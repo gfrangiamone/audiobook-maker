@@ -282,7 +282,9 @@ Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (
 | `LLM_RESERVED_PROMPT_TOKENS` | `4000` | `ABM_LLM_RESERVED_PROMPT_TOKENS` | `generation_engine.py` | 90 |
 | `LLM_OUTPUT_SAFETY_MARGIN` | `0.85` | `ABM_LLM_OUTPUT_SAFETY_MARGIN` | `generation_engine.py` | 91 |
 | `LLM_REQUEST_TIMEOUT_SEC` | `120.0` | `ABM_LLM_REQUEST_TIMEOUT_SEC` | `generation_engine.py` | 94 |
-| `LLM_MAX_RETRIES` | `4` (backoff esponenziale `2**attempt`) | `ABM_LLM_MAX_RETRIES` | `generation_engine.py` | 95 |
+| `LLM_MAX_RETRIES` | `4` (backoff esponenziale `2**attempt`; su sovraccarico provider `LLM_OVERLOAD_BACKOFF_SEC × 2**attempt`) | `ABM_LLM_MAX_RETRIES` | `generation_engine.py` | 95 |
+| `LLM_FIRST_EVENT_TIMEOUT_SEC` | `90.0` (secondi senza **alcun** evento dall'apertura dello stream: il watchdog `_FirstEventWatchdog` chiude lo stream e la chiamata diventa `_LLMStallError`, transitoria. Serve perché un provider in coda risponde 200 e manda solo keep-alive SSE: il read timeout non scatta mai e la rinuncia arriva dopo 900 s — incidente 14/09/2026, 19 ottimizzazioni fallite. Durante l'attesa il watchdog osserva anche `opt_cancelled` → `_CancelledError` immediato. `0` = disattivato) | `ABM_LLM_FIRST_EVENT_TIMEOUT_SEC` | `generation_engine.py` | 130 |
+| `LLM_OVERLOAD_BACKOFF_SEC` | `20.0` (pausa base prima di ritentare un provider sovraccarico: stallo del primo evento o errore con `unable to start processing` / `try again later` / `overloaded` / `server busy` nel messaggio. Raddoppia a ogni tentativo: 20, 40, 80 s. Caso peggiore con i default: 4 × 90 s + 140 s ≈ 8 min prima dell'errore del job) | `ABM_LLM_OVERLOAD_BACKOFF_SEC` | `generation_engine.py` | 133 |
 | `LLM_INTER_CHUNK_SLEEP_SEC` | `0.5` | `ABM_LLM_INTER_CHUNK_SLEEP_SEC` | `generation_engine.py` | 96 |
 | `LLM_HEARTBEAT_TIMEOUT_SEC` | `60.0` (auto-cancel solo interactive) | `ABM_LLM_HEARTBEAT_TIMEOUT_SEC` | `generation_engine.py` | 97 |
 | `LLM_TRIVIAL_INPUT_MIN_CHARS` | `80` (sotto soglia, o single-line < 2× senza punteggiatura terminale → pass-through, no LLM call. Antidoto a prompt-leak su input banali) | `ABM_LLM_TRIVIAL_INPUT_MIN_CHARS` | `generation_engine.py` | 100 |
@@ -292,7 +294,9 @@ Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (
 | `LLM_MAX_INPUT_CHARS` | derived = ~3.26M | — | `generation_engine.py` | 102 |
 | `LLM_SAFE_OUTPUT_CHUNK` | derived = `MAX_TOKENS × CHARS_PER_TOKEN × SAFETY_MARGIN` ≈ 195k char | — | `generation_engine.py` | 106 |
 
-Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`.
+Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`. In più: HTTP 429/500/502/503/504, `_LLMStallError` e i messaggi di sovraccarico del provider (questi ultimi con `LLM_OVERLOAD_BACKOFF_SEC`).
+
+**Email di fallimento ottimizzazione**: su errore (non su annullamento) `run_optimization` rimborsa e poi chiama `_send_optimization_failed_email`, che scrive a `notify_email` nella lingua `notify_lang` (fallback inglese). La riga sul rimborso dipende dal pagamento: voucher → importo ri-accreditato sul buono usato; PayPal → annuncio del buono di rimborso che arriva in email separata; gratuita → nessun addebito; rimborso non riuscito → nessuna promessa. Mai il codice del buono. Una sola email per job (`opt_fail_email_sent`), activity log `OPT_FAIL_EMAIL_SENT` / `OPT_FAIL_EMAIL_FAILED`.
 
 ### 3.4 Generazione audio
 
@@ -301,7 +305,8 @@ Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`
 | `CHUNK_MAX_CHARS` | `2000` (caratteri max per chunk TTS) | `tts_split.py` | 38 |
 | `ABM_EDGE_TTS_TIMEOUT` | `120` (secondi, timeout per singola chiamata edge-tts via `asyncio.wait_for` su `communicate.save()`. Necessario perché edge-tts non applica `receive_timeout` alla websocket — `ws_connect` aiohttp senza timeout: una connessione half-open lascerebbe il job sospeso per sempre senza errori, incidente 2026-06-11. Allo scadere: `TimeoutError` → retry/backoff esistente → fallback silenzio) | `tts_split.py` | 45 |
 | `CHAPTER_SILENCE_SEC` | `3` (secondi di silenzio tra capitoli) | `generation_engine.py` | 78 |
-| `_TTS_MIN_SENT_CHARS` | `80` (soglia minima di caratteri per frase inviata a edge-tts su voci Multilingual) | `tts_split.py` | 41 |
+| `_TTS_MIN_SENT_CHARS` | `80` (soglia minima di caratteri per frase inviata a edge-tts su voci Multilingual; e' anche la lunghezza sotto la quale `_hard_split_oversized` non chiude un pezzo di frase spezzata ne' lascia un moncone in fondo) | `tts_split.py` | 41 |
+| `_SEGNI_FORTI` | `;:；：` (punteggiatura che `_hard_split_oversized` preferisce alla virgola quando deve spezzare una frase troppo lunga: un taglio su punto e virgola si sente meno di uno su virgola, e i pezzi restano leggibili) | `tts_split.py` | 256 |
 | `_TTS_MAX_SENT_CHARS` | `1500` (cap superiore di sicurezza per frase) | `tts_split.py` | 43 |
 | *(nessun parametro: chunking dei frammenti)* | Non esiste alcuna soglia che impedisca a un chunk breve di raggiungere il backend TTS, ed e' una scelta esplicita. Un frammento tipo `XIV.` o `1793.` fa scattare la moderazione contenuti dei backend Gemini (codice `2017`), ma dal v3.35.0 **non produce un buco**: viene narrato dalla voce edge di ripiego (riga sotto) e non conta come `failed_chunks`. Silenziarlo a monte per risparmiare la chiamata cancellerebbe testo che oggi si sente. Un passo di fusione a valle dello split e' stato valutato e scartato (2026-08): `split_text_into_chunks` aggrega gia' il frammento al vicino quando c'e' spazio, e quando non ce n'e' nemmeno la fusione potrebbe rispettare i cap — misurato su 6000 input casuali (it/zh, cap 60-2000 char, byte-cap 200-1800), zero casi in cui la fusione cambiava l'esito. Comportamento fissato da `test/test_chunk_fragments.py` | `tts_split.py` | — |
 | `_EDGE_FALLBACK_VOICES` / `_EDGE_FALLBACK_DEFAULT` | Mappa lingua (2 lettere) → voce edge-tts standard (default `en-US-AriaNeural`) usata come **fallback quando un chunk Gemini viene rifiutato in modo definitivo** (content policy / safety su testi sensibili). Invece di scrivere silenzio, `generate_chunk_pcm_gemini(..., fallback_lang=...)` sintetizza il chunk con la voce edge, lo converte in PCM 24 kHz mono (`_mp3_to_pcm_24k` via ffmpeg) e lo concatena come i chunk Gemini. Chunk recuperato → **non conta come `failed_chunks`**, contatore `job["gemini_edge_fallback_chunks"]`, contabilità token/costo/rate-sample Gemini **saltata** (0 token reali). Quota/budget/kill-switch restano job-fatal senza fallback. Introdotto v3.35.0 (incidente `kd8XQj6WWdrZJt1_z0VMPQ`). | `tts_split.py` / `generation_engine.py` | — |
@@ -422,11 +427,12 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_COST_USD_PER_MCHAR` | `0.91` Costo GPU misurato (RTX 4090, 2026-08-04). **Ripiego**: alimenta l'audit del margine solo per i job senza righe di fattura RunPod (generati prima del §17.7). Mai il prezzo all'utente. | `voxcpm_tts.py` | 66 |
 | `ABM_VOXCPM_USD_PER_HOUR` | `0.69` Tariffa oraria in USD della scheda dell'endpoint RunPod — il default e' la RTX PRO 6000 Blackwell MIG 1g.24gb (4 vCPU, 47 GB RAM). Base del costo reale dell'audit del margine: i secondi di `executionTime` di ogni job piu' l'accensione dei worker svegliati dal libro. **Scriverla e' una dichiarazione**: se c'e', vale per tutti i job e il listino interno per scheda (MIG 0,69 / A40 1,22 / 4090 1,10 USD/h) non si consulta piu'. Assente: ogni job si paga alla tariffa della scheda su cui e' davvero girato, con 0,69 come ripiego per le schede fuori listino. Mai il prezzo all'utente. | `voxcpm_tts.py` | 119 |
 | `ABM_VOXCPM_CONCURRENCY` | `32` Chunk in volo dentro un singolo job del worker. | `voxcpm_tts.py` | 74 |
-| `ABM_VOXCPM_CHUNK_CHARS` | `300` Tetto di caratteri per chunk delle voci `voxcpm:` (clamp 40–2000). Il worker non rispezza i chunk ricevuti: oltre questo tetto il timbro deriva dentro il chunk. Deve coincidere con `ABM_VOXCPM_CHUNK_MAX_CHARS` dell'endpoint. | `voxcpm_tts.py` | 98 |
+| `ABM_VOXCPM_CHUNK_CHARS` | `280` Tetto di caratteri per chunk delle voci `voxcpm:` (clamp 40–2000). Il worker non rispezza i chunk ricevuti: oltre questo tetto il timbro deriva dentro il chunk. Deve coincidere con `ABM_VOXCPM_CHUNK_MAX_CHARS` dell'endpoint. Sceso da 300 a 280 l'11/9/2026: `tts_split._pick_sentence_slack` concede a una frase il 15% di sforamento pur di non spezzarla sulle virgole (tetto effettivo 322), e partire da 280 tiene quel tetto vicino ai 300 misurati sul worker. | `voxcpm_tts.py` | 98 |
 | `ABM_VOXCPM_QUEUE_TIMEOUT_S` | `900` Quanto si aspetta in coda un job VoxCPM prima di dichiarare l'endpoint saturo. Scaduto, il job si cancella e non si ritenta. | `voxcpm_tts.py` | 245 |
 | `ABM_VOXCPM_JOB_TIMEOUT_S` | `1800` Quanto puo' durare l'esecuzione di un job VoxCPM. Scaduto, il job si cancella (RunPod fattura a secondi) e si ritenta. | `voxcpm_tts.py` | 249 |
 | `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
 | `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
+| `ABM_VOXCPM_PROGRESS` | `1` Il client ascolta gli avanzamenti parziali del worker (`chunks_done` dal polling di `/status`) e la barra si muove coi chunk. A `0` la barra torna a muoversi solo a capitolo consegnato: interruttore da girare se il polling dovesse mai pesare, senza ricostruire l'immagine sulla GPU. | `voxcpm_tts.py` | 506 |
 | `ABM_MAX_VOXCPM_TEXT_CHARS` | Cap caratteri testo per job con voce VoxCPM. Default = `ABM_MAX_SPEECHIFY_TEXT_CHARS` (a sua volta `800000` di default). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `voxcpm:`. | `audiobook_app.py` | 504 |
 | `ABM_VOXCPM_DIGEST` | `1` Digest quotidiano dei ritentativi delle code tagliate, spedito a `ABM_ADMIN_EMAIL` una volta per giornata (sempre quella di **ieri**, in UTC: un giorno ancora aperto darebbe conti parziali). Valori falsi: `0`/`false`/`off`/`no`. Senza `ABM_ADMIN_EMAIL` o senza SMTP non parte comunque. Il giorno gia' spedito e' segnato in `voxcpm_digest_last.txt` dentro `ABM_DATA_DIR`, cosi' un riavvio non salta ne' duplica una giornata. | `email_service.py` | 41 |
 | `ABM_VOICE_CLONE_MIN_SEC` / `ABM_VOICE_CLONE_MAX_SEC` | `12` / `20` — finestra di durata accettata dal gate del campione vocale (voci campionate, D7). Il target dichiarato all'utente resta 15-18 s. | `voice_clone_audio.py` | `gate_from_env`, 244 |
@@ -474,6 +480,8 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si ricavano dai campi `worker_verify_*` che `generation_engine` scrive nel libro mastro (`gemini_cost_audit_YYYY-MM.jsonl`, righe con `"provider": "voxcpm"`): `worker_verify_chunks` i chunk passati sotto l'ASR del worker, `worker_verify_sospetti` i ritentativi giudicati necessari, `worker_verify_rinunciati` i sospetti lasciati fuori dal tetto `ABM_VOXCPM_VERIFY_MAX_FRAC` del worker, `worker_verify_giri` i giri di rigenerazione spesi. I record scritti prima di questa versione non li hanno: il digest li conta a parte, come «job senza misure». Dal 3 settembre 2026 ci sono anche `worker_verify_numerali` (code in cui compariva un numero) e `worker_verify_falsi_numerali` (di quelle, gli allarmi che il rilevatore ha spento perche' l'unica differenza era la grafia: l'ASR scrive «1967» dove il testo dice «millenovecentosessantasette»). Sono ritentativi non comprati, non difetti recuperati, e stanno in un riquadro loro; i job di un worker precedente alla regola si contano come «ciechi sui numeri», perche' uno zero li' vorrebbe dire «nessun numero in giro».
 
+
+**Dataset delle code tagliate** (`<ABM_DATA_DIR>/voxcpm_code_tagliate_YYYY-MM.jsonl`, dal 15 settembre 2026). Il libro mastro conta le code che il worker ha consegnato ancora tagliate (`worker_code_tagliate`), ma un conteggio non dice **che cosa** sia il difetto: se la frase fosse davvero mozza, o se ad allarmarsi a vuoto fosse il confronto con l'ASR o la misura del segnale. Il worker allega a ogni chunk difettoso il giudizio per esteso in `verify_details`, e fino a oggi l'app lo buttava via. Ora `generation_engine._write_voxcpm_tails_dataset` ne scrive **una riga per difetto** (append-only, lock, mensile, sotto la stessa data dir del libro mastro), su job completati e falliti allo stesso modo. Campi: `ts`, `job_id`, `voice_id`, `language`, `outcome`, `capitolo`, `chunk`, `coda_attesa` (gli ultimi 60 caratteri del testo ripulito mandato al worker, la stessa finestra di `verifica.CODA_CAR`), `detto` (la coda come l'ASR l'ha sentita) e le misure del giudizio: `scoperti`, `scoperti_grezzi`, `caduta`, `silenzio_ms`, `resa`, `livello`, `mozza`, `conclamato`, `fioco`, `numeri`, `sospetto`. Le chiavi assenti nel giudizio non vengono inventate. Sui libri senza code tagliate il file non nasce; l'ordine di grandezza e' di qualche KB per libro difettoso. Le stesse righe finiscono nel log dell'app, le prime cinque per capitolo (`coda tagliata: chunk N | attesa: ... | udita: ...`). **Retention:** manuale, come per il libro mastro.
 
 ### 3.6 Cleanup (pulizia automatica)
 
@@ -762,7 +770,7 @@ Il credito Cloudflare AI Gateway è **prepagato**, è denominato **in dollari** 
 
 ### 7.9 Backend Cloudflare — failover automatico e circuit breaker (`tts_backend_state.py`)
 
-Il passaggio Cloudflare → Vertex e' **automatico e a senso unico**: quando il backend Cloudflare si rivela non utilizzabile, il modello viene marcato come "scattato" su disco (`<ABM_DATA_DIR>/_tts_backend_state.json`) e da quel momento risolve a Vertex. Non esiste half-open, non esiste scadenza: il rientro su Cloudflare avviene **solo** dal pulsante in console admin (`reset()`), che deve anche invalidare la cache in-process `gemini_tts._BACKEND`, altrimenti il processo vivo continua a servire Vertex.
+Il passaggio Cloudflare → Vertex e' **automatico e immediato**: quando il backend Cloudflare si rivela non utilizzabile, il modello viene marcato come "scattato" su disco (`<ABM_DATA_DIR>/_tts_backend_state.json`) e da quel momento risolve a Vertex. Il rientro avviene in due modi, entrambi passando da `reset()`, che deve anche invalidare la cache in-process `gemini_tts._BACKEND`, altrimenti il processo vivo continua a servire Vertex: **subito** dal pulsante in console admin, oppure **da solo** quando la sonda di rientro descritta in §7.9.1 ottiene audio valido da Cloudflare. Non esiste half-open sul traffico reale: nessun job viene mai usato per capire se il backend sia guarito.
 
 **Contratto del rientro (`POST /admin/api/tts_backend {"action":"reset"}`).** L'endpoint azzera il trip su disco e fa il **`pop`** della voce di cache di ogni `model_key` noto — mai un valore forzato, nemmeno sul modello target: il backend torna a essere deciso da `_resolve_backend` alla sintesi successiva, cioè dalla configurazione dichiarata e da `id_cloudflare`. Due guardie sull'ingresso, entrambe lato server perché il bottone disabilitato in console è scavalcabile da una chiamata diretta all'API: `model_key` non presente in `GEMINI_MODELS` → **400** (una chiave inventata materializzerebbe per sempre una voce spuria nel file di stato); `ABM_GEMINI_BACKEND != "cloudflare"` → **409** (con quella configurazione la sintesi non userà mai Cloudflare, quindi riarmare il breaker non cambia nulla e la console direbbe il falso). `model_key` è coerciuto a stringa prima di ogni confronto: dal corpo JSON può arrivare una lista o un dict, e un valore unhashable produrrebbe un **500** invece del 400 previsto.
 
@@ -773,7 +781,44 @@ Il job in corso non viene interrotto: prosegue su Vertex **dal chunk corrente**,
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
 | `ABM_CF_TRIP_FAILURES` | `3` | Fallimenti consecutivi dopo i quali un errore `retryable` / `rate_limited` fa scattare il breaker. Floor a 1; valore non numerico → default. Un successo azzera il contatore. Gli errori `backend_down` fanno scattare **subito**, ignorando la soglia; `fatal` e `content_rejected` non fanno scattare nulla (sono difetti della richiesta, non del backend). File: `gemini_tts.py:_cf_trip_failures` (376). |
-| `ABM_CF_TIMEOUT_MS` | `60000` | Timeout HTTP (ms) delle call verso Workers AI. Floor a 1000; valore non numerico → default. Indipendente dai timeout Vertex (`ABM_GEMINI_HTTP_TIMEOUT_MS*`) perche' la latenza del gateway Cloudflare ha un profilo diverso. File: `gemini_tts.py:_cf_timeout_ms` (2117). |
+| `ABM_CF_TIMEOUT_MS` | `25000` | Timeout HTTP (ms) delle call verso Workers AI. Floor a 1000; valore non numerico → default. Indipendente dai timeout Vertex (`ABM_GEMINI_HTTP_TIMEOUT_MS*`) perche' la latenza del gateway Cloudflare ha un profilo diverso. **Era `60000` fino al 14/09/2026**: con quel valore ogni chunk moribondo teneva occupato un thread di sintesi per un minuto pieno e i tre fallimenti consecutivi che fanno scattare il breaker costavano tre minuti di job prima che il failover su Vertex partisse. Un chunk Cloudflare sano risponde in pochi secondi: oltre i 25 s non si sta aspettando una risposta lenta, si sta aspettando una risposta che non arrivera'. File: `gemini_tts.py:_cf_timeout_ms` (2436). |
+
+#### 7.9.1 Sonda di rientro automatico su Cloudflare
+
+Dopo un trip, un **sorveglianti in background** (`audiobook_app._cf_probe_supervisor`, 18332) sveglia periodicamente `gemini_tts.probe_cloudflare(model_key)` per i modelli con un appuntamento scaduto. La sonda sintetizza **due parole** su Cloudflare, butta via l'audio e, se il backend risponde, riarma il breaker: il modello torna su Cloudflare senza alcun intervento.
+
+**Perche' adesso si puo', e prima no.** L'obiezione storica al rientro automatico — *«un backend caduto per credito esaurito tornerebbe a cadere subito, e ogni caduta costa un job»* — vale solo per un rientro che si misuri con il **traffico vero**. Una sonda in background non ha alcun utente collegato: un tentativo fallito costa una richiesta HTTP rifiutata, non un audiolibro rimandato a meta' su un backend ancora guasto. La sonda non gira **mai** dentro un job, e il rientro avviene fra un job e l'altro.
+
+**Cause di trip sondabili (whitelist `gemini_tts._CF_PROBE_REASONS`, 448).** Solo `cf_backend_down` e `cf_consecutive_failures`, cioe' le uniche **misurate** e quindi ri-misurabili. `cf_backend_down` e' emesso esclusivamente per credito esaurito (HTTP 402 / codice provider 2021) ed e' incluso di proposito: sondarlo costa una richiesta rifiutata e si risolve da solo dopo una ricarica, senza dipendere dalla memoria dell'admin. I trip "virtuali" del fail-safe (`state_file_unreadable`, `state_entry_corrupt`) **non si riarmano mai da soli**: uno stato che non sappiamo leggere non e' una misura, e ripristinarlo in automatico sarebbe esattamente il ripristino silenzioso che il fail-safe esiste per impedire.
+
+**Ammissibilita' ricontrollata a ogni tick, mai congelata allo scatto** (`_cf_probe_eligible`, 491): interruttore acceso, `ABM_GEMINI_BACKEND=cloudflare`, credenziali presenti, modello con `id_cloudflare`, modello ancora scattato, causa in whitelist. Se una condizione cade, la sonda viene **disarmata** (`clear_probe`) lasciando il trip in piedi: il rientro torna manuale, e non si continua a bussare su un backend che nessuna sintesi userebbe piu'.
+
+**Esiti di `probe_cloudflare()`** — `"returned"` | `"failed"` | `"deferred"` | `"disarmed"`:
+
+- **`returned`**: audio valido, oppure `content_rejected` (codice 2017 / HTTP 422). Il rifiuto del filtro contenuti arriva solo se il backend **risponde**: contarlo come fallimento rimanderebbe il rientro di ore per il motivo sbagliato. Segue `reset()`, `pop` della cache `_BACKEND` per **ogni** `model_key` noto (mai un valore forzato: `_set_backend(mk, "cloudflare")` scavalcherebbe `_resolve_backend` e inchioderebbe su Cloudflare anche un modello che Cloudflare non ospita) ed email di rientro all'admin.
+- **`failed`**: qualunque altro `TransportError`, risposta vuota o eccezione inattesa. Il trip resta, l'intervallo **raddoppia** e l'appuntamento si sposta.
+- **`deferred`**: credito dichiarato sotto la soglia d'allarme. La sonda **non viene eseguita** e l'appuntamento si sposta **senza** raddoppiare e senza contare un fallimento: direbbe solo cio' che gia' sappiamo (il 402 arriverebbe comunque), e far correre il backoff verso il tetto proprio mentre l'admin sta ricaricando renderebbe il rientro piu' lento di quanto serva.
+- **`disarmed`**: condizioni di ammissibilita' non soddisfatte.
+
+**Il raddoppio parte da `probe_delay_sec` persistito, non da un contatore di tentativi**: un riavvio del processo nel mezzo di un failover lungo riprende dal ritmo gia' raggiunto invece di ricominciare a bussare ogni mezz'ora. `probe_next_at` e' un **epoch float**, l'unico campo dello stato che sia un istante da confrontare; un valore illeggibile degrada a `0.0` ("scaduto adesso"), cioe' una sonda di troppo che si ri-arma da sola col valore giusto — il difetto opposto, un appuntamento che blocca il rientro per sempre, sarebbe molto peggiore.
+
+**La sonda si paga.** L'audio prodotto e' audio vero: l'esito riuscito passa da `add_spend()` come qualunque sintesi. Un rientro che non toccasse il ledger farebbe divergere in silenzio il residuo stimato dal saldo reale — cioe' proprio il numero su cui si decide se ricaricare.
+
+**Ordine allo scatto: prima si arma, poi si notifica.** L'email di switch annuncia **quando** cadra' la prima sonda leggendolo dallo stato persistito (`tts_backend_state.probe_info`); armare dopo la notifica le farebbe dire "rientro manuale" a ogni failover. Solo il primo chiamante che fa scattare il breaker arma l'appuntamento: con N thread che scoprono l'avaria insieme, ri-armare a ogni scatto rimanderebbe la prima sonda a ogni chiamata.
+
+**Email di rientro** (`email_service.admin_notify_tts_backend_return`): immediata come quella di switch, intestazione verde, riporta sonde fallite e durata del failover in italiano leggibile ("2 ore e 35 minuti"). Non e' cortesia: e' la chiusura esplicita dell'incidente: finche' non arriva, l'admin deve assumere che il servizio giri su Vertex.
+
+**API dello stato:** `schedule_probe(model_key, fra_sec)`, `clear_probe(model_key)`, `probe_due(model_key)`, `probe_info(model_key)` (`next_at` / `delay_sec` / `attempts` / `last_error`), `record_probe_failure(model_key, detail, *, factor=2.0, max_delay_sec=None)`, `defer_probe(model_key)`. Il modulo custodisce l'appuntamento ma non decide se la sonda vada fatta, esattamente come custodisce la soglia di trip senza decidere lo scatto.
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `ABM_CF_PROBE_ENABLE` | `1` | Interruttore del rientro automatico. A `0`/`false`/`no`/`off` nessun appuntamento viene armato e una sonda gia' in calendario viene disarmata al primo tick: il rientro torna esclusivamente manuale dalla console. File: `gemini_tts.py:_cf_probe_enabled` (458). |
+| `ABM_CF_PROBE_FIRST_SEC` | `1800` | Attesa (s) fra lo scatto del breaker e la **prima** sonda. Floor 60. Mezz'ora e' il compromesso fra il non insistere su un guasto ancora in corso e il non lasciare il servizio sul margine ridotto di Vertex piu' del necessario. File: `gemini_tts.py:_cf_probe_first_sec` (463). |
+| `ABM_CF_PROBE_MAX_SEC` | `21600` | Tetto (s) dell'intervallo fra sonde, raggiunto raddoppiando a ogni fallimento (30 min → 1 h → 2 h → 4 h → 6 h). Floor 60. Il tetto esiste perche' senza di esso un guasto lungo porterebbe l'intervallo a giorni, e il rientro arriverebbe molto dopo la riparazione. File: `gemini_tts.py:_cf_probe_max_sec` (471). |
+| `ABM_CF_PROBE_TIMEOUT_MS` | `15000` | Timeout (ms) della sola sonda, deliberatamente piu' corto di `ABM_CF_TIMEOUT_MS`. Floor 1000. Una sonda lenta e' gia' una risposta — non c'e' alcun utente in attesa di quell'audio. File: `gemini_tts.py:_cf_probe_timeout_ms` (481). |
+| `ABM_CF_PROBE_TICK_SEC` | `60` | Periodo di risveglio del sorvegliante, cioe' la **granularita'** con cui gli appuntamenti vengono onorati (non la loro frequenza). Floor 10. File: `audiobook_app.py:_cf_probe_tick_sec` (18322). |
+
+Il pannello **Backend TTS** della console admin mostra il prossimo appuntamento, le sonde fallite e l'ultimo errore (`GET /admin/api/tts_backend`, campi `probe_enabled`, `probe_next_at`, `probe_in_sec`, `probe_attempts`, `probe_last_error`, `probe_delay_sec`). Il pulsante di rientro resta: e' la via **immediata**, quando l'admin sa gia' che il guasto e' risolto e non vuole aspettare il prossimo appuntamento.
 
 **Lettura fail-safe dello stato.** File **assente** = installazione pulita, nessun modello scattato (trattarlo come scattato disabiliterebbe Cloudflare dal primo avvio e la feature non si accenderebbe mai). File **presente ma illeggibile** = ogni modello e' considerato scattato finche' l'admin non interviene. Una singola voce per-modello corrotta viene materializzata come trip concreto con `reason="state_entry_corrupt"`, limitato a quel modello.
 
@@ -1120,14 +1165,29 @@ standard`. Op di log: `QUOTA_ABUSE_KILL`, `QUOTA_ABUSE_BLOCK`. Ripristino:
 `set_verdict`): S2 e S4 misurano *volume*, non evasione — un lettore che
 converte la propria bibliografia produce caratteri quanto un harvester.
 Il verdetto `abuse` viene declassato a `inconclusive` (nessun blocco, gruppo
-comunque sotto osservazione) se manca **ogni** traccia di evasione:
+comunque sotto osservazione) se manca **ogni** traccia di evasione. Dal
+14/09/2026 la traccia è la **rotazione di identità**
+(`identity_rotation`), non il contatore del gate: superare il gate è l'uso
+previsto del gate, cioè consegnare un'email; ad aggirarlo è cambiare
+l'identità con cui lo si supera. C'è rotazione quando vale almeno una fra:
 
-- nessun `quota_gate`/`quota_block` mai registrato per il gruppo — non ha mai
-  raggiunto il limite, quindi non lo sta aggirando;
-- nessun cid nato dopo l'ultimo blocco/kill del gruppo (rotazione reattiva);
-- meno di `_DISPOSABLE_MIN` (2) cid *usa-e-getta*, cioè vissuti meno di
+- almeno un cid nato dopo l'ultimo blocco/kill del gruppo (rotazione reattiva,
+  dove come «blocco» conta anche il primo `quota_gate`/`quota_block`);
+- almeno `_DISPOSABLE_MIN` (2) cid *usa-e-getta*, cioè vissuti meno di
   `_DISPOSABLE_LIFE_SEC` (2 h) e fermi da oltre `_DISPOSABLE_IDLE_SEC` (6 h)
-  — è la rotazione preventiva, che elude il gate senza mai toccarlo.
+  — è la rotazione preventiva, che elude il gate senza mai toccarlo;
+- più di `_STABLE_MAX_EMAILS` (1) email distinte sul gruppo — evadere il
+  gate in serie costringe a registrarne di nuove;
+- almeno `_ROTATION_MIN_CIDS` (4) cid con vita mediana sotto
+  `_ROTATION_MAX_MEDIAN_LIFE_SEC` (24 h) — rotazione lenta, che vive troppo
+  a lungo per finire fra gli usa-e-getta.
+
+Senza rotazione il gruppo ha `stable_identity` vero e non è bloccabile, per
+quanti gate abbia superato e per quanto volume abbia generato (caso ellehome
+del 14/09/2026: 11 libri in 20 giorni, un IP, un cookie longevo, una sola
+email, otto `QUOTA_GATE` — bastava il contatore a far cadere la garanzia).
+`quota_gate_ever` falso resta una garanzia a sé: chi non ha mai raggiunto il
+limite non ha nulla da aggirare.
 
 Un gruppo ripristinato da console porta `cleared_ts`: entro
 `_CLEARED_WINDOW_SEC` (30 giorni) può tornare `abuse` solo con confidenza

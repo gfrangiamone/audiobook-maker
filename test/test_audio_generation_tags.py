@@ -3,8 +3,11 @@
 Invarianti verificate:
  - `_generation_tags` descrive motore, voce, lingua, accento, velocita' e stile
    per i tre motori (Edge standard, Gemini premium, Speechify premium);
- - i tag arrivano davvero nel file: MP3 da PCM, MP3 da concat, M4B da PCM
-   (che senza `-movflags +use_metadata_tags` li scarterebbe in silenzio);
+ - i tag arrivano davvero nel file: MP3 da PCM, MP3 da concat, M4B da PCM;
+ - nell'M4B arrivano **insieme alla copertina**: il flag che farebbe accettare
+   al muxer MP4 le chiavi non standard gli fa saltare l'atomo `covr`, percio'
+   i parametri viaggiano impacchettati in `keywords` (regressione 15/09/2026,
+   M4B consegnati senza cover);
  - i tag standard del libro (titolo/autore/capitoli) restano intatti;
  - valori multilinea o troppo lunghi non rompono il comando ffmpeg.
 """
@@ -47,6 +50,27 @@ def _silence_pcm(tmp_path, seconds=1, sample_rate=24000):
     p = tmp_path / "chunk.pcm"
     p.write_bytes(b"\x00\x00" * (sample_rate * seconds))
     return str(p)
+
+
+def _cover_jpg(tmp_path):
+    """Copertina minima vera (ffmpeg): serve un JPEG, non un file finto."""
+    p = tmp_path / "cover.jpg"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+         "-i", "color=c=red:s=64x64:d=1", "-frames:v", "1", str(p)],
+        capture_output=True,
+    )
+    return str(p)
+
+
+def _ha_copertina(path):
+    """True se il file porta uno stream video allegato (atomo covr negli M4B)."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v",
+         "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+        capture_output=True, text=True,
+    ).stdout
+    return "video" in out
 
 
 # --- sanitizzazione ---------------------------------------------------------
@@ -126,6 +150,28 @@ def test_tags_voce_speechify_usa_locale_come_accento():
     assert tags["abm_speed"].startswith("0.95x")
 
 
+def test_tags_voce_voxcpm_non_scambia_lid_per_la_lingua():
+    # `voxcpm:v2:it-IT/Lorenzo` non e' una locale col nome dentro: spezzarlo
+    # sui trattini come le voci Edge finiva per incidere l'id intero nella
+    # lingua e lasciare il modello vuoto.
+    import voxcpm_catalog
+    tags = generation_engine._generation_tags(
+        {}, _Info(), "voxcpm:v2:it-IT/Lorenzo", "-10%")
+    assert tags["abm_model"] == voxcpm_catalog.MODEL_LABEL
+    assert tags["abm_voice"] == "Lorenzo (IT)"
+    assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/Lorenzo"
+    assert tags["abm_language"] == "it-IT"
+    assert tags["abm_accent"] == "it-IT"
+    assert tags["abm_speed"].startswith("0.90x")
+
+
+def test_tags_voce_voxcpm_sparita_dal_catalogo_non_esplode():
+    tags = generation_engine._generation_tags(
+        {}, _Info(), "voxcpm:v2:it-IT/NonEsiste", "+0%")
+    assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/NonEsiste"
+    assert tags["abm_language"] == "it"
+
+
 def test_tags_segnalano_testo_ottimizzato():
     tags = generation_engine._generation_tags(
         {"ai_optimized": True}, _Info(), "it-IT-DiegoNeural", "+0%")
@@ -167,15 +213,18 @@ def test_m4b_porta_i_tag_senza_perdere_quelli_del_libro(tmp_path):
     out = str(tmp_path / "out.m4b")
     assert audio_utils.pcm_to_aac_m4b(
         [pcm], out, title="Il Libro", author="Autore X",
+        cover_path=_cover_jpg(tmp_path),
         chapters=[{"title": "Cap 1", "start": 0, "end": 1000}],
         extra_tags={"abm_model": "Gemini 3.1 Flash TTS", "abm_accent": "gb (British)"})
     tags = _format_tags(out)
-    assert tags["abm_model"] == "Gemini 3.1 Flash TTS"
-    assert tags["abm_accent"] == "gb (British)"
+    assert "abm_model=Gemini 3.1 Flash TTS" in tags["keywords"]
+    assert "abm_accent=gb (British)" in tags["keywords"]
     # I metadati del libro non devono essere stati sostituiti dai custom.
     assert tags["title"] == "Il Libro"
     assert tags["artist"] == "Autore X"
     assert tags["media_type"] == "2"
+    # E la copertina deve essere sopravvissuta ai tag custom.
+    assert _ha_copertina(out)
 
 
 @requires_ffmpeg
@@ -185,10 +234,63 @@ def test_m4b_da_mp3_porta_i_tag(tmp_path):
     assert audio_utils.pcm_to_mp3([pcm], mp3)
     out = str(tmp_path / "out.m4b")
     assert audio_utils._convert_mp3_to_m4b(
-        mp3, out, title="Il Libro", extra_tags={"abm_voice": "Achernar"})
+        mp3, out, title="Il Libro", cover_path=_cover_jpg(tmp_path),
+        extra_tags={"abm_voice": "Achernar"})
     tags = _format_tags(out)
-    assert tags["abm_voice"] == "Achernar"
+    assert "abm_voice=Achernar" in tags["keywords"]
     assert tags["title"] == "Il Libro"
+    assert _ha_copertina(out)
+
+
+@requires_ffmpeg
+def test_m4b_senza_tag_custom_resta_con_la_copertina(tmp_path):
+    # Il caso di controllo: senza extra_tags la copertina c'e' sempre stata.
+    # Se un giorno sparisse anche qui, il colpevole non sarebbe il tagging.
+    pcm = _silence_pcm(tmp_path, seconds=2)
+    out = str(tmp_path / "out.m4b")
+    assert audio_utils.pcm_to_aac_m4b(
+        [pcm], out, title="Il Libro", cover_path=_cover_jpg(tmp_path))
+    assert _ha_copertina(out)
+    assert "keywords" not in _format_tags(out)
+
+
+def test_pacchetto_mp4_sta_in_una_chiave_sola_e_ha_un_tetto():
+    args = audio_utils._extra_tag_args_mp4(
+        {"abm_voice": "Diego", "abm_speed": "1.10x"})
+    assert args[0] == "-metadata"
+    assert len(args) == 2
+    assert args[1] == "keywords=abm_voice=Diego; abm_speed=1.10x"
+    # Il ';' dentro un valore non deve fingersi separatore di coppie.
+    args = audio_utils._extra_tag_args_mp4({"abm_style": "calma; lenta"})
+    assert args[1] == "keywords=abm_style=calma, lenta"
+    # Valori enormi: si tronca a coppie intere, non a meta' di una.
+    args = audio_utils._extra_tag_args_mp4(
+        {"abm_style_%d" % i: "x" * 300 for i in range(10)})
+    assert len(args[1]) <= len("keywords=") + audio_utils._EXTRA_TAG_PACK_MAX_CHARS
+    assert audio_utils._extra_tag_args_mp4(None) == []
+
+
+def test_descrizione_del_libro_perde_il_markup():
+    # Il `dc:description` degli EPUB e' HTML: finiva inciso tale e quale.
+    out = audio_utils._descrizione_semplice(
+        '<p class="description">AL DIO SCONOSCIUTO &egrave; un romanzo'
+        '\n&ldquo;profetico&rdquo;.</p>')
+    assert out == 'AL DIO SCONOSCIUTO \u00e8 un romanzo \u201cprofetico\u201d.'
+    assert audio_utils._descrizione_semplice(None) == ""
+    # Il tetto vale sul testo, non sul markup.
+    assert len(audio_utils._descrizione_semplice("<p>" + "a" * 2000 + "</p>")) == 1000
+
+
+@requires_ffmpeg
+def test_m4b_non_incide_i_tag_html_della_descrizione(tmp_path):
+    pcm = _silence_pcm(tmp_path, seconds=2)
+    out = str(tmp_path / "out.m4b")
+    assert audio_utils.pcm_to_aac_m4b(
+        [pcm], out, title="Il Libro",
+        description='<p class="description">Un <i>bel</i> libro.</p>')
+    tags = _format_tags(out)
+    assert tags["comment"] == "Un bel libro."
+    assert tags["description"] == "Un bel libro."
 
 
 @requires_ffmpeg

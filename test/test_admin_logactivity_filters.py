@@ -126,3 +126,55 @@ def test_transfer_keeps_book_title(monkeypatch):
     html = _page_with_log(monkeypatch, lines)
     assert "Il Nome della Rosa" in html
     assert 'data-transferred="1"' in html
+
+
+# ---------------------------------------------------------------------------
+# Filtro PREMIUM: un job del wizard combinato (ottimizzazione AI + auto-gen
+# con voce premium) deve rientrare nel filtro gia' in fase di ottimizzazione,
+# prima che l'evento GENERATE venga scritto.
+# ---------------------------------------------------------------------------
+
+def test_premium_filter_counts_optimize_with_premium_voice(monkeypatch):
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f'SID_OPT # {ts} # "book.epub" # OPTIMIZE # cid9 # 1.2.3.9 # gemini:flash31:Kore # it # ',
+    ]
+    html = _page_with_log(monkeypatch, lines)
+    assert 'data-gemini="1"' in html
+    stat = html[html.index('data-filter="gemini"'):]
+    assert '<div class="num">1</div>' in stat[:400]
+
+
+def test_premium_filter_ignores_optimize_without_voice(monkeypatch):
+    """Ottimizzazione senza auto-gen (voce vuota): non e' un avvio premium."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f'SID_OPT2 # {ts} # "book.epub" # OPTIMIZE # cid8 # 1.2.3.8 # # it # ',
+    ]
+    html = _page_with_log(monkeypatch, lines)
+    assert 'data-gemini="0"' in html
+
+
+def test_premium_filter_not_fooled_by_earlier_premium_voice(monkeypatch):
+    """La voce premium su un evento non di avvio (es. anteprima) non basta:
+    conta solo la voce portata da GENERATE/OPTIMIZE."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f'SID_PRE # {ts} # "book.epub" # PREVIEW # cid7 # 1.2.3.7 # gemini:flash31:Kore # it # ',
+        f'SID_PRE # {ts} # "book.epub" # OPTIMIZE # cid7 # 1.2.3.7 # # it # ',
+    ]
+    html = _page_with_log(monkeypatch, lines)
+    assert 'data-gemini="0"' in html
+
+
+def test_api_optimize_logs_auto_generate_voice():
+    """/api/optimize con auto_generate scrive la voce di destinazione
+    sull'evento OPTIMIZE, cosi' il pannello admin la vede subito."""
+    import inspect
+    src = inspect.getsource(audiobook_app.api_optimize)
+    assert '"OPTIMIZE"' in src
+    idx = src.index('"OPTIMIZE"')
+    assert 'opt_voice' in src[idx:idx + 400]

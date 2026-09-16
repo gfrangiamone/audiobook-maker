@@ -16,6 +16,9 @@ import threading
 # Schema degli id di catalogo: `voxcpm:v2:<locale>/<Nome>` (§12.2).
 CATALOG_SCHEMA = "v2"
 _ID_PREFIX = "voxcpm:" + CATALOG_SCHEMA + ":"
+# Passo di lettura per una voce che non dichiara `speed` (catalogo consegnato
+# prima del campo): lo stesso SPEED del banco del worker.
+SPEED_DEFAULT = 0.93
 
 _DEFAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "voxcpm2", "voci_inventate")
@@ -101,6 +104,15 @@ def _normalize(raw):
         demos.append({"id": d_id, "common": bool(d.get("common")),
                       "file": d_file, "text": d_text})
     demos.sort(key=lambda d: not d["common"])
+    # Il passo della clip comune: il libro deve uscire a quello. Un valore
+    # assente, non numerico o fuori dall'intervallo del worker ripiega sul
+    # default senza scartare la voce.
+    try:
+        speed = float(raw["speed"])
+        if not 0.5 <= speed <= 2.0:
+            speed = SPEED_DEFAULT
+    except (KeyError, TypeError, ValueError):
+        speed = SPEED_DEFAULT
     return {
         "id": f"{_ID_PREFIX}{locale}/{name}",
         "name": name,
@@ -114,6 +126,7 @@ def _normalize(raw):
         "transcript": transcript,
         "duration_s": float(audio.get("duration_s") or 0.0),
         "demos": demos,
+        "speed": speed,
     }
 
 
@@ -158,6 +171,7 @@ def _load():
         return []
     out = []
     spente = 0
+    senza_passo = 0
     for raw in (data.get("voices") or []):
         try:
             rec = _normalize(raw)
@@ -167,12 +181,19 @@ def _load():
                 spente += 1
                 continue
             out.append(rec)
+            if not isinstance(raw.get("speed"), (int, float)):
+                senza_passo += 1
         except Exception as e:
             src_id = raw.get("id") if isinstance(raw, dict) else "<non-dict>"
             print(f"[voxcpm_catalog] voce scartata: {src_id} errore normalizzazione: {e}")
     print(f"[voxcpm_catalog] {len(out)} voci caricate da {path} "
           f"(lingue offerte: {', '.join(sorted(attive))}"
           + (f"; {spente} voci di lingue non attive ignorate)" if spente else ")"))
+    if senza_passo:
+        print(f"[voxcpm_catalog] {senza_passo} voci senza `speed` nel catalogo: "
+              f"leggeranno a {SPEED_DEFAULT} (catalogo consegnato prima del "
+              f"passo per voce, rigenerarlo con generate.py --rebuild e "
+              f"impacchetta.py)")
     return out
 
 

@@ -394,6 +394,12 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    equivalenti gia' in uso (--txd testo attenuato, --brd bordo) e la stessa
    coppia di colori di `.al-w` per lo stato "lingua ipotizzata". */
 .book-lang-row{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+/* Nell'angolo in alto a destra dell'intestazione, senza margine proprio.
+   Stesso font del sottotitolo (.84rem/1.4, --txd) e allineamento alla sua linea
+   di base: l'ultima riga del blocco lingua poggia sulla riga del sottotitolo. */
+.panel-head>.book-lang-row{flex:0 1 auto;justify-content:flex-end;align-items:baseline;
+                           margin-bottom:0;font-size:.84rem;line-height:1.4}
+.panel-head>.book-lang-row .book-lang-src{font-size:1em}
 .book-lang-label{color:var(--txd)}
 .book-lang-src{color:var(--txd);font-size:.9em}
 .book-lang-src.is-warn{color:#856d10}
@@ -581,7 +587,15 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .panel.active{display:block;animation:fadeSlideIn .3s ease}
 @keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .panel h2{font-family:'DM Serif Display','Noto Serif SC','STSong','SimSun',serif;font-size:1.25rem;font-weight:400;margin-bottom:4px;letter-spacing:-.01em;color:var(--tx)}
-.panel>.subtitle{color:var(--txd);font-size:.84rem;margin-bottom:28px;line-height:1.4}
+.panel>.subtitle,.panel-head-main>.subtitle{color:var(--txd);font-size:.84rem;margin-bottom:28px;line-height:1.4}
+/* Intestazione di pannello a due colonne: titolo+sottotitolo a sinistra, blocco
+   di contesto (la lingua del libro) in alto a destra. Il margine inferiore
+   passa dal sottotitolo al contenitore, cosi' la colonna destra puo' crescere
+   su piu' righe senza sbilanciare la spaziatura. */
+.panel-head{display:flex;align-items:flex-end;align-items:last baseline;
+            justify-content:space-between;gap:10px 24px;flex-wrap:wrap;margin-bottom:28px}
+.panel-head-main{flex:1 1 240px;min-width:0}
+.panel-head-main>.subtitle{margin-bottom:0}
 
 /* ═══ BOOK INFO BAR ═══ */
 .book-info-bar{display:flex;gap:22px;align-items:flex-start;padding:20px 22px;background:var(--srf2);border-radius:var(--rs);margin-bottom:22px;border:1px solid var(--brd)}
@@ -612,6 +626,17 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    vince sulla regola UA [hidden]{display:none} (stessa specificità, autore dopo UA),
    lasciando visibile #geminiAccentRow anche quando _updateAccentDropdown lo nasconde. */
 .form-row[hidden]{display:none}
+/* Stesso difetto, stessa toppa, per ogni altra classe che dichiara un
+   display: la regola d'autore batte la [hidden]{display:none} del browser,
+   e l'elemento che il JS crede nascosto resta sullo schermo.
+     .icon-btn        -> #restoreLangBtn offriva di tornare a una lingua che
+                         era gia' quella attiva;
+     .voxcpm-clip-btn -> #voxcpmDemoStyledBtn compariva anche per le voci
+                         senza clip stilizzata, e non suonava niente;
+     .prem-badge      -> il pallino restava dopo la scoperta del tab.
+   Non si generalizza a [hidden]{display:none!important}: nel codice ci sono
+   elementi mostrati con style.display, e l'!important li spegnerebbe. */
+.icon-btn[hidden],.voxcpm-clip-btn[hidden],.prem-badge[hidden]{display:none}
 .form-group{flex:1;min-width:180px}
 
 /* ═══ SPEED SLIDER (mockup-inspired) ═══ */
@@ -635,6 +660,17 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .preview-cost-row .preview-section{flex:1 1 320px;margin-top:0}
 .preview-cost-row .ai-opt-card{flex:1 1 320px;margin-bottom:0}
 .preview-cost-row .cost-preview-box:not([hidden]){flex:1 1 220px;margin:0;display:flex;flex-direction:column;justify-content:center}
+/* Su VoxCPM l'anteprima non esiste: al posto di #previewSection la riga porta
+   il box d'ascolto, con la stessa geometria affiancata. Due terzi al box
+   d'ascolto, un terzo alla stima costo: le basi sono percentuali (meno mezzo
+   gap ciascuna) e non fattori di crescita su base 0, che il padding del box
+   costo sposterebbe di una ventina di pixel. I min-width fissano il punto in
+   cui conviene andare a capo invece di comprimere le clip; il grow serve solo
+   li', per far riempire la riga a chi e' andato a capo.
+   Il selettore di fratellanza evita :has(): il box d'ascolto precede quello
+   del costo nel markup (vedi il commento in html_head.html). */
+.preview-cost-row>#voxcpmSampleRow:not([hidden]){flex:1 1 calc(66.667% - 8px);min-width:300px;margin:0}
+.preview-cost-row>#voxcpmSampleRow:not([hidden])~.cost-preview-box:not([hidden]){flex:1 1 calc(33.333% - 8px);min-width:190px}
 .preview-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .preview-header .preview-label{font-size:.85rem;font-weight:600;color:var(--txd);white-space:nowrap}
 .preview-audio-wrap{display:none;margin-top:14px}
@@ -788,6 +824,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .wizard-steps{gap:4px;padding:6px 12px 0}
   .wizard-connector{width:20px}
   .form-row{flex-direction:column;gap:14px}
+  .panel-head{gap:14px}
+  .panel-head>.book-lang-row{flex:1 1 100%;justify-content:flex-start}
   .panel-footer{flex-direction:column-reverse;gap:14px;align-items:stretch}
   .panel-footer .left,.panel-footer .right{flex:auto;justify-content:center;flex-wrap:wrap}
   .book-info-bar{gap:14px}
@@ -1179,9 +1217,13 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .voxcpm-volume-ico{font-size:.8rem;opacity:.75}
 .voxcpm-volume-row input[type=range]{width:104px;max-width:34vw;accent-color:var(--ac)}
 .voxcpm-clip-row{display:flex;gap:8px;flex-wrap:wrap}
+/* La base a 240px non e' cosmetica: nei due terzi di riga che il box occupa
+   accanto alla stima costo, due clip affiancate non ci stanno senza tagliare
+   le frasi con l'ellissi. Superata la base, il wrap le impila e ognuna legge
+   per intero — che e' il testo su cui l'utente sceglie la voce. */
 /* font-family:inherit — senza, il bottone eredita il font di sistema e
    stona con tutto il resto del pannello. */
-.voxcpm-clip-btn{display:inline-flex;align-items:center;gap:10px;flex:1 1 200px;min-width:0;padding:9px 12px;font-family:inherit;font-size:.85rem;line-height:1.3;color:var(--tx);background:var(--srf2);border:1px solid var(--brd);border-radius:8px;cursor:pointer;text-align:left;transition:border-color .15s,background .15s}
+.voxcpm-clip-btn{display:inline-flex;align-items:center;gap:10px;flex:1 1 240px;min-width:0;padding:9px 12px;font-family:inherit;font-size:.85rem;line-height:1.3;color:var(--tx);background:var(--srf2);border:1px solid var(--brd);border-radius:8px;cursor:pointer;text-align:left;transition:border-color .15s,background .15s}
 .voxcpm-clip-btn:hover{border-color:var(--ac)}
 .voxcpm-clip-btn[data-playing="1"]{border-color:var(--ac);background:var(--acs)}
 .voxcpm-clip-ico{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:0 0 22px;border-radius:50%;background:var(--ac);color:#fff;font-size:.6rem;line-height:1}

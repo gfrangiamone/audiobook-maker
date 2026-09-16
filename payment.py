@@ -1200,31 +1200,51 @@ def capture_and_store_order(order_id: str, job_id: str = "",
         if job_id:
             with _payments_lock:
                 existing = None
+                consumed_oids = []
                 for oid, p in _payments.items():
                     if (isinstance(p, dict) and oid != order_id
                             and (p.get("job_id", "") or "") == job_id
                             and p.get("captured_at")
                             and not p.get("pending_unfunded")):
+                        if p.get("used"):
+                            consumed_oids.append(oid)
                         existing = (oid, p)
                         if not p.get("used"):
                             break  # preferisci un capture ancora consumabile
             if existing is not None:
                 eoid, ep = existing
                 if ep.get("used"):
-                    raise DuplicateJobCaptureError(
-                        f"job {job_id} already has a consumed capture ({eoid}); "
-                        f"refusing duplicate capture of order {order_id}")
-                print(f"[paypal] duplicate capture for job {job_id}: reusing "
-                      f"already-captured order {eoid}, skipping capture of {order_id}")
-                return {
-                    "order_id": eoid,
-                    "amount_eur": ep.get("amount_eur", 0),
-                    "email": ep.get("email", ""),
-                    "capture_id": ep.get("capture_id", ""),
-                    "captured_at": ep.get("captured_at", 0),
-                    "already_captured": True,
-                    "duplicate_skipped_order_id": order_id,
-                }
+                    # Il capture consumato puo' essere stato ANNULLATO e
+                    # RIMBORSATO (job cancellato, errore, heartbeat): in quel
+                    # caso il cliente non ha piu' nulla di pagato su questo job
+                    # e deve poter ri-pagare lo STESSO job_id, altrimenti resta
+                    # bloccato per sempre (incidente 89eGMA9eVVgUxxVOA-fpuA:
+                    # 5 ordini approvati e mai catturati, "tasto disabilitato").
+                    # Il guard resta pieno finche' esiste anche un solo capture
+                    # consumato e NON rimborsato: quello e' il doppio addebito
+                    # da impedire (incidente K1Rpn-x0fmaylsjKYGdftg).
+                    unrefunded = [o for o in consumed_oids
+                                  if not has_refund_for_job(job_id, o)]
+                    if unrefunded:
+                        raise DuplicateJobCaptureError(
+                            f"job {job_id} already has a consumed capture ({eoid}); "
+                            f"refusing duplicate capture of order {order_id}")
+                    print(f"[paypal] job {job_id}: capture consumati "
+                          f"{','.join(consumed_oids)} tutti gia' rimborsati -> "
+                          f"capture di {order_id} consentita (ri-pagamento)")
+                else:
+                    print(f"[paypal] duplicate capture for job {job_id}: reusing "
+                          f"already-captured order {eoid}, skipping capture "
+                          f"of {order_id}")
+                    return {
+                        "order_id": eoid,
+                        "amount_eur": ep.get("amount_eur", 0),
+                        "email": ep.get("email", ""),
+                        "capture_id": ep.get("capture_id", ""),
+                        "captured_at": ep.get("captured_at", 0),
+                        "already_captured": True,
+                        "duplicate_skipped_order_id": order_id,
+                    }
 
         # Capture via PayPal API
         captured = _paypal_capture_order(order_id)

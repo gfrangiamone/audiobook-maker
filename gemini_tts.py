@@ -373,6 +373,19 @@ def set_backend_switch_notifier(fn):
     _backend_switch_notifier = fn
 
 
+# Callback del RIENTRO: invocata quando una sonda riesce e il modello torna
+# su Cloudflare. Speculare a quella di switch e tenuta separata per lo stesso
+# motivo: dice il contrario, e chi legge l'oggetto dell'email deve capirlo
+# dalla prima riga.
+_backend_return_notifier = None
+
+
+def set_backend_return_notifier(fn):
+    """Registra la callback di rientro: fn(model_key, attempts, down_seconds)."""
+    global _backend_return_notifier
+    _backend_return_notifier = fn
+
+
 # Callback del PRE-allarme sul credito Cloudflare: invocata (al piu' una
 # volta per soglia, vedi `_maybe_alert_credit`) mentre il backend e' ancora
 # sano, cioe' finche' c'e' tempo per ricaricare. Distinta dalla callback di
@@ -419,6 +432,234 @@ def _cf_trip_failures():
         return 3
 
 
+# === Sonda di rientro su Cloudflare =========================================
+# Il rientro automatico e' ammissibile solo perche' non passa MAI da un job
+# vero: la sonda sintetizza due parole in background, senza alcun utente
+# collegato, e butta via l'audio. Una sonda fallita costa una richiesta HTTP
+# rifiutata; un job vero rimandato su un backend ancora guasto costerebbe un
+# audiolibro, ed e' esattamente la ragione per cui i job non riprovano mai
+# Cloudflare da soli.
+
+# Cause di trip che meritano una sonda. E' una whitelist, non una blacklist:
+# `state_file_unreadable` e `state_entry_corrupt` sono i trip "virtuali" del
+# fail-safe, cioe' uno stato che non sappiamo leggere, e riarmarli da soli
+# sarebbe precisamente il ripristino silenzioso che il fail-safe esiste per
+# impedire. Solo un guasto MISURATO di Cloudflare si puo' misurare di nuovo.
+_CF_PROBE_REASONS = ("cf_backend_down", "cf_consecutive_failures")
+
+# Testo della sonda: corto e neutro. Corto perche' la spesa e' reale e va
+# tenuta a un'inezia; neutro perche' un testo che il filtro contenuti potesse
+# rifiutare farebbe fallire la sonda per un motivo che non ha nulla a che
+# vedere con la salute del backend.
+_CF_PROBE_TEXT = "Test."
+_CF_PROBE_VOICE = "Zephyr"
+
+
+def _cf_probe_enabled():
+    val = (os.environ.get("ABM_CF_PROBE_ENABLE", "1") or "1").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
+
+def _cf_probe_first_sec():
+    """Attesa prima della PRIMA sonda dopo un trip (default 30 minuti)."""
+    try:
+        return max(60, int(os.environ.get("ABM_CF_PROBE_FIRST_SEC", "1800") or 1800))
+    except (TypeError, ValueError):
+        return 1800
+
+
+def _cf_probe_max_sec():
+    """Tetto del raddoppio (default 6 ore). Un backend giu' da giorni va
+    ricontrollato lo stesso, ma a un ritmo che costa una manciata di
+    richieste rifiutate al giorno, non una ogni mezz'ora per sempre."""
+    try:
+        return max(60, int(os.environ.get("ABM_CF_PROBE_MAX_SEC", "21600") or 21600))
+    except (TypeError, ValueError):
+        return 21600
+
+
+def _cf_probe_timeout_ms():
+    """Timeout della sola sonda, piu' corto di quello di produzione: una
+    sonda lenta e' gia' una risposta (il backend non e' tornato sano) e
+    nessun utente sta aspettando questo audio."""
+    try:
+        return max(1000, int(os.environ.get("ABM_CF_PROBE_TIMEOUT_MS", "15000") or 15000))
+    except (TypeError, ValueError):
+        return 15000
+
+
+def _cf_probe_eligible(model_key):
+    """(ammissibile, motivo) per una sonda su questo modello.
+
+    Tutte le condizioni si ricontrollano a ogni giro, non si congelano al
+    trip: la configurazione puo' cambiare fra un appuntamento e l'altro (un
+    deploy che toglie le credenziali Cloudflare, un `ABM_GEMINI_BACKEND`
+    riportato a `vertex` di proposito), e continuare a bussare su un backend
+    che nessuna sintesi userebbe piu' e' spesa e rumore puri.
+    """
+    if not _cf_probe_enabled():
+        return False, "rientro automatico disattivato (ABM_CF_PROBE_ENABLE=0)"
+    choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+    if choice != "cloudflare":
+        return False, f"ABM_GEMINI_BACKEND={choice!r}: la sintesi non userebbe Cloudflare"
+    if not (os.environ.get("ABM_CF_ACCOUNT_ID", "").strip()
+            and os.environ.get("ABM_CF_API_TOKEN", "").strip()):
+        return False, "credenziali Cloudflare assenti"
+    if not (GEMINI_MODELS.get(model_key) or {}).get("id_cloudflare"):
+        return False, f"{model_key} non e' ospitato su Cloudflare"
+    st = _backend_state.state(model_key)
+    if not st.get("tripped_at"):
+        return False, "nessun trip da riguadagnare"
+    if st.get("trip_reason") not in _CF_PROBE_REASONS:
+        return False, f"causa di trip non sondabile: {st.get('trip_reason')!r}"
+    return True, ""
+
+
+def probe_cloudflare(model_key):
+    """Un tentativo di rientro su Cloudflare. Non solleva mai.
+
+    La chiama il thread di sorveglianza quando `tts_backend_state.probe_due`
+    dice che l'appuntamento e' scaduto. Bypassa `_resolve_backend` di
+    proposito - quello risponde "vertex" proprio perche' il breaker e'
+    scattato - e parla direttamente all'adapter Cloudflare: e' l'unico punto
+    del codice autorizzato a farlo, ed e' sicuro solo perche' l'audio
+    prodotto viene buttato via invece che consegnato a qualcuno.
+
+    Returns:
+        "returned"  sonda riuscita, breaker resettato, modello su Cloudflare
+        "failed"    sonda fallita, appuntamento raddoppiato
+        "deferred"  non eseguita ora, appuntamento rimandato invariato
+        "disarmed"  non piu' applicabile, sonda disarmata (il trip resta)
+    """
+    ok, why = _cf_probe_eligible(model_key)
+    if not ok:
+        _backend_state.clear_probe(model_key)
+        print(f"[gemini-tts] sonda di rientro {model_key} disarmata: {why}")
+        return "disarmed"
+
+    # Credito dichiarato sotto soglia: una sonda direbbe solo cio' che gia'
+    # sappiamo (il 402 arriverebbe comunque) e il rientro non dipende da noi
+    # ma da una ricarica. Rimandata SENZA contarla come fallimento: allungare
+    # il backoff durante un'attesa in cui non abbiamo misurato nulla
+    # spingerebbe l'intervallo al tetto proprio mentre l'admin ricarica.
+    try:
+        if (_backend_state.credit_check_enabled()
+                and _backend_state.declared_balance_usd() > 0
+                and _backend_state.credit_left_usd()
+                <= _backend_state.credit_alert_threshold_usd()):
+            _backend_state.defer_probe(model_key)
+            print(f"[gemini-tts] sonda di rientro {model_key} rimandata: "
+                  f"credito stimato sotto soglia, serve una ricarica")
+            return "deferred"
+    except Exception as e:
+        # La contabilita' del credito e' osservabilita', non un cancello: se
+        # si rompe, la sonda va fatta lo stesso, non saltata per sempre.
+        print(f"[gemini-tts] sonda {model_key}: controllo credito fallito "
+              f"(non-fatale): {e}")
+
+    started = time.time()
+    try:
+        out = _transport.cloudflare_call(
+            final_text=_CF_PROBE_TEXT,
+            voice_name=_CF_PROBE_VOICE,
+            model_key=model_key,
+            model_id=GEMINI_MODELS[model_key]["id_cloudflare"],
+            timeout_ms=_cf_probe_timeout_ms(),
+            temperature=None,
+        )
+    except TransportError as te:
+        # `content_rejected` su un testo nostro di due parole non e' un
+        # guasto del backend, e dice comunque che il backend RISPONDE: la
+        # richiesta e' arrivata fino al filtro contenuti. Trattarlo come
+        # fallimento rimanderebbe il rientro di ore per il motivo sbagliato,
+        # quindi vale come successo di raggiungibilita'.
+        if te.kind == "content_rejected":
+            print(f"[gemini-tts] sonda {model_key}: contenuto rifiutato ma "
+                  f"backend raggiungibile, vale come rientro")
+            return _finish_cf_return(model_key, started)
+        _backend_state.record_probe_failure(
+            model_key, str(te)[:200], max_delay_sec=_cf_probe_max_sec())
+        return "failed"
+    except Exception as e:
+        # Rete di sicurezza: la sonda gira in un thread di servizio e non
+        # deve poter uccidere il sorvegliante con un'eccezione inattesa.
+        _backend_state.record_probe_failure(
+            model_key, f"{type(e).__name__}: {str(e)[:160]}",
+            max_delay_sec=_cf_probe_max_sec())
+        return "failed"
+
+    pcm = (out or {}).get("pcm") or b""
+    if not pcm:
+        _backend_state.record_probe_failure(
+            model_key, "risposta senza audio", max_delay_sec=_cf_probe_max_sec())
+        return "failed"
+
+    # La sonda e' audio vero prodotto da Cloudflare: si paga, quindi si
+    # addebita. Un rientro che non passasse dal ledger farebbe divergere in
+    # silenzio il residuo stimato dal saldo reale, ed e' proprio il numero su
+    # cui si decide se ricaricare. Stessa derivazione di `synthesize`, perche'
+    # Cloudflare non restituisce i token.
+    try:
+        secs = len(pcm) / float(AUDIO_SAMPLE_RATE * AUDIO_SAMPLE_WIDTH_BYTES
+                                * AUDIO_CHANNELS)
+        spesa = actual_cost_breakdown(
+            estimate_input_tokens(_CF_PROBE_TEXT),
+            int(round(secs * _audio_tokens_per_second(model_key))),
+            model_key, "cloudflare")
+        _backend_state.add_spend(model_key, spesa["total_usd"])
+    except Exception as e:
+        print(f"[gemini-tts] sonda {model_key}: addebito a ledger fallito "
+              f"(non-fatale): {e}")
+
+    return _finish_cf_return(model_key, started)
+
+
+def _finish_cf_return(model_key, started_at):
+    """Chiude un rientro riuscito: reset del breaker, invalidazione della
+    cache in-process, notifica all'admin.
+
+    La cache `_BACKEND` si svuota per TUTTI i modelli noti e con `pop`, mai
+    scrivendoci un valore: e' la stessa disciplina del rientro manuale da
+    console. Un `_set_backend(model_key, "cloudflare")` qui scavalcherebbe
+    `_resolve_backend`, cioe' la configurazione dichiarata e la presenza di
+    `id_cloudflare`, inchiodando su Cloudflare anche un modello che
+    Cloudflare non ospita.
+
+    Le misure per l'email si leggono PRIMA del reset: dopo, `tripped_at` e i
+    contatori della sonda non esistono piu'.
+    """
+    st = _backend_state.state(model_key)
+    info = _backend_state.probe_info(model_key)
+    giu_da = None
+    try:
+        tripped = st.get("tripped_at") or ""
+        if tripped:
+            t0 = datetime.strptime(tripped, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+            giu_da = max(0.0, time.time() - t0.timestamp())
+    except (ValueError, TypeError, OverflowError):
+        giu_da = None
+
+    _backend_state.reset(model_key)
+    with _BACKEND_LOCK:
+        for noto in GEMINI_MODELS:
+            _BACKEND.pop(noto, None)
+        _BACKEND.pop(_BACKEND_DEFAULT_KEY, None)
+    print(f"[gemini-tts] RIENTRO {model_key} su Cloudflare: sonda riuscita in "
+          f"{time.time() - started_at:.1f}s dopo {info['attempts']} tentativi "
+          f"falliti")
+
+    if _backend_return_notifier is not None:
+        try:
+            _backend_return_notifier(model_key, info["attempts"], giu_da)
+        except Exception as e:
+            # Come per la notifica di switch: il rientro e' gia' avvenuto,
+            # l'email e' un di piu', ma un fallimento silenzioso no.
+            print(f"[gemini-tts] ATTENZIONE: notifica di rientro fallita per "
+                  f"model_key={model_key}: {e}")
+    return "returned"
+
+
 def _transport_for(backend):
     """Adapter di trasporto corrispondente al backend risolto."""
     if backend == "cloudflare":
@@ -452,6 +693,23 @@ def _trip_to_vertex(model_key, *, reason, detail, job_id):
             _BACKEND[model_key or _BACKEND_DEFAULT_KEY] = False
         print(f"[gemini-tts] Backend di {model_key} DISABILITATO: breaker "
               f"scattato e Vertex non e' pronto (credenziali/progetto assenti)")
+
+    if first:
+        # Appuntamento per il rientro, fissato una sola volta (`first`): con
+        # N thread che scoprono l'avaria insieme, ri-armare a ogni scatto
+        # rimanderebbe la prima sonda a ogni chiamata. Solo le cause
+        # MISURATE sono sondabili (vedi `_CF_PROBE_REASONS`); per le altre
+        # non si arma nulla e il rientro resta quello manuale da console.
+        #
+        # Va PRIMA della notifica, non dopo: l'email di switch annuncia
+        # all'admin quando cadra' la prima sonda, e lo legge dallo stato
+        # persistito. Armare dopo la manderebbe a dire "nessuna sonda".
+        if _cf_probe_enabled() and reason in _CF_PROBE_REASONS:
+            fra = _cf_probe_first_sec()
+            _backend_state.schedule_probe(model_key, fra)
+            print(f"[gemini-tts] rientro automatico di {model_key} armato: "
+                  f"prima sonda fra {fra}s")
+
     if first and _backend_switch_notifier is not None:
         # `notified` deve riflettere che il tentativo c'e' stato, non che sia
         # andato a buon fine (rilievo minor, fix-1): un notifier che fallisce
@@ -2176,11 +2434,22 @@ def _http_timeout_ms(model_key=None):
 
 
 def _cf_timeout_ms():
-    """Timeout HTTP (ms) per le call al backend Cloudflare Workers AI."""
+    """Timeout HTTP (ms) per le call al backend Cloudflare Workers AI.
+
+    25s, non piu' 60s. Il costo di un tentativo fallito non e' l'attesa fra
+    un retry e l'altro (2s, 4s, 8s...) ma il timeout stesso: nell'episodio
+    del 14/09/2026 tre timeout consecutivi da 60s hanno tenuto fermo un job
+    PAGATO per 2 minuti e 7 secondi prima che il breaker scattasse, di cui
+    6 secondi soli di backoff. Con 25s la stessa sequenza di tentativi entra
+    in poco piu' di un minuto, cioe' l'utente aspetta meno E il failover
+    arriva prima. Il rischio speculare - troncare una sintesi lenta ma sana -
+    e' tarato sulla realta' del gateway: una chunk da 450 caratteri risponde
+    in pochi secondi, e una che ne impiega piu' di 25 sta gia' andando male.
+    """
     try:
-        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "60000") or 60000))
+        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "25000") or 25000))
     except (TypeError, ValueError):
-        return 60000
+        return 25000
 
 
 def _make_genai_client(**kwargs):

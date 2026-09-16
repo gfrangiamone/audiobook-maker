@@ -1,4 +1,4 @@
-"""Il chunking per voci VoxCPM deve usare il cap 300, non i 2000 di Edge.
+"""Il chunking per voci VoxCPM deve usare il cap 280, non i 2000 di Edge.
 
 VoxCPM2 e' autoregressivo e riancora il timbro al campione di riferimento
 solo all'inizio di ogni chunk: dentro il chunk il conditioning si
@@ -6,11 +6,15 @@ auto-alimenta (`prefix_feat_cond = pred_feat`, issue OpenBMB/VoxCPM#302) e
 su testi lunghi la voce deriva e il ritmo accelera. Il worker non rispezza i
 `chunks` che riceve, quindi il tetto lo decide qui.
 
-300 e' il valore con cui sono state prese tutte le misure del worker
-(`abm-voxcpm-worker`, README): chunk mediano ~19 s a 13,8 car/s in italiano,
-dell'ordine del campione di clone. Senza un ramo dedicato
-`_pick_chunk_max_chars` cadeva su CHUNK_MAX_CHARS=2000: 132 chunk da ~142 s
-sul libro del banco di prova.
+Le misure del worker (`abm-voxcpm-worker`, README) sono state prese a 300:
+chunk mediano ~19 s a 13,8 car/s in italiano, dell'ordine del campione di
+clone. Senza un ramo dedicato `_pick_chunk_max_chars` cadeva su
+CHUNK_MAX_CHARS=2000: 132 chunk da ~142 s sul libro del banco di prova.
+
+Dall'11/9/2026 la base scende a 280 perche' `_pick_sentence_slack` concede a
+una frase intera il 15% di sforamento pur di non spezzarla su una virgola
+(vedi `test_voxcpm_chapter.py`): 280 x 1,15 = 322, cosi' il tetto vero resta
+vicino ai 300 delle misure.
 """
 import tts_split
 import voxcpm_tts
@@ -19,13 +23,13 @@ _VOCE = "voxcpm:v2:it-IT/Valentina"
 _CLONE = "voxcpm:mine:abcdef0123456789"
 
 
-def test_voxcpm_chunk_cap_is_300():
+def test_voxcpm_chunk_cap_is_280():
     got = tts_split._pick_chunk_max_chars(_VOCE, "it")
-    assert got == voxcpm_tts.CHUNK_MAX_CHARS == 300
+    assert got == voxcpm_tts.CHUNK_MAX_CHARS == 280
 
 
 def test_cloned_voice_uses_the_same_cap():
-    assert tts_split._pick_chunk_max_chars(_CLONE, "en") == 300
+    assert tts_split._pick_chunk_max_chars(_CLONE, "en") == 280
 
 
 def test_voxcpm_has_no_byte_cap():
@@ -40,7 +44,7 @@ def test_other_engines_chunk_caps_unchanged():
 
 
 def test_chunk_max_chars_default_matches_constant():
-    assert voxcpm_tts.chunk_max_chars() == voxcpm_tts.CHUNK_MAX_CHARS == 300
+    assert voxcpm_tts.chunk_max_chars() == voxcpm_tts.CHUNK_MAX_CHARS == 280
 
 
 def test_chunk_max_chars_env_override(monkeypatch):
@@ -65,7 +69,7 @@ def test_chunk_max_chars_env_invalid_falls_back(monkeypatch):
 
 
 def test_the_plan_for_a_voxcpm_voice_never_exceeds_the_cap():
-    # Il tetto arriva fino ai chunk veri: nessuno supera 300 caratteri e le
+    # Il tetto arriva fino ai chunk veri: nessuno supera 280 caratteri e le
     # frasi restano intere (ogni chunk finisce con un terminatore).
     frase = ("Il mattino dopo la nave lascio' il porto con il vento a favore "
              "e nessuno a bordo sapeva quanto sarebbe durata la traversata. ")
@@ -73,5 +77,5 @@ def test_the_plan_for_a_voxcpm_voice_never_exceeds_the_cap():
     cap = tts_split._pick_chunk_max_chars(_VOCE, "it")
     chunks = tts_split.split_text_into_chunks(testo, max_chars=cap)
     assert len(chunks) == 6
-    assert all(len(c) <= 300 for c in chunks)
+    assert all(len(c) <= 280 for c in chunks)
     assert all(c.endswith(".") for c in chunks)

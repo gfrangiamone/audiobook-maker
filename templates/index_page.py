@@ -15,11 +15,30 @@ Server-side SEO:
   JSON-LD schema (FAQPage, HowTo, SoftwareApplication) is injected into <head>.
 """
 
+import hashlib
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
 _FRAGMENTS_DIR = Path(__file__).parent / "_fragments"
+_STATIC_DIR = Path(__file__).parent.parent / "static"
+
+# "/static/<path>?v=__APP_VERSION__" dentro i frammenti HTML.
+_STATIC_REF_RE = re.compile(r'(/static/[^"?\s]+)\?v=__APP_VERSION__"')
+
+
+def _static_fingerprint(url_path: str) -> str:
+    """Impronta breve (sha1, 8 cifre esadecimali) del file statico servito a url_path.
+
+    File assente o illeggibile: "0", cosi' l'URL resta valido.
+    """
+    try:
+        data = (_STATIC_DIR / url_path[len("/static/"):]).read_bytes()
+    except OSError:
+        return "0"
+    return hashlib.sha1(data).hexdigest()[:8]
+
 
 # Baidu Tongji analytics — attivo solo se ABM_BAIDU_TONGJI_ID configurato
 _BAIDU_TONGJI_ID = os.environ.get("ABM_BAIDU_TONGJI_ID", "")
@@ -155,6 +174,13 @@ def build_html_template(
     html = html.replace("__SEO_FAQ_LD__", faq_ld)
     html = html.replace("__SEO_HOWTO_LD__", howto_ld)
     html = html.replace("__SEO_APP_LD__", app_ld)
+    # Cache-busting degli asset statici: la versione da sola non basta, perche'
+    # style.css/app.js sono serviti con max-age di un anno e cambiano spesso senza
+    # un bump di versione. All'URL si aggiunge l'impronta del contenuto del file.
+    html = _STATIC_REF_RE.sub(
+        lambda m: f'{m.group(1)}?v={version or "3.3"}.{_static_fingerprint(m.group(1))}"',
+        html,
+    )
     html = html.replace("__APP_VERSION__", version or "3.3")
     html = html.replace("__BAIDU_TONGJI__", _BAIDU_TONGJI_SNIPPET)
     # Limite upload (MB) esposto al JS per il pre-check dimensione file lato client

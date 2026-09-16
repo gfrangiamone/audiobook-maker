@@ -379,24 +379,32 @@ __REVIEWS_LD__
 
     <!-- ═══ PANEL 3: Audio Settings ═══ -->
     <section class="panel" id="panel3" aria-labelledby="panel3Heading">
-      <h2 id="panel3Heading" data-t="s2_title"></h2>
-      <p class="subtitle" data-t="p3_subtitle"></p>
+      <!-- Titolo a sinistra, lingua del libro in alto a destra: la lingua e'
+           una proprieta' del libro, non un passo della configurazione, quindi
+           sta nell'angolo come un'etichetta e non in mezzo ai controlli. Il
+           blocco puo' occupare piu' righe; sotto i 640px torna a capo. -->
+      <div class="panel-head">
+        <div class="panel-head-main">
+          <h2 id="panel3Heading" data-t="s2_title"></h2>
+          <p class="subtitle" data-t="p3_subtitle"></p>
+        </div>
 
-      <div class="book-lang-row" id="bookLangRow">
-        <span class="book-lang-label" data-t="lbl_book_lang"></span>
-        <strong class="book-lang-name" id="bookLangName"></strong>
-        <span class="book-lang-src" id="bookLangSrc"></span>
-        <button type="button" id="forceLangBtn" class="icon-btn"
-                data-t-title="tip_force_lang" aria-haspopup="dialog"
-                onclick="openForceLangModal()"><span aria-hidden="true">&#9881;</span><span
-                data-t="force_lang_change"></span></button>
-        <!-- Il ritorno alla lingua dichiarata dal libro. Nasce nascosto:
-             applyBookLanguage() lo mostra solo quando c'e' davvero un valore
-             del libro diverso da quello attivo, e ne scrive l'etichetta. -->
-        <button type="button" id="restoreLangBtn" class="icon-btn" hidden
-                data-t-title="tip_restore_lang"
-                onclick="restoreBookLang()"><span aria-hidden="true">&#8617;</span><span
-                id="restoreLangLabel"></span></button>
+        <div class="book-lang-row" id="bookLangRow">
+          <span class="book-lang-label" data-t="lbl_book_lang"></span>
+          <strong class="book-lang-name" id="bookLangName"></strong>
+          <span class="book-lang-src" id="bookLangSrc"></span>
+          <button type="button" id="forceLangBtn" class="icon-btn"
+                  data-t-title="tip_force_lang" aria-haspopup="dialog"
+                  onclick="openForceLangModal()"><span aria-hidden="true">&#9881;</span><span
+                  data-t="force_lang_change"></span></button>
+          <!-- Il ritorno alla lingua dichiarata dal libro. Nasce nascosto:
+               applyBookLanguage() lo mostra solo quando c'e' davvero un valore
+               del libro diverso da quello attivo, e ne scrive l'etichetta. -->
+          <button type="button" id="restoreLangBtn" class="icon-btn" hidden
+                  data-t-title="tip_restore_lang"
+                  onclick="restoreBookLang()"><span aria-hidden="true">&#8617;</span><span
+                  id="restoreLangLabel"></span></button>
+        </div>
       </div>
       <div class="al al-i" id="cascadeNote" hidden role="status" aria-live="polite"></div>
 
@@ -520,49 +528,6 @@ __REVIEWS_LD__
         </div>
       </div>
 
-      <div class="form-row" id="voxcpmSampleRow" hidden>
-        <div class="form-group" style="flex:1 1 100%">
-          <div class="voxcpm-listen-box">
-            <div class="voxcpm-listen-head">
-              <label data-t="voxcpm_sample_title">Ascolta come suona questa voce</label>
-              <div class="voxcpm-volume-row">
-                <span class="voxcpm-volume-ico" aria-hidden="true">&#128266;</span>
-                <input type="range" id="voxcpmVolume" min="0" max="100" step="1" value="100" aria-label="Volume">
-              </div>
-            </div>
-            <div id="voxcpmDemoBlock" hidden>
-              <div class="voxcpm-clip-row">
-                <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoCommonBtn">
-                  <span class="voxcpm-clip-txt" data-t="voxcpm_demo_common">La stessa frase per tutte le voci</span>
-                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
-                </button>
-                <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoStyledBtn" hidden>
-                  <span class="voxcpm-clip-txt" data-t="voxcpm_demo_styled">Una frase nelle corde di questa voce</span>
-                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
-                </button>
-              </div>
-              <div class="model-rate-hint" data-t-html="voxcpm_demo_hint">
-                Clip audio generate con questa voce <span class="voxcpm-hint-em">(non sono anteprima del tuo libro)</span>
-              </div>
-            </div>
-            <div id="voxcpmSampleBlock" hidden>
-              <div class="voxcpm-clip-row">
-                <button type="button" class="voxcpm-clip-btn" id="voxcpmSampleBtn">
-                  <span class="voxcpm-clip-txt" data-t="voxcpm_sample_listen">Campione della voce</span>
-                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
-                </button>
-              </div>
-              <div class="model-rate-hint" data-t="voxcpm_sample_hint">
-                Il campione da cui la voce viene clonata: il libro suonerà così.
-              </div>
-            </div>
-            <audio id="voxcpmDemoCommon" preload="none"></audio>
-            <audio id="voxcpmDemoStyled" preload="none"></audio>
-            <audio id="voxcpmSample" preload="none"></audio>
-          </div>
-        </div>
-      </div>
-
       <details class="adv-options" id="advOptions">
         <summary data-t="adv_options_title">Opzioni avanzate</summary>
         <div class="adv-options-body">
@@ -579,6 +544,56 @@ __REVIEWS_LD__
       </details>
 
       <div class="preview-cost-row">
+        <!-- Il box d'ascolto VoxCPM sta QUI, primo figlio della riga, per
+             affiancarsi alla stima costo come fa #previewSection per gli altri
+             modelli: i due box non convivono mai (su VoxCPM l'anteprima non
+             esiste e _updatePreviewBtn() nasconde #previewSection). L'ordine
+             nel DOM non e' cosmetico: la regola dei due terzi in style.css usa
+             la fratellanza `#voxcpmSampleRow ~ .cost-preview-box` e cade se il
+             box d'ascolto smette di precedere quello del costo. -->
+        <div class="form-row" id="voxcpmSampleRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
+            <div class="voxcpm-listen-box">
+              <div class="voxcpm-listen-head">
+                <label data-t="voxcpm_sample_title">Ascolta come suona questa voce</label>
+                <div class="voxcpm-volume-row">
+                  <span class="voxcpm-volume-ico" aria-hidden="true">&#128266;</span>
+                  <input type="range" id="voxcpmVolume" min="0" max="100" step="1" value="100" aria-label="Volume">
+                </div>
+              </div>
+              <div id="voxcpmDemoBlock" hidden>
+                <div class="voxcpm-clip-row">
+                  <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoCommonBtn">
+                    <span class="voxcpm-clip-txt" data-t="voxcpm_demo_common">La stessa frase per tutte le voci</span>
+                    <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                  </button>
+                  <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoStyledBtn" hidden>
+                    <span class="voxcpm-clip-txt" data-t="voxcpm_demo_styled">Una frase nelle corde di questa voce</span>
+                    <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                  </button>
+                </div>
+                <div class="model-rate-hint" data-t-html="voxcpm_demo_hint">
+                  Clip audio generate con questa voce <span class="voxcpm-hint-em">(non sono anteprima del tuo libro)</span>
+                </div>
+              </div>
+              <div id="voxcpmSampleBlock" hidden>
+                <div class="voxcpm-clip-row">
+                  <button type="button" class="voxcpm-clip-btn" id="voxcpmSampleBtn">
+                    <span class="voxcpm-clip-txt" data-t="voxcpm_sample_listen">Campione della voce</span>
+                    <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                  </button>
+                </div>
+                <div class="model-rate-hint" data-t="voxcpm_sample_hint">
+                  Il campione da cui la voce viene clonata: il libro suonerà così.
+                </div>
+              </div>
+              <audio id="voxcpmDemoCommon" preload="none"></audio>
+              <audio id="voxcpmDemoStyled" preload="none"></audio>
+              <audio id="voxcpmSample" preload="none"></audio>
+            </div>
+          </div>
+        </div>
+
         <div class="preview-section" id="previewSection">
           <div class="preview-header">
             <span class="preview-label">&#x1F50A; <span data-t="preview_box_title">Anteprima lettura</span></span>

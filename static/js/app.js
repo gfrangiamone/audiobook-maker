@@ -452,6 +452,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   // la cascata di applyBookLanguage() ripopola modello/accento/voce.
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
+    // Scelta dell'utente: la nota della cascata parlava della voce che il
+    // cambio di modello sta per sostituire.
+    if(typeof _hideCascadeNote==='function')_hideCascadeNote();
     // _onPremiumModelChanged() gestisce il toggle stile/emozioni, ripopola
     // voci/accenti/emozioni e propaga il cambio al sig di preview.
     if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
@@ -957,6 +960,7 @@ function applyBookLanguage(){
   if(!bookLangState.code)return;
   const linguaCambiata=(_linguaAnnunciata!==bookLangState.code);
   _linguaAnnunciata=bookLangState.code;
+  const vocePrimaPrem=document.getElementById('vvPremium')?.value||'';
   const esito=resolveAudioSelection({
     lang:bookLangState.code,
     catalog:voices,
@@ -966,7 +970,7 @@ function applyBookLanguage(){
       standardVoice:document.getElementById('vv')?.value||'',
       model:document.getElementById('vmPremium')?.value||'',
       premiumAccent:document.getElementById('geminiAccent')?.value||'',
-      premiumVoice:document.getElementById('vvPremium')?.value||''
+      premiumVoice:vocePrimaPrem
     }
   });
 
@@ -1062,6 +1066,20 @@ function applyBookLanguage(){
       vp.value=vocePrem;
       _allineaMemoriaVocePremium(vocePrem);
     }
+    /* La cascata sceglie la voce premium senza conoscere l'accento premium
+       (CONFINE in testa ad audio_cascade.js): per un libro inglese prende la
+       prima voce del catalogo, en-IN, mentre il rebuild filtra su en-US e il
+       select resta su un'altra voce. La nota deve nominare la voce che
+       l'utente ha davanti, non quella calcolata e scartata: si riscrive il
+       cambiamento a partire dal valore reale del select. */
+    const voceVista=vp?vp.value:'';
+    if(vp&&voceVista!==vocePrem){
+      esito.changes=esito.changes.filter(c=>!(c.what==='voice'&&c.dove==='premium'));
+      if(vocePrimaPrem&&voceVista&&voceVista!==vocePrimaPrem){
+        esito.changes.push({what:'voice',from:vocePrimaPrem,to:voceVista,
+                            reason:'voice_unavailable_in_accent',dove:'premium'});
+      }
+    }
   }
 
   _showCascadeNote(esito,linguaCambiata);
@@ -1108,7 +1126,7 @@ function _renderStandardVoices(std){
     sel.lastElementChild.appendChild(o);
   }
   sel.value=std.voice;
-  sel.onchange=()=>{_updateVoiceChip();_onPreviewParamsChanged();};
+  sel.onchange=()=>{_hideCascadeNote();_updateVoiceChip();_onPreviewParamsChanged();};
   _updateVoiceChip();
 }
 
@@ -1137,6 +1155,16 @@ function _nomeVoce(esito,c){
      «Riportato al valore predefinito» descrive il codice: chi legge vuole
      sapere quale voce ha adesso, e le frasi cosi' scritte non si ripetono
      fra loro perche' ognuna nomina una cosa diversa. */
+/* Chiude la nota. La nota racconta cosa ha cambiato LA CASCATA nell'ultimo
+   giro: appena l'utente mette mano lui a uno di quei controlli — sceglie la
+   voce, cambia modello, passa all'altro tab — quel racconto non descrive piu'
+   cio' che ha davanti, e resterebbe li' a nominare una voce che non e' piu'
+   quella selezionata. */
+function _hideCascadeNote(){
+  const box=document.getElementById('cascadeNote');
+  if(box){box.hidden=true;box.textContent='';}
+}
+
 function _showCascadeNote(esito,linguaCambiata){
   const box=document.getElementById('cascadeNote');
   if(!box)return;
@@ -1296,9 +1324,10 @@ function _onPremiumModelChanged(){
   // solo VoxCPM.
   if(styleRow)styleRow.hidden=simba||vox;
   if(emoRow)emoRow.hidden=!simba;
-  /* Il box d'ascolto vive FUORI da #tabPremium (deve stare sotto lo
-     slider della velocita', che lo influenza): tabPremium.hidden non lo
-     copre. E questa funzione gira anche mentre l'utente guarda le Voci
+  /* Il box d'ascolto vive FUORI da #tabPremium (sta nella
+     .preview-cost-row, accanto alla stima costo e sotto lo slider della
+     velocita' che lo influenza): tabPremium.hidden non lo copre. E questa
+     funzione gira anche mentre l'utente guarda le Voci
      Standard — applyBookLanguage() la chiama a ogni giro di cascata per
      ricostruire i controlli premium — quindi il modello da solo non
      basta a decidere: senza il tab, il box comparirebbe fra le voci
@@ -1359,11 +1388,13 @@ function _populateVoxcpmAccents(){
   if(!acc)return;
   // I locali si ricavano dalle voci, non da una tabella: il catalogo e' una
   // variabile (D10) e una lingua puo' guadagnare varianti senza rilascio.
-  const locali=[];
+  const grezzi=[];
   for(const v of _voxcpmVoicesForLang()){
-    if(v.locale&&locali.indexOf(v.locale)<0)locali.push(v.locale);
+    if(v.locale&&grezzi.indexOf(v.locale)<0)grezzi.push(v.locale);
   }
-  locali.sort();
+  // Ordine per diffusione, non alfabetico: la tabella dei locali sta in
+  // audio_cascade.js ed e' la stessa che ordina gli accenti del tab Standard.
+  const locali=(typeof ordinaLocali==='function')?ordinaLocali(grezzi):grezzi.sort();
   const prev=(locali.indexOf(_voxcpmAccentSel)>=0)?_voxcpmAccentSel:'';
   acc.innerHTML='';
   for(const loc of locali){
@@ -1641,6 +1672,7 @@ function updVoicesPremium(){
     _voxcpmVoiceSel=sel.value;
     _loadVoxcpmSample();
     sel.onchange=()=>{
+      _hideCascadeNote();
       _voxcpmVoiceSel=sel.value;
       _loadVoxcpmSample();
       if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
@@ -1671,7 +1703,7 @@ function updVoicesPremium(){
     // la prima (comportamento corretto quando l'utente cambia accento).
     if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
     _speechifyVoiceSel=sel.value;
-    sel.onchange=()=>{_speechifyVoiceSel=sel.value;if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+    sel.onchange=()=>{_hideCascadeNote();_speechifyVoiceSel=sel.value;if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
     return;
   }
   // --- Ramo Gemini (esistente) ---
@@ -1716,7 +1748,7 @@ function updVoicesPremium(){
   // resta la prima (giusto: quella voce, con questo modello, non esiste).
   if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
   _geminiVoiceSel=sel.value;
-  sel.onchange=()=>{_geminiVoiceSel=sel.value;_updateAccentDropdown();_onPreviewParamsChanged();};
+  sel.onchange=()=>{_hideCascadeNote();_geminiVoiceSel=sel.value;_updateAccentDropdown();_onPreviewParamsChanged();};
   // Dropdown accento: dipende da lingua + voce premium correnti.
   if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
   // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.
@@ -1887,6 +1919,14 @@ function switchAudioTab(tab){
     else updVoicesPremium();
   }
   if(prev!==tab){
+    /* La nota della cascata parla SOLO del tab che l'utente aveva davanti
+       (regola gia' applicata da _showCascadeNote con `dove`): tenerla in piedi
+       dopo lo switch le fa nominare un controllo che non e' piu' sullo schermo
+       — «Voce impostata su Isabella (IT)» letto dal pannello PREMIUM. Il
+       feedback vale per l'azione appena fatta; cambiare tab e' un'azione
+       nuova. Quando e' applyBookLanguage() a forzare il ritorno a Standard,
+       la nota viene riscritta subito dopo, con i valori giusti. */
+    _hideCascadeNote();
     // Pausa la riproduzione corrente e ricalibra il player sull'anteprima
     // del tab attivo: se la firma è in _knownPreviewSigs ricarica l'audio,
     // altrimenti nasconde il player ma NON cancella le firme note.
@@ -1896,10 +1936,10 @@ function switchAudioTab(tab){
     // nascosto (tabPremium.hidden=true).
     if(tab!=='premium'){
       if(typeof _pauseVoxcpmSample==='function')_pauseVoxcpmSample();
-      // Il box d'ascolto vive fuori da #tabPremium (dopo lo slider della
-      // velocita', che deve precederlo e influenzarlo): tabPremium.hidden
-      // non lo copre, va nascosto qui. Al rientro ci pensa
-      // _onPremiumModelChanged.
+      // Il box d'ascolto vive fuori da #tabPremium — sta nella
+      // .preview-cost-row, accanto alla stima costo, sotto lo slider della
+      // velocita' che lo influenza: tabPremium.hidden non lo copre, va
+      // nascosto qui. Al rientro ci pensa _onPremiumModelChanged.
       const vsRow=document.getElementById('voxcpmSampleRow');
       if(vsRow)vsRow.hidden=true;
     }
@@ -2349,6 +2389,15 @@ async function renderPaypalGeminiButtons(){
             // immediata) e riapertura del checkout quando possibile.
             _payPaypalErr((typeof t==='function'&&t('pay_paypal_unfunded'))||'This payment method (bank debit / eCheck) is not accepted: it takes days to clear and can be reversed by the bank. Please pay by card or with your PayPal balance.');
             if(d.retryable&&actions&&typeof actions.restart==='function')return actions.restart();
+            return;
+          }
+          if(d.paypal_issue==='ALREADY_PAID'||d.error==='already_paid_for_job'){
+            // Il job ha gia' un pagamento incassato e consumato: il secondo
+            // ordine NON viene catturato (si auto-annulla, nessun addebito).
+            // Senza questo ramo l'utente vedeva il codice grezzo
+            // "already_paid_for_job" e il bottone Conferma restava disabilitato
+            // (incidente 89eGMA9eVVgUxxVOA-fpuA).
+            _payPaypalErr((typeof t==='function'&&t('pay_paypal_already_paid'))||'This audiobook has already been paid: no new charge has been made. If the previous generation was cancelled, use the refund voucher we emailed you (Voucher tab).');
             return;
           }
           if(d.retryable&&d.paypal_issue==='INSTRUMENT_DECLINED'&&actions&&typeof actions.restart==='function'){
@@ -3717,6 +3766,14 @@ async function startCombinedGeneration(combinedPaymentToken){
   }
 }
 
+// I nodi di avanzamento legacy (#pPct/#pBar/#pMsg/#pCh/#x*) vivono tutti
+// dentro #pra. Vanno letti sempre in modo difensivo: se uno di loro manca,
+// l'eccezione fermerebbe l'handler SSE PRIMA della barra visibile del wizard
+// e l'interfaccia resterebbe congelata a 0% mentre il job avanza davvero.
+function _legacyTxt(id,v,color){const el=document.getElementById(id);if(!el)return null;el.textContent=v;if(color!==undefined)el.style.color=color;return el}
+function _legacyW(id,v){const el=document.getElementById(id);if(!el)return null;el.style.width=v;return el}
+function _legacyColor(id,color){const el=document.getElementById(id);if(!el)return null;el.style.color=color;return el}
+
 function _setWizPct(pct){
   const p=Math.max(0,Math.min(100,Math.round(pct||0)));
   const pBar=document.getElementById('pBar');if(pBar)pBar.style.width=p+'%';
@@ -3845,7 +3902,7 @@ function _showGeminiOverloadModal(d){
   function dismiss(){
     el.remove();
     // Pulisci eventuale errore inline residuo nello step di progress
-    var pra=document.getElementById('pra');if(pra)pra.innerHTML='';
+    var praSlot=document.getElementById('praErr');if(praSlot)praSlot.innerHTML='';
     // Torna allo step 3 (scelta voce/audio)
     try{goToStep(3);}catch(e){}
     // Libera lo stato wizard per consentire un nuovo avvio.
@@ -3912,7 +3969,7 @@ function _listenOptProgressWiz(){
     }
     if(d.status==='cancelled'){
       finished=true;es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');
-      document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
+      _legacyTxt('pMsg',t('opt_cancelled')||'Optimization cancelled');
       unlockUI();return;
     }
     if(d.status==='optimized'){
@@ -3921,9 +3978,9 @@ function _listenOptProgressWiz(){
       (async()=>{try{const est=await fetch('/api/optimize_estimate/'+jobId).then(r=>r.json());if(est.optimized_chapters)optimizedChapters=est.optimized_chapters;}catch(e){}})();
       aiOptEnabled=false;
       _updateAiOptUI();
-      document.getElementById('pMsg').textContent=t('opt_done')||'Text optimization complete!';
-      document.getElementById('pBar').style.width='100%';
-      document.getElementById('pPct').textContent='100%';
+      _legacyTxt('pMsg',t('opt_done')||'Text optimization complete!');
+      _legacyW('pBar','100%');
+      _legacyTxt('pPct','100%');
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='100%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='100%';
       const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('opt_done')||'Optimization complete';
@@ -3963,8 +4020,8 @@ function _listenOptProgressWiz(){
     var streamedChars=Math.min(d.opt_streamed_chars||0,curChChars);
     var workedChars=doneChars+streamedChars;
     var pct=Math.min(100,Math.round(workedChars/totalChars*100));
-    document.getElementById('pBar').style.width=pct+'%';
-    document.getElementById('pPct').textContent=pct+'%';
+    _legacyW('pBar',pct+'%');
+    _legacyTxt('pPct',pct+'%');
     // Come per la barra audio: un solo messaggio, gia' tradotto, per i due
     // riquadri. progressPhase mostrava la stringa cruda del server, in inglese
     // dentro un'interfaccia per il resto tradotta.
@@ -3973,7 +4030,7 @@ function _listenOptProgressWiz(){
       optMsg=t('opt_chapter',{n:d.opt_current_chapter_num||0,tot:d.opt_progress_total||0,
                               title:String(d.opt_current_chapter||'').substring(0,40)});
     }
-    document.getElementById('pMsg').textContent=optMsg;
+    _legacyTxt('pMsg',optMsg);
     const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
     const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
     const progressPhase=document.getElementById('progressPhase');if(progressPhase&&optMsg)progressPhase.textContent=optMsg;
@@ -4511,7 +4568,7 @@ function listenProgress(){
         const _cmsg=d.error_code==='job_terminated'
           ?(t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.')
           :t('cancelled_msg');
-        document.getElementById('pMsg').textContent=_cmsg;document.getElementById('pMsg').style.color='var(--err)';
+        _legacyTxt('pMsg',_cmsg,'var(--err)');
         document.getElementById('cnA').style.display='none';unlockUI();generating=false;
         if(d.error_code!=='job_terminated')_renderGeminiCancelSummary(d);
         return
@@ -4529,36 +4586,36 @@ function listenProgress(){
       }
       _updateGeminiCancelLockUI(pct);
       // Update both old and new progress elements
-      document.getElementById('pPct').textContent=pct+'%';
-      document.getElementById('pBar').style.width=pct+'%';
+      _legacyTxt('pPct',pct+'%');
+      _legacyW('pBar',pct+'%');
       // Un solo messaggio, gia' tradotto, per i due riquadri: progressPhase
       // mostrava la stringa cruda del server accanto a pMsg tradotto, e nello
       // stesso pannello convivevano due lingue.
       const msg=tServerMsg(d.progress_message);
-      document.getElementById('pMsg').textContent=msg;
+      _legacyTxt('pMsg',msg);
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
       const progressPhase=document.getElementById('progressPhase');if(progressPhase&&msg)progressPhase.textContent=msg;
       _updateJobRunningPct(pct,myJobId);
 
       if(d.current_chapter)
-        document.getElementById('pCh').textContent='Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40);
+        _legacyTxt('pCh','Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40));
       if(d.progress_total>0)
-        document.getElementById('xBlk').textContent=d.progress_current+' / '+d.progress_total;
+        _legacyTxt('xBlk',d.progress_current+' / '+d.progress_total);
       if(d.total_chapters>0)
-        document.getElementById('xCh').textContent=d.current_chapter_num+' / '+d.total_chapters;
+        _legacyTxt('xCh',d.current_chapter_num+' / '+d.total_chapters);
       if(d.elapsed_seconds>0)
-        document.getElementById('xEl').textContent=fmtTime(d.elapsed_seconds);
+        _legacyTxt('xEl',fmtTime(d.elapsed_seconds));
 
       if(d.processed_chars>0&&d.elapsed_seconds>1&&d.total_chars>0){
         const cps=d.processed_chars/d.elapsed_seconds;
         const left=d.total_chars-d.processed_chars;
         const eta=Math.round(left/cps);
-        document.getElementById('xEta').textContent=eta>0?'~'+fmtTime(eta):t('almost');
-        document.getElementById('xSpd').textContent=Math.round(cps)+' '+t('cps');
+        _legacyTxt('xEta',eta>0?'~'+fmtTime(eta):t('almost'));
+        _legacyTxt('xSpd',Math.round(cps)+' '+t('cps'));
       }
       if(d.bytes_generated>0)
-        document.getElementById('xSz').textContent=fmtBytes(d.bytes_generated);
+        _legacyTxt('xSz',fmtBytes(d.bytes_generated));
 
       // M4B sub-bar update
       const m4bWrap=document.getElementById('m4bProgressWrap');
@@ -4585,10 +4642,9 @@ function listenProgress(){
         generating=false;jobDone=true;
         _hideJobRunningModal(false,myJobId); // don't reset — keep jobId for download buttons
         unlockUI();
-        document.getElementById('pPct').textContent='100%';
-        document.getElementById('pBar').style.width='100%';
-        document.getElementById('pMsg').textContent=t('done_msg');
-        document.getElementById('pMsg').style.color='var(--ok)';
+        _legacyTxt('pPct','100%');
+        _legacyW('pBar','100%');
+        _legacyTxt('pMsg',t('done_msg'),'var(--ok)');
         const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='100%';
         const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='100%';
         const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('done_t');
@@ -4596,13 +4652,12 @@ function listenProgress(){
 
         if(d.m4b_failed){
           const warn=document.createElement('div');warn.className='al al-warn';warn.style.marginTop='10px';
-          warn.textContent=t('m4b_warn_mp3');document.getElementById('pra').appendChild(warn);
+          warn.textContent=t('m4b_warn_mp3');const _praHost=document.getElementById('pra');if(_praHost)_praHost.appendChild(warn);
         }
         if(d.failed_chunks>0){
-          document.getElementById('pMsg').textContent=t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)';
-          document.getElementById('pMsg').style.color='#d97706';
+          _legacyTxt('pMsg',t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)','#d97706');
         }
-        document.getElementById('xEta').textContent='-';
+        _legacyTxt('xEta','-');
 
         // Navigate to panel 5 (completion)
         _unlockStep(5);
@@ -4752,8 +4807,8 @@ function retryGeneration(){
   document.getElementById('cnA').innerHTML='<button class="btn btn-danger" id="btnC">⏹️ '+(t('btn_cancel')||'Cancel')+'</button>';
   document.getElementById('btnC').onclick=cancelJob;
   document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
-  document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
-  document.getElementById('pPct').textContent='0%';
+  _legacyTxt('pMsg','','');
+  _legacyTxt('pPct','0%');
   startGen();
 }
 
@@ -4775,7 +4830,7 @@ function _setCancelButtonMode(mode){
 function cancelOptimization(){
   if(!jobId)return;
   try{navigator.sendBeacon('/api/cancel_optimize/'+jobId);}catch(e){}
-  document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimisation cancelled';
+  _legacyTxt('pMsg',t('opt_cancelled')||'Optimisation cancelled');
   _setCancelButtonMode('gen');
   unlockUI();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
@@ -4965,11 +5020,11 @@ function _completeCancelUI(){
   try{ _syncTransferBtnPlacement(); }catch(_e){}
   const aiOptCard2=document.getElementById('aiOptCard');if(aiOptCard2)aiOptCard2.style.display='';
   const summaryBox2=document.getElementById('summaryBox');if(summaryBox2)summaryBox2.style.display='';
-  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
+  _legacyW('pBar','0%');_legacyTxt('pPct','0%');
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
-  document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
+  _legacyTxt('pMsg','','');
   document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;const sp=document.createElement('span');sp.setAttribute('data-t','btn_gen');sp.textContent=t('btn_gen');btnGen.replaceChildren(sp);}
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
@@ -5079,6 +5134,39 @@ async function _streamToBlob(response,onProgress){
   return new Blob(chunks,{type});
 }
 
+// --- Cold storage: il 302 che fetch non puo' seguire ---------------------
+// Dopo la finestra calda il file locale viene evacuato su cold storage e
+// l'endpoint risponde 302 verso un presigned URL cross-origin. `fetch`
+// seguirebbe il redirect, ma la risposta dello storage non porta
+// Access-Control-Allow-Origin: il browser la scarta e solleva
+// "TypeError: Failed to fetch" -- l'errore che compariva sul bottone mentre
+// il link via email, che e' una navigazione e quindi non soggetto al CORS,
+// scaricava lo stesso identico file senza problemi.
+// Con redirect:'manual' il redirect arriva come risposta opaca (type
+// 'opaqueredirect'): la Location non e' leggibile, ma non serve -- basta
+// rinavigare sullo stesso endpoint e lasciare che sia il browser a seguirlo.
+// Ripetere la richiesta e' gratis: questi endpoint chiamano
+// _send_file_throttled con bypass_throttle=True, quindi il secondo colpo non
+// consuma un download ne' fa scattare il cooldown.
+function _coldRedirect(r){
+  return !!r && r.type==='opaqueredirect';
+}
+// Navigazione, non fetch. Il presigned URL porta Content-Disposition
+// attachment (storage_backend.presigned_get_url), quindi il browser scarica
+// senza lasciare la pagina. Niente barra di avanzamento: la consegna esce
+// dal controllo del JS, ed e' il prezzo per non bufferizzare in memoria
+// mezzo giga di M4B.
+function _coldNavigate(url){
+  window.location.assign(url);
+}
+function _dlSuccessLabel(type){
+  if(type === 'm4b') return t('btn_dl_m4b');
+  if(type === 'abm') return t('btn_dl_abm');
+  if(type === 'mp3') return t('btn_dl_mp3');
+  if(type === 'm4bkit') return t('btn_dl_m4b_kit');
+  return t('btn_dl');
+}
+
 async function downloadFile(type){
   if(!jobId)return;
   // Bottone su cui mostrare spinner/disable durante il download. In modalita'
@@ -5096,7 +5184,13 @@ async function downloadFile(type){
   for(let attempt=1;attempt<=maxDlRetries;attempt++){
     try{
       navigator.sendBeacon('/api/heartbeat/'+jobId);
-      const r=await fetch('/api/download/'+jobId + (type ? '?type='+type : ''));
+      const dlUrl='/api/download/'+jobId + (type ? '?type='+type : '');
+      const r=await fetch(dlUrl,{redirect:'manual'});
+      if(_coldRedirect(r)){
+        _coldNavigate(dlUrl);
+        _clearBtnLoading(btn,'✅ <span>'+_dlSuccessLabel(type)+'</span>');
+        return;
+      }
       if(r.status===404){
         if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
         showPErr(t('dl_expired')||'File non più disponibile. Riconverti il libro.');
@@ -5163,12 +5257,7 @@ async function downloadFile(type){
       document.body.appendChild(a);a.click();
       setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
       
-      let successT = t('btn_dl');
-      if(type === 'm4b') successT = t('btn_dl_m4b');
-      if(type === 'abm') successT = t('btn_dl_abm');
-      if(type === 'mp3') successT = t('btn_dl_mp3');
-      if(type === 'm4bkit') successT = t('btn_dl_m4b_kit');
-      _clearBtnLoading(btn,'✅ <span>'+successT+'</span>');
+      _clearBtnLoading(btn,'✅ <span>'+_dlSuccessLabel(type)+'</span>');
       if(isLastDl)showDlLastWarning();
       return;
     }catch(e){
@@ -5189,7 +5278,13 @@ async function downloadPodcast(){
   _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
-    const r=await fetch('/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl));
+    const pUrl='/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl);
+    const r=await fetch(pUrl,{redirect:'manual'});
+    if(_coldRedirect(r)){
+      _coldNavigate(pUrl);
+      _clearBtnLoading(btn,'✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>');
+      return;
+    }
     if(r.status===429){
       const txt=await r.text();
       const m=txt.match(/Wait (\d+) seconds/);
@@ -5243,7 +5338,9 @@ async function downloadPodcastZip(){
   _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
-    const r=await fetch('/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):''));
+    const pUrl='/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):'');
+    const r=await fetch(pUrl,{redirect:'manual'});
+    if(_coldRedirect(r)){_coldNavigate(pUrl);_clearBtnLoading(btn,'✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>');return}
     if(r.status===429){const txt=await r.text();const m=txt.match(/Wait (\d+) seconds/);const sec=m?m[1]:'60';showPErr(t('dl_cooldown').replace('%s', sec));_clearBtnLoading(btn,restoreHtml);return}
     if(r.status===410){showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');_clearBtnLoading(btn,restoreHtml);return}
     if(!r.ok){const tx=await r.text();showPErr(tx||'Download failed');_clearBtnLoading(btn,restoreHtml);return}
@@ -5316,9 +5413,9 @@ async function goBackToChapters(){
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   _resetEmailLateArea();
   const btnGenGoBack=document.getElementById('btnGenerate');if(btnGenGoBack){btnGenGoBack.disabled=false;btnGenGoBack.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
-  document.getElementById('pMsg').style.color='';
+  _legacyColor('pMsg','');
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
-  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
+  _legacyW('pBar','0%');_legacyTxt('pPct','0%');
   // Reset wizard progress
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
@@ -5415,8 +5512,8 @@ function resetAll(){
   const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
   const costEstimate=document.getElementById('costEstimate');if(costEstimate)costEstimate.classList.remove('visible');
   // Reset old progress
-  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
-  document.getElementById('pMsg').style.color='';
+  _legacyW('pBar','0%');_legacyTxt('pPct','0%');
+  _legacyColor('pMsg','');
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
   // Reset wizard progress
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
@@ -5587,9 +5684,19 @@ function _elVisible(el){ if(!el) return false; try{ return el.offsetParent!==nul
 // era visibile all'utente (pagina apparentemente ferma e muta). Ora l'alert va
 // nel primo contenitore effettivamente visibile del wizard; #pra resta popolato
 // per retrocompatibilita'.
+// L'errore va in un nodo dedicato appeso a #pra: sostituire l'innerHTML di
+// #pra cancellava #pPct/#pBar/#pMsg/#pCh e le statistiche, e da quel momento
+// ogni tick SSE e ogni reset dell'interfaccia sollevavano TypeError.
+function _praErrSlot(){
+  const pra=document.getElementById('pra');
+  if(!pra)return null;
+  let slot=document.getElementById('praErr');
+  if(!slot){slot=document.createElement('div');slot.id='praErr';pra.appendChild(slot)}
+  return slot;
+}
 function showPErr(m){
   const html='<div class="al al-e fi">'+esc(m)+'</div>';
-  const pra=document.getElementById('pra');if(pra)pra.innerHTML=html;
+  const praSlot=_praErrSlot();if(praSlot)praSlot.innerHTML=html;
   let target=null;
   const ids=['progressErr','panel5Err','s3err'];
   for(let i=0;i<ids.length;i++){const el=document.getElementById(ids[i]);if(_elVisible(el)){target=el;break}}
@@ -5598,7 +5705,7 @@ function showPErr(m){
   target.innerHTML=html;
   try{target.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(_e){}
 }
-function _clearPErr(){['progressErr','panel5Err'].forEach(function(id){const el=document.getElementById(id);if(el)el.innerHTML=''})}
+function _clearPErr(){['progressErr','panel5Err','praErr'].forEach(function(id){const el=document.getElementById(id);if(el)el.innerHTML=''})}
 
 function showDlLastWarning(){
   const el=document.getElementById('dlLastNotice');

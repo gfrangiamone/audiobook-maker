@@ -240,7 +240,12 @@ def concurrency():
 # il campione. Il worker non rispezza i `chunks` che riceve: il tetto lo
 # decide qui e va tenuto uguale a ABM_VOXCPM_CHUNK_MAX_CHARS sull'endpoint,
 # cosi' un testo grezzo e un piano di ABM producono gli stessi chunk.
-CHUNK_MAX_CHARS = 300
+#
+# Sceso da 300 a 280 l'11/9/2026: `tts_split._pick_sentence_slack` lascia a
+# una frase il 15% di sforamento pur di non spezzarla sulle virgole, e il
+# tetto vero diventa 322. Partire da 280 tiene quel tetto vicino ai 300
+# misurati invece di portarlo a 345.
+CHUNK_MAX_CHARS = 280
 # Sotto questo pavimento una frase normale non ci sta e lo splitter
 # taglierebbe sulle virgole; il tetto e' quello degli altri motori.
 CHUNK_MIN_CHARS = 40
@@ -418,14 +423,31 @@ class VoxcpmConsegnaFallita(VoxcpmJobError):
     ritentabile = True
 
 
+class VoxcpmSottomissioneFallita(VoxcpmJobError):
+    """La POST /run non e' mai andata a buon fine: il job non e' partito.
+
+    Tentativi di `_submit` esauriti su cause transitorie (connessione caduta,
+    TLS interrotto, 5xx, 429). Nessuna GPU toccata, nessun job da cancellare:
+    si risottomette il capitolo dopo una pausa lunga. Distinta da
+    `VoxcpmCodaSatura`, che e' l'endpoint che risponde «pieno» e non migliora
+    rimettendosi in fila, e da `VoxcpmConsegnaFallita`, dove la sintesi c'e'
+    stata davvero.
+    """
+
+    ritentabile = True
+
+
 # Quante volte si rifa' un job i cui chunk sono usciti a silenzio, quante
-# se n'e' rimbalzato uno, e quante si risottomette un capitolo il cui audio
-# non e' arrivato dal worker (`VoxcpmConsegnaFallita`). Budget separati
-# perche' misurano cose diverse: il primo il carico sulla GPU, il secondo la
-# sfortuna nell'instradamento, il terzo la salute del trasporto via R2.
+# se n'e' rimbalzato uno, quante si risottomette un capitolo il cui audio
+# non e' arrivato dal worker (`VoxcpmConsegnaFallita`) e quante un capitolo
+# che non si e' riusciti nemmeno a sottomettere (`VoxcpmSottomissioneFallita`).
+# Budget separati perche' misurano cose diverse: il primo il carico sulla GPU,
+# il secondo la sfortuna nell'instradamento, il terzo la salute del trasporto
+# via R2, il quarto quella della rete verso l'endpoint.
 SILENCE_RETRIES = 2
 BOUNCE_RETRIES = 6
 DELIVERY_RETRIES = 2
+SUBMIT_CHAPTER_RETRIES = 2
 
 # Sottostringhe che, nel messaggio d'errore, dicono "la GPU non ce l'ha
 # fatta". Sono i casi in cui rifare piu' stretti ha senso: una firma scaduta
@@ -434,7 +456,16 @@ _GPU_PRESSURE = ("out of memory", "cuda", "nvml", "cublas", "device-side",
                  "motore compromesso")
 
 _RUNPOD_BASE = "https://api.runpod.ai/v2"
-_SUBMIT_RETRIES = 4
+# Otto prove, con pausa che raddoppia da 2 s fino a un tetto di 60 s
+# (2, 4, 8, 16, 32, 60, 60): circa tre minuti di attesa. Erano quattro prove
+# a 1+2+4 s, cioe' sette secondi in tutto: il 15/09/2026 un'interruzione TLS
+# verso l'endpoint piu' lunga di quella finestra ha ucciso un libro all'86%,
+# con ventuno capitoli su ventiquattro gia' sintetizzati e pagati. Stessa
+# forma di `_scarica` (`_SCARICA_TENTATIVI`), perche' e' lo stesso guasto
+# visto dall'altro capo: la rete che se ne va per un momento.
+_SUBMIT_RETRIES = 8
+_SUBMIT_PAUSA_SEC = 2.0
+_SUBMIT_PAUSA_MAX_SEC = 60.0
 _HTTP_TRANSIENT = (429, 500, 502, 503, 504)
 
 
@@ -492,6 +523,7 @@ def _errore_del_job(out, testo, job_id):
 
 def _submit(payload, session, sleep):
     ultimo = ""
+    pausa = _SUBMIT_PAUSA_SEC
     for tentativo in range(_SUBMIT_RETRIES):
         try:
             r = session.post(f"{_base()}/run", headers=_headers(),
@@ -511,8 +543,17 @@ def _submit(payload, session, sleep):
                 raise VoxcpmJobError(f"HTTP {r.status_code}: {r.text[:200]}")
             ultimo = f"HTTP {r.status_code}"
         if tentativo < _SUBMIT_RETRIES - 1:
-            sleep(min(30, 2 ** tentativo))
-    raise VoxcpmJobError(f"esauriti i tentativi di sottomissione ({ultimo})")
+            _LOG.warning(
+                "sottomissione del job fallita (%s), tentativo %d di %d: "
+                "riprovo fra %.0f s", ultimo, tentativo + 1, _SUBMIT_RETRIES,
+                pausa)
+            sleep(pausa)
+            pausa = min(pausa * 2, _SUBMIT_PAUSA_MAX_SEC)
+    # Tipo dedicato, non `VoxcpmJobError` nudo: chi orchestra il capitolo
+    # deve poter distinguere «il job non e' mai partito» da un guasto della
+    # sintesi, ed e' su quel tipo che `synthesize_chapter` risottomette.
+    raise VoxcpmSottomissioneFallita(
+        f"esauriti i tentativi di sottomissione ({ultimo})")
 
 
 def cancel_job(job_id, *, session=None):
@@ -587,7 +628,8 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
 
     Raises:
         VoxcpmRimbalzato, VoxcpmMotoreCompromesso, VoxcpmBloccato,
-        VoxcpmCodaSatura, VoxcpmAnnullato, VoxcpmJobError: vedi la tabella §9.4.
+        VoxcpmCodaSatura, VoxcpmAnnullato, VoxcpmSottomissioneFallita,
+        VoxcpmJobError: vedi la tabella §9.4.
     """
     ses = session or requests
     attesa = poll_seconds() if poll is None else float(poll)
@@ -859,6 +901,34 @@ def _lingua_voce(voice_id):
     return voxcpm_catalog.parse_voice_id(voice_id)["locale"].split("-")[0].lower()
 
 
+def passo_di_voce(voice_id):
+    """Il passo a cui e' stirata la clip comune della voce, dal catalogo.
+
+    Una voce che non e' di catalogo (clonata, o sparita da una rigenerazione)
+    legge al default: e' lo stesso passo con cui escono le clip che non hanno
+    una riga in `_velocita.csv`.
+    """
+    try:
+        return float(voxcpm_catalog.parse_voice_id(voice_id)["speed"])
+    except ValueError:
+        return voxcpm_catalog.SPEED_DEFAULT
+
+
+def speed_effettiva(passo_voce, rate):
+    """Il passo da chiedere al worker: quello della voce, per il cursore.
+
+    `+10%` su una voce a 0,88 da' 0,968. L'utente chiede il dieci per cento
+    in piu' di quello che ascolta nella clip, non di una velocita' cruda che
+    non ha mai sentito (decisione dell'utente, 14 settembre 2026). Un cursore
+    illeggibile vale zero. Il risultato sta nell'intervallo del worker.
+    """
+    try:
+        pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
+    except (TypeError, ValueError):
+        pct = 0.0
+    return max(0.5, min(2.0, round(float(passo_voce) * (1.0 + pct / 100.0), 3)))
+
+
 def clone_block(voice_id):
     """I campi del payload che determinano la voce, in modalita' `hifi`.
 
@@ -1054,9 +1124,129 @@ def normalizza_puntini(testo):
     return _PUNTINI_RE.sub(_sostituisci, testo)
 
 
+# Segni che a fine enunciato restano sospesi: la frase continua nel chunk
+# dopo, ma per il modello quello e' tutto il testo che c'e'.
+_CODA_SOSPESA = ",;:"
+
+
+def pulisci_coda(testo):
+    """Toglie la virgola (o il punto e virgola, o i due punti) rimasta in coda.
+
+    Quando una frase supera il cap, `tts_split` la spezza sui breakpoint
+    deboli e il pezzo se ne va con la virgola attaccata in fondo. VoxCPM quel
+    segno sospeso lo puo' pronunciare: nel collaudo del 9/9/2026 il chunk che
+    finiva «il piu' delle volte,» usciva con un «punto» detto a voce. Il
+    chunk tagliato a meta' frase deve arrivare al modello come arriva
+    qualunque altro taglio dello splitter, cioe' senza punteggiatura finale.
+
+    Non tocca i terminatori veri (. ! ? ...): li' la pausa e' dovuta.
+    """
+    if not testo:
+        return testo
+    pulito = testo.rstrip()
+    while pulito and pulito[-1] in _CODA_SOSPESA:
+        pulito = pulito[:-1].rstrip()
+    return pulito if pulito else testo
+
+
+def segno_sospeso(testo):
+    """Il segno che `pulisci_coda` toglierebbe, o stringa vuota.
+
+    Il worker il testo lo riceve gia' ripulito e non ha modo di sapere se quel
+    taglio stava su una virgola o in mezzo a un sintagma: la pausa che merita
+    e' diversa, quindi il segno glielo diciamo a parte.
+    """
+    if not testo:
+        return ""
+    pulito = testo.rstrip()
+    return pulito[-1] if pulito and pulito[-1] in _CODA_SOSPESA else ""
+
+
+# La coda che il worker confronta e' lunga `verifica.CODA_CAR` caratteri: la
+# stessa finestra va ritagliata qui, altrimenti «attesa» e «udita» nel log
+# parlano di due pezzi di testo diversi e affiancarle non dice niente.
+_CODA_DIAGNOSI_CAR = 60
+# Quante code tagliate finiscono nel log per capitolo. Il dataset le tiene
+# tutte: il log serve a far vedere il difetto a chi sta guardando, non a
+# contarlo.
+_CODA_DIAGNOSI_LOG_MAX = 5
+# Le misure del giudizio del worker, nell'ordine in cui vanno lette: prima
+# cosa ha sentito l'ASR, poi cosa ha visto il segnale, poi le regole che
+# hanno deciso.
+_CODA_DIAGNOSI_MISURE = ("scoperti", "scoperti_grezzi", "caduta",
+                         "silenzio_ms", "resa", "livello", "mozza",
+                         "conclamato", "fioco", "numeri", "grafia",
+                         "sospetto")
+
+
+def _dettaglio_code_tagliate(indici, giudizi, testi, campioni=None,
+                             sample_rate=48000):
+    """Una riga per chunk consegnato con la coda ancora tagliata.
+
+    Il worker su questi chunk spende tutti i suoi giri e poi li consegna
+    comunque, allegando in `verify_details` il giudizio dato a ognuno —
+    compreso `detto`, la coda come l'ASR l'ha sentita. Finora l'app buttava
+    via quel blocco e delle code tagliate restava il solo conteggio: nessun
+    modo di distinguere una frase davvero mozza da un falso allarme del
+    confronto con l'ASR o della misura del segnale, e quindi nessun modo di
+    tarare alcunche' senza tirare a indovinare. Qui coda attesa e coda udita
+    finiscono affiancate, con le misure che hanno deciso.
+
+    Il giudizio manca se il worker e' di una versione precedente: resta la
+    riga col solo indice e la coda attesa, che e' comunque piu' di zero.
+
+    `campioni` sono i `chunk_samples` del worker: con quelli la riga dice
+    anche dove comincia il chunk dentro il PCM del capitolo (`inizio_s`), che
+    e' il punto da cui ascoltarlo. Senza, la chiave non c'e': uno zero
+    manderebbe ad ascoltare l'inizio del capitolo.
+    """
+    inizi = None
+    if isinstance(campioni, list) and len(campioni) == len(testi) and sample_rate:
+        try:
+            inizi, somma = [], 0
+            for n in campioni:
+                inizi.append(somma / float(sample_rate))
+                somma += int(n)
+        except (TypeError, ValueError):
+            inizi = None
+    fuori = []
+    for i in indici:
+        try:
+            idx = int(i)
+        except (TypeError, ValueError):
+            continue
+        testo = testi[idx] if 0 <= idx < len(testi) else ""
+        riga = {"chunk": idx,
+                "coda_attesa": testo[-_CODA_DIAGNOSI_CAR:],
+                "detto": ""}
+        if inizi is not None and 0 <= idx < len(inizi):
+            riga["inizio_s"] = round(inizi[idx], 2)
+        # Le chiavi di `verify_details` sono stringhe (JSON), ma un worker
+        # che passasse interi non deve far sparire la diagnosi.
+        g = giudizi.get(str(idx))
+        if g is None:
+            g = giudizi.get(idx)
+        if isinstance(g, dict):
+            riga["detto"] = str(g.get("detto") or "")
+            for k in _CODA_DIAGNOSI_MISURE:
+                if k in g:
+                    riga[k] = g[k]
+        fuori.append(riga)
+    return fuori
+
+
+def _riga_coda_tagliata(d):
+    """La riga di diagnosi in una stringa sola, per il log."""
+    misure = " ".join("%s=%s" % (k, d[k])
+                      for k in _CODA_DIAGNOSI_MISURE if k in d)
+    return ("chunk %d | attesa: %r | udita: %r | %s"
+            % (d["chunk"], d.get("coda_attesa", ""), d.get("detto", ""),
+               misure))
+
+
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
-                       on_progress=None):
+                       on_progress=None, speed=None):
     """Sintetizza un capitolo intero come un solo job. Scrive il PCM grezzo.
 
     Un job per capitolo (§7.3): il costo sta nell'accensione del worker, non
@@ -1085,13 +1275,19 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             a `run_job` e spenta da `ABM_VOXCPM_PROGRESS=0`. Un capitolo
             rifatto ripubblica `chunks_done` da zero: la monotonia della
             barra e' responsabilita' del chiamante, non di qui.
+        speed: il passo di lettura da chiedere al worker (gia' moltiplicato
+            per il cursore, vedi `speed_effettiva`). `None` = non mandarlo.
+            Se il worker lo echeggia, torna in `stats["speed"]`; se non lo
+            echeggia (immagine precedente) la chiave manca e il chiamante
+            deve stirare da se'.
 
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
         `jobs`, `redone`, `bounced`, `failed_chunks`, `code_tagliate`,
+        `code_tagliate_dettaglio`,
         `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
-        `verifica_giri`, `verifica_numerali`, `verifica_falsi_numerali`,
-        `bytes` e `runpod`,
+        `verifica_giri`, `verifica_rientri`, `verifica_numerali`,
+        `verifica_falsi_numerali`, `verifica_falsi_grafia`, `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -1127,6 +1323,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # meta', e senza questo numero il difetto arriva nell'M4B senza
              # che nessuno lo sappia.
              "code_tagliate": 0,
+             # E per ognuna di quelle code, il giudizio che il worker le ha
+             # dato: la coda attesa e quella udita affiancate, con le misure.
+             # Senza questo il conteggio sopra dice che il difetto c'e' ma non
+             # che cosa sia, e su un numero non si tara niente.
+             "code_tagliate_dettaglio": [],
              # Le tre misure che dicono quanto e' costata la verifica e
              # quanto e' servita. `code_tagliate` da solo conta i falliti
              # ma non i tentati: un capitolo con zero code tagliate puo'
@@ -1139,6 +1340,13 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # quanto i falliti, ma nessun tentativo li ha mancati.
              "verifica_rinunciati": 0,
              "verifica_giri": 0,        # giri di rigenerazione spesi
+             # La curva dei rientri: quanti chunk sono tornati sani al primo
+             # giro, quanti al secondo, quanti al terzo. `verifica_giri` dice
+             # quanti giri ha speso il capitolo, `code_tagliate` quanti chunk
+             # non sono rientrati: nessuno dei due dice se un giro in piu'
+             # pagherebbe. Questa lista si', perche' e' la sola che mostra se
+             # il recupero sta ancora rendendo quando i giri finiscono.
+             "verifica_rientri": [],
              # Gli allarmi che il rilevatore ha visto e taciuto perche' la
              # coda conteneva un numero: l'ASR scrive «1967» dove il testo
              # dice «millenovecentosessantasette», e senza questa regola il
@@ -1147,13 +1355,18 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # nuova, una grafia che le tabelle non conoscono.
              "verifica_numerali": 0,        # code con un numero dentro
              "verifica_falsi_numerali": 0,  # di quelle, allarmi spenti
+             # Lo stesso per la regola della grafia, l'altro vizio del
+             # riconoscitore: «di se» dove il testo dice «disse». Contatore
+             # separato perche' i due difetti non si guastano insieme, e un
+             # totale unico nasconderebbe quale dei due sta cedendo.
+             "verifica_falsi_grafia": 0,
              # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
              # buttati via sono GPU comprata, ed e' il conto sui caratteri a
              # non vederli.
              "runpod": []}
 
     conc = concurrency()
-    tentativo, rimbalzi, riconsegne = 0, 0, 0
+    tentativo, rimbalzi, riconsegne, risottomissioni = 0, 0, 0, 0
     while True:
         if cancelled is not None and cancelled():
             raise VoxcpmJobError("job annullato: nessun altro worker acceso")
@@ -1161,7 +1374,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
         payload = {"input": {
             "action": "generate",
-            "chunks": [normalizza_puntini(c) for c in chunks],
+            "chunks": [pulisci_coda(normalizza_puntini(c)) for c in chunks],
+            # Elenco parallelo: per ogni chunk il segno debole tolto dalla
+            # coda. Il worker ci misura la pausa della giunzione.
+            "giunti": [segno_sospeso(normalizza_puntini(c)) for c in chunks],
             **clone,
             "cfg": CFG_READ,
             "concurrency": conc,
@@ -1171,6 +1387,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             "output_format": "pcm",
             "language": lingua,
         }}
+        if speed is not None:
+            # Il worker stira ogni chunk a questo passo prima di concatenare.
+            payload["input"]["speed"] = speed
         if su_r2:
             payload["input"]["s3"] = {
                 "put_url": storage_backend.presigned_put_url(key),
@@ -1195,6 +1414,25 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # guasto impiega ancora una decina di secondi a uscire, e finche'
             # e' li' respinge tutto.
             riposa(min(30, 10 * rimbalzi))
+            continue
+        except VoxcpmSottomissioneFallita as e:
+            # Il job non e' mai partito: nessuna GPU spesa, niente da
+            # cancellare, il capitolo e' intatto. Prima questo saliva come
+            # `VoxcpmJobError` nudo e nessun ramo lo prendeva, quindi
+            # un'interruzione di rete piu' lunga della finestra di `_submit`
+            # uccideva il job intero (15/09/2026: ventuno capitoli su
+            # ventiquattro, gia' sintetizzati e pagati, buttati via).
+            # La pausa e' di minuti e non di secondi apposta: se la rete e'
+            # stata giu' per i tre minuti di `_submit`, non torna nell'attimo
+            # dopo, e rilanciare subito spenderebbe il budget a vuoto.
+            risottomissioni += 1
+            if risottomissioni > SUBMIT_CHAPTER_RETRIES:
+                raise
+            _LOG.warning(
+                "capitolo mai sottomesso (%s): riprovo fra %d s, %d di %d",
+                e, 60 * risottomissioni, risottomissioni,
+                SUBMIT_CHAPTER_RETRIES)
+            riposa(60 * risottomissioni)
             continue
         except (VoxcpmBloccato, VoxcpmMotoreCompromesso):
             # Stesso rimedio, due sintomi: il worker che si e' fermato e la
@@ -1221,6 +1459,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # somma davvero.
             stats["chars"] = int(out.get("chars") or 0)
             stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
+            # L'eco del passo applicato dal worker: e' la prova, nelle
+            # statistiche del job, che il PCM consegnato e' gia' stirato.
+            if "speed" in out:
+                stats["speed"] = float(out["speed"])
             # Come `chars`: quello che conta e' il tentativo consegnato, non
             # la somma con quelli buttati via.
             _tagliate = out.get("chunks_difettosi") or []
@@ -1231,6 +1473,14 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                     "(chunk %s): il worker ha esaurito i suoi ritentativi",
                     len(_tagliate),
                     ", ".join(str(i) for i in _tagliate[:10]))
+                stats["code_tagliate_dettaglio"] = _dettaglio_code_tagliate(
+                    _tagliate, out.get("verify_details") or {},
+                    payload["input"]["chunks"],
+                    campioni=out.get("chunk_samples"),
+                    sample_rate=int(out.get("sample_rate") or 48000))
+                for _d in stats["code_tagliate_dettaglio"][
+                        :_CODA_DIAGNOSI_LOG_MAX]:
+                    _LOG.warning("coda tagliata: %s", _riga_coda_tagliata(_d))
             # Come `chars`: le misure sono quelle del tentativo consegnato.
             # Il blocco manca se la verifica era spenta o se il worker e'
             # di una versione precedente, e allora restano gli zeri.
@@ -1243,10 +1493,21 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 stats["verifica_rinunciati"] = len(
                     _ver.get("rinunciati") or [])
                 stats["verifica_giri"] = int(_ver.get("giri") or 0)
+                # Assente sui worker precedenti: lista vuota, non zeri. Una
+                # lista di zeri direbbe «nessuno e' rientrato», che e' il
+                # contrario di «non lo sappiamo».
+                stats["verifica_rientri"] = [
+                    int(x or 0) for x in (
+                        _ver.get("rientri_per_giro") or [])]
                 stats["verifica_numerali"] = int(
                     _ver.get("numerali") or 0)
                 stats["verifica_falsi_numerali"] = int(
                     _ver.get("falsi_numerali") or 0)
+                # La gemella della precedente: gli allarmi spenti dalla
+                # regola della grafia. Assente sui worker precedenti, e lo
+                # zero e' la risposta giusta — quella regola li' non c'era.
+                stats["verifica_falsi_grafia"] = int(
+                    _ver.get("falsi_grafia") or 0)
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
             bad = out["failed_indices"] or []
@@ -1345,11 +1606,10 @@ def jobs_in_flight():
 def apply_rate(pcm_path, rate, sample_rate):
     """Applica la velocita' di lettura al PCM, sul posto. Ritorna True se fatto.
 
-    L'azione `generate` del worker non ha un parametro di velocita': ce l'ha
-    `assemble`, che D9 lascia fuori dal perimetro. La velocita' la mette
-    quindi l'app, con un `atempo` di ffmpeg sul PCM grezzo. L'intervallo del
-    pannello e' -30%..+30% (§5.2), comodamente dentro il dominio 0,5-2,0 di
-    `atempo`: un solo filtro basta, nessuna catena.
+    `rate` e' la percentuale del pannello ("+10%"). Dal 14/09/2026 il passo lo
+    stira il worker dentro `generate` e il pre-pass VoxCPM non chiama piu'
+    questa funzione: resta per stirare un PCM gia' su disco. Lo stiramento e'
+    un `atempo` di ffmpeg sul PCM grezzo.
     """
     try:
         pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())

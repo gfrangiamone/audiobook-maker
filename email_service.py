@@ -1217,7 +1217,8 @@ def admin_notify_margin_anomaly(job_id, kind, provider, book_title="",
 
 
 def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
-                                    credit_left_usd=None):
+                                    credit_left_usd=None,
+                                    probe_first_sec=None):
     """Notifica IMMEDIATA all'admin: il backend TTS e' passato a Vertex.
 
     Non passa dal digest di fine giornata: il margine in failover (Vertex)
@@ -1257,6 +1258,37 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
         credit_row = (f"<tr><td><strong>Credito residuo (stima)</strong></td>"
                       f"<td>{credit_left_usd:.2f} USD</td></tr>")
 
+    # `probe_first_sec` assente significa "nessuna sonda armata": rientro
+    # automatico spento per configurazione, oppure causa di trip non
+    # sondabile (lo stato illeggibile del fail-safe non si riarma mai da
+    # solo). In quel caso l'unica via di rientro resta la console, e l'email
+    # non deve promettere un appuntamento che nessuno ha fissato.
+    probe_label = _fmt_durata_it(probe_first_sec) if probe_first_sec else ""
+    if probe_label:
+        probe_row = (f"<tr><td><strong>Prima sonda di rientro</strong></td>"
+                     f"<td>fra {_esc_html(probe_label)}</td></tr>")
+        probe_par = (
+            "<p><strong>Il rientro si tenta da solo.</strong> Una sonda in "
+            "background - poche parole di sintesi, nessun utente collegato - "
+            f"riprova Cloudflare fra {_esc_html(probe_label)}, poi a "
+            "intervalli doppi a ogni fallimento fino a un tetto; al primo "
+            "esito buono il modello torna su Cloudflare e ricevi una seconda "
+            "email. Nessun job viene mai usato per provare: un audiolibro "
+            "rimandato su un backend ancora guasto costerebbe l'intera "
+            "generazione, la sonda costa una richiesta rifiutata.</p>"
+            "<p>Se la causa e' il credito esaurito la sonda non basta: "
+            "ricarica e riallinea <code>ABM_CF_CREDIT_BALANCE_USD</code>, "
+            "oppure riattiva subito Cloudflare dal pannello "
+            "<em>Backend TTS</em> della console admin senza aspettare il "
+            "prossimo appuntamento.</p>")
+    else:
+        probe_row = ""
+        probe_par = (
+            "<p><strong>Il rientro e' manuale.</strong> Per questo trip non "
+            "e' stata armata alcuna sonda: risolta la causa (di norma: "
+            "ricaricare il credito Cloudflare), riattiva Cloudflare dal "
+            "pannello <em>Backend TTS</em> della console admin.</p>")
+
     html_body = f"""
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
       <div style="background:#c0392b;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
@@ -1271,18 +1303,14 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
           <tr><td><strong>Dettaglio</strong></td><td style="font-family:monospace;font-size:12px">{detail_safe}</td></tr>
           <tr><td><strong>Job che ha rilevato</strong></td><td><code>{job_safe}</code></td></tr>
           {credit_row}
+          {probe_row}
         </table>
         <p style="background:#fff4e5;padding:10px;border-left:4px solid #d97706;margin-top:14px">
           <strong>Perche' e' urgente:</strong> su Vertex il margine scende
           quasi al pareggio, mentre su Cloudflare resta ampio. Il servizio
           continua a funzionare, ma ogni ora in questo stato e' margine
           perso su ogni job servito.</p>
-        <p><strong>Il rientro e' manuale.</strong> Risolto il problema (di
-           norma: ricaricare il credito Cloudflare), riattiva Cloudflare
-           dal pannello <em>Backend TTS</em> della console admin. Non c'e'
-           alcun ripristino automatico: un backend caduto per credito
-           esaurito tornerebbe a cadere subito, e ogni caduta costa un
-           job.</p>
+        {probe_par}
       </div>
     </div>"""
 
@@ -1292,6 +1320,113 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
               f"({reason})")
     except Exception as e:
         print(f"[admin] Invio notifica switch backend TTS fallito: {e}")
+
+
+def _fmt_durata_it(secondi):
+    """Durata in italiano leggibile a colpo d'occhio ("2 ore e 35 minuti").
+
+    Le email di failover si leggono di notte e sul telefono: "9312 s"
+    obbliga chi legge a fare una divisione prima di capire se il disservizio
+    e' durato dieci minuti o tre ore. Restituisce "" per un valore assente o
+    non numerico, cosi' il chiamante puo' semplicemente omettere la riga
+    invece di stampare un segnaposto.
+    """
+    try:
+        tot = int(max(0, float(secondi)))
+    except (TypeError, ValueError):
+        return ""
+    if tot < 60:
+        return f"{tot} second{'o' if tot == 1 else 'i'}"
+    minuti, ore = (tot // 60) % 60, tot // 3600
+    if not ore:
+        return f"{minuti} minut{'o' if minuti == 1 else 'i'}"
+    testa = f"{ore} or{'a' if ore == 1 else 'e'}"
+    if not minuti:
+        return testa
+    return f"{testa} e {minuti} minut{'o' if minuti == 1 else 'i'}"
+
+
+def admin_notify_tts_backend_return(model_key, probe_attempts=0,
+                                    down_seconds=None, credit_left_usd=None):
+    """Notifica all'admin: il modello e' RIENTRATO su Cloudflare da solo.
+
+    Gemella speculare di `admin_notify_tts_backend_switch`, tenuta separata
+    per la stessa ragione per cui lo e' il pre-allarme sul credito: dice il
+    contrario, e chi legge l'oggetto di notte deve capire dalla prima riga
+    se il servizio sta girando al margine ridotto oppure no.
+
+    Non e' un'email di cortesia. Finche' non arriva, l'admin deve assumere
+    che il servizio giri su Vertex: e' la chiusura esplicita dell'incidente
+    aperto dall'email di switch, e senza di essa un failover risolto da solo
+    resterebbe indistinguibile da uno ancora in corso.
+
+    Immediata e non nel digest per simmetria con lo switch: un rientro
+    annunciato il giorno dopo farebbe intervenire a mano su un guasto gia'
+    passato.
+
+    Un guasto SMTP non propaga: il rientro e' gia' avvenuto e persistito,
+    l'email e' un di piu'.
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+
+    model_safe = _esc_html(_sanitize_header(model_key or "", max_len=80))
+    subject = _sanitize_header(
+        f"[ABM-ADMIN] TTS {model_key}: rientro automatico su Cloudflare",
+        max_len=200)
+
+    try:
+        tentativi = max(0, int(probe_attempts or 0))
+    except (TypeError, ValueError):
+        tentativi = 0
+
+    # `down_seconds=None` = durata non ricostruibile (marca di trip assente o
+    # illeggibile). Meglio omettere la riga che stampare uno zero, che
+    # significherebbe "nessun disservizio", cioe' il contrario del vero.
+    durata = _fmt_durata_it(down_seconds)
+    durata_row = ""
+    if durata:
+        durata_row = (f"<tr><td><strong>Durata del failover</strong></td>"
+                      f"<td>{_esc_html(durata)}</td></tr>")
+    credit_row = ""
+    if credit_left_usd is not None:
+        credit_row = (f"<tr><td><strong>Credito residuo (stima)</strong></td>"
+                      f"<td>{credit_left_usd:.2f} USD</td></tr>")
+
+    html_body = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
+      <div style="background:#1e8449;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">TTS: rientro automatico su Cloudflare</h2>
+      </div>
+      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
+        <p>Il modello <strong>{model_safe}</strong> e' tornato su Cloudflare:
+           una sonda di rientro ha ottenuto audio valido e il breaker e'
+           stato riarmato. I job che partono da ora usano di nuovo
+           Cloudflare; quelli gia' in corso finiscono su Vertex, dove sono
+           cominciati.</p>
+        <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
+          <tr><td><strong>Sonde fallite prima del rientro</strong></td><td>{tentativi}</td></tr>
+          {durata_row}
+          {credit_row}
+        </table>
+        <p style="background:#eafaf1;padding:10px;border-left:4px solid #1e8449;margin-top:14px">
+          Il margine torna quello pieno di Cloudflare. Non serve alcun
+          intervento: questa email chiude il failover annunciato dall'email
+          di switch.</p>
+        <p>Se il failover era dovuto al credito esaurito, il rientro
+           significa che la ricarica e' andata a buon fine: controlla che
+           <code>ABM_CF_CREDIT_BALANCE_USD</code> sia riallineato e che il
+           ledger sia stato azzerato dal pannello <em>Backend TTS</em>,
+           altrimenti il residuo stimato resta sbagliato per il ciclo
+           successivo.</p>
+      </div>
+    </div>"""
+
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+        print(f"[admin] Notifica rientro backend TTS inviata per {model_key}")
+    except Exception as e:
+        print(f"[admin] Invio notifica rientro backend TTS fallito: {e}")
 
 
 def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
@@ -1395,22 +1530,43 @@ def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
 
 def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
                                           refund_eur, voucher_code,
-                                          book_title, download_url, lang="it"):
-    """Notifica all'utente che ha annullato volontariamente un job voci PREMIUM
-    in corso: l'MP3 parziale e' disponibile al download, il rimborso e' stato
-    emesso al netto della quota gia' consumata (costo provider + commissioni
-    non recuperabili).
+                                          book_title, download_url, lang="it",
+                                          auto_cancel=False):
+    """Notifica all'utente che un job voci PREMIUM in corso e' stato
+    interrotto: l'MP3 parziale e' disponibile al download, il rimborso e'
+    stato emesso al netto della quota gia' consumata (costo provider +
+    commissioni non recuperabili).
 
     - voucher_code valorizzato => pagamento PayPal, nuovo voucher emesso per
       l'importo rimborsato (refund_eur).
     - voucher_code None => pagamento via voucher, refund_eur ri-accreditato
       silenziosamente sul voucher originale.
+    - auto_cancel=True => l'interruzione NON e' stata chiesta dall'utente
+      (heartbeat scaduto, job soppiantato): scrivergli "hai annullato tu"
+      sarebbe falso e lo lascia senza spiegazione di cosa e' successo.
     """
     if not (email and _smtp_available()):
         return
     title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
-    subject = (f"Audiobook Maker — Generazione annullata, audio parziale "
-               f"disponibile ({refund_eur:.2f} EUR rimborsati)")
+    if auto_cancel:
+        subject = (f"Audiobook Maker — Generazione interrotta, audio parziale "
+                   f"disponibile ({refund_eur:.2f} EUR rimborsati)")
+        heading = "&#x26A0;&#xFE0F; Generazione interrotta"
+        intro = (f"la generazione delle voci PREMIUM per <strong>{title_safe}</strong> "
+                 f"si &egrave; interrotta prima del completamento perch&eacute; la "
+                 f"pagina del browser non era pi&ugrave; in contatto con il servizio "
+                 f"(scheda chiusa, computer in sospensione o connessione caduta).")
+        note = ("<p>Per i libri lunghi ti consigliamo di attivare la "
+                "<strong>consegna via email</strong> prima di avviare la "
+                "generazione: il lavoro prosegue sui nostri server anche a "
+                "browser chiuso e ricevi l'audiolibro appena &egrave; pronto.</p>")
+    else:
+        subject = (f"Audiobook Maker — Generazione annullata, audio parziale "
+                   f"disponibile ({refund_eur:.2f} EUR rimborsati)")
+        heading = "&#x26A0;&#xFE0F; Generazione annullata su tua richiesta"
+        intro = (f"hai annullato la generazione delle voci PREMIUM per "
+                 f"<strong>{title_safe}</strong> mentre era in corso.")
+        note = ""
     dl_safe = (download_url or "").replace('"', "%22")
     if voucher_code and refund_eur > 0:
         from datetime import datetime, timedelta
@@ -1431,10 +1587,10 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     <p style="margin:0">La generazione era gi&agrave; in fase avanzata: l'importo trattenuto ({retained_eur:.2f} EUR) corrisponde al costo gi&agrave; sostenuto. <strong>Nessun rimborso residuo</strong>.</p>
   </div>"""
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#d97706">&#x26A0;&#xFE0F; Generazione annullata su tua richiesta</h2>
+  <h2 style="color:#d97706">{heading}</h2>
   <p>Ciao,</p>
-  <p>hai annullato la generazione delle voci PREMIUM per <strong>{title_safe}</strong> mentre era in corso.</p>
-  <p>Abbiamo salvato l'<strong>audio parziale</strong> gi&agrave; sintetizzato fino al momento dell'annullamento. Puoi scaricarlo dal link sottostante:</p>
+  <p>{intro}</p>
+  <p>Abbiamo salvato l'<strong>audio parziale</strong> gi&agrave; sintetizzato fino a quel momento. Puoi scaricarlo dal link sottostante:</p>
   <p style="text-align:center;margin:20px 0">
     <a href="{dl_safe}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">Scarica l'audio parziale (MP3)</a>
   </p>
@@ -1445,7 +1601,8 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     <tr><td style="padding:6px 0;color:#666;border-top:1px solid #eee"><strong>Rimborso</strong></td><td style="padding:6px 0;text-align:right;border-top:1px solid #eee"><strong style="color:#059669">{refund_eur:.2f} EUR</strong></td></tr>
   </table>
   {refund_block}
-  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di annullamento, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>
+  {note}
+  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di interruzione, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
   <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
 </div>"""

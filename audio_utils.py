@@ -19,7 +19,9 @@ Funzioni:
 Nessuna dipendenza da altri moduli del progetto.
 """
 
+import html as _html
 import os
+import re as _re
 import shutil
 import subprocess
 import sys
@@ -686,6 +688,23 @@ def _extract_year_from_date(date_str):
 # FFMETADATA1 (capitoli + tag globali) — condiviso fra conversione M4B e kit
 # ---------------------------------------------------------------------------
 
+_TAG_HTML = _re.compile(r"<[^>]+>")
+
+
+def _descrizione_semplice(s, limite=1000):
+    """Descrizione del libro ridotta a testo semplice, poi troncata.
+
+    Il `dc:description` degli EPUB porta quasi sempre markup (`<p class=
+    "description">...</p>`, entita' HTML), e ffmpeg lo incide tale e quale:
+    Apple Books e gli altri lettori mostrano i tag all'utente. Il markup si
+    toglie PRIMA di troncare, altrimenti il tetto se lo mangiano i tag.
+    """
+    if not s:
+        return ""
+    txt = _html.unescape(_TAG_HTML.sub(" ", str(s)))
+    return " ".join(txt.split())[:limite].strip()
+
+
 def _escape_ffmeta(s):
     """Escape dei caratteri speciali del formato FFMETADATA1 (=, ;, #, \\, newline)."""
     return (str(s).replace('\\', '\\\\').replace('=', '\\=')
@@ -695,11 +714,15 @@ def _escape_ffmeta(s):
 # ---------------------------------------------------------------------------
 # Tag di generazione (parametri che hanno prodotto l'audio)
 # ---------------------------------------------------------------------------
-# Scritti su ogni file consegnato all'utente (MP3 unico, MP3 di capitolo, M4B)
-# come tag custom del container: TXXX in ID3v2 per l'MP3, atomi udta per l'M4B.
-# Il muxer MP4 scarta silenziosamente le chiavi non standard se non gli si passa
-# `-movflags +use_metadata_tags`, quindi per l'M4B il flag e' obbligatorio.
+# Scritti su ogni file consegnato all'utente (MP3 unico, MP3 di capitolo, M4B).
+# Nell'MP3 vanno in un TXXX ID3v2 per chiave, uno a uno. Nell'M4B no: il muxer
+# MP4 scarta le chiavi non standard a meno di `-movflags +use_metadata_tags`,
+# e quel flag non e' gratis (vedi `_extra_tag_args_mp4`). Li' i parametri
+# viaggiano impacchettati in una sola chiave standard.
 _EXTRA_TAG_MAX_CHARS = 300
+# Tetto della stringa impacchettata per l'M4B: e' un solo atomo, e i valori
+# arrivano anche dall'utente (istruzioni di stile).
+_EXTRA_TAG_PACK_MAX_CHARS = 1200
 
 
 def _sanitize_extra_tags(extra_tags):
@@ -729,6 +752,39 @@ def _extra_tag_args(extra_tags):
     for k, v in _sanitize_extra_tags(extra_tags):
         args += ["-metadata", f"{k}={v}"]
     return args
+
+
+def _extra_tag_args_mp4(extra_tags):
+    """Come `_extra_tag_args`, ma per il container MP4/M4B: una chiave sola.
+
+    Il muxer MP4 conosce due modi di scrivere i metadati, e sono alternativi:
+      - il ramo iTunes (default), `moov/udta/meta(hdlr=mdir)/ilst`, che accetta
+        solo le chiavi note ma e' l'unico che scrive l'atomo `covr`, cioe' la
+        COPERTINA;
+      - il ramo `mdta`, attivato da `-movflags +use_metadata_tags`, che accetta
+        qualunque chiave (`moov/udta/meta/keys` + `ilst`) ma la copertina non la
+        scrive affatto.
+    Chiedere il secondo per portarsi dietro le chiavi `abm_*` costa quindi la
+    copertina, in silenzio: e' la regressione vista il 15/09/2026 sugli M4B
+    consegnati senza cover. I due rami occupano lo stesso slot e nemmeno un
+    secondo passaggio `-c copy` riesce a tenerli insieme.
+
+    Fra le due la copertina vince: e' cio' che l'utente vede. I parametri di
+    generazione restano nel file impacchettati in `keywords` (atomo `keyw`),
+    chiave standard che convive con `covr`, che il file FFMETADATA1 non usa e
+    che nessun lettore di audiolibri mostra al posto di qualcos'altro.
+    """
+    pezzi, usati = [], 0
+    for k, v in _sanitize_extra_tags(extra_tags):
+        # il ';' separa le coppie: dentro un valore diventa ','
+        pezzo = "%s=%s" % (k, v.replace(";", ","))
+        if usati + len(pezzo) > _EXTRA_TAG_PACK_MAX_CHARS:
+            break
+        pezzi.append(pezzo)
+        usati += len(pezzo) + 2
+    if not pezzi:
+        return []
+    return ["-metadata", "keywords=" + "; ".join(pezzi)]
 
 
 def _build_ffmetadata_text(chapters=None, title=None, author=None,
@@ -795,10 +851,12 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
       [stream-level, -metadata:s:a:0 CLI]
       - language        ← codice ISO 639-2/B 3-lettere (es. "ita", "eng")
                           Per MP4/M4B il tag language è per-stream, non globale.
-      [format-level, -metadata CLI + -movflags +use_metadata_tags]
-      - extra_tags      ← parametri di generazione (motore, voce, accento,
-                          velocità, stile): chiavi non standard, che il muxer
-                          MP4 scarterebbe senza use_metadata_tags.
+      [format-level, -metadata CLI]
+      - keywords        ← parametri di generazione (motore, voce, accento,
+                          velocità, stile) impacchettati in una riga sola:
+                          chiavi non standard il muxer MP4 non ne accetta, e
+                          il flag che gliele farebbe accettare gli toglie la
+                          copertina (vedi `_extra_tag_args_mp4`).
 
     Nota: il tag `encoder` NON viene impostato perché ffmpeg lo sovrascrive sempre
     con il proprio valore (es. "Lavf62.3.100").
@@ -829,7 +887,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
         # Normalizza metadati opzionali
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
-        desc_trunc = (description or "").strip()[:1000] if description else ""
+        desc_trunc = _descrizione_semplice(description)
 
         # Filtra capitoli con durata zero (ffprobe non disponibile → tutte le durate = 0)
         valid_chapters = None
@@ -894,11 +952,10 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
             if c_idx == -1:
                 c += ["-vn"]
             c += ["-c:a", "aac", "-b:a", aac_bitrate]
-            # Tag custom: dopo -map_metadata per non essere sovrascritti, e con
-            # use_metadata_tags perche' il muxer MP4 ignora le chiavi non standard.
-            _xt = _extra_tag_args(extra_tags)
-            if _xt:
-                c += ["-movflags", "+use_metadata_tags"] + _xt
+            # Tag custom: dopo -map_metadata per non essere sovrascritti, e in
+            # una chiave standard sola perche' il ramo che accetta le chiavi
+            # custom non scrive la copertina (vedi _extra_tag_args_mp4).
+            c += _extra_tag_args_mp4(extra_tags)
             c += ["-f", "ipod", m4b_path]
             return c
 
@@ -1167,7 +1224,7 @@ def build_m4b_rebuild_kit(mp3_path, output_zip, chapters=None, title=None,
 
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
-        desc_trunc = (description or "").strip()[:1000] if description else ""
+        desc_trunc = _descrizione_semplice(description)
 
         source_kbps = _get_audio_bitrate(mp3_path)
         aac_bitrate = f"{source_kbps}k"
@@ -1867,8 +1924,9 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         bitrate: AAC bitrate (default '96k' mono).
         chapters: [{'title', 'start' ms, 'end' ms}, ...] opzionale.
         title/author/cover_path/date/language/description/genre: metadati M4B.
-        extra_tags: dict di tag custom (parametri di generazione) scritti negli
-            atomi udta; richiedono `-movflags +use_metadata_tags`.
+        extra_tags: dict di tag custom (parametri di generazione), scritti
+            impacchettati nella chiave standard `keywords` per non perdere la
+            copertina (vedi `_extra_tag_args_mp4`).
 
     Returns:
         True se ok, False altrimenti.
@@ -1891,7 +1949,7 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
 
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
-        desc_trunc = (description or "").strip()[:1000] if description else ""
+        desc_trunc = _descrizione_semplice(description)
 
         valid_chapters = None
         if chapters:
@@ -1942,10 +2000,9 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
             cmd.extend(["-metadata:s:a:0", f"language={lang_iso}"])
         cmd.extend(["-metadata", "media_type=2"])
         # Tag custom: DOPO -map_metadata (che altrimenti li sovrascriverebbe) e
-        # con use_metadata_tags, senza il quale il muxer MP4 li scarta in silenzio.
-        _xt = _extra_tag_args(extra_tags)
-        if _xt:
-            cmd.extend(["-movflags", "+use_metadata_tags"] + _xt)
+        # in una chiave standard sola, perche' il ramo che accetta le chiavi
+        # custom lascerebbe il file senza copertina (vedi _extra_tag_args_mp4).
+        cmd.extend(_extra_tag_args_mp4(extra_tags))
         cmd.extend(["-f", "ipod", output_path])
 
         # ffmpeg stampa per primi banner di versione + 'configuration: ...' che

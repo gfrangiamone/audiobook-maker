@@ -85,9 +85,11 @@ def test_markup_bottone_e_modal():
         assert f'id="{i}"' in HTML, i
     # Il microfono e il banner di ripresa vivono DENTRO #tabPremium, subito
     # dopo la combo delle voci: sulla scheda Standard non esistono proprio.
+    # (`voxcpmSampleRow` non fa piu' da estremo: il box d'ascolto e' sceso
+    # accanto alla stima costo, fuori dal pannello, e li' deve restare.)
     assert (HTML.index('id="tabPremium"') < HTML.index('id="vvPremium"')
             < HTML.index('id="vcOpenBtn"') < HTML.index('id="vcBtnRow"')
-            < HTML.index('id="voxcpmSampleRow"') < HTML.index('id="advOptions"'))
+            < HTML.index('id="advOptions"'))
     assert 'data-t-title="vc_btn_tip"' in HTML
     # Bottone a sola icona: un data-t sovrascriverebbe l'SVG del microfono.
     bottone = HTML[HTML.index('id="vcOpenBtn"'):HTML.index('id="vcOpenBtn"') + 400]

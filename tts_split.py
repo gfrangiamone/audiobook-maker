@@ -118,10 +118,13 @@ def _pick_chunk_max_chars(voice_id, language):
     il cap sul testo resta sotto quel limite (default 1800, ~100 char di margine
     per i tag; il clamp lato speechify_tts impedisce override pericolosi).
 
-    VoxCPM: voxcpm_tts.chunk_max_chars() (default 300, override env
+    VoxCPM: voxcpm_tts.chunk_max_chars() (default 280, override env
     ABM_VOXCPM_CHUNK_CHARS). Non e' un limite dell'API ma di qualita': il
     modello riancora il timbro al campione solo all'inizio di ogni chunk, e su
     chunk lunghi la voce deriva. Il worker non rispezza i chunk che riceve.
+    Attenzione: per VoxCPM il tetto vero non e' questo ma quello allargato da
+    _pick_sentence_slack (280 x 1,15 = 322), che una frase intera puo'
+    raggiungere pur di non finire spezzata su una virgola.
 
     Edge: 2000 sempre (motore senza vincoli stringenti di RPD).
     """
@@ -189,6 +192,32 @@ def _pick_pre_split(voice_id):
     return None
 
 
+# Quanto una frase puo' sforare il cap pur di NON essere spezzata sulle
+# virgole. Vale solo per VoxCPM, ed e' il rimedio a un difetto suo: il worker
+# sintetizza ogni chunk come enunciato a se' e li concatena campione su
+# campione, quindi un taglio a meta' frase si sente due volte — la virgola
+# finale, sospesa, il modello la puo' pronunciare («punto»), e fra i due
+# enunciati restano in fila la coda di silenzio del primo e l'attacco del
+# secondo, una pausa piu' lunga di un punto fermo dove il testo aveva una
+# virgola. Collaudo del 9/9/2026: «il paragone e', il piu' delle volte,» /
+# «a favore dell'affare umano».
+#
+# La frase tenuta intera allunga il chunk, e chunk lunghi fanno derivare il
+# timbro: per questo il cap base e' sceso a 280 (voxcpm_tts.CHUNK_MAX_CHARS),
+# cosi' il tetto con lo sforamento resta intorno ai 300 misurati sul worker.
+_VOXCPM_SENTENCE_SLACK = 0.15
+
+
+def _pick_sentence_slack(voice_id):
+    """Frazione di sforamento concessa a una frase intera, 0 = nessuna.
+
+    Solo VoxCPM: gli altri motori hanno cap che sono limiti veri (byte
+    dell'API per Gemini, lunghezza SSML per Speechify) o non hanno il
+    problema, e allargarli non si fa.
+    """
+    return _VOXCPM_SENTENCE_SLACK if _is_voxcpm_voice(voice_id) else 0.0
+
+
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo
 # alla frase successiva per garantire abbastanza contesto al motore TTS.
 _TTS_MIN_SENT_CHARS = 80
@@ -221,34 +250,75 @@ def _within(s, max_chars, max_bytes):
             (max_bytes is None or len(s.encode("utf-8")) <= max_bytes))
 
 
+# Segni deboli, ma meno deboli di una virgola: un punto e virgola o due punti
+# reggono un taglio molto meglio, perche' li' la voce chiude comunque il
+# periodo. Fra due tagli possibili si sceglie questo.
+_SEGNI_FORTI = ";:；："
+
+
 def _hard_split_oversized(s, max_chars, max_bytes):
     """Spezza una singola frase oltre i limiti in pezzi <= (max_chars, max_bytes).
 
-    1) prova i breakpoint deboli (virgole CJK/latine);
+    1) prova i breakpoint deboli (virgole CJK/latine), preferendo i segni forti
+       e senza lasciare un moncone in fondo;
     2) per i residui ancora oversize (es. lunghe sequenze CJK senza punteggiatura)
        taglio duro carattere-per-carattere rispettando SEMPRE il cap byte —
        garantisce che nessun pezzo superi mai il limite dell'API.
+
+    Ogni pezzo e' una sintesi a se' e ogni giunzione fra due pezzi va cucita:
+    il numero di pezzi resta quindi il minimo che sta nei limiti. Quel che si
+    puo' scegliere e' *dove* tagliare — su un punto e virgola meglio che su una
+    virgola — e che l'ultimo pezzo non sia di tre parole: un frammento corto
+    il modello lo legge senza contesto, con la cadenza sbagliata.
     """
     parts = [p for p in _SOFT_BREAK_RE.split(s) if p]
-    merged = []
-    cur = ""
-    for p in parts:
+
+    def unisci(ps):
         # Il breakpoint latino si porta via lo spazio che seguiva la virgola
         # (`(?<=[,;:])\s+` lo consuma): rimettendo insieme due pezzi va
         # restituito, o al TTS arriva «tra cui,pubblicati da Garzanti,Danny»
         # dove il testo diceva «tra cui, pubblicati da Garzanti, Danny». Il
         # breakpoint CJK e' a larghezza zero, non aveva spazi da consumare:
         # li' i pezzi si riattaccano come stavano.
-        giunto = " " if cur and cur[-1] in ",;:" else ""
-        cand = (cur + giunto + p) if cur else p
-        if _within(cand, max_chars, max_bytes):
-            cur = cand
+        out = ""
+        for p in ps:
+            out += (" " if out and out[-1] in ",;:" else "") + p
+        return out
+
+    gruppi = []
+    cur = []
+    for p in parts:
+        if not cur:
+            cur = [p]
+            continue
+        testo = unisci(cur)
+        if not _within(unisci(cur + [p]), max_chars, max_bytes):
+            gruppi.append(cur)
+            cur = [p]
+        elif (testo[-1] in _SEGNI_FORTI
+                and len(testo) >= _TTS_MIN_SENT_CHARS):
+            # Ci sta ancora, ma questo e' un segno forte e il pezzo ha gia'
+            # una misura sua: meglio tagliare qui che su una virgola piu' in
+            # la' per riempire il cap.
+            gruppi.append(cur)
+            cur = [p]
         else:
-            if cur:
-                merged.append(cur)
-            cur = p
+            cur.append(p)
     if cur:
-        merged.append(cur)
+        gruppi.append(cur)
+    # Il moncone finale si evita arretrando il taglio precedente, non
+    # aggiungendo pezzi: il conto resta quello. Si arretra solo finche' chi
+    # cede resta a sua volta di misura, altrimenti il moncone cambia solo di
+    # posto.
+    while (len(gruppi) >= 2 and len(gruppi[-2]) > 1
+            and len(unisci(gruppi[-1])) < _TTS_MIN_SENT_CHARS):
+        p = gruppi[-2][-1]
+        if (not _within(unisci([p] + gruppi[-1]), max_chars, max_bytes)
+                or len(unisci(gruppi[-2][:-1])) < _TTS_MIN_SENT_CHARS):
+            break
+        gruppi[-2].pop()
+        gruppi[-1].insert(0, p)
+    merged = [unisci(g) for g in gruppi]
     out = []
     for p in merged:
         if _within(p, max_chars, max_bytes):
@@ -268,7 +338,8 @@ def _hard_split_oversized(s, max_chars, max_bytes):
     return out
 
 
-def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
+def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
+                           sentence_slack=0.0):
     """Spezza il testo in chunk <= max_chars (e <= max_bytes UTF-8).
 
     Strategia: tokenizza in frasi (terminatori latini E CJK), pre-spezza ogni
@@ -279,6 +350,12 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
 
     max_bytes: cap byte UTF-8 opzionale (necessario per Gemini, che limita a
         byte; per il giapponese ogni carattere pesa ~3 byte). Se None, solo chars.
+    sentence_slack: frazione di sforamento concessa a una frase pur di tenerla
+        intera invece di spezzarla sulle virgole (vedi _pick_sentence_slack).
+        Riguarda SOLO il cap caratteri: max_bytes resta un limite invalicabile.
+        L'accumulo di frasi adiacenti continua a fermarsi a max_chars — la
+        deroga serve alla frase che da sola sfora di poco, non a gonfiare i
+        chunk.
     """
     if not text or not text.strip():
         return [text] if text else [""]
@@ -286,13 +363,19 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
     sentences = [s.strip() for s in raw_sentences if s and s.strip()]
     if not sentences:
         sentences = [text.strip()]
-    # Pre-bound: ogni frase oversize viene spezzata sotto i cap.
+    # Pre-bound: ogni frase oversize viene spezzata sotto i cap. La frase che
+    # sfora di poco resta intera se il motore lo concede: meglio un chunk un
+    # po' lungo che un taglio a meta' frase (vedi _pick_sentence_slack).
+    tetto_frase = max(max_chars, int(max_chars * (1.0 + max(0.0, sentence_slack))))
     bounded = []
     for s in sentences:
-        if _within(s, max_chars, max_bytes):
+        if _within(s, tetto_frase, max_bytes):
             bounded.append(s)
         else:
-            bounded.extend(_hard_split_oversized(s, max_chars, max_bytes))
+            # Il tetto e' quello della frase, non il cap secco: lo slack e'
+            # gia' la misura che il motore regge, e concederlo anche ai pezzi
+            # significa un pezzo in meno, cioe' una giunzione in meno.
+            bounded.extend(_hard_split_oversized(s, tetto_frase, max_bytes))
     chunks = []
     current = ""
     for sent in bounded:
@@ -686,7 +769,8 @@ def _sanitize_tts_text(text: str):
 
 
 def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
-                 strip_round=True, strip_square=True, pre_split=None):
+                 strip_round=True, strip_square=True, pre_split=None,
+                 sentence_slack=0.0):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
 
     max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
@@ -697,6 +781,8 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                letto dal TTS invece di essere rimosso (default: rimuove entrambe).
     pre_split: callable opzionale applicato al testo INTERO del capitolo appena
                prima della spezzatura (vedi _pick_pre_split). None = nessuna.
+    sentence_slack: sforamento concesso a una frase intera pur di non spezzarla
+               sulle virgole (vedi _pick_sentence_slack). 0 = nessuno.
     """
     plan = []
     for ch in info.chapters:
@@ -724,7 +810,9 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
         # il seguito sbaglierebbero verdetto (vedi _pick_pre_split).
         if pre_split is not None:
             full_text = pre_split(full_text)
-        chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
+        chunks = split_text_into_chunks(full_text, max_chars=max_chars,
+                                        max_bytes=max_bytes,
+                                        sentence_slack=sentence_slack)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
                 "chapter_index": ch.index,

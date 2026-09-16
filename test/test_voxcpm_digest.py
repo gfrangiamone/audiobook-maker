@@ -137,6 +137,44 @@ def test_gli_allarmi_spenti_dai_numeri_si_sommano(digest, tmp_path):
     assert r["job_senza_numeri"] == 0
 
 
+def test_gli_allarmi_spenti_dalla_grafia_hanno_una_colonna_loro(digest,
+                                                                tmp_path):
+    """La regola della grafia si conta a parte da quella dei numeri.
+
+    I due vizi del riconoscitore sono diversi — le tabelle delle cifre da un
+    lato, l'orecchio del modello dall'altro — e si guastano separatamente:
+    sommarli nasconderebbe quale dei due ha smesso di reggere.
+    """
+    _scrivi(tmp_path, [_rec("grafia", worker_code_tagliate=0,
+                            worker_verify_chunks=1911,
+                            worker_verify_sospetti=9,
+                            worker_verify_rinunciati=0,
+                            worker_verify_giri=3,
+                            worker_verify_numerali=0,
+                            worker_verify_falsi_numerali=0,
+                            worker_verify_falsi_grafia=8)])
+    r = digest.riepilogo(GIORNO)
+    assert r["falsi_grafia"] == 8
+    assert (r["numerali"], r["falsi_numerali"]) == (0, 0)
+    corpo = digest.html(r)
+    assert "regola della grafia" in corpo
+    assert "taciuti altri <strong>8</strong>" in corpo
+
+
+def test_il_worker_senza_la_regola_della_grafia_non_inventa_allarmi(digest,
+                                                                    tmp_path):
+    # Immagine precedente: la chiave manca, e lo zero e' la risposta giusta.
+    # Il riquadro sulla grafia non deve nemmeno comparire.
+    _scrivi(tmp_path, [_rec("vecchio", worker_code_tagliate=1,
+                            worker_verify_chunks=90,
+                            worker_verify_sospetti=2,
+                            worker_verify_rinunciati=0,
+                            worker_verify_giri=1)])
+    r = digest.riepilogo(GIORNO)
+    assert r["falsi_grafia"] == 0
+    assert "regola della grafia" not in digest.html(r)
+
+
 def test_il_worker_di_ieri_e_cieco_solo_sui_numeri(digest, tmp_path):
     """Un worker che misura i ritentativi ma non ancora i numeri.
 
@@ -290,3 +328,62 @@ def test_l_html_non_si_fida_del_job_id(digest, tmp_path):
     corpo = digest.html(digest.riepilogo(GIORNO))
     assert "<script>x" not in corpo
     assert "&lt;script&gt;x" in corpo
+
+
+# ---------------------------------------------------------------------------
+# Le code da ascoltare
+# ---------------------------------------------------------------------------
+
+def _coda(tmp_path, job_id="libro", ts=GIORNO, outcome="completed", **extra):
+    riga = {"ts": ts + "T21:00:00+00:00", "job_id": job_id, "language": "it",
+            "outcome": outcome, "capitolo": 7, "chunk": 23,
+            "coda_attesa": "e se ne ando'.", "detto": "e se ne",
+            "scoperti": 1, "scoperti_grezzi": 1, "mozza": False,
+            "conclamato": False, "fioco": False}
+    riga.update(extra)
+    with open(tmp_path / "voxcpm_code_tagliate_2026-09.jsonl", "a",
+              encoding="utf-8") as f:
+        f.write(json.dumps(riga, ensure_ascii=False) + "\n")
+
+
+def test_le_code_con_testo_mancante_vanno_ascoltate(digest, tmp_path):
+    _scrivi(tmp_path, [_rec("libro", worker_code_tagliate=3)])
+    _coda(tmp_path, capitolo=7, chunk=23, posizione_s=3725.4,
+          nel_capitolo_s=61.2, titolo="Capitolo otto")
+    # Spenta a torto da una regola: la misura grezza dice che manca testo.
+    _coda(tmp_path, capitolo=2, chunk=4, scoperti=0, scoperti_grezzi=2,
+          grafia="parola")
+    # Falso allarme del solo segnale: l'ASR ha sentito tutto.
+    _coda(tmp_path, capitolo=5, chunk=5, scoperti=0, scoperti_grezzi=0)
+    r = digest.riepilogo(GIORNO)
+    assert r["code_da_ascoltare"] == 2
+    (job,) = r["da_ascoltare"]
+    assert [(c["capitolo"], c["chunk"]) for c in job["code"]] == [(2, 4), (7, 23)]
+    assert "2 code da ascoltare" in digest.oggetto(r)
+    corpo = digest.html(r)
+    assert "1:02:05" in corpo and "1:01 nel capitolo" in corpo
+    assert "cap. 8" in corpo and "Capitolo otto" in corpo
+    assert "allarme spento dalla regola grafia" in corpo
+
+
+def test_marchiata_mozza_va_ascoltata_anche_senza_scoperti(digest, tmp_path):
+    _scrivi(tmp_path, [_rec("libro", worker_code_tagliate=1)])
+    _coda(tmp_path, scoperti=0, scoperti_grezzi=0, mozza=True, inizio_s=42)
+    r = digest.riepilogo(GIORNO)
+    assert r["code_da_ascoltare"] == 1
+    assert "circa 0:42 nel capitolo" in digest.html(r)
+
+
+def test_libri_non_consegnati_e_altri_giorni_restano_fuori(digest, tmp_path):
+    _scrivi(tmp_path, [_rec("libro", worker_code_tagliate=1)])
+    _coda(tmp_path, job_id="rimborsato", outcome="failed_refunded")
+    _coda(tmp_path, job_id="domani", ts=ALTRO)
+    r = digest.riepilogo(GIORNO)
+    assert r["da_ascoltare"] == [] and r["code_da_ascoltare"] == 0
+    assert "Da ascoltare" not in digest.html(r)
+    assert "da ascoltare" not in digest.oggetto(r)
+
+
+def test_senza_dataset_nessuna_coda(digest, tmp_path):
+    _scrivi(tmp_path, [_rec("libro")])
+    assert digest.riepilogo(GIORNO)["da_ascoltare"] == []

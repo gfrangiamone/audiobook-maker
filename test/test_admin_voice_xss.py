@@ -26,8 +26,19 @@ def test_voice_id_regex_rejects_html():
     # senza questo /api/generate e /api/optimize rifiutavano OGNI voce VoxCPM
     # con "Invalid voice id." prima di qualunque logica di prezzo.
     assert audiobook_app._VOICE_ID_RE.match("voxcpm:v2:it-IT/Stefano")
+    # 16/09/2026: 27 voci del catalogo VoxCPM portano il nome con accento
+    # (Chloé, Álvaro, João): in prod /api/generate le rifiutava tutte con
+    # "Invalid voice id." dopo che l'anteprima le aveva fatte ascoltare.
+    assert audiobook_app._VOICE_ID_RE.match("voxcpm:v2:fr-FR/Chloé")
+    assert audiobook_app._VOICE_ID_RE.match("voxcpm:v2:es-ES/Álvaro")
+    assert audiobook_app._VOICE_ID_RE.match("voxcpm:v2:pt-PT/João")
+    # Forma decomposta (NFD) che un browser potrebbe mandare: e + accento.
+    assert audiobook_app._VOICE_ID_RE.match("voxcpm:v2:fr-FR/Chloé")
     # Payload XSS e injection rifiutati
     assert not audiobook_app._VOICE_ID_RE.match("x-y-<img src=x onerror=alert(1)>")
+    assert not audiobook_app._VOICE_ID_RE.match("a-b-c<>\"'")
+    # Quattro voci cinesi hanno lo spazio nel nome (Peiyu 3).
+    assert audiobook_app._VOICE_ID_RE.match("voxcpm:v2:zh-CN/Peiyu 3")
     assert not audiobook_app._VOICE_ID_RE.match("a-b-c # injected")
     assert not audiobook_app._VOICE_ID_RE.match("a-b-c\nNEWLINE")
     assert not audiobook_app._VOICE_ID_RE.match("")
@@ -88,3 +99,12 @@ def test_admin_audit_page_does_not_inline_token(client):
     assert "test-admin-token" not in body
     # Deve invece usare il pattern session/localStorage.
     assert "getItem('abm_admin_token')" in body
+
+
+def test_voice_id_regex_accepts_every_voxcpm_catalog_id():
+    """Ogni id del catalogo consegnato deve passare la validazione."""
+    import voxcpm_catalog
+    ids = [v["id"] for v in voxcpm_catalog.voices()]
+    assert ids, "catalogo vuoto o assente"
+    rifiutati = [i for i in ids if not audiobook_app._VOICE_ID_RE.match(i)]
+    assert rifiutati == []

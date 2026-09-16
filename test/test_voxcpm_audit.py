@@ -276,3 +276,147 @@ def test_riga_live_di_un_job_voxcpm_in_corso_usa_il_tariffario_voxcpm(monkeypatc
         assert row["user_price_eur_should_have_been"] > 0
     finally:
         audiobook_app.jobs.pop(jid, None)
+
+
+def test_i_rientri_per_giro_finiscono_nel_record(audit_isolato):
+    # `worker_code_tagliate` conta chi non e' rientrato, `worker_verify_giri`
+    # quanti giri sono stati spesi: nessuno dei due dice se un giro in piu'
+    # pagherebbe. Lo dice la curva, e deve restare scritta nello storico.
+    job = job_con_fattura()
+    job["voxcpm_actual"].update({"verifica_sospetti": 8, "verifica_giri": 3,
+                                 "verifica_rientri": [5, 2, 0]})
+    generation_engine._write_voxcpm_audit("job-1", job, VOCE, "it",
+                                          "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_rientri"] == [5, 2, 0]
+    assert r["worker_verify_giri"] == 3
+    assert r["worker_verify_sospetti"] == 8
+
+
+def test_job_senza_rientri_non_inventa_zeri(audit_isolato):
+    # Un job girato su un'immagine che non manda la curva: lista vuota. Una
+    # lista di zeri nello storico si leggerebbe come "nessun recupero".
+    generation_engine._write_voxcpm_audit("job-1", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_rientri"] == []
+
+
+def test_gli_allarmi_spenti_dalla_grafia_arrivano_nel_record(audit_isolato):
+    # Numeri e grafia sono due vizi distinti del riconoscitore: il primo sta
+    # nelle tabelle delle cifre, il secondo nell'orecchio del modello («di se»
+    # per «disse»). Nello storico devono restare due colonne, perche' un
+    # totale unico non direbbe quale delle due regole ha smesso di reggere.
+    job = job_con_fattura()
+    job["voxcpm_actual"].update({"verifica_numerali": 24,
+                                 "verifica_falsi_numerali": 9,
+                                 "verifica_falsi_grafia": 7})
+    generation_engine._write_voxcpm_audit("job-2", job, VOCE, "it",
+                                          "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_falsi_numerali"] == 9
+    assert r["worker_verify_falsi_grafia"] == 7
+
+
+def test_il_worker_senza_grafia_scrive_zero(audit_isolato):
+    # Immagine precedente alla regola: la chiave manca e lo zero e' la
+    # risposta giusta — non ha taciuto niente perche' non c'era.
+    generation_engine._write_voxcpm_audit("job-3", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    assert leggi(audit_isolato)[0]["worker_verify_falsi_grafia"] == 0
+
+
+def leggi_code_tagliate(dir_dati):
+    righe = []
+    for fp in sorted(dir_dati.glob("voxcpm_code_tagliate_*.jsonl")):
+        with open(fp, encoding="utf-8") as f:
+            righe.extend(json.loads(r) for r in f if r.strip())
+    return righe
+
+
+def _job_con_code_tagliate():
+    job = job_con_fattura()
+    job["voxcpm_actual"].update({
+        "code_tagliate": 2,
+        "code_tagliate_dettaglio": [
+            {"capitolo": 0, "chunk": 0, "coda_attesa": "in fondo al viale.",
+             "detto": "in fondo al", "scoperti": 3, "caduta": -14.0,
+             "mozza": True, "conclamato": True},
+            {"capitolo": 3, "chunk": 17, "coda_attesa": "nel 1967.",
+             "detto": "nel millenovecento", "scoperti": 2, "caduta": -4.0,
+             "mozza": False, "numeri": True, "grafia": "parola"},
+        ]})
+    return job
+
+
+def test_le_code_tagliate_finiscono_in_un_dataset_a_parte(audit_isolato):
+    # Una riga per difetto, non per job: e' l'unico modo di distinguere una
+    # frase davvero mozza da un falso allarme del rilevatore, e senza le due
+    # stringhe affiancate tarare le soglie sarebbe tirare a indovinare.
+    generation_engine._write_voxcpm_audit("job-9", _job_con_code_tagliate(),
+                                          VOCE, "it", "completed")
+    righe = leggi_code_tagliate(audit_isolato)
+    assert [r["chunk"] for r in righe] == [0, 17]
+    assert righe[0]["capitolo"] == 0
+    assert righe[0]["coda_attesa"] == "in fondo al viale."
+    assert righe[0]["detto"] == "in fondo al"
+    assert righe[0]["job_id"] == "job-9"
+    assert righe[0]["voice_id"] == VOCE
+    assert righe[0]["outcome"] == "completed"
+    assert righe[1]["numeri"] is True
+    # Anche il verdetto della regola della grafia passa la lista bianca: senza
+    # di lui, riaprendo il dataset non si saprebbe perche' quell'allarme e'
+    # rimasto acceso o si e' spento.
+    assert righe[1]["grafia"] == "parola"
+    # Il conteggio resta dov'era: il dataset lo affianca, non lo sostituisce.
+    assert leggi(audit_isolato)[0]["worker_code_tagliate"] == 2
+
+
+def test_il_dataset_delle_code_tagliate_si_scrive_anche_sui_falliti(
+        audit_isolato):
+    # Il difetto va guardato soprattutto sui job morti: sono quelli in cui il
+    # worker ha faticato di piu'.
+    generation_engine._write_voxcpm_audit("job-9", _job_con_code_tagliate(),
+                                          VOCE, "it", "failed")
+    assert [r["outcome"] for r in leggi_code_tagliate(audit_isolato)] == [
+        "failed", "failed"]
+
+
+def test_senza_code_tagliate_il_dataset_non_nasce(audit_isolato):
+    # Sui libri sani il file non deve nemmeno esistere.
+    generation_engine._write_voxcpm_audit("job-9", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    assert list(audit_isolato.glob("voxcpm_code_tagliate_*.jsonl")) == []
+
+
+def test_la_coda_tagliata_prende_il_minuto_nel_libro():
+    # Il capitolo M4B comincia 1,5 s prima del suo PCM (silenzio d'apertura):
+    # la posizione nel capitolo la conta, quella nel libro parte dal PCM.
+    job = {"voxcpm_actual": {"code_tagliate_dettaglio": [
+        {"capitolo": 3, "testa": 40, "chunk": 7, "inizio_s": 62.25},
+        {"capitolo": 4, "testa": 55, "chunk": 1},
+        {"capitolo": 9, "testa": 99, "chunk": 2, "inizio_s": 5.0},
+    ]}}
+    generation_engine._voxcpm_posiziona_code(job, {40: (600000, 598500),
+                                                   55: (900000, 899000)})
+    righe = job["voxcpm_actual"]["code_tagliate_dettaglio"]
+    assert righe[0]["posizione_s"] == pytest.approx(662.25, abs=0.06)
+    assert righe[0]["nel_capitolo_s"] == pytest.approx(63.8, abs=0.1)
+    assert "posizione_s" not in righe[1]
+    assert "posizione_s" not in righe[2]
+
+
+def test_il_minuto_finisce_nel_dataset_delle_code(tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    job = {"voxcpm_actual": {"code_tagliate_dettaglio": [
+        {"capitolo": 3, "testa": 40, "chunk": 7, "coda_attesa": "fine.",
+         "detto": "fi", "titolo": "Tre", "inizio_s": 62.25,
+         "posizione_s": 662.3, "nel_capitolo_s": 63.8}]}}
+    generation_engine._write_voxcpm_tails_dataset(
+        "j1", job, "voxcpm:v2:it-IT/Matteo", "it", "completed")
+    (fp,) = list(tmp_path.glob("voxcpm_code_tagliate_*.jsonl"))
+    rec = json.loads(fp.read_text(encoding="utf-8").strip())
+    assert rec["titolo"] == "Tre"
+    assert rec["posizione_s"] == 662.3
+    assert rec["nel_capitolo_s"] == 63.8
+    assert "testa" not in rec

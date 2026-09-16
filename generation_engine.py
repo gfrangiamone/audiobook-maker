@@ -73,6 +73,7 @@ from audio_utils import (
 from tts_split import (
     _plan_chunks, generate_chunk_mp3,
     _pick_chunk_max_chars, _pick_chunk_max_bytes, _pick_pre_split,
+    _pick_sentence_slack,
     generate_chunk_pcm_gemini, _generate_silence_pcm,
     generate_chunk_pcm_speechify,
     prepare_tts_text, _normalize_shouting,
@@ -123,6 +124,14 @@ LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
 LLM_EMPTY_MAX_RETRIES = _env_int("ABM_LLM_EMPTY_MAX_RETRIES", 2)
+# Un provider in coda risponde 200 subito e poi manda solo commenti SSE di
+# keep-alive: il read timeout non scatta mai e l'errore arriva dopo 15 minuti
+# (incidente 14/09/2026, 19 ottimizzazioni perse). Se entro questa soglia non
+# arriva nessun evento, lo stream si chiude e si ritenta. 0 = disattivato.
+LLM_FIRST_EVENT_TIMEOUT_SEC = _env_float("ABM_LLM_FIRST_EVENT_TIMEOUT_SEC", 90.0)
+# Pausa base prima di ritentare un provider sovraccarico (raddoppia a ogni
+# tentativo): i 1-8 s dei guasti di rete non gli danno il tempo di smaltire.
+LLM_OVERLOAD_BACKOFF_SEC = _env_float("ABM_LLM_OVERLOAD_BACKOFF_SEC", 20.0)
 
 # --- Auto-generazione post-ottimizzazione -----------------------------------
 # Attesa massima di uno slot di generazione libero prima di partire comunque.
@@ -943,6 +952,56 @@ class _EmptyOutputError(Exception):
     """
 
 
+class _LLMStallError(Exception):
+    """Sollevata quando lo stream LLM non emette alcun evento entro
+    LLM_FIRST_EVENT_TIMEOUT_SEC: il provider ha accettato la richiesta ma non
+    ha iniziato a elaborarla (coda da sovraccarico). E' transitoria."""
+
+
+# Frammenti del messaggio con cui il provider rinuncia a una richiesta rimasta
+# in coda ("unable to start processing ... try again later"): errore senza
+# status HTTP, quindi invisibile al controllo per codice.
+_LLM_OVERLOAD_MARKERS = (
+    "unable to start processing", "try again later", "overloaded",
+    "server is busy", "server busy",
+)
+
+
+class _FirstEventWatchdog:
+    """Chiude lo stream se non arriva il primo evento entro `timeout` secondi,
+    o se il job viene annullato mentre si aspetta. Chiudere lo stream da un
+    altro thread sblocca l'iterazione (httpx.ReadError o fine silenziosa):
+    `reason` dice al chiamante perche' e' successo."""
+
+    def __init__(self, stream, timeout, job=None):
+        self.reason = None
+        self._stream = stream
+        self._job = job
+        self._deadline = time.monotonic() + timeout
+        self._poll = max(0.01, min(1.0, timeout / 4.0))
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="llm-first-event-watchdog")
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop.wait(self._poll):
+            if self._job is not None and self._job.get("opt_cancelled"):
+                self.reason = "cancelled"
+            elif time.monotonic() >= self._deadline:
+                self.reason = "stall"
+            else:
+                continue
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            return
+
+    def stop(self):
+        self._stop.set()
+
+
 _LEAK_PREFIX_LEN = 120      # char di "fingerprint" presi dal capo del prompt
 _LEAK_PREFIX_MIN = 60       # soglia minima utile per evitare match casuali su prompt cortissimi
 _LEAK_SEARCH_WINDOW = 400   # finestra iniziale dell'output in cui cercare il prefix (tollera heading saltati)
@@ -1090,6 +1149,7 @@ def _call_llm(user_content, job=None, max_retries=None):
     while attempt < max_retries:
         result_parts = []
         partial_streamed = 0
+        watchdog = None
         try:
             # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort).
             # Su retry anti-leak: temperature un filo piu' alta + reasoning off,
@@ -1115,8 +1175,13 @@ def _call_llm(user_content, job=None, max_retries=None):
                 kwargs.update(llm_thinking_kwargs())
 
             stream = _llm_client.chat.completions.create(**kwargs)
+            if LLM_FIRST_EVENT_TIMEOUT_SEC > 0:
+                watchdog = _FirstEventWatchdog(
+                    stream, LLM_FIRST_EVENT_TIMEOUT_SEC, job)
             call_usage = None
             for event in stream:
+                if watchdog is not None:
+                    watchdog.stop()
                 # Check cancellation during streaming to stop consuming tokens
                 if job is not None and job.get("opt_cancelled"):
                     stream.close()
@@ -1141,6 +1206,15 @@ def _call_llm(user_content, job=None, max_retries=None):
                 if hasattr(event.choices[0].delta, "reasoning_content") and event.choices[0].delta.reasoning_content:
                     if job is not None:
                         job["opt_streamed_chars"] = job.get("opt_streamed_chars", 0) + len(event.choices[0].delta.reasoning_content)
+
+            # Stream chiuso dal watchdog senza eccezione: non e' una risposta
+            # vuota (budget e messaggio sbagliati), e' un provider che non e'
+            # mai partito o un annullamento arrivato durante l'attesa.
+            if watchdog is not None and watchdog.reason == "cancelled":
+                raise _CancelledError("Optimization cancelled while waiting for the LLM")
+            if watchdog is not None and watchdog.reason == "stall":
+                raise _LLMStallError(
+                    f"no event within {LLM_FIRST_EVENT_TIMEOUT_SEC:.0f}s")
 
             raw = "".join(result_parts)
             cleaned = _sanitize_llm_output(raw)
@@ -1222,12 +1296,25 @@ def _call_llm(user_content, job=None, max_retries=None):
         except _CancelledError:
             raise
         except Exception as e:
+            # Eccezione provocata dalla chiusura del watchdog (tipicamente
+            # httpx.ReadError): va letta per la sua causa, non per il tipo.
+            if watchdog is not None and watchdog.reason == "cancelled":
+                raise _CancelledError(
+                    "Optimization cancelled while waiting for the LLM") from e
+            if (watchdog is not None and watchdog.reason == "stall"
+                    and not isinstance(e, _LLMStallError)):
+                e = _LLMStallError(
+                    f"no event within {LLM_FIRST_EVENT_TIMEOUT_SEC:.0f}s")
             last_exc = e
             if job is not None and partial_streamed > 0:
                 job["opt_streamed_chars"] = max(0, job.get("opt_streamed_chars", 0) - partial_streamed)
             err_name = type(e).__name__
+            # Provider sovraccarico: nessun evento in tempo, oppure la rinuncia
+            # esplicita dopo la coda. Transitorio, ma con pause lunghe.
+            overload = isinstance(e, _LLMStallError) or any(
+                m in str(e).lower() for m in _LLM_OVERLOAD_MARKERS)
             # Errori di rete client-side (httpx/openai connection wrappers).
-            transient = any(s in err_name for s in (
+            transient = overload or any(s in err_name for s in (
                 "ReadError", "ConnectError", "ConnectTimeout", "ReadTimeout",
                 "RemoteProtocolError", "APIConnectionError", "APITimeoutError",
             ))
@@ -1245,11 +1332,17 @@ def _call_llm(user_content, job=None, max_retries=None):
                 if isinstance(_sc, int) and _sc in (429, 500, 502, 503, 504):
                     transient = True
             if not transient or attempt >= max_retries - 1:
-                raise
-            wait = 2 ** attempt  # 1, 2, 4, 8 seconds
+                raise e
+            if overload:
+                wait = LLM_OVERLOAD_BACKOFF_SEC * (2 ** attempt)  # 20, 40, 80 s
+            else:
+                wait = 2 ** attempt  # 1, 2, 4, 8 seconds
             print(f"  [LLM] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
             time.sleep(wait)
             attempt += 1
+        finally:
+            if watchdog is not None:
+                watchdog.stop()
     if last_exc:
         raise last_exc
     return "".join(result_parts)
@@ -2263,6 +2356,130 @@ def _send_optimization_email(job_id):
                       "", job.get("browser_lang", ""))
 
 
+def _opt_failed_email_texts(book_title, amount_eur):
+    """i18n email di ottimizzazione testo NON riuscita. Tre varianti della
+    riga di rimborso: `refund_voucher` (ri-accredito sul buono usato),
+    `refund_paypal` (buono di rimborso in email separata), `refund_none`
+    (ottimizzazione gratuita). Mai il codice del buono qui: per PayPal lo
+    porta l'email del buono, per il voucher resta quello gia' in mano."""
+    amt = f"{amount_eur:.2f}"
+    return {
+        "it": {
+            "subject": f"Audiobook Maker — \"{book_title}\" ottimizzazione testo non riuscita",
+            "heading": "&#x26A0;&#xFE0F; Ottimizzazione testo non riuscita",
+            "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine: il servizio di elaborazione non era disponibile. Di solito &egrave; un problema temporaneo: riprova tra un po'.",
+            "btn": "&#x1F504; Riprova",
+            "refund_voucher": f"Nessun addebito: {amt} EUR sono stati ri-accreditati sul buono che hai usato e sono subito disponibili.",
+            "refund_paypal": f"Nessun addebito: riceverai in un'email separata un buono di rimborso da {amt} EUR (o pi&ugrave;).",
+            "refund_none": "L'ottimizzazione era gratuita: non &egrave; stato addebitato nulla.",
+            "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
+        },
+        "en": {
+            "subject": f"Audiobook Maker — \"{book_title}\" text optimization failed",
+            "heading": "&#x26A0;&#xFE0F; Text optimization failed",
+            "body": f"The AI text optimization of <strong>{book_title}</strong> could not be completed: the processing service was unavailable. This is usually temporary: please try again in a while.",
+            "btn": "&#x1F504; Try again",
+            "refund_voucher": f"You have not been charged: {amt} EUR has been credited back to the voucher you used and is available right away.",
+            "refund_paypal": f"You have not been charged: you will receive a refund voucher of {amt} EUR (or more) in a separate email.",
+            "refund_none": "The optimization was free: nothing has been charged.",
+            "footer": "This email was automatically generated by Audiobook Maker.",
+        },
+        "fr": {
+            "subject": f"Audiobook Maker — \"{book_title}\" échec de l'optimisation du texte",
+            "heading": "&#x26A0;&#xFE0F; &Eacute;chec de l'optimisation du texte",
+            "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> n'a pas pu aboutir : le service de traitement n'&eacute;tait pas disponible. C'est g&eacute;n&eacute;ralement temporaire : r&eacute;essayez un peu plus tard.",
+            "btn": "&#x1F504; R&eacute;essayer",
+            "refund_voucher": f"Aucun d&eacute;bit : {amt} EUR ont &eacute;t&eacute; recr&eacute;dit&eacute;s sur le bon utilis&eacute; et sont disponibles imm&eacute;diatement.",
+            "refund_paypal": f"Aucun d&eacute;bit : vous recevrez dans un email s&eacute;par&eacute; un bon de remboursement de {amt} EUR (ou plus).",
+            "refund_none": "L'optimisation &eacute;tait gratuite : rien n'a &eacute;t&eacute; d&eacute;bit&eacute;.",
+            "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
+        },
+        "es": {
+            "subject": f"Audiobook Maker — \"{book_title}\" la optimización de texto ha fallado",
+            "heading": "&#x26A0;&#xFE0F; La optimizaci&oacute;n de texto ha fallado",
+            "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> no se ha podido completar: el servicio de procesamiento no estaba disponible. Suele ser algo temporal: vuelve a intentarlo dentro de un rato.",
+            "btn": "&#x1F504; Reintentar",
+            "refund_voucher": f"No se ha cobrado nada: {amt} EUR se han devuelto al cup&oacute;n que usaste y est&aacute;n disponibles de inmediato.",
+            "refund_paypal": f"No se ha cobrado nada: recibir&aacute;s en un email aparte un cup&oacute;n de reembolso de {amt} EUR (o m&aacute;s).",
+            "refund_none": "La optimizaci&oacute;n era gratuita: no se ha cobrado nada.",
+            "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
+        },
+        "de": {
+            "subject": f"Audiobook Maker — \"{book_title}\" Textoptimierung fehlgeschlagen",
+            "heading": "&#x26A0;&#xFE0F; Textoptimierung fehlgeschlagen",
+            "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> konnte nicht abgeschlossen werden: Der Verarbeitungsdienst war nicht erreichbar. Das ist meist vor&uuml;bergehend: Bitte versuche es sp&auml;ter erneut.",
+            "btn": "&#x1F504; Erneut versuchen",
+            "refund_voucher": f"Es wurde nichts berechnet: {amt} EUR wurden deinem verwendeten Gutschein wieder gutgeschrieben und sind sofort verf&uuml;gbar.",
+            "refund_paypal": f"Es wurde nichts berechnet: Du erh&auml;ltst in einer separaten E-Mail einen Erstattungsgutschein &uuml;ber {amt} EUR (oder mehr).",
+            "refund_none": "Die Optimierung war kostenlos: Es wurde nichts berechnet.",
+            "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
+        },
+        "pt": {
+            "subject": f"Audiobook Maker — \"{book_title}\" falha na otimização de texto",
+            "heading": "&#x26A0;&#xFE0F; Falha na otimiza&ccedil;&atilde;o de texto",
+            "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{book_title}</strong> n&atilde;o p&ocirc;de ser conclu&iacute;da: o servi&ccedil;o de processamento n&atilde;o estava dispon&iacute;vel. Normalmente &eacute; tempor&aacute;rio: tente novamente daqui a pouco.",
+            "btn": "&#x1F504; Tentar novamente",
+            "refund_voucher": f"Nada foi cobrado: {amt} EUR foram devolvidos ao voucher que voc&ecirc; usou e j&aacute; est&atilde;o dispon&iacute;veis.",
+            "refund_paypal": f"Nada foi cobrado: voc&ecirc; receber&aacute; em um e-mail separado um voucher de reembolso de {amt} EUR (ou mais).",
+            "refund_none": "A otimiza&ccedil;&atilde;o era gratuita: nada foi cobrado.",
+            "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
+        },
+        "zh": {
+            "subject": f"Audiobook Maker — \"{book_title}\" 文本优化失败",
+            "heading": "&#x26A0;&#xFE0F; 文本优化失败",
+            "body": f"<strong>{book_title}</strong> 的AI文本优化未能完成：处理服务暂时不可用。这通常是暂时性的问题，请稍后再试。",
+            "btn": "&#x1F504; 重试",
+            "refund_voucher": f"未产生任何费用：{amt} EUR 已退回您使用的优惠券，可立即使用。",
+            "refund_paypal": f"未产生任何费用：您将在另一封邮件中收到价值 {amt} EUR（或更多）的退款优惠券。",
+            "refund_none": "本次优化为免费：未产生任何费用。",
+            "footer": "此邮件由 Audiobook Maker 自动生成。",
+        },
+    }
+
+
+def _send_optimization_failed_email(job_id, job):
+    """Avvisa l'email registrata che l'ottimizzazione e' fallita, dopo il
+    rimborso. Senza questo avviso chi aveva chiesto la notifica aspettava
+    un'email che non sarebbe mai arrivata (ticket del 15/09/2026). Chiamarla
+    solo sui fallimenti, mai sugli annullamenti: chi annulla lo sa gia'."""
+    email = job.get("notify_email")
+    if not email or job.get("opt_fail_email_sent"):
+        return False
+    info = job.get("info")
+    book_title = getattr(info, "title", "") or "Audiobook"
+    lang = job.get("notify_lang", "en")
+    paid = float(job.get("payment_amount_eur", 0) or 0)
+    payment_type = job.get("payment_type", "")
+
+    texts = _opt_failed_email_texts(book_title, paid)
+    t = dict(texts.get(lang, texts["en"]))
+    if paid > 0 and job.get("refund_done") and payment_type == "voucher":
+        t["warn"] = t["refund_voucher"]
+    elif paid > 0 and job.get("refund_done") and payment_type == "paypal":
+        t["warn"] = t["refund_paypal"]
+    elif paid <= 0:
+        t["warn"] = t["refund_none"]
+    else:
+        # Pagato ma rimborso non riuscito: nessuna promessa in email, il caso
+        # e' nei log per l'intervento manuale.
+        t["warn"] = ""
+    retry_url = f"{BASE_URL}/" if BASE_URL else "/"
+    html_body = _email_html_body(t, retry_url)
+
+    try:
+        success = email_service._send_email(email, t["subject"], html_body)
+    except Exception as e:
+        print(f"[{job_id}] optimization-failed email error: {e}", flush=True)
+        success = False
+    if success:
+        job["opt_fail_email_sent"] = True
+    _log_activity(job_id, job.get("original_filename", ""),
+                  "OPT_FAIL_EMAIL_SENT" if success else "OPT_FAIL_EMAIL_FAILED",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  "", job.get("browser_lang", ""))
+    return success
+
+
 # ---------------------------------------------------------------------------
 # Payment refund helper
 # ---------------------------------------------------------------------------
@@ -3081,6 +3298,11 @@ def run_optimization(job_id, selected_chapters=None):
         import traceback
         traceback.print_exc()
         _refund_job_payment(job_id, job, "error")
+        try:
+            _send_optimization_failed_email(job_id, job)
+        except Exception as _e_fail_mail:
+            print(f"[{job_id}] optimization-failed email (non-fatal): "
+                  f"{_e_fail_mail}", flush=True)
         _write_optimization_audit(
             job_id, job, language=lang, chars_total=total_chars,
             outcome="failed_refunded")
@@ -3516,8 +3738,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     PRIMO chunk, e gli altri chunk dello stesso capitolo ricevono un file
     vuoto: `pcm_concat` li concatena in ordine e un pezzo vuoto non aggiunge
     nulla, quindi l'audio esce identico e i marcatori M4B restano allineati.
-    Chiedere al worker le lunghezze dei singoli chunk vorrebbe dire modificare
-    `abm-voxcpm-worker`, che la spec mette fra i non toccati.
+    `rate` e' il cursore del pannello: non si applica da solo ma moltiplica il
+    passo della voce, e il prodotto va al worker come `speed`.
 
     `job`, se passato, riceve `job["voxcpm_actual"]` aggiornato capitolo per
     capitolo, DENTRO lo stesso loop che raccoglie `esiti` (non a fine
@@ -3551,18 +3773,34 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
             "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
             "code_tagliate": 0,
+            # E il giudizio che il worker ha dato a ognuna di quelle code:
+            # coda attesa e coda udita affiancate, con le misure che hanno
+            # deciso. Una riga per difetto, non per capitolo: e' un elenco,
+            # non un contatore, ed e' l'unica cosa che permette di distinguere
+            # una frase davvero mozza da un falso allarme del rilevatore.
+            "code_tagliate_dettaglio": [],
             # Quanto e' servita la verifica delle code sul worker: chunk
             # ascoltati, ritentativi necessari, quelli a cui si e'
             # rinunciato per il tetto, e i giri spesi. Il digest quotidiano
             # vive di questi quattro numeri.
             "verifica_chunk": 0, "verifica_sospetti": 0,
             "verifica_rinunciati": 0, "verifica_giri": 0,
+            # E la curva dei rientri, sommata posizione per posizione sui
+            # capitoli: quanti chunk sono rientrati al primo giro, quanti al
+            # secondo, quanti al terzo. E' l'unico numero che dice se
+            # concedere un giro in piu' paga.
+            "verifica_rientri": [],
             # E di due che dicono quanto lavora la regola dei numeri: le
             # code dove un numero c'era, e quante di quelle avrebbero fatto
             # scattare un allarme se l'ASR non avesse il vizio di riscrivere
             # «millenovecentosessantasette» come «1967». Sono ritentativi
             # non comprati.
             "verifica_numerali": 0, "verifica_falsi_numerali": 0,
+            # E il gemello per la regola della grafia: gli allarmi spenti
+            # perche' l'ASR scriveva la stessa coda in un altro modo. Conto
+            # separato dai numerali perche' e' un altro vizio del
+            # riconoscitore, e i due non si guastano insieme.
+            "verifica_falsi_grafia": 0,
             # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
             # fattura: e' il costo vero del libro, che il conto sui caratteri
             # non puo' vedere.
@@ -3642,6 +3880,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             fasi[ci] = str(riga.get("phase") or "")
             _scrivi_barra()
 
+    # Il passo da chiedere al worker: quello della clip comune della voce,
+    # per il cursore dell'utente (spec 2026-09-14). Una volta per libro.
+    passo = voxcpm_tts.speed_effettiva(voxcpm_tts.passo_di_voce(voice), rate)
+
     def _uno(gruppo):
         ci, indici = gruppo
         if cancelled is not None and cancelled():
@@ -3655,6 +3897,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 # risalire dal file su R2 al job che l'ha prodotto.
                 key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
                 cancelled=cancelled,
+                speed=passo,
                 # Il payload del worker non porta l'indice di capitolo, e non
                 # deve: il capitolo e' un concetto di ABM. La callback lo sa
                 # perche' e' stata costruita per quello.
@@ -3669,18 +3912,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             if cancelled is not None and cancelled():
                 raise _CancelledError("Job cancelled") from None
             raise
-        sr = stats.get("sample_rate") or 48000
-        if voxcpm_tts.apply_rate(dest, rate, sr):
-            # La velocita' ha riscritto il PCM sul posto: dimensione e durata
-            # vanno ricalcolate dal file finale, altrimenti gli "attuali" del
-            # Task 11 non corrispondono all'audio davvero consegnato.
-            try:
-                nbytes = os.path.getsize(dest)
-            except OSError:
-                nbytes = stats.get("bytes", 0)
-            stats = dict(stats)
-            stats["bytes"] = nbytes
-            stats["audio_seconds"] = nbytes / (sr * 2)
+        # Il PCM arriva gia' al passo: lo stira il worker dentro `generate`
+        # e lo echeggia in `stats["speed"]` (spec 2026-09-14, immagine
+        # ef469d6 in produzione). Qui non si tocca: una seconda stiratura
+        # darebbe il passo al quadrato.
         return ci, indici, stats
 
     # `Executor.map` restituisce (e solleva) in ordine di SOTTOMISSIONE: se il
@@ -3739,9 +3974,41 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         for _k in ("verifica_chunk", "verifica_sospetti",
                                    "verifica_rinunciati", "verifica_giri",
                                    "verifica_numerali",
-                                   "verifica_falsi_numerali"):
+                                   "verifica_falsi_numerali",
+                                   "verifica_falsi_grafia"):
                             _va[_k] = int(_va.get(_k, 0) or 0) + int(
                                 stats.get(_k, 0) or 0)
+                        # I rientri si sommano posizione per posizione, non si
+                        # concatenano: il secondo giro di un capitolo e il
+                        # secondo giro di un altro sono lo stesso giro. La
+                        # lista si allunga fino al capitolo che ne ha spesi di
+                        # piu', e resta vuota se nessuno ha misurato niente.
+                        _rientri = stats.get("verifica_rientri") or []
+                        if _rientri:
+                            _acc = list(_va.get("verifica_rientri") or [])
+                            if len(_acc) < len(_rientri):
+                                _acc += [0] * (len(_rientri) - len(_acc))
+                            for _giro, _quanti in enumerate(_rientri):
+                                _acc[_giro] += int(_quanti or 0)
+                            _va["verifica_rientri"] = _acc
+                        # Il dettaglio delle code tagliate si concatena
+                        # invece di sommarsi: ogni riga e' un difetto a se'.
+                        # L'indice del capitolo lo si attacca qui, che e'
+                        # l'unico punto in cui si sa quale capitolo fosse.
+                        _dett = stats.get("code_tagliate_dettaglio") or []
+                        if _dett:
+                            _acc_d = _va.setdefault(
+                                "code_tagliate_dettaglio", [])
+                            for _riga in _dett:
+                                _riga = dict(_riga)
+                                _riga["capitolo"] = ci
+                                # Il primo chunk del capitolo nel piano: e'
+                                # la chiave con cui l'assemblaggio sa dove
+                                # comincia il suo PCM nel libro.
+                                _riga["testa"] = indici[0]
+                                _riga["titolo"] = str(
+                                    plan[indici[0]].get("chapter_title") or "")
+                                _acc_d.append(_riga)
                         # `setdefault`: un job aperto da una versione
                         # precedente ha un `voxcpm_actual` senza la chiave.
                         _va.setdefault("runpod", []).extend(
@@ -3756,7 +4023,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                             "chars": 0, "audio_seconds": 0.0,
                             "tts_seconds": 0.0, "jobs": 0, "redone": 0,
                             "bounced": 0, "failed_chunks": 0,
-                            "code_tagliate": 0, "bytes": 0,
+                            "code_tagliate": 0,
+                            "code_tagliate_dettaglio": [], "bytes": 0,
                             "runpod": []}
             # I capitoli tornano in ordine di completamento, non di indice: il
             # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
@@ -3908,6 +4176,36 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
                     accent = "%s (%s)" % (chosen, codes[chosen])
             except Exception:
                 pass
+        elif engine == "voxcpm":
+            # Il voice id VoxCPM non e' una locale con dentro il nome, come
+            # quelli Edge: e' `voxcpm:v2:<locale>/<Nome>`. Spezzarlo sui
+            # trattini nel ramo Edge scriveva l'id intero dentro
+            # `abm_language` e lasciava `abm_model` vuoto (M4B consegnati il
+            # 15/09/2026 con `abm_language=voxcpm:v2:it-IT/Lorenzo`).
+            model_label = getattr(voxcpm_tts, "MODEL_LABEL", "") or model_label
+            if voice_id.startswith("voxcpm:mine:"):
+                # Voce campione: non e' nel catalogo e il suo nome e' roba del
+                # proprietario. Nei tag va un'etichetta neutra, e la lingua la
+                # sa solo il record (vedi voice_clone.py).
+                voice_name = "user-voice"
+                try:
+                    import voice_clone as _vcl
+                    language = _vcl.language_of(voice_id) or ""
+                except Exception:
+                    pass
+            else:
+                try:
+                    import voxcpm_catalog
+                    rec = voxcpm_catalog.parse_voice_id(voice_id)
+                    voice_name = voxcpm_catalog._display_name(rec)
+                    # Come per Simba: l'accento non e' un parametro a se', e' la
+                    # locale della voce (il filtro ACCENTO sceglie fra le varianti).
+                    language = rec["locale"] or ""
+                    accent = language
+                except Exception:
+                    # Voce sparita dal catalogo dopo una rigenerazione (§9.4): non
+                    # e' un errore, restano l'id e la lingua del libro.
+                    pass
         elif engine == "speechify":
             try:
                 _mk, _vn, _loc = speechify_tts.parse_voice_id(voice_id)
@@ -3918,20 +4216,6 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
                 # della voce scelta (il dropdown accento filtra le voci).
                 language = _loc or ""
                 accent = _loc or ""
-            except Exception:
-                pass
-        elif engine == "voxcpm":
-            try:
-                import voxcpm_catalog as _vcat
-                model_label = getattr(_vcat, "MODEL_LABEL", "") or "VoxCPM2"
-                if voice_id.startswith("voxcpm:mine:"):
-                    import voice_clone as _vcl
-                    voice_name = "user-voice"
-                    language = _vcl.language_of(voice_id) or ""
-                else:
-                    _rec = _vcat.parse_voice_id(voice_id)
-                    voice_name = _rec.get("name") or voice_id
-                    language = _rec.get("locale") or ""
             except Exception:
                 pass
         else:
@@ -4483,6 +4767,100 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
 
 
+# Il dataset delle code tagliate e' un file a parte, non una colonna in piu'
+# nell'audit dei costi: quello ha una riga per job ed e' letto dagli
+# aggregati, questo ne ha una per difetto e serve solo a guardarci dentro.
+# Mensile e append-only come l'altro, sotto la stessa data dir.
+_CODE_TAGLIATE_LOCK = threading.Lock()
+# I campi del giudizio del worker che valgono la pena di essere conservati,
+# nell'ordine in cui si leggono. Fuori da questa lista non passa niente: il
+# worker puo' aggiungere chiavi sue, e un dataset che cambia forma da solo non
+# si analizza piu'.
+_CODE_TAGLIATE_CAMPI = ("coda_attesa", "detto", "scoperti", "scoperti_grezzi",
+                        "caduta", "silenzio_ms", "resa", "livello", "mozza",
+                        "conclamato", "fioco", "numeri", "grafia", "sospetto")
+# I campi scritti dall'app, non dal worker: dove sta la coda nel libro, per
+# poterla ascoltare (vedi `_voxcpm_posiziona_code`).
+_CODE_TAGLIATE_POSIZIONE = ("titolo", "inizio_s", "posizione_s",
+                            "nel_capitolo_s")
+
+
+def _voxcpm_posiziona_code(job, inizi_ms):
+    """Dove sta nel libro ogni coda tagliata. Non fatale.
+
+    `inizi_ms` mappa il primo chunk di un capitolo alla coppia (inizio del
+    suo PCM nel libro, inizio del capitolo M4B), in millisecondi. Il capitolo
+    M4B comincia prima del PCM — c'e' il silenzio d'apertura — e l'admin il
+    capitolo lo apre dal lettore: gli servono entrambe le misure.
+
+    Aggiunge a ogni riga `posizione_s` (dall'inizio del libro) e
+    `nel_capitolo_s` (dall'inizio del capitolo). Le righe senza `inizio_s`
+    (worker che non manda `chunk_samples`) restano senza: meglio nessun
+    minuto che il minuto sbagliato.
+    """
+    try:
+        for r in ((job.get("voxcpm_actual") or {}).get(
+                "code_tagliate_dettaglio") or []):
+            coppia = inizi_ms.get(r.get("testa"))
+            if coppia is None or r.get("inizio_s") is None:
+                continue
+            pcm_ms, cap_ms = coppia
+            pos = pcm_ms / 1000.0 + float(r["inizio_s"])
+            r["posizione_s"] = round(pos, 1)
+            r["nel_capitolo_s"] = round(pos - cap_ms / 1000.0, 1)
+    except Exception as e:
+        print(f"voxcpm: posizione delle code tagliate non calcolata "
+              f"(non fatale): {e}")
+
+
+def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
+    """Una riga JSONL per ogni coda consegnata ancora tagliata. Non fatale.
+
+    Il worker spende tutti i suoi giri su questi chunk e poi li consegna
+    comunque: il conteggio nell'audit dice che il difetto c'e', ma non che
+    cosa sia. Qui finisce il giudizio per esteso — la coda come l'avrebbe
+    dovuta leggere e la coda come l'ASR l'ha sentita, affiancate — perche'
+    senza vedere quelle due stringhe una accanto all'altra non si distingue
+    una frase davvero mozza da un falso allarme del rilevatore, e tarare
+    soglie alla cieca costa un giro di GPU per ogni ipotesi sbagliata.
+
+    Scrive solo se c'e' qualcosa da scrivere: sui libri sani il file non
+    nasce nemmeno.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        righe = (job.get("voxcpm_actual") or {}).get(
+            "code_tagliate_dettaglio") or []
+        if not righe:
+            return
+        ora = datetime.now(timezone.utc)
+        base = Path(os.environ.get("ABM_DATA_DIR", "."))
+        fp = base / f"voxcpm_code_tagliate_{ora.strftime('%Y-%m')}.jsonl"
+        ts = ora.isoformat()
+        blocco = []
+        for r in righe:
+            # `if ... is None` e non `or`: il capitolo 0 e il chunk 0
+            # esistono, e un `or -1` li trasformerebbe in "non lo so".
+            _cap = r.get("capitolo")
+            _chk = r.get("chunk")
+            rec = {"ts": ts, "job_id": job_id, "voice_id": voice_id,
+                   "language": language, "outcome": outcome,
+                   "capitolo": -1 if _cap is None else int(_cap),
+                   "chunk": -1 if _chk is None else int(_chk)}
+            for k in _CODE_TAGLIATE_CAMPI + _CODE_TAGLIATE_POSIZIONE:
+                if k in r:
+                    rec[k] = r[k]
+            blocco.append(json.dumps(rec, ensure_ascii=False,
+                                     separators=(",", ":")))
+        with _CODE_TAGLIATE_LOCK:
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            with open(fp, "a", encoding="utf-8") as f:
+                f.write("\n".join(blocco) + "\n")
+    except Exception as e:
+        print(f"[{job_id}] voxcpm tails dataset write failed (non-fatal): {e}")
+
+
 def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
     """Append audit record al termine di un job VoxCPM. Best-effort, non fatale.
 
@@ -4650,6 +5028,13 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "worker_verify_rinunciati": int(
                 actual.get("verifica_rinunciati", 0) or 0),
             "worker_verify_giri": int(actual.get("verifica_giri", 0) or 0),
+            # La progressione del recupero: quanti chunk sono rientrati al
+            # primo giro, quanti al secondo, e cosi' via. E' la sola misura
+            # che dice se un giro in piu' pagherebbe — `code_tagliate` conta
+            # chi non e' rientrato, non chi sarebbe rientrato. Lista vuota
+            # sui worker che non la mandano: zeri direbbero un'altra cosa.
+            "worker_verify_rientri": [
+                int(x or 0) for x in (actual.get("verifica_rientri") or [])],
             # Gli allarmi che la regola dei numeri ha spento prima che
             # diventassero ritentativi. Non sono difetti evitati: sono
             # difetti che non c'erano.
@@ -4657,6 +5042,14 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
                 actual.get("verifica_numerali", 0) or 0),
             "worker_verify_falsi_numerali": int(
                 actual.get("verifica_falsi_numerali", 0) or 0),
+            # Lo stesso per la regola della grafia: gli allarmi spenti perche'
+            # l'ASR aveva scritto la stessa coda in un altro modo («di se»
+            # dove il testo dice «disse»). Vale la pena contarli a parte dai
+            # numerali: sono due difetti diversi del riconoscitore, e se una
+            # lingua nuova ne facesse impazzire uno solo, il totale unico non
+            # lo direbbe.
+            "worker_verify_falsi_grafia": int(
+                actual.get("verifica_falsi_grafia", 0) or 0),
         }
         _reused_n = int(job.get("chunks_reused", 0) or 0)
         if _reused_n:
@@ -4670,6 +5063,9 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             rec["cancel_partial_audio_delivered"] = bool(
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
+        # Dopo l'audit e non al posto suo: sono due file con due scopi, e il
+        # secondo non deve poter far mancare il primo.
+        _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome)
         _free_thr = voxcpm_tts.free_threshold_eur()
         if outcome == "completed" and charged <= 0.0 and should_have_been > _free_thr:
             print(f"[{job_id}] AUDIT WARNING: completed VoxCPM job sopra soglia "
@@ -5623,7 +6019,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         _strip_square = not bool(job.get("read_square_brackets", False))
         plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes,
                             strip_round=_strip_round, strip_square=_strip_square,
-                            pre_split=_pick_pre_split(voice))
+                            pre_split=_pick_pre_split(voice),
+                            sentence_slack=_pick_sentence_slack(voice))
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
         job["gemini_actual"] = {
             "input_tokens": 0,
@@ -5819,13 +6216,22 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["total_chapters"] = len(info.chapters)
 
         def _check_cancelled():
-            """Controlla se il job e stato cancellato o il client disconnesso."""
+            """Controlla se il job e stato cancellato o il client disconnesso.
+
+            Annota in job["cancel_reason"] il PERCHE': "superseded" (nuova
+            epoch), "user" (annullamento esplicito) o "heartbeat" (client
+            sparito). Serve a valle per non scrivere all'utente che ha
+            annullato lui quando l'annullamento e' automatico.
+            """
             if job.get("gen_epoch", 0) != my_epoch:
                 print(f"[{job_id}] _check_cancelled: epoch mismatch "
                       f"(job={job.get('gen_epoch')}, my={my_epoch})")
+                job["cancel_reason"] = "superseded"
                 return True
             if job.get("cancelled"):
                 print(f"[{job_id}] _check_cancelled: explicit cancel flag")
+                job.setdefault("cancel_reason",
+                               "abuse" if job.get("abuse_terminated") else "user")
                 return True
             if job.get("email_registered"):
                 return False
@@ -5835,6 +6241,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             if idle > 60:
                 print(f"[{job_id}] _check_cancelled: heartbeat timeout "
                       f"({idle:.0f}s idle > 60s)")
+                job["cancel_reason"] = "heartbeat"
                 return True
             return False
 
@@ -6108,6 +6515,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # all'interno di un capitolo, sia come primo chunk di un capitolo
             # nuovo senza silence_path: in questo caso l'ascoltatore sente
             # ~gap_ms di silenzio in testa al cap, che e` esteticamente OK).
+            #
+            # Dove comincia nel libro il PCM dei capitoli VoxCPM che hanno
+            # code tagliate: serve a dire all'admin da che minuto ascoltarle.
+            # Solo quei capitoli, non tutti: e' un indirizzo, non un indice.
+            _vox_inizi_ms = {}
+            _vox_teste_difettose = set()
+            if use_voxcpm:
+                for _r in ((job.get("voxcpm_actual") or {}).get(
+                        "code_tagliate_dettaglio") or []):
+                    if _r.get("testa") is not None:
+                        _vox_teste_difettose.add(_r["testa"])
             for i, block in enumerate(plan):
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
@@ -6168,6 +6586,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     current_ms += gap_ms_inter
                     if m4b_chapters:
                         m4b_chapters[-1]["end"] += gap_ms_inter
+                if i in _vox_teste_difettose:
+                    _vox_inizi_ms[i] = (current_ms,
+                                        m4b_chapters[-1]["start"] if m4b_chapters else 0)
                 all_parts.append(part_path)
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
@@ -6192,6 +6613,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
             if m4b_chapters:
                 m4b_chapters[-1]["end"] = current_ms
+
+            if _vox_inizi_ms:
+                _voxcpm_posiziona_code(job, _vox_inizi_ms)
 
             print(f"[{job_id}] All chunks processed: {total_chunks} total, {failed_chunks} failed")
             job["progress_message"] = "Merging audio..."
@@ -7069,6 +7493,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                         job.get("original_filename", "")),
                             download_url=partial_download_url,
                             lang=job.get("browser_lang", "it"),
+                            # L'utente non ha annullato nulla se e' stato
+                            # l'heartbeat (o un'altra causa automatica) a
+                            # chiudere il job: il testo dell'email cambia.
+                            auto_cancel=(job.get("cancel_reason", "user")
+                                         != "user"),
                         )
                     except Exception as e:
                         print(f"[{job_id}] cancel partial email failed: {e}")

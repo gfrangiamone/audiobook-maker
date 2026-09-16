@@ -59,8 +59,12 @@ def test_l_ascolto_e_un_box_compatto_con_volume_unico():
     # §17.4: niente player nativi doppi — bottoni custom cablati in JS
     # (addEventListener, mai onclick inline), tre <audio> nudi e un solo
     # regolatore di volume per tutti.
+    # Il blocco finisce dove comincia il box dell'anteprima: da quando
+    # l'ascolto e' entrato nella .preview-cost-row, #previewSection e' il
+    # fratello che lo segue (prima il confine era #advOptions, che ora lo
+    # precede).
     i = HTML.find('id="voxcpmSampleRow"')
-    j = HTML.find('id="advOptions"', i)
+    j = HTML.find('id="previewSection"', i)
     assert i != -1 and j != -1
     blocco = HTML[i:j]
     assert "voxcpm-listen-box" in blocco

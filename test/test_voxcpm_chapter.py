@@ -187,6 +187,142 @@ def test_la_normalizzazione_a_monte_e_solo_di_voxcpm():
     assert tts_split._pick_pre_split("") is None
 
 
+# -- Il taglio a meta' frase ---------------------------------------------
+#
+# Collaudo dell'11/9/2026. La frase che supera il cap viene spezzata sulle
+# virgole, e il pezzo se ne va con la virgola sospesa in coda: VoxCPM quel
+# segno lo pronuncia («il piu' delle volte» + «punto» + «a favore dell'affare
+# umano») e fra i due enunciati concatenati restano in fila la coda di
+# silenzio del primo e l'attacco del secondo, una pausa piu' lunga di un punto
+# fermo. Due rimedi: la frase che sfora di poco non si spezza, e la coda
+# sospesa non parte per il worker.
+
+# 308 caratteri: sopra il cap di 280, sotto il tetto con lo sforamento (322).
+# E' la frase del collaudo, quella che normalizza_puntini ha reso una sola
+# fondendo le due meta' attorno ai puntini.
+SFORA_DI_POCO = (
+    "Ma se paragoniamo la nostra attenzione, la serieta della nostra ricerca, "
+    "il nostro desiderio di conoscere all'attenzione, alla serieta, al "
+    "desiderio che portiamo nel trovare tal ragguaglio o tale aiuto di cui "
+    "abbiamo bisogno per un affare umano, il paragone e, il piu delle volte, "
+    "a favore dell'affare umano."
+)
+
+
+def test_la_frase_che_sfora_di_poco_non_si_spezza():
+    assert 280 < len(SFORA_DI_POCO) <= int(280 * 1.15)
+    intero = tts_split.split_text_into_chunks(
+        SFORA_DI_POCO, max_chars=280,
+        sentence_slack=tts_split._VOXCPM_SENTENCE_SLACK)
+    assert intero == [SFORA_DI_POCO]
+    # Senza deroga il taglio cade su una virgola, ed e' il difetto.
+    spezzato = tts_split.split_text_into_chunks(SFORA_DI_POCO, max_chars=280)
+    assert len(spezzato) == 2
+    assert spezzato[0].endswith(",")
+
+
+def test_la_frase_lunga_non_lascia_un_moncone_in_fondo():
+    """Riempire fino al cap lascia in fondo un orfano di poche parole.
+
+    Un frammento corto il modello lo legge senza contesto, con la cadenza
+    sbagliata. Il taglio precedente arretra, e il numero di pezzi — cioe' di
+    giunzioni da cucire — resta quello.
+    """
+    frase = ", ".join([f"parola numero {i} di una parte di media misura"
+                       for i in range(7)]) + "."
+    pezzi = tts_split.split_text_into_chunks(frase, max_chars=140)
+    assert len(pezzi) == 3                       # 321 caratteri / 140
+    assert min(len(p) for p in pezzi) >= 80, [len(p) for p in pezzi]
+
+
+def test_il_taglio_preferisce_il_segno_forte():
+    """Fra un punto e virgola e una virgola piu' in la', vince il primo."""
+    frase = ("Il primo membro del periodo dura un centinaio di caratteri "
+             "buoni e si chiude sul punto e virgola; poi comincia il secondo "
+             "membro, che prosegue con una virgola, e ancora, fino alla fine "
+             "del periodo.")
+    pezzi = tts_split.split_text_into_chunks(frase, max_chars=140)
+    assert len(pezzi) == 2
+    assert pezzi[0].endswith(";"), pezzi[0]
+
+
+def test_lo_sforamento_non_gonfia_i_chunk():
+    """La deroga e' per la frase singola, non per l'accumulo di frasi."""
+    frase = "Frase da quaranta caratteri buoni, si."
+    testo = " ".join([frase.strip()] * 20)
+    chunks = tts_split.split_text_into_chunks(
+        testo, max_chars=280,
+        sentence_slack=tts_split._VOXCPM_SENTENCE_SLACK)
+    assert chunks, "nessun chunk"
+    assert all(len(c) <= 280 for c in chunks), [len(c) for c in chunks]
+
+
+def test_lo_sforamento_non_sfonda_il_cap_byte():
+    """Il cap byte e' un limite dell'API: la deroga non lo tocca."""
+    chunks = tts_split.split_text_into_chunks(
+        SFORA_DI_POCO, max_chars=280, max_bytes=290,
+        sentence_slack=tts_split._VOXCPM_SENTENCE_SLACK)
+    assert all(len(c.encode("utf-8")) <= 290 for c in chunks)
+    assert len(chunks) > 1
+
+
+def test_lo_sforamento_e_solo_di_voxcpm():
+    assert tts_split._pick_sentence_slack(VOCE) > 0
+    assert tts_split._pick_sentence_slack("it-IT-ElsaNeural") == 0.0
+    assert tts_split._pick_sentence_slack("gemini:flash25:it-IT/Kore") == 0.0
+    assert tts_split._pick_sentence_slack("") == 0.0
+
+
+@pytest.mark.parametrize("testo,atteso", [
+    ("il paragone e, il piu delle volte,", "il paragone e, il piu delle volte"),
+    ("una premessa:", "una premessa"),
+    ("un inciso;", "un inciso"),
+    # Spazi e segni in fila: si toglie tutto quel che resta sospeso.
+    ("la frase continua , ", "la frase continua"),
+    # I terminatori veri non si toccano: li' la pausa e' dovuta.
+    ("Fine del periodo.", "Fine del periodo."),
+    ("Davvero?", "Davvero?"),
+    ("Non lo so…", "Non lo so…"),
+    # Una virgoletta dopo la virgola non e' una coda sospesa.
+    ('disse "vieni",', 'disse "vieni"'),
+    # Non si restituisce mai il vuoto.
+    (",", ","),
+    ("", ""),
+])
+def test_pulisci_coda(testo, atteso):
+    assert voxcpm_tts.pulisci_coda(testo) == atteso
+
+
+def test_la_coda_sospesa_non_arriva_al_worker(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok())
+    monkeypatch.setattr(voxcpm_tts, "run_job", finto)
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    voxcpm_tts.synthesize_chapter(
+        ["il paragone e, il piu delle volte,", "a favore dell'affare umano."],
+        VOCE, str(tmp_path / "cap.pcm"))
+    assert finto.payload[0]["input"]["chunks"] == [
+        "il paragone e, il piu delle volte", "a favore dell'affare umano."]
+
+
+def test_il_segno_tolto_viaggia_a_parte(tmp_path, monkeypatch):
+    """Il worker deve sapere su che segno cadeva il taglio.
+
+    Il testo gli arriva gia' ripulito: senza questo elenco non distinguerebbe
+    una virgola sospesa da un taglio in mezzo a un sintagma, e la pausa che le
+    due cose meritano e' diversa.
+    """
+    finto = FintoRunJob(esito_ok())
+    monkeypatch.setattr(voxcpm_tts, "run_job", finto)
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    voxcpm_tts.synthesize_chapter(
+        ["il paragone e, il piu delle volte,", "una premessa lunga:",
+         "a favore dell'affare umano."],
+        VOCE, str(tmp_path / "cap.pcm"))
+    inp = finto.payload[0]["input"]
+    assert inp["giunti"] == [",", ":", ""]
+    assert len(inp["giunti"]) == len(inp["chunks"])
+
+
 def test_prompt_text_e_la_trascrizione_esatta(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok())
     sintetizza(finto, tmp_path, monkeypatch)
@@ -202,6 +338,31 @@ def test_il_payload_dice_al_worker_che_lingua_legge(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok())
     sintetizza(finto, tmp_path, monkeypatch)
     assert finto.payload[0]["input"]["language"] == "it"
+
+
+def test_il_payload_porta_il_passo_se_richiesto(tmp_path, monkeypatch):
+    # Il worker stira da se' (spec 2026-09-14): il chiamante manda il
+    # prodotto gia' calcolato, non il passo della voce e il cursore separati.
+    finto = FintoRunJob(esito_ok(speed=0.968))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch, speed=0.968)
+    assert finto.payload[0]["input"]["speed"] == 0.968
+    assert stats["speed"] == 0.968
+
+
+def test_senza_speed_il_payload_non_lo_porta(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok())
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert "speed" not in finto.payload[0]["input"]
+    assert "speed" not in stats
+
+
+def test_immagine_vecchia_non_echeggia_speed(tmp_path, monkeypatch):
+    # Un worker che ignora `speed` non lo rimanda: le stats non lo portano,
+    # e chi legge il registro del job vede che il passo non e' stato applicato.
+    finto = FintoRunJob(esito_ok())
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch, speed=0.93)
+    assert finto.payload[0]["input"]["speed"] == 0.93
+    assert "speed" not in stats
 
 
 def test_code_tagliate_dal_worker_nelle_misure(tmp_path, monkeypatch):
@@ -230,6 +391,70 @@ def test_code_tagliate_solo_del_tentativo_consegnato(tmp_path, monkeypatch):
         esito_ok(chunks_difettosi=[2]))
     stats, _ = sintetizza(finto, tmp_path, monkeypatch)
     assert stats["code_tagliate"] == 1
+
+
+def test_il_giudizio_delle_code_tagliate_arriva_nelle_misure(
+        tmp_path, monkeypatch):
+    # Il worker allega il giudizio per ogni chunk che ha consegnato difettoso:
+    # senza la coda attesa e quella udita affiancate, il conteggio dice che il
+    # difetto c'e' ma non che cosa sia, e finora l'app buttava via il blocco.
+    finto = FintoRunJob(esito_ok(
+        chunks_difettosi=[0, 2],
+        verify_details={
+            "0": {"detto": "prima fra", "scoperti": 3, "scoperti_grezzi": 3,
+                  "caduta": -14.0, "silenzio_ms": 0, "resa": 1.1,
+                  "livello": -21.0, "mozza": True, "conclamato": True,
+                  "fioco": False, "numeri": False, "sospetto": True},
+            "2": {"detto": "terza frase.", "scoperti": 0, "caduta": -11.0,
+                  "mozza": False, "conclamato": False},
+        }))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    dett = stats["code_tagliate_dettaglio"]
+    assert [d["chunk"] for d in dett] == [0, 2]
+    assert dett[0]["coda_attesa"] == "Prima frase."
+    assert dett[0]["detto"] == "prima fra"
+    assert dett[0]["caduta"] == -14.0
+    assert dett[0]["mozza"] is True
+    # Il secondo giudizio non ha tutte le chiavi: passano quelle che ci sono,
+    # senza inventare zeri per le altre.
+    assert dett[1]["detto"] == "terza frase."
+    assert "silenzio_ms" not in dett[1]
+
+
+def test_senza_giudizio_del_worker_resta_la_coda_attesa(tmp_path, monkeypatch):
+    # Un worker di una versione precedente non manda `verify_details`: la riga
+    # con l'indice e la coda attesa e' comunque piu' di zero.
+    finto = FintoRunJob(esito_ok(chunks_difettosi=[1]))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["code_tagliate_dettaglio"] == [
+        {"chunk": 1, "coda_attesa": "Seconda frase.", "detto": ""}]
+
+
+def test_senza_code_tagliate_il_dettaglio_e_vuoto(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok())
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["code_tagliate_dettaglio"] == []
+
+
+def test_i_rientri_per_giro_arrivano_nelle_misure(tmp_path, monkeypatch):
+    # La curva del recupero: cinque chunk sono tornati sani al primo giro, due
+    # al secondo, uno al terzo. E' la sola misura che dice se un giro in piu'
+    # pagherebbe, e finora il worker la mandava e nessuno la leggeva.
+    finto = FintoRunJob(esito_ok(verify={
+        "chunks_verificati": 40, "giri": 3, "rientri_per_giro": [5, 2, 1]}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_rientri"] == [5, 2, 1]
+    assert stats["verifica_giri"] == 3
+
+
+def test_worker_senza_rientri_lascia_la_lista_vuota(tmp_path, monkeypatch):
+    # Un'immagine precedente non manda il campo: lista vuota, non una lista di
+    # zeri. Gli zeri direbbero «nessuno e' rientrato», che e' il contrario di
+    # «non lo sappiamo».
+    finto = FintoRunJob(esito_ok(verify={"chunks_verificati": 40, "giri": 2}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_rientri"] == []
+    assert stats["verifica_giri"] == 2
 
 
 def test_l_audio_finisce_nel_file(tmp_path, monkeypatch):
@@ -330,6 +555,45 @@ def test_coda_satura_non_si_ritenta(tmp_path, monkeypatch):
     with pytest.raises(voxcpm_tts.VoxcpmCodaSatura):
         sintetizza(finto, tmp_path, monkeypatch)
     assert len(finto.payload) == 1
+
+
+def test_capitolo_mai_sottomesso_si_risottomette(tmp_path, monkeypatch):
+    # 15/09/2026: la POST /run cadeva su TLS, il `VoxcpmJobError` nudo non
+    # trovava un ramo e portava giu' il libro intero all'86%. Il job non e'
+    # mai partito: nessuna GPU spesa, quindi concorrenza invariata e budget
+    # dei silenzi intatto.
+    finto = FintoRunJob(
+        voxcpm_tts.VoxcpmSottomissioneFallita("esauriti i tentativi"),
+        esito_ok())
+    stats, dest = sintetizza(finto, tmp_path, monkeypatch)
+    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 32]
+    assert stats["redone"] == 0
+    assert os.path.getsize(dest) == 200
+
+
+def test_risottomissioni_a_oltranza_si_arrendono(tmp_path, monkeypatch):
+    troppe = [voxcpm_tts.VoxcpmSottomissioneFallita("rete giu'")
+              for _ in range(voxcpm_tts.SUBMIT_CHAPTER_RETRIES + 2)]
+    finto = FintoRunJob(*troppe)
+    with pytest.raises(voxcpm_tts.VoxcpmSottomissioneFallita):
+        sintetizza(finto, tmp_path, monkeypatch)
+    # Il budget e' SUBMIT_CHAPTER_RETRIES risottomissioni oltre al primo
+    # tentativo vero, come per i rimbalzi e per le riconsegne.
+    assert len(finto.payload) == voxcpm_tts.SUBMIT_CHAPTER_RETRIES + 1
+
+
+def test_fra_due_sottomissioni_si_aspettano_minuti(tmp_path, monkeypatch):
+    # Se la rete e' stata giu' per i tre minuti interi di `_submit`, non
+    # torna nell'attimo dopo: rilanciare subito spenderebbe il budget a
+    # vuoto. La pausa cresce a ogni giro.
+    pause = []
+    monkeypatch.setattr(voxcpm_tts, "_dormi", pause.append)
+    monkeypatch.setattr(voxcpm_tts, "run_job", FintoRunJob(
+        voxcpm_tts.VoxcpmSottomissioneFallita("rete giu'"),
+        voxcpm_tts.VoxcpmSottomissioneFallita("rete giu'"),
+        esito_ok()))
+    voxcpm_tts.synthesize_chapter(CHUNKS, VOCE, str(tmp_path / "cap.pcm"))
+    assert pause == [60, 120]
 
 
 def test_con_r2_acceso_l_audio_passa_dalla_put_firmata(tmp_path, monkeypatch):
@@ -742,3 +1006,20 @@ def test_invalidare_il_catalogo_svuota_la_cache_dei_campioni(tmp_path, monkeypat
 
     voxcpm_tts.clone_block(VOCE)
     assert letture["n"] == 2
+
+
+def test_la_coda_tagliata_sa_dove_comincia_nel_capitolo():
+    # I campioni dei chunk (48 kHz, dopo lo stretch) fissano l'inizio di
+    # ciascuno dentro il PCM del capitolo: e' il minuto da cui ascoltarla.
+    dett = voxcpm_tts._dettaglio_code_tagliate(
+        [2], {}, CHUNKS, campioni=[48000, 96000, 24000], sample_rate=48000)
+    assert dett[0]["inizio_s"] == 3.0
+
+
+def test_senza_campioni_coerenti_niente_minuto():
+    # Un conteggio che non torna coi chunk darebbe un minuto sbagliato.
+    dett = voxcpm_tts._dettaglio_code_tagliate(
+        [1], {}, CHUNKS, campioni=[48000, 96000], sample_rate=48000)
+    assert "inizio_s" not in dett[0]
+    dett = voxcpm_tts._dettaglio_code_tagliate([1], {}, CHUNKS)
+    assert "inizio_s" not in dett[0]

@@ -12,9 +12,19 @@ import pytest
 
 import chunk_reuse
 import generation_engine
+import voxcpm_catalog
 import voxcpm_tts
 
 VOCE = "voxcpm:v2:it-IT/Stefano"
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "voxcpm_catalog")
+
+
+@pytest.fixture(autouse=True)
+def catalogo_di_prova(monkeypatch):
+    # `passo_di_voce` deve leggere la fixture (Stefano a 0,88), non il
+    # catalogo di produzione.
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", FIXTURE)
+    voxcpm_catalog.invalidate_cache()
 
 
 def blocco(testo, capitolo):
@@ -85,24 +95,28 @@ class FintaSintesi:
 
     def __call__(self, chunks, voice_id, dest_path, **kw):
         self.chiamate.append({"chunks": list(chunks), "voice": voice_id,
-                              "dest": dest_path, "key": kw.get("key", "")})
+                              "dest": dest_path, "key": kw.get("key", ""),
+                              "speed": kw.get("speed")})
         if self.errore:
             raise self.errore
         with open(dest_path, "wb") as f:
             f.write(b"\x11\x22" * len(chunks))
-        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
-                "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
-                "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
-                "bytes": 2 * len(chunks),
-                "runpod": [{"exec_s": 30.0, "queue_s": 1.0, "worker": "w1",
-                            "gpu": "NVIDIA RTX PRO 6000 MIG 1g.24gb"}]}
+        out = {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+               "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
+               "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
+               "bytes": 2 * len(chunks),
+               "runpod": [{"exec_s": 30.0, "queue_s": 1.0, "worker": "w1",
+                           "gpu": "NVIDIA RTX PRO 6000 MIG 1g.24gb"}]}
+        # Il worker echeggia il passo che ha applicato (spec 2026-09-14).
+        if kw.get("speed") is not None:
+            out["speed"] = kw.get("speed")
+        return out
 
 
 @pytest.fixture
 def sintesi_finta(monkeypatch):
     f = FintaSintesi()
     monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
-    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
     monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")   # deterministico nei test
     return f
 
@@ -170,18 +184,28 @@ def test_annullamento_ferma_le_accensioni(tmp_path, sintesi_finta):
     assert sintesi_finta.chiamate == []
 
 
-def test_la_velocita_si_applica_al_pcm_del_capitolo(tmp_path, monkeypatch):
+def test_il_worker_riceve_il_passo_della_voce_per_il_cursore(tmp_path, sintesi_finta):
+    # Stefano sta a 0,88 nella fixture; +10% sul passo che si ascolta = 0,968.
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+10%", tmp_path, "job-1", set())
+    assert [c["speed"] for c in sintesi_finta.chiamate] == [0.968, 0.968, 0.968]
+
+
+def test_il_pre_pass_non_stira_il_pcm_del_worker(tmp_path, monkeypatch):
+    # Il worker consegna il PCM gia' al passo e lo echeggia: l'app non deve
+    # toccarlo. Stirarlo ancora darebbe 0,93 al quadrato, l'errore piu'
+    # facile da fare qui; `apply_rate` non va chiamata affatto.
     f = FintaSintesi()
     monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
     monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
     applicate = []
     monkeypatch.setattr(voxcpm_tts, "apply_rate",
-                        lambda p, r, sr: applicate.append((os.path.basename(p), r, sr)))
-    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+15%", tmp_path, "job-1", set())
-    # Una volta per capitolo, non una per chunk: l'audio sta tutto li'.
-    assert applicate == [("chunk_000000.pcm", "+15%", 48000),
-                         ("chunk_000002.pcm", "+15%", 48000),
-                         ("chunk_000003.pcm", "+15%", 48000)]
+                        lambda p, r, sr: applicate.append(p) or True)
+    pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+10%", tmp_path, "job-1", set())
+    assert applicate == []
+    assert pre[0]["speed"] == 0.968
+    # Le statistiche restano quelle del worker, che sono gia' giuste.
+    assert pre[0]["bytes"] == 4
+    assert pre[0]["audio_seconds"] == 2.0
 
 
 def test_fallimento_in_corsa_con_l_annullamento_esce_come_annullamento(tmp_path, monkeypatch):
@@ -218,30 +242,9 @@ def test_un_capitolo_perso_senza_annullamento_resta_un_fallimento(tmp_path, monk
                                            "job-1", set(), cancelled=lambda: False)
 
 
-def test_la_velocita_applicata_aggiorna_byte_e_durata(tmp_path, monkeypatch):
-    # Dopo che apply_rate riscrive il PCM sul posto, le statistiche del
-    # capitolo (bytes/audio_seconds) devono riflettere il file FINALE, non
-    # quello uscito dal worker, altrimenti gli "attuali" del Task 11 non
-    # corrispondono all'audio davvero consegnato.
-    f = FintaSintesi()
-    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
-    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
-
-    def rate_finto(path, r, sr):
-        with open(path, "wb") as fh:
-            fh.write(b"\x00\x00" * 24000)  # 0.5 s a 48 kHz, 16 bit mono
-        return True
-
-    monkeypatch.setattr(voxcpm_tts, "apply_rate", rate_finto)
-    pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+15%", tmp_path,
-                                             "job-1", set())
-    assert pre[0]["bytes"] == 48000
-    assert pre[0]["audio_seconds"] == 0.5
-
-
 def test_velocita_non_applicata_non_tocca_le_statistiche(tmp_path, sintesi_finta):
-    # apply_rate finto ritorna False (rate neutro/nessun cambiamento): le
-    # statistiche restano quelle originali del worker.
+    # Il PCM arriva dal worker gia' al passo e qui nessuno lo riscrive: le
+    # statistiche (bytes/audio_seconds) restano quelle del worker.
     pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
                                              "job-1", set())
     assert pre[0]["bytes"] == 2 * 2       # FintaSintesi: 2 byte per chunk, 2 chunk nel cap.0
@@ -356,6 +359,80 @@ def test_le_righe_di_fattura_arrivano_all_audit(tmp_path, sintesi_finta):
     assert len(righe) == 3          # tre capitoli, un job per capitolo
     assert {r["worker"] for r in righe} == {"w1"}
     assert voxcpm_tts.gpu_cost_usd(righe)["exec_seconds"] == 90.0
+
+
+def test_i_rientri_si_sommano_giro_per_giro_non_in_coda(tmp_path, monkeypatch):
+    # Il secondo giro di un capitolo e il secondo giro di un altro sono lo
+    # stesso giro: le curve si sommano posizione per posizione. Concatenarle
+    # direbbe che il libro ha speso cinque giri invece di tre.
+    # Un capitolo non ha misurato niente, gli altri due hanno curve di
+    # lunghezza diversa: la piu' lunga detta la lunghezza della somma.
+    curve = [[3, 1], [], [2, 0, 1]]
+    ordine = iter(curve)
+
+    def sintesi(chunks, voice_id, dest_path, **kw):
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22" * len(chunks))
+        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+                "audio_seconds": 1.0, "tts_seconds": 0.5, "jobs": 1,
+                "redone": 0, "bounced": 0, "failed_chunks": 0,
+                "bytes": 2 * len(chunks), "verifica_rientri": next(ordine)}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")   # sequenziale: deterministico
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert job["voxcpm_actual"]["verifica_rientri"] == [5, 1, 1]
+
+
+def test_il_dettaglio_delle_code_si_concatena_col_capitolo(tmp_path,
+                                                           monkeypatch):
+    # Ogni riga e' un difetto a se' e va ritrovata nel libro: l'indice del
+    # capitolo lo sa solo l'aggregazione, ed e' li' che va attaccato.
+    # Capitolo 0, 1 e 2: solo il primo e il terzo hanno code tagliate.
+    dettagli = iter([
+        [{"chunk": 0, "coda_attesa": "al viale.", "detto": "al"}],
+        [],
+        [{"chunk": 4, "coda_attesa": "nel 1967.", "detto": "nel mille"}],
+    ])
+
+    def sintesi(chunks, voice_id, dest_path, **kw):
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22" * len(chunks))
+        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+                "audio_seconds": 1.0, "tts_seconds": 0.5, "jobs": 1,
+                "redone": 0, "bounced": 0, "failed_chunks": 0,
+                "bytes": 2 * len(chunks),
+                "code_tagliate_dettaglio": next(dettagli)}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")   # sequenziale: deterministico
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    righe = job["voxcpm_actual"]["code_tagliate_dettaglio"]
+    assert [(r["capitolo"], r["chunk"]) for r in righe] == [(0, 0), (2, 4)]
+    assert righe[0]["detto"] == "al"
+
+
+def test_libro_senza_code_tagliate_non_inventa_il_dettaglio(tmp_path,
+                                                            sintesi_finta):
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert job["voxcpm_actual"]["code_tagliate_dettaglio"] == []
+
+
+def test_libro_senza_rientri_non_inventa_la_curva(tmp_path, sintesi_finta):
+    # Nessun capitolo ha misurato niente (worker vecchio, o verifica spenta):
+    # la lista resta vuota, non diventa una fila di zeri.
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert job["voxcpm_actual"]["verifica_rientri"] == []
 
 
 def test_un_actual_gia_aperto_senza_righe_non_esplode(tmp_path, sintesi_finta):

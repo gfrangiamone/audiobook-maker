@@ -218,7 +218,9 @@ def test_tag_e_etichette_della_voce_personale(tmp_path, monkeypatch):
     # Voce di catalogo (non personale): l'id completo resta nei metadati,
     # non e' un segreto.
     tags = ge._generation_tags({"voice": "voxcpm:v2:it-IT/Stefano"}, Info(), "voxcpm:v2:it-IT/Stefano", "+0%")
-    assert tags["abm_voice"] == "Stefano" and tags["abm_language"] == "it-IT"
+    # `Nome (REGIONE)`: la convenzione del catalogo (voxcpm_catalog._display_name),
+    # la stessa che l'utente legge nel selettore.
+    assert tags["abm_voice"] == "Stefano (IT)" and tags["abm_language"] == "it-IT"
     assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/Stefano"
 
 

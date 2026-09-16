@@ -24,6 +24,7 @@ Il giorno e' quello UTC dei timestamp del libro mastro, non l'ora locale del
 server: e' l'unico modo perche' due letture dello stesso giorno diano lo
 stesso risultato.
 """
+import json
 import os
 from datetime import date, timedelta
 from pathlib import Path
@@ -40,6 +41,76 @@ _MARKER = "voxcpm_digest_last.txt"
 # Quanti job elencare per esteso. Oltre, la mail diventa un tabulato che
 # nessuno legge: il totale resta esatto, la coda si riassume in una riga.
 MAX_RIGHE = 25
+# Quante code da ascoltare elencare per esteso, sull'intera giornata.
+MAX_ASCOLTI = 40
+
+
+def _probabile_taglio(r):
+    """Se una coda consegnata tagliata merita un ascolto.
+
+    Il worker consegna come tagliate anche code in cui l'ASR ha sentito la
+    frase intera e l'allarme e' venuto dal solo segnale (sul libro del
+    16/09/2026 erano 3 su 11, sane all'ascolto). L'ascolto si chiede quando
+    una misura dice che manca del testo — anche se una regola di spegnimento
+    l'ha poi azzerata: `scoperti_grezzi` e' la misura prima delle regole —
+    oppure quando il worker l'ha marchiata mozza, conclamata o fioca.
+    """
+    try:
+        if int(r.get("scoperti_grezzi", r.get("scoperti", 0)) or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return any(bool(r.get(k)) for k in ("mozza", "conclamato", "fioco"))
+
+
+def da_ascoltare(giorno):
+    """Le code tagliate dei libri consegnati in un giorno che vanno ascoltate.
+
+    Legge il dataset `voxcpm_code_tagliate_YYYY-MM.jsonl` e tiene le righe
+    dei job `completed`: un job fallito e rimborsato non ha raggiunto nessun
+    cliente. Il giorno e' quello UTC del timestamp, come per il libro mastro.
+
+    Returns:
+        lista di `{"job_id", "language", "code": [...]}`, dal job con piu'
+        code; le code di ogni job in ordine di capitolo e chunk.
+    """
+    fp = _DATA_DIR / ("voxcpm_code_tagliate_%s.jsonl" % giorno[:7])
+    per_job = {}
+    try:
+        with open(fp, encoding="utf-8") as f:
+            for riga in f:
+                try:
+                    r = json.loads(riga)
+                except ValueError:
+                    continue
+                if not isinstance(r, dict):
+                    continue
+                if str(r.get("ts") or "")[:10] != giorno:
+                    continue
+                if (r.get("outcome") or "") != "completed":
+                    continue
+                if not _probabile_taglio(r):
+                    continue
+                jid = r.get("job_id") or ""
+                job = per_job.setdefault(jid, {
+                    "job_id": jid, "language": r.get("language") or "—",
+                    "code": []})
+                job["code"].append(r)
+    except OSError:
+        return []
+    fuori = list(per_job.values())
+    for job in fuori:
+        job["code"].sort(key=lambda c: (_intero(c.get("capitolo")),
+                                        _intero(c.get("chunk"))))
+    fuori.sort(key=lambda j: -len(j["code"]))
+    return fuori
+
+
+def _intero(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return -1
 
 
 def _record_del_giorno(giorno):
@@ -84,6 +155,13 @@ def riepilogo(giorno):
         # delle tabelle.
         "numerali": 0,
         "falsi_numerali": 0,
+        # La regola della grafia, l'altro modo in cui l'allarme si spegne:
+        # code in cui l'ASR aveva scritto le stesse parole in un altro modo
+        # («di se» per «disse», «la su» per «lassu'»). Sta accanto ai numeri
+        # e non dentro perche' e' un vizio diverso del riconoscitore: quello
+        # dei numeri dipende dalle tabelle, questo dall'orecchio del modello,
+        # e sommarli nasconderebbe quale dei due sta cedendo.
+        "falsi_grafia": 0,
         # Job di un worker che misurava i ritentativi ma non ancora i
         # numeri: cieco solo su queste due colonne.
         "job_senza_numeri": 0,
@@ -120,6 +198,11 @@ def riepilogo(giorno):
                 rec.get("worker_verify_falsi_numerali", 0) or 0)
         else:
             tot["job_senza_numeri"] += 1
+        # Chiave piu' giovane delle altre: sui job di prima resta zero, che
+        # qui e' la risposta giusta — quella regola non c'era, quindi non ha
+        # taciuto niente.
+        tot["falsi_grafia"] += int(
+            rec.get("worker_verify_falsi_grafia", 0) or 0)
         if tagliate:
             tot["job_con_difetti"] += 1
         if necessari or tagliate:
@@ -139,6 +222,8 @@ def riepilogo(giorno):
     tot["job"].sort(key=lambda j: (-j["tagliate"], -j["necessari"]))
     tot["tasso_recupero"] = (round(100.0 * tot["riusciti"] / tot["tentati"], 1)
                              if tot["tentati"] else None)
+    tot["da_ascoltare"] = da_ascoltare(giorno)
+    tot["code_da_ascoltare"] = sum(len(j["code"]) for j in tot["da_ascoltare"])
     return tot
 
 
@@ -192,6 +277,11 @@ def oggetto(r):
     """L'oggetto dice l'esito, non il fatto che il digest esista."""
     if not r["job_totali"]:
         return "VoxCPM %s: nessuna generazione" % r["giorno"]
+    ascolti = r.get("code_da_ascoltare") or 0
+    if ascolti:
+        # Viene prima dei ritentativi: e' l'unica voce che chiede un'azione.
+        return ("VoxCPM %s: %d code da ascoltare in %d libri consegnati"
+                % (r["giorno"], ascolti, len(r["da_ascoltare"])))
     rimaste = r["falliti"] + r["non_tentati"]
     if rimaste:
         return ("VoxCPM %s: %d code recuperate, %d rimaste"
@@ -258,6 +348,98 @@ def _tabella_job(r):
             "<tbody>%s</tbody></table>" % (intestazione, righe))
 
 
+def _minuti(sec):
+    try:
+        sec = int(round(float(sec)))
+    except (TypeError, ValueError):
+        return ""
+    h, m, s = sec // 3600, sec % 3600 // 60, sec % 60
+    return "%d:%02d:%02d" % (h, m, s) if h else "%d:%02d" % (m, s)
+
+
+def _dove(c):
+    """Da dove ascoltare: nel libro e nel capitolo quando l'assemblaggio li ha
+    misurati; altrimenti dall'inizio del PCM del capitolo, che non conta il
+    silenzio d'apertura ed e' quindi approssimato."""
+    if c.get("posizione_s") is not None:
+        testo = "<strong>%s</strong> nel libro" % _minuti(c["posizione_s"])
+        if c.get("nel_capitolo_s") is not None:
+            testo += ('<br><span style="color:#888">%s nel capitolo</span>'
+                      % _minuti(c["nel_capitolo_s"]))
+        return testo
+    if c.get("inizio_s") is not None:
+        return "circa %s nel capitolo" % _minuti(c["inizio_s"])
+    return '<span style="color:#999">—</span>'
+
+
+def _motivo(c):
+    if c.get("mozza"):
+        return "mozza"
+    if c.get("conclamato"):
+        return "conclamata"
+    if c.get("fioco"):
+        return "fioca"
+    spente = [k for k in ("numeri", "grafia") if c.get(k)]
+    if spente and not int(c.get("scoperti", 0) or 0):
+        return "allarme spento dalla regola %s" % "/".join(spente)
+    return "testo mancante"
+
+
+def _sezione_ascolti(r):
+    lista = r.get("da_ascoltare") or []
+    if not lista:
+        return ""
+    righe = ""
+    mostrate = 0
+    for job in lista:
+        if mostrate >= MAX_ASCOLTI:
+            break
+        righe += ('<tr><td colspan="4" style="padding:10px 12px;'
+                  'background:#fafafa;font-family:monospace;font-size:12px">'
+                  "%s · %s · %d code</td></tr>"
+                  % (_esc(job["job_id"]), _esc(job["language"]),
+                     len(job["code"])))
+        for c in job["code"]:
+            if mostrate >= MAX_ASCOLTI:
+                break
+            mostrate += 1
+            cap = _intero(c.get("capitolo"))
+            capitolo = "cap. %d" % (cap + 1) if cap >= 0 else "cap. ?"
+            if c.get("titolo"):
+                capitolo += ('<br><span style="color:#888">%s</span>'
+                             % _esc(str(c["titolo"])[:60]))
+            righe += (
+                "<tr>"
+                '<td style="%s;font-size:13px">%s</td>'
+                '<td style="%s;font-size:13px;white-space:nowrap">%s</td>'
+                '<td style="%s;font-size:12px">'
+                "<div>atteso: «…%s»</div>"
+                '<div style="color:#c62828">sentito: «%s»</div></td>'
+                '<td style="%s;font-size:12px">%s</td>'
+                "</tr>"
+                % (_TD, capitolo, _TD, _dove(c), _TD,
+                   _esc(c.get("coda_attesa", "")), _esc(c.get("detto", "")),
+                   _TD, _esc(_motivo(c))))
+    resto = r["code_da_ascoltare"] - mostrate
+    if resto > 0:
+        righe += ('<tr><td colspan="4" style="padding:10px 12px;color:#888;'
+                  'font-size:12px">… e altre %d code, nel file '
+                  "voxcpm_code_tagliate del mese.</td></tr>" % resto)
+    intestazione = ((_TH % ("left", "Capitolo")) + (_TH % ("left", "Da dove"))
+                    + (_TH % ("left", "Coda")) + (_TH % ("left", "Perché")))
+    return (
+        '<h3 style="margin:24px 4px 8px;color:#c62828">Da ascoltare: '
+        "%d code in libri consegnati</h3>"
+        '<p style="color:#555;font-size:13px;margin:0 4px 10px">Il job è '
+        "risultato completato, ma in queste code l'ASR ha sentito mancare del "
+        "testo anche dopo tutti i giri di rigenerazione. Il cliente non ha "
+        "ricevuto alcun avviso.</p>"
+        '<table style="width:100%%;border-collapse:collapse;background:white;'
+        'border:1px solid #ddd"><thead><tr style="background:#fdf0f0">%s'
+        "</tr></thead><tbody>%s</tbody></table>"
+        % (r["code_da_ascoltare"], intestazione, righe))
+
+
 def html(r):
     """Il corpo HTML del digest a partire da `riepilogo`."""
     if not r["job_totali"]:
@@ -287,6 +469,13 @@ def html(r):
                   "differenza era la grafia (l'ASR scrive «1967» dove il "
                   "testo dice «millenovecentosessantasette»).</p>"
                   % (r["falsi_numerali"], r["numerali"]))
+    if r["falsi_grafia"]:
+        numeri += ('<p style="color:#555;font-size:13px;margin:6px 4px 0">'
+                   "La regola della grafia ne ha taciuti altri "
+                   "<strong>%d</strong>: code in cui il riconoscitore aveva "
+                   "scritto le stesse parole in un altro modo («di se» dove "
+                   "il testo dice «disse»). Anche questi sono ritentativi "
+                   "che nessuno ha comprato.</p>" % r["falsi_grafia"])
     if r["job_senza_numeri"]:
         numeri += ('<p style="color:#888;font-size:12px;margin:6px 4px 0">'
                    "%d job vengono da un worker precedente alla regola dei "
@@ -310,7 +499,7 @@ def html(r):
         "con almeno una coda ancora tagliata (<strong>%d</strong> chunk in "
         "tutto).</p>" % (r["job_totali"], r["job_con_difetti"],
                          r["code_tagliate"])
-        + _tabella_job(r) + numeri + ciechi)
+        + _sezione_ascolti(r) + _tabella_job(r) + numeri + ciechi)
     return _pagina(r, corpo)
 
 
