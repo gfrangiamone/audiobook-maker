@@ -1,8 +1,8 @@
 {
   "schema": "abm-voice-clone-prompts/1",
   "prompts": {
-    "it": {"text": "Ogni mattina apro la finestra prima di fare il caffè, e ascolto la strada che si sveglia. Passa il furgone del pane, poi qualcuno con il cane, poi il silenzio. Non ho fretta. Leggo qualche pagina, e ne rileggo una frase a voce alta."},
-    "en": {"text": "Every morning I open the window before making coffee, and I listen to the street waking up. The bread van goes by, then someone with a dog, then silence. I am in no hurry. I read a few pages, and read one sentence again out loud."},
+    "it": {"text": "Ogni mattina, prima che la città si svegli, scelgo di camminare lungo il fiume e ascoltare il rumore dell'acqua. Vi siete mai fermati a guardare come il cielo cambia colore, mentre gli uccelli cominciano a cantare tra gli alberi? È un momento di silenzio semplice, ma mi aiuta a pensare con più chiarezza."},
+    "en": {"text": "Every morning, before the town wakes up, I like to walk along the river and listen to the gentle sound of the water. Have you ever stopped to watch how the sky slowly changes color, while the birds begin to sing among the trees? It's just a simple, quiet moment, but the fresh air helps me think more clearly."},
     "fr": {"text": "Chaque matin, j'ouvre la fenêtre avant de préparer le café, et j'écoute la rue qui se réveille. Le camion du boulanger passe, puis quelqu'un avec son chien, puis le silence. Rien ne presse. Je lis quelques pages, et j'en relis une phrase à voix haute."},
     "es": {"text": "Cada mañana abro la ventana antes de preparar el café, y escucho la calle que despierta. Pasa la furgoneta del pan, luego alguien con su perro, luego el silencio. No tengo prisa. Leo unas páginas, y vuelvo a leer una frase en voz alta."},
     "de": {"text": "Jeden Morgen öffne ich das Fenster, bevor ich Kaffee koche, und höre, wie die Straße erwacht. Der Bäckerwagen fährt vorbei, dann jemand mit Hund, dann Stille. Ich habe keine Eile. Ich lese ein paar Seiten und lese einen Satz noch einmal laut."},

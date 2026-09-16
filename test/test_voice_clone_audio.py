@@ -19,7 +19,7 @@ def _db(v):
     return 10.0 ** (v / 20.0)
 
 
-def _parlato(seconds=15.0, burst=0.45, pause=0.15, level_db=-20.0,
+def _parlato(seconds=21.0, burst=0.45, pause=0.15, level_db=-20.0,
              floor_db=-80.0, lowpass_hz=None, seed=7):
     rng = np.random.default_rng(seed)
     n = int(seconds * SR)
@@ -40,7 +40,7 @@ def _parlato(seconds=15.0, burst=0.45, pause=0.15, level_db=-20.0,
 def test_parlato_pulito_passa():
     mt = vca.apply_gate(vca.measure(_parlato(), SR), SR)
     assert mt.reasons == [], mt
-    assert 12.0 <= mt.duration <= 20.0
+    assert 18.0 <= mt.duration <= 26.0
     assert mt.snr_db >= 22.0 and mt.clarity >= 36.0
     assert 0.55 <= mt.speech_ratio <= 0.98
     assert mt.bandwidth_hz >= vca.Gate().min_bandwidth_ratio * SR / 2
@@ -53,7 +53,7 @@ def test_troppo_breve():
 
 
 def test_troppo_lunga():
-    mt = vca.apply_gate(vca.measure(_parlato(seconds=24.0), SR), SR)
+    mt = vca.apply_gate(vca.measure(_parlato(seconds=30.0), SR), SR)
     assert mt.reasons[0] == "vc_gate_long"
 
 
@@ -63,7 +63,7 @@ def test_fondo_rumoroso():
 
 
 def test_pausa_interna_lunga():
-    x = _parlato(seconds=15.0)
+    x = _parlato(seconds=21.0)
     x[int(6.0 * SR):int(7.6 * SR)] = 0.0          # buco da 1,6 s
     mt = vca.apply_gate(vca.measure(x, SR), SR)
     assert "vc_gate_pauses" in mt.reasons
@@ -188,7 +188,7 @@ def test_loudness_e_normalize(tmp_path):
 
 @needs_ffmpeg
 def test_prepare_sample_passa_e_scrive_il_wav(tmp_path):
-    src = _wav_parlato(tmp_path, seconds=15.0)
+    src = _wav_parlato(tmp_path, seconds=21.0)
     dst = str(tmp_path / "sample.wav")
     mt = vca.prepare_sample(src, dst)
     assert mt.reasons == [] and os.path.exists(dst)
@@ -202,7 +202,7 @@ def test_prepare_sample_rifiuta_e_non_scrive(tmp_path):
     with pytest.raises(vca.SampleRejected) as ei:
         vca.prepare_sample(src, dst)
     assert ei.value.reason == "vc_gate_short"
-    assert ei.value.metrics.duration < 12.0
+    assert ei.value.metrics.duration < 18.0
     assert not os.path.exists(dst)
 
 
@@ -214,7 +214,7 @@ def test_prepare_sample_banda_telefonica_cade_per_banda(tmp_path):
     Nyquist: tanta quanta una registrazione sana a 44,1 kHz (0,71), quindi
     separava i due casi solo grazie a una soglia che bocciava anche i campioni
     buoni."""
-    src = _wav_parlato(tmp_path, seconds=15.0)
+    src = _wav_parlato(tmp_path, seconds=21.0)
     mp3 = _codifica(src, str(tmp_path / "tel.mp3"), "-ar", "8000",
                     "-c:a", "libmp3lame", "-b:a", "24k")
     with pytest.raises(vca.SampleRejected) as ei:

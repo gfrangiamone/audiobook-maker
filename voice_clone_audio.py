@@ -221,9 +221,16 @@ def measure(x, sr):
 
 @dataclass
 class Gate:
-    """Soglie del worker (`Gate` di audio.py) piu' la finestra di durata D7."""
-    min_sec: float = 12.0
-    max_sec: float = 20.0
+    """Soglie del worker (`Gate` di audio.py) piu' la finestra di durata D7.
+
+    La finestra segue la lunghezza delle frasi guidate: quelle attuali stanno
+    sui 305 caratteri e al ritmo di una lettura calma (i 12,5 caratteri al
+    secondo misurati su una registrazione vera) chiedono circa 24 secondi. Con
+    la vecchia finestra 12-20 s ogni lettura a voce distesa veniva scartata
+    come «troppo lunga». Cambiando le frasi va ricontrollata anche questa.
+    """
+    min_sec: float = 18.0
+    max_sec: float = 26.0
     min_snr_db: float = 22.0
     min_clarity: float = 36.0
     min_speech_ratio: float = 0.55
@@ -250,8 +257,8 @@ def _env_float(name, default):
 
 
 def gate_from_env():
-    return Gate(min_sec=_env_float("ABM_VOICE_CLONE_MIN_SEC", 12.0),
-                max_sec=_env_float("ABM_VOICE_CLONE_MAX_SEC", 20.0),
+    return Gate(min_sec=_env_float("ABM_VOICE_CLONE_MIN_SEC", 18.0),
+                max_sec=_env_float("ABM_VOICE_CLONE_MAX_SEC", 26.0),
                 min_bandwidth_ratio=_env_float("ABM_VOICE_CLONE_MIN_BAND_RATIO", 0.60))
 
 

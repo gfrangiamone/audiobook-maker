@@ -198,8 +198,8 @@
     var mt = (d && d.metrics) || {};
     var dur = Number(mt.duration);
     var rep = {got: isFinite(dur) && dur > 0 ? dur.toFixed(1) : '?',
-               min: Math.round(Number(cfg.min_sec) || 12),
-               max: Math.round(Number(cfg.max_sec) || 20)};
+               min: Math.round(Number(cfg.min_sec) || 18),
+               max: Math.round(Number(cfg.max_sec) || 26)};
     var keys = vcGateKeys(d);
     var msg = keys.map(function (k) { return tt(k, rep); }).join(' ');
     var heard = (d && d.heard || '').trim();
@@ -353,7 +353,12 @@
 
   /* ---------- pannello 2: campione ---------- */
 
-  var REC_MAX_MS = 25000;
+  /* Tetto di sicurezza della registrazione: deve stare sopra il massimo che
+     il gate accetta (26 s), altrimenti la cattura si spegnerebbe da sola a
+     meta' dell'ultima frase e il campione verrebbe scartato come «troppo
+     corto» per colpa nostra. Sopra il tetto e' il gate a dire di no, con un
+     messaggio che spiega il perche'. */
+  var REC_MAX_MS = 32000;
 
   function vcFillLangs() {
     var ls = $('vcLang'); var loc = $('vcLocale');

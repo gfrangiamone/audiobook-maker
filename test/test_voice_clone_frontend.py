@@ -308,7 +308,13 @@ def test_registratore_senza_filtri_e_con_stop_automatico():
     assert "echoCancellation: false" in VC
     assert "noiseSuppression: false" in VC
     assert "autoGainControl: false" in VC
-    assert "REC_MAX_MS = 25000" in VC
+    # Il tetto della cattura deve stare SOPRA la finestra del gate: se si
+    # spegnesse prima, la registrazione verrebbe troncata a meta' dell'ultima
+    # frase e poi scartata come «troppo corta» per colpa nostra.
+    import voice_clone_audio
+    m = re.search(r"REC_MAX_MS = (\d+)", VC)
+    assert m, "tetto di registrazione assente"
+    assert int(m.group(1)) / 1000.0 > voice_clone_audio.Gate().max_sec
     assert "/api/voice_clone/sample" in VC
     assert "vcUploadCheck(f.name, f.size" in VC
 
