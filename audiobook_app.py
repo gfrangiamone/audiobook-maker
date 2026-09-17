@@ -7144,9 +7144,10 @@ def admin_audit_premium_page():
         <th title="Dispositivi che la usano (passa sopra per i nomi)">Dispositivi</th>
         <th>Attivazione</th><th>Scadenza</th>
         <th title="Libri completati con questa voce">Libri</th><th>Stato</th>
+        <th title="Motivo scritto dall'utente che ha rifiutato la voce, tradotto in italiano (passa sopra per l'originale)">Motivo rifiuto</th>
       </tr></thead>
       <tbody id="vcaRecordsBody">
-        <tr><td colspan="14" class="empty-msg">Premi "Aggiorna" per caricare le voci.</td></tr>
+        <tr><td colspan="15" class="empty-msg">Premi "Aggiorna" per caricare le voci.</td></tr>
       </tbody>
     </table>
   </div>
@@ -7816,7 +7817,7 @@ def admin_audit_premium_page():
   }
   function vcaRender(recs, total){
     const tb = $("vcaRecordsBody");
-    if (!recs.length){ tb.innerHTML='<tr><td colspan="14" class="empty-msg">Nessuna voce trovata.</td></tr>'; return; }
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="15" class="empty-msg">Nessuna voce trovata.</td></tr>'; return; }
     tb.innerHTML = recs.map(r=>{
       const marg = Number(r.margin_eur||0), net = Number(r.net_margin_eur||0);
       const fee = Number(r.paypal_fee_eur||0);
@@ -7836,6 +7837,13 @@ def admin_audit_premium_page():
         end = `<span title="fine: ${esc(r.state)}${r.delete_reason?" ("+esc(r.delete_reason)+")":""}">${vcaDate(r.ended_at)}</span>`;
       const [bcls,blab] = VCA_STATE_BADGE[r.state]||["badge-muted", r.state||"?"];
       const fails = r.demo_fail_count ? ` title="demo fallite ${r.demo_fail_count} volte"` : "";
+      let why = "-";
+      if (r.reject_note_original){
+        const tip = `Originale${r.reject_note_lang?" ("+r.reject_note_lang+")":""}: ${r.reject_note_original}`;
+        why = r.reject_note_it
+          ? `<span class="vca-why" title="${esc(tip)}">${esc(r.reject_note_it)}</span>`
+          : `<span class="vca-why" title="${esc(tip)}"><i>traduzione in corso…</i><br><small>${esc(r.reject_note_original)}</small></span>`;
+      }
       return `<tr>
         <td>${vcaDate(r.ref_ts)}</td>
         <td><b>${esc(r.name||"-")}</b><br><code>${esc(r.id)}</code></td>
@@ -7851,8 +7859,9 @@ def admin_audit_premium_page():
         <td>${end}</td>
         <td>${Number(r.books||0)}</td>
         <td><span class="badge ${bcls}"${fails}>${esc(blab)}</span></td>
+        <td style="min-width:14rem;max-width:24rem;white-space:normal">${why}</td>
       </tr>`;
-    }).join("") + auditTruncNote(recs.length, total, 14);
+    }).join("") + auditTruncNote(recs.length, total, 15);
   }
   $("vcaRefreshBtn").addEventListener("click", vcaFetch);
 
@@ -8987,6 +8996,11 @@ def admin_api_voice_clone_audit():
         usd_eur = float(speechify_tts.usd_eur_rate())
     except Exception:
         usd_eur = 1.0
+    # Motivi di rifiuto ancora senza traduzione italiana: si ritentano qui.
+    for r in recs:
+        note = r.get("reject_note") if isinstance(r, dict) else None
+        if isinstance(note, dict) and note.get("text") and not note.get("it"):
+            _vc_translate_reject_note(r.get("id"))
     out = voice_clone_audit.report(
         recs,
         state=request.args.get("state") or "paid",
@@ -9650,13 +9664,58 @@ def api_vc_retry(clone_id):
     return _vc_action(clone_id, lambda rec, cid: voice_clone_demo.retry(rec["id"], cid))
 
 
+_vc_reject_translating = set()
+_vc_reject_translating_lock = threading.Lock()
+
+
+def _vc_translate_reject_note(clone_id):
+    """Traduce in italiano, in background, il motivo del rifiuto (tab admin
+    «Voci campionate»). Una sola traduzione per voce alla volta; se fallisce
+    la ritenta la prossima apertura della tab."""
+    with _vc_reject_translating_lock:
+        if clone_id in _vc_reject_translating:
+            return
+        _vc_reject_translating.add(clone_id)
+
+    def run():
+        try:
+            note = (voice_clone.get(clone_id) or {}).get("reject_note") or {}
+            text = note.get("text") if isinstance(note, dict) else ""
+            if not text or note.get("it"):
+                return
+            out = community_translator.translate_to_italian(text)
+            if out:
+                voice_clone.set_reject_translation(clone_id, out["it"], out.get("source_lang"))
+        except Exception as e:      # noqa: BLE001 - la traduzione non e' critica
+            print(f"[voice_clone] reject note translation failed for {clone_id}: {type(e).__name__}")
+        finally:
+            with _vc_reject_translating_lock:
+                _vc_reject_translating.discard(clone_id)
+
+    threading.Thread(target=run, daemon=True, name=f"vc-reject-it-{clone_id}").start()
+
+
 @app.route("/api/voice_clone/<clone_id>/reject", methods=["POST"])
 def api_vc_reject(clone_id):
+    data = request.get_json(silent=True) or {}
+    note = voice_clone.normalize_reject_note(data.get("reason") if isinstance(data, dict) else "")
+    rec0 = _vc_rec_or_404(clone_id)
+    # Chi rifiuta le demo pronte deve dire perche'; se le demo sono fallite
+    # il motivo e' gia' noto e non si chiede. Solo per chi ne ha diritto: agli
+    # altri risponde _vc_action (403/410), senza rivelare lo stato.
+    if (rec0 and rec0.get("state") == "demos_ready"
+            and voice_clone._has_cid(rec0, _get_client_id())
+            and len(note) < voice_clone.REJECT_NOTE_MIN):
+        return _vc_err("reject_reason_required", "Please tell us why", 400,
+                       min_chars=voice_clone.REJECT_NOTE_MIN)
+
     def go(rec, cid):
         if rec.get("state") == "refunded":
             return rec
-        out = voice_clone_demo.reject(rec["id"], cid)
+        out = voice_clone_demo.reject(rec["id"], cid, note=note)
         _vc_log(out, "VOICE_CLONE_REJECTED")
+        if note:
+            _vc_translate_reject_note(rec["id"])
         return out
     return _vc_action(clone_id, go)
 

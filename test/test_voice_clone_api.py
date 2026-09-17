@@ -597,7 +597,7 @@ def test_voice_code_non_trapela_a_dispositivi_non_proprietari(client, tmp_path, 
     r = client.get(f"/api/voice_clone/progress/{rec['id']}")
     payload = json.loads(r.get_data(as_text=True).strip().split("data: ")[-1])
     assert "voice_code" not in payload
-    r = client.post(f"/api/voice_clone/{rec['id']}/reject")
+    r = client.post(f"/api/voice_clone/{rec['id']}/reject", json={"reason": "Non mi somiglia per niente"})
     assert r.status_code == 200 and "voice_code" not in r.get_json()
     altro = _paid(tmp_path, cid="cid-tre", email="c@x.it")
     for s in ("demos_generating", "demos_ready"):
@@ -922,3 +922,76 @@ def test_claim_oltre_le_richieste_parallele_ammesse(client, tmp_path, ambiente, 
     r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
     assert r.status_code == 429 and r.get_json()["error_code"] == "claim_busy"
     assert len(ambiente) == prima
+
+
+def _thread_sincrono(monkeypatch):
+    """La traduzione del motivo parte in un thread: qui gira subito."""
+    class T:
+        def __init__(self, target=None, **kw):
+            self.target = target
+
+        def start(self):
+            self.target()
+    monkeypatch.setattr(audiobook_app.threading, "Thread", T)
+
+
+def test_rifiuto_delle_demo_pronte_chiede_il_motivo(client, tmp_path, monkeypatch):
+    import community_translator
+    _thread_sincrono(monkeypatch)
+    chiamate = []
+    monkeypatch.setattr(community_translator, "translate_to_italian",
+                        lambda t, **kw: chiamate.append(t) or {"source_lang": "en", "it": "Non mi somiglia"})
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], s)
+    for corpo in (None, {}, {"reason": "   no  "}):
+        r = client.post(f"/api/voice_clone/{rec['id']}/reject", json=corpo)
+        assert r.status_code == 400, corpo
+        d = r.get_json()
+        assert d["error_code"] == "reject_reason_required" and d["min_chars"] == vc.REJECT_NOTE_MIN
+    assert vc.get(rec["id"])["state"] == "demos_ready"
+    # un altro dispositivo non scopre lo stato: 403, non 400
+    _cid(client, "cid-estraneo")
+    assert client.post(f"/api/voice_clone/{rec['id']}/reject", json={}).status_code == 403
+    _cid(client, "cid-uno")
+    r = client.post(f"/api/voice_clone/{rec['id']}/reject",
+                    json={"reason": "It doesn't\n sound\x07 like me at all"})
+    assert r.status_code == 200 and r.get_json()["state"] == "refunded"
+    assert "reject_note" not in r.get_json()
+    note = vc.get(rec["id"])["reject_note"]
+    assert note["text"] == "It doesn't sound like me at all" and note["at"]
+    assert chiamate == ["It doesn't sound like me at all"]
+    assert note["it"] == "Non mi somiglia" and note["lang"] == "en"
+    assert "reject_note" not in vc.public_view(vc.get(rec["id"]))
+
+
+def test_rifiuto_dopo_demo_fallite_non_chiede_il_motivo(client, tmp_path, monkeypatch):
+    import community_translator
+    monkeypatch.setattr(community_translator, "translate_to_italian",
+                        lambda t, **kw: pytest.fail("niente da tradurre"))
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demo_failed"):
+        vc.transition(rec["id"], s)
+    r = client.post(f"/api/voice_clone/{rec['id']}/reject", json={})
+    assert r.status_code == 200 and r.get_json()["state"] == "refunded"
+    assert "reject_note" not in vc.get(rec["id"])
+
+
+def test_audit_admin_ritenta_la_traduzione_mancante(client, tmp_path, monkeypatch):
+    import community_translator
+    _thread_sincrono(monkeypatch)
+    monkeypatch.setattr(community_translator, "translate_to_italian", lambda t, **kw: None)
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], s)
+    r = client.post(f"/api/voice_clone/{rec['id']}/reject", json={"reason": "La voce è troppo robotica"})
+    assert r.status_code == 200
+    assert "it" not in vc.get(rec["id"])["reject_note"]
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-admin")
+    monkeypatch.setattr(community_translator, "translate_to_italian",
+                        lambda t, **kw: {"source_lang": "it", "it": t})
+    r = client.get("/admin/api/voice_clone_audit?state=all", headers={"X-Admin-Token": "tok-admin"})
+    assert r.status_code == 200
+    riga = next(x for x in r.get_json()["records"] if x["id"] == rec["id"])
+    assert riga["reject_note_original"] == "La voce è troppo robotica"
+    assert vc.get(rec["id"])["reject_note"]["it"] == "La voce è troppo robotica"

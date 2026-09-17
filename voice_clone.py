@@ -647,6 +647,8 @@ def normalize_device_name(s):
 
 IDENTITY_MIN = 10
 IDENTITY_MAX = 300
+REJECT_NOTE_MIN = 10
+REJECT_NOTE_MAX = 1000
 
 
 def normalize_identity(s):
@@ -655,6 +657,28 @@ def normalize_identity(s):
     caratteri. Finisce nell'email e nella pagina dei dispositivi."""
     s = _NAME_DROP_RE.sub("", _NAME_CTRL_RE.sub(" ", str(s or "")))
     return " ".join(s.split())[:IDENTITY_MAX].strip()
+
+
+def normalize_reject_note(s):
+    """Il motivo del rifiuto scritto dall'utente: niente caratteri di
+    controllo o invisibili, spazi compattati, al massimo REJECT_NOTE_MAX."""
+    s = _NAME_DROP_RE.sub("", _NAME_CTRL_RE.sub(" ", str(s or "")))
+    return " ".join(s.split())[:REJECT_NOTE_MAX].strip()
+
+
+def set_reject_translation(clone_id, it_text, source_lang=""):
+    """La traduzione italiana del motivo del rifiuto (tab admin). Il record
+    e' gia' `refunded`: si tocca solo `reject_note`."""
+    with _lock:
+        rec = get(clone_id)
+        note = (rec or {}).get("reject_note")
+        if not isinstance(note, dict) or not note.get("text"):
+            return None
+        note = dict(note)
+        note["it"] = str(it_text or "")[:REJECT_NOTE_MAX * 2]
+        note["lang"] = str(source_lang or "")[:8]
+        note["translated_at"] = time.time()
+        return store().update(clone_id, {"reject_note": note})
 
 
 def device_name_from_ua(ua):
@@ -825,7 +849,9 @@ _SECRET_KEYS = ("token", "manage_token", "resume_token", "owner_email",
                 "pending_confirm", "pending_confirms", "confirm_locks",
                 # conti interni dell'audit admin: i libri sono job di tutti i
                 # dispositivi della voce, il costo GPU non riguarda l'utente
-                "demo_cost", "books")
+                "demo_cost", "books",
+                # il motivo del rifiuto e' per l'admin, non torna al client
+                "reject_note")
 
 
 def public_view(rec):

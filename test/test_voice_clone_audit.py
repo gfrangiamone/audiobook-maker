@@ -229,3 +229,36 @@ def test_pagina_ha_la_tab_e_alimenta_il_margine_totale(admin):
     assert '"optDateFrom","vcaDateFrom"' in body and '"optDateTo","vcaDateTo"' in body
     assert '_h === "#tab-voices"' in body and "window._vcaLoaded = true;\n  vcaFetch();" in body
     assert 'value="drafts"' in body and body.index('value="paid"') < body.index('value="drafts"')
+
+
+def test_riga_con_motivo_del_rifiuto():
+    nota = {"text": "Doesn't sound like me", "it": "Non mi somiglia", "lang": "en", "at": T_AGO}
+    r = vca.row(_rec(state="refunded", refund={"reason": "user_rejected"}, reject_note=nota))
+    assert r["reject_note_original"] == "Doesn't sound like me"
+    assert r["reject_note_it"] == "Non mi somiglia" and r["reject_note_lang"] == "en"
+    vuota = vca.row(_rec())
+    assert vuota["reject_note_original"] == "" and vuota["reject_note_it"] == ""
+
+
+def test_pagina_admin_ha_la_colonna_motivo_rifiuto():
+    import inspect
+    src = inspect.getsource(audiobook_app)
+    assert ">Motivo rifiuto</th>" in src and "reject_note_it" in src
+    assert 'auditTruncNote(recs.length, total, 15)' in src
+    assert 'colspan="14" class="empty-msg">Nessuna voce' not in src
+
+
+def test_traduzione_in_italiano_del_motivo(monkeypatch):
+    import community_translator as ct
+    monkeypatch.setattr(ct, "is_available", lambda: True)
+    visti = []
+
+    def llm(payload, **kw):
+        visti.append((payload, kw.get("system_prompt")))
+        return '```json\n{"source_lang": "EN", "it": " Non mi somiglia "}\n```'
+    monkeypatch.setattr(ct, "_call_llm", llm)
+    assert ct.translate_to_italian("Doesn't sound like me") == {"source_lang": "en", "it": "Non mi somiglia"}
+    assert visti[0][0] == {"text": "Doesn't sound like me"} and "Italian" in visti[0][1]
+    monkeypatch.setattr(ct, "_call_llm", lambda payload, **kw: "niente json")
+    assert ct.translate_to_italian("ciao a tutti") is None
+    assert ct.translate_to_italian("   ") is None

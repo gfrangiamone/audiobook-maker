@@ -1339,6 +1339,13 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-confirm{display:flex;align-items:center;justify-content:flex-end;gap:.5rem;
             flex-wrap:wrap;margin:.6rem 0}
 .vc-confirm[hidden]{display:none}
+/* Rifiuto: prima il motivo (obbligatorio), poi la conferma. */
+.vc-reject-box{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0}
+.vc-reject-box[hidden]{display:none}
+.vc-reject-box textarea{width:100%;box-sizing:border-box;padding:10px 14px;background:var(--srf2);
+  color:var(--tx);border:1px solid var(--brd);border-radius:var(--rs);font-family:inherit;font-size:.95rem;resize:vertical}
+.vc-reject-box textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-reject-box .vc-confirm{margin:0}
 .vc-demo-row audio{width:100%}
 .vc-mine-list{list-style:none;padding:0;margin:.5rem 0}
 .vc-mine-item{border:1px solid var(--brd);border-radius:8px;padding:.6rem;margin:.4rem 0}

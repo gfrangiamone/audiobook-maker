@@ -226,6 +226,7 @@
     /* Il limite va detto: senza il segnaposto l'utente leggeva «il limite e' {mb} MB». */
     if (code === 'too_large') return tt('vc_err_too_large', {mb: (S.cfg && S.cfg.max_upload_mb) || 20});
     if (code === 'identity_required') return tt('vc_err_identity_required', {n: (d && d.min_chars) || VC_IDENTITY_MIN});
+    if (code === 'reject_reason_required') return tt('vc_err_reject_reason_required', {n: (d && d.min_chars) || VC_REJECT_REASON_MIN});
     var k = code ? 'vc_err_' + code : (fallbackKey || 'vc_err_generic');
     var s = tt(k);
     return (s && s !== k) ? s : tt(fallbackKey || 'vc_err_generic');
@@ -1005,9 +1006,27 @@
       var c = $('vcCode'); if (c) c.textContent = S.cur.voice_code || '';
     }
     $('vcApprove').onclick = function () { vcAction('approve').then(function (v) { if (v) vcAfterApprove(v); }); };
-    $('vcReject').onclick = function () { if (S.busy) return; var rc = $('vcRejectConfirm'); if (rc) rc.hidden = false; };
-    $('vcRejectNo').onclick = function () { if (S.busy) return; var rc = $('vcRejectConfirm'); if (rc) rc.hidden = true; };
-    $('vcRejectYes').onclick = function () { vcAction('reject').then(function (v) { if (v) vcRefreshMine().then(vcSyncButton); }); };
+    $('vcReject').onclick = function () {
+      if (S.busy) return;
+      var rc = $('vcRejectConfirm'); if (!rc) return;
+      var ta = $('vcRejectReason');
+      if (rc.hidden && ta) ta.value = '';
+      rc.hidden = false;
+      if (ta) ta.focus();
+    };
+    $('vcRejectNo').onclick = function () { if (S.busy) return; vcErr(''); var rc = $('vcRejectConfirm'); if (rc) rc.hidden = true; };
+    /* Il motivo del rifiuto e' obbligatorio: lo legge l'amministratore. */
+    $('vcRejectYes').onclick = function () {
+      if (S.busy) return;
+      var ta = $('vcRejectReason');
+      var reason = ta ? ta.value.replace(/\s+/g, ' ').trim() : '';
+      if (reason.length < VC_REJECT_REASON_MIN) {
+        vcErr(tt('vc_err_reject_reason_required', {n: VC_REJECT_REASON_MIN}));
+        if (ta) ta.focus();
+        return;
+      }
+      vcAction('reject', {reason: reason}).then(function (v) { if (v) vcRefreshMine().then(vcSyncButton); });
+    };
     $('vcReject2').onclick = function () { vcAction('reject').then(function (v) { if (v) vcRefreshMine().then(vcSyncButton); }); };
     $('vcRetry').onclick = function () { vcAction('retry').then(function (v) { if (v) vcWatch(); }); };
     $('vcDoneClose').onclick = function () { if (S.busy) return; vcClose(); };
@@ -1175,6 +1194,7 @@
   /* Stesso minimo del server (voice_clone.IDENTITY_MIN): il controllo qui
      evita solo un giro a vuoto, decide sempre il server. */
   var VC_IDENTITY_MIN = 10;
+  var VC_REJECT_REASON_MIN = 10;
 
   /* Richiesta partita: «Aggiungi» sparisce e i campi restano bloccati su
      quello che il proprietario leggera' nell'email, cosi' non si possono

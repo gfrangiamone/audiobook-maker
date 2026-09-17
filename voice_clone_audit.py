@@ -61,6 +61,8 @@ def row(rec, *, usd_eur=1.0, fee_fn=None):
             fee = 0.0
     devices = rec.get("devices") or []
     demo = rec.get("demo") or {}
+    note = rec.get("reject_note")
+    note = note if isinstance(note, dict) else {}
     return {
         "id": rec.get("id"),
         "name": rec.get("name") or "",
@@ -94,6 +96,10 @@ def row(rec, *, usd_eur=1.0, fee_fn=None):
         "devices": len(devices),
         "device_names": [d.get("name") or "" for d in devices],
         "books": len(rec.get("books") or []),
+        # motivo del rifiuto: la traduzione italiana arriva in background
+        "reject_note_original": note.get("text") or "",
+        "reject_note_it": note.get("it") or "",
+        "reject_note_lang": note.get("lang") or "",
     }
 
 

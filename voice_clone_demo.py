@@ -258,10 +258,14 @@ def retry(clone_id, cid, background=True):
     return start_demos(clone_id, background=background)
 
 
-def reject(clone_id, cid):
-    """Rifiuto esplicito dell'utente (§3.5, §7.4): rimborso senza bonus."""
+def reject(clone_id, cid, note=""):
+    """Rifiuto esplicito dell'utente (§3.5, §7.4): rimborso senza bonus. Il
+    motivo scritto dall'utente (`note`) resta nel record per l'admin."""
     with vc._lock:
         _require(clone_id, cid, ("demos_ready", "demo_failed"))
+        note = vc.normalize_reject_note(note)
+        if note:
+            vc.store().update(clone_id, {"reject_note": {"text": note, "at": time.time()}})
     return refund(clone_id, "user_rejected", bonus=False)
 
 

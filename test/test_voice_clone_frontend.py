@@ -716,8 +716,27 @@ def test_niente_rigenerazione_nel_pannello_4():
     riga = riga[:riga.index("</div>")]
     assert 'id="vcReject"' in riga and 'id="vcApprove"' in riga,         "rifiuto e approvazione devono stare nella stessa riga di chiusura"
     # la conferma inline resta sotto, e sparendo non deve lasciare un vuoto
-    assert 'id="vcRejectConfirm" class="vc-confirm"' in demos
+    assert 'id="vcRejectConfirm" class="vc-reject-box"' in demos
+    assert ".vc-reject-box[hidden]{display:none}" in CSS
     assert ".vc-confirm[hidden]{display:none}" in CSS
+
+
+def test_rifiuto_chiede_il_motivo():
+    """Chi rifiuta la voce deve scrivere il motivo (lo legge l'admin): il campo
+    sta nel riquadro di conferma, il client lo controlla e lo manda."""
+    p4 = HTML[HTML.index('id="vcP4"'):HTML.index('id="vcPMine"')]
+    box = p4[p4.index('id="vcRejectConfirm"'):p4.index('id="vcFailed"')]
+    assert 'id="vcRejectReason"' in box and 'data-t-ph="vc_reject_reason_ph"' in box
+    assert box.index('id="vcRejectReason"') < box.index('id="vcRejectYes"')
+    assert "var VC_REJECT_REASON_MIN = 10;" in VC
+    assert "vcAction('reject', {reason: reason})" in VC
+    assert "reject_reason_required" in _estrai_funzione(VC, "vcApiErrMsg")
+    for lang in LANGS:
+        for k in ("vc_reject_reason", "vc_reject_reason_ph", "vc_err_reject_reason_required"):
+            m = re.search(r"Object\.assign\(L\.%s,\{[^\n]*\b%s:\"([^\"]*)\"" % (lang, k), I18N)
+            assert m and m.group(1).strip(), (lang, k)
+            if k == "vc_err_reject_reason_required":
+                assert "{n}" in m.group(1), lang
 
 
 def _return_a_livello_zero(frammento):

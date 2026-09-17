@@ -1348,9 +1348,13 @@ __REVIEWS_LD__
               <button type="button" id="vcReject" class="btn-secondary" data-t="vc_reject"></button>
               <button type="button" id="vcApprove" class="btn-primary" data-t="vc_approve"></button>
             </div>
-            <span id="vcRejectConfirm" class="vc-confirm" hidden><span data-t="vc_reject_sure"></span>
-              <button type="button" id="vcRejectYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
-              <button type="button" id="vcRejectNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
+            <div id="vcRejectConfirm" class="vc-reject-box" hidden>
+              <label for="vcRejectReason" data-t="vc_reject_reason"></label>
+              <textarea id="vcRejectReason" rows="3" maxlength="1000" data-t-ph="vc_reject_reason_ph"></textarea>
+              <span class="vc-confirm"><span data-t="vc_reject_sure"></span>
+                <button type="button" id="vcRejectYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
+                <button type="button" id="vcRejectNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
+            </div>
           </div>
           <div id="vcFailed" hidden>
             <p class="al al-e" data-t="vc_demo_failed"></p>
