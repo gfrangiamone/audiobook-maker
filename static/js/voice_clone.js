@@ -68,6 +68,16 @@
     return Array.isArray(langs[lang]) && langs[lang].length > 0;
   }
 
+  /* Fumetto promozionale: la prima volta, poi ogni 7 giorni. Un'ultima
+     apparizione nel futuro (orologio spostato indietro) non lo spegne. */
+  var VC_PROMO_EVERY_MS = 7 * 24 * 3600 * 1000;
+
+  function vcPromoDue(last, now) {
+    last = Number(last) || 0;
+    if (last <= 0 || last > now) return true;
+    return now - last >= VC_PROMO_EVERY_MS;
+  }
+
   function vcUploadCheck(name, size, maxMb) {
     var m = /\.([A-Za-z0-9]+)$/.exec(name || '');
     var ext = m ? m[1].toLowerCase() : '';
@@ -130,7 +140,7 @@
     vcPanelFor: vcPanelFor, vcGateKey: vcGateKey, vcGateKeys: vcGateKeys, vcPending: vcPending,
     vcHasReadyFor: vcHasReadyFor, vcButtonKey: vcButtonKey, vcVisible: vcVisible,
     vcUploadCheck: vcUploadCheck, vcRecordExt: vcRecordExt, vcFixDurata: vcFixDurata,
-    ACCEPTED_EXT: ACCEPTED_EXT,
+    vcPromoDue: vcPromoDue, VC_PROMO_EVERY_MS: VC_PROMO_EVERY_MS, ACCEPTED_EXT: ACCEPTED_EXT,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = VcCore;
@@ -236,10 +246,34 @@
   function vcRefreshMine() {
     return vcFetch('/api/voice_clone/mine').then(function (r) {
       S.mine = (r.ok && Array.isArray(r.data.voices)) ? r.data.voices : [];
+      S.mineOk = !!r.ok;
       return S.mine;
-    }).catch(function () { S.mine = []; return S.mine; });
+    }).catch(function () { S.mine = []; S.mineOk = false; return S.mine; });
   }
   window.vcRefreshMine = vcRefreshMine;
+
+  /* Fumetto «Campiona la tua voce» (lo disegna app.js sopra la tab Premium):
+     qui solo le condizioni e la memoria dell'ultima apparizione. Niente
+     fumetto se l'elenco delle voci non e' arrivato: meglio tacere che
+     proporre la clonazione a chi ha gia' le sue voci. */
+  var VC_PROMO_KEY = 'abm_vc_promo';
+
+  function vcPromoLast() {
+    try { return Number((JSON.parse(localStorage.getItem(VC_PROMO_KEY) || '{}') || {}).last) || 0; }
+    catch (e) { return 0; }
+  }
+
+  window.vcPromoEligible = function () {
+    var voxOk = !!(typeof voices === 'object' && voices && voices._voxcpm && voices._voxcpm.available);
+    if (!vcVisible(S.cfg, voxOk, vcLang())) return false;
+    if (!S.mineOk || S.mine.length) return false;
+    if (vcVoxSelected()) return false;
+    return vcPromoDue(vcPromoLast(), Date.now());
+  };
+
+  window.vcPromoShown = function () {
+    try { localStorage.setItem(VC_PROMO_KEY, JSON.stringify({last: Date.now()})); } catch (e) {}
+  };
 
   function vcLang() {
     return (typeof bookLangState === 'object' && bookLangState && bookLangState.code) ? bookLangState.code : 'it';
@@ -1244,6 +1278,11 @@
       return vcRefreshMine();
     }).then(function () {
       vcSyncButton();
+      /* Config e voci arrivano dopo il primo giro dello step Audio: il
+         fumetto si rivaluta qui, altrimenti chi ci arriva subito non lo vede. */
+      try {
+        if (typeof maybeShowPremiumHint === 'function' && _wizStep === 3 && wizMode === 'audio') maybeShowPremiumHint();
+      } catch (e) {}
       /* La ripresa da ?vc=<id> richiede che app.js abbia gia' popolato la
          pagina (combo voci, bookLangState): rimandata al prossimo giro di
          event loop. Se l'id non compare piu' in `mine` (campione scaduto o

@@ -1125,6 +1125,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .prem-coach-x { position:absolute; top:4px; right:6px; background:none; border:0;
                 color:var(--txm,#9e9890); font-size:18px; line-height:1;
                 cursor:pointer; padding:2px; }
+.vc-promo-go { display:block; background:none; border:0; padding:0; margin:0; text-align:left;
+               color:inherit; font:inherit; cursor:pointer; }
+.vc-promo-cta { display:block; margin-top:6px; color:#d4a83a; text-decoration:underline; }
+.vc-promo-go:hover .vc-promo-cta, .vc-promo-go:focus-visible .vc-promo-cta { color:#e8c065; }
+.prem-coach[hidden] { display:none; }
 @keyframes premCoachIn { from { opacity:0; transform:translateY(4px); }
                          to   { opacity:1; transform:none; } }
 @media (max-width:720px) {

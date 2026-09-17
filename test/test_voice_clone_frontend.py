@@ -998,3 +998,30 @@ def test_rimuovi_da_questo_dispositivo_chiede_conferma():
         assert {"vc_forget_ask", "vc_forget_yes", "vc_forget_no"} <= _chiavi_i18n(lang), lang
     # la voce puo' essere arrivata da un altro: la didascalia non dice «che hai registrato»
     assert 'vc_mine_sample:"Il campione vocale registrato:"' in I18N
+
+
+def test_fumetto_promozionale_delle_voci_campionate():
+    # la bolla sta accanto al coachmark Premium e si apre col click sul testo
+    assert 'id="vcPromoCoach"' in HTML
+    blocco = HTML[HTML.index('id="vcPromoCoach"'):]
+    blocco = blocco[:blocco.index("</div>")]
+    assert 'onclick="_vcPromoGo()"' in blocco and 'onclick="_dismissVcPromo()"' in blocco
+    assert 'data-t="vc_promo_text"' in blocco and 'data-t="vc_promo_cta"' in blocco
+    for lang in LANGS:
+        assert {"vc_promo_text", "vc_promo_cta"} <= _chiavi_i18n(lang), lang
+    # precedenza: il fumetto esce prima del coachmark Premium e ne salta il conteggio
+    hint = _estrai_funzione(JS, "maybeShowPremiumHint")
+    assert hint.index("_maybeShowVcPromo()") < hint.index("_showPremiumCoach()")
+    assert hint.index("if(vcPromo)return;") < hint.index("st.shows++")
+    promo = _estrai_funzione(JS, "_maybeShowVcPromo")
+    assert "vcPromoEligible()" in promo and "vcPromoShown()" in promo and "_dismissPremiumHint()" in promo
+    # click: tab Premium, modello VoxCPM, wizard
+    vai = _estrai_funzione(JS, "_vcPromoGo")
+    assert vai.index("switchAudioTab('premium')") < vai.index("vm.value='voxcpm'") < vai.index("vcOpen()")
+    assert "_dismissVcPromo()" in _estrai_funzione(JS, "switchAudioTab")
+    # condizioni: feature attiva per la lingua, nessuna voce sul dispositivo, ogni 7 giorni
+    assert "VC_PROMO_EVERY_MS = 7 * 24 * 3600 * 1000" in VC
+    idx = VC.index("window.vcPromoEligible")
+    elig = VC[idx:VC.index("};", idx)]
+    assert "vcVisible(S.cfg" in elig and "S.mine.length" in elig and "vcPromoDue(" in elig
+    assert "maybeShowPremiumHint()" in _estrai_funzione(VC, "vcInit")

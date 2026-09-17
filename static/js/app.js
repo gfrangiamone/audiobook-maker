@@ -821,6 +821,7 @@ function _applyPremiumAvailability(){
   // rimuovi badge e coachmark; se è disponibile e siamo nello step Audio, rivaluta.
   if(!_premiumTabAvailable()){
     _dismissPremiumHint();
+    _dismissVcPromo();
     const _b=document.getElementById('premiumTabBadge');
     if(_b)_b.hidden=true;
   }else if(_wizStep===3 && wizMode==='audio'){
@@ -1804,6 +1805,15 @@ function _premiumTabAvailable(){
 }
 function _showPremiumCoach(){
   const coach=document.getElementById('premiumCoach');
+  if(!_coachOnPremiumTab(coach))return false;
+  if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
+  _premiumCoachTimer=setTimeout(_dismissPremiumHint,12000);
+  return true;
+}
+// Apre una bolla (.prem-coach) sopra la tab Premium con la freccia sulla
+// parola "PREMIUM". Condiviso dal coachmark Premium e dal fumetto delle voci
+// campionate: stanno nello stesso punto, ne compare uno alla volta.
+function _coachOnPremiumTab(coach){
   const btn=document.getElementById('tabPremiumBtn');
   if(!coach||!btn)return false;
   // Allinea la bolla all'inizio del tab Premium.
@@ -1827,8 +1837,6 @@ function _showPremiumCoach(){
     }
     coach.style.setProperty('--arrow-left',(targetX-coachX-6)+'px'); // -6 = metà larghezza freccia
   }catch(e){}
-  if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
-  _premiumCoachTimer=setTimeout(_dismissPremiumHint,12000);
   return true;
 }
 function _dismissPremiumHint(){
@@ -1846,17 +1854,65 @@ function _markPremiumDiscovered(){
 // Valuta e (se del caso) mostra badge + coachmark. Idempotente.
 function maybeShowPremiumHint(){
   if(!_premiumTabAvailable())return;
+  // Il fumetto delle voci campionate ha la precedenza: quando esce (o e' gia'
+  // aperto) il coachmark Premium resta chiuso e non consuma un'apparizione.
+  const vcPromo=_maybeShowVcPromo();
   if(wizardState && wizardState.audioTab==='premium')return;
   const st=_premiumHintLoad();
   if(st.discovered)return;
   // Badge: sempre quando non scoperto e tab disponibile.
   const badge=document.getElementById('premiumTabBadge');
   if(badge)badge.hidden=false;
+  if(vcPromo)return;
   // Coachmark: gate cap totale + 1/giorno.
   if(st.shows>=_PREMIUM_HINT_MAX)return;
   if(st.lastDay===_premiumHintToday())return;
   if(!_showPremiumCoach())return;
   st.shows++; st.lastDay=_premiumHintToday(); _premiumHintSave(st);
+}
+
+// ═══════════════ Fumetto «Campiona la tua voce» ═══════════════
+// Promuove le voci campionate: la prima volta allo step Audio, poi una volta
+// ogni 7 giorni (data dell'ultima apparizione in localStorage, gestita da
+// voice_clone.js). Solo se la funzione e' attiva per la lingua del libro, il
+// modello VoxCPM e' fra quelli PREMIUM offerti e il dispositivo non ha ancora
+// voci campionate. Click sul testo = tab Premium, modello VoxCPM, wizard.
+let _vcPromoTimer=null;
+function _vcPromoModelOffered(){
+  const vm=document.getElementById('vmPremium');
+  return !!vm&&Array.prototype.some.call(vm.options,o=>o.value==='voxcpm'&&!o.disabled);
+}
+function _maybeShowVcPromo(){
+  const coach=document.getElementById('vcPromoCoach');
+  if(!coach)return false;
+  if(!coach.hidden)return true;
+  if(typeof window.vcPromoEligible!=='function'||!window.vcPromoEligible())return false;
+  if(!_vcPromoModelOffered())return false;
+  _dismissPremiumHint();
+  if(!_coachOnPremiumTab(coach))return false;
+  if(typeof window.vcPromoShown==='function')window.vcPromoShown();
+  if(_vcPromoTimer)clearTimeout(_vcPromoTimer);
+  _vcPromoTimer=setTimeout(_dismissVcPromo,15000);
+  return true;
+}
+function _dismissVcPromo(){
+  const coach=document.getElementById('vcPromoCoach');
+  if(coach)coach.hidden=true;
+  if(_vcPromoTimer){clearTimeout(_vcPromoTimer);_vcPromoTimer=null;}
+}
+function _vcPromoGo(){
+  _dismissVcPromo();
+  if(wizardState.audioTab!=='premium'){
+    switchAudioTab('premium');
+    // Manutenzione o selezione troppo lunga: la tab non si e' aperta.
+    if(wizardState.audioTab!=='premium')return;
+  }
+  const vm=document.getElementById('vmPremium');
+  if(vm&&vm.value!=='voxcpm'&&_vcPromoModelOffered()){
+    vm.value='voxcpm';
+    vm.dispatchEvent(new Event('change'));
+  }
+  if(typeof window.vcOpen==='function')window.vcOpen();
 }
 
 function switchAudioTab(tab){
@@ -1889,6 +1945,7 @@ function switchAudioTab(tab){
   // Premium hint: qualsiasi switch riuscito chiude il coachmark; aprire la tab
   // Premium = "scoperta" → soppressione definitiva di coachmark e badge.
   _dismissPremiumHint();
+  _dismissVcPromo();
   if(tab==='premium')_markPremiumDiscovered();
   document.querySelectorAll('.tab-bar .tab').forEach(t=>{
     const active=t.dataset.tab===tab;

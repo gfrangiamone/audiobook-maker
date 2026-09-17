@@ -419,6 +419,13 @@ __REVIEWS_LD__
           <span class="prem-coach-text" data-t="premium_hint_text"></span>
           <button type="button" class="prem-coach-x" aria-label="Close" onclick="_dismissPremiumHint()">&times;</button>
         </div>
+        <div id="vcPromoCoach" class="prem-coach vc-promo" hidden role="status" aria-live="polite">
+          <button type="button" class="vc-promo-go" onclick="_vcPromoGo()">
+            <span class="prem-coach-text" data-t="vc_promo_text"></span>
+            <span class="vc-promo-cta" data-t="vc_promo_cta"></span>
+          </button>
+          <button type="button" class="prem-coach-x" aria-label="Close" onclick="_dismissVcPromo()">&times;</button>
+        </div>
       </div>
 
       <!-- Il motivo per cui il tab PREMIUM e' spento sta FUORI dai tab-panel:

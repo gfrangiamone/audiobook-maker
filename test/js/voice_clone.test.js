@@ -197,3 +197,17 @@ test('vcFixDurata: elemento assente non fa esplodere il chiamante', () => {
   assert.equal(typeof VcCore.vcFixDurata(null), 'function');
   VcCore.vcFixDurata(null)();
 });
+
+test('vcPromoDue: la prima volta, poi ogni 7 giorni', () => {
+  const G = 24 * 3600 * 1000;
+  const now = 1_800_000_000_000;
+  assert.equal(VcCore.VC_PROMO_EVERY_MS, 7 * G);
+  assert.equal(VcCore.vcPromoDue(0, now), true);
+  assert.equal(VcCore.vcPromoDue(undefined, now), true);
+  assert.equal(VcCore.vcPromoDue('rotto', now), true);
+  assert.equal(VcCore.vcPromoDue(now - G, now), false);
+  assert.equal(VcCore.vcPromoDue(now - 7 * G + 1, now), false);
+  assert.equal(VcCore.vcPromoDue(now - 7 * G, now), true);
+  // orologio tornato indietro: non resta muto per sempre
+  assert.equal(VcCore.vcPromoDue(now + G, now), true);
+});
