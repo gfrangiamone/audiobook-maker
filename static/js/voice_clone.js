@@ -1185,6 +1185,12 @@
         vcSetBusy(false);
         if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
         m.speed = r.data.speed;
+        // Il catalogo gia' caricato serve le clip del box d'ascolto: senza
+        // aggiornarlo si sentirebbero alla velocita' vecchia fino al reload.
+        if (typeof voices !== 'undefined' && voices && Array.isArray(voices._mine)) {
+          voices._mine.forEach(function (x) { if (x && x.id === m.id) x.speed = r.data.speed; });
+        }
+        if (typeof _applyVoxcpmListenParams === 'function') _applyVoxcpmListenParams();
         vcErr(tt('vc_speed_saved'), true);
       }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
     };

@@ -184,6 +184,9 @@ function vociMie(catalog, lang, locale) {
       lang: m.lang, locale: m.locale,
       gender: m.gender === 'f' ? 'Female' : 'Male',
       demos: demos,
+      // Velocita' impostata dal proprietario: le clip escono al passo
+      // nativo, il player la applica come playbackRate.
+      speed: (Number(m.speed) > 0) ? Number(m.speed) : 1,
       sample_url: '/api/voice_clone/' + m.id + '/sample.wav'
     });
   }

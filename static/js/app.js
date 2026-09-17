@@ -1540,10 +1540,15 @@ function _syncVoxcpmClipIcons(){
 // generate alla stessa velocita' di base del libro, quindi lo slider e'
 // l'unica differenza fra clip e lettura. Sul campione di riferimento —
 // registrato, non generato — resta un'anteprima onesta dell'effetto.
+// Le voci campionate fanno eccezione: le clip escono al passo nativo del
+// worker, mentre il libro prende anche la velocita' impostata dal
+// proprietario (voice_clone.speed), che va moltiplicata qui.
 function _voxcpmListenRate(){
   const vr=document.getElementById('vr');
   const pct=parseFloat(String((vr&&vr.value)||'+0%').replace('%','').replace('+',''))||0;
-  return 1+pct/100;
+  const v=_voxcpmSelectedVoice();
+  const base=(v&&v.mine&&Number(v.speed)>0)?Number(v.speed):1;
+  return base*(1+pct/100);
 }
 function _applyVoxcpmListenParams(){
   const vol=document.getElementById('voxcpmVolume');

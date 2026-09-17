@@ -8,7 +8,7 @@ const CAT = {
   _voxcpm: {available: true, model_label: 'VoxCPM2', personas: {}},
   _mine: [
     {id: 'vc_a1', state: 'ready', voice_id: 'voxcpm:mine:TOKA', lang: 'it', locale: 'it-IT',
-     gender: 'f', owner: true, pending: false, name: 'Nonna Pina',
+     gender: 'f', owner: true, pending: false, name: 'Nonna Pina', speed: 1.3,
      demo_urls: {common: '/api/voice_clone/vc_a1/demo/common', extra: '/api/voice_clone/vc_a1/demo/extra'}},
     {id: 'vc_b2', state: 'ready', voice_id: 'voxcpm:mine:TOKB', lang: 'it', locale: 'it-CH',
      gender: 'm', owner: false, pending: false,
@@ -39,6 +39,12 @@ test('vociMie: senza locale filtra solo per lingua', () => {
   assert.equal(vociMie(CAT, 'it', '')[1].gender, 'Male');
   // voce senza nome: stringa vuota, la combo usa l'etichetta generica
   assert.equal(vociMie(CAT, 'it', '')[1].name, '');
+});
+
+test('vociMie: velocita impostata dal proprietario, 1 se assente', () => {
+  const out = vociMie(CAT, 'it', '');
+  assert.equal(out[0].speed, 1.3);
+  assert.equal(out[1].speed, 1);
 });
 
 test('vociMie: catalogo senza _mine o nullo -> lista vuota', () => {
