@@ -539,7 +539,10 @@ def test_le_pagine_dei_link_email_seguono_la_lingua_del_browser(client, tmp_path
     assert "Accept-Language" in r.headers.get("Vary", "")
     r = client.get(f"/vc/{tok}/delete", headers={"Accept-Language": "ja"})
     assert 'lang="en"' in r.data.decode("utf-8") and b"Delete your voice sample" in r.data
+    # ?lang= non conta piu': decide solo il browser
     r = client.get(f"/vc/{tok}/delete?lang=de", headers={"Accept-Language": "it"})
+    assert 'lang="it"' in r.data.decode("utf-8")
+    r = client.get(f"/vc/{tok}/delete", headers={"Accept-Language": "de-DE"})
     assert 'lang="de"' in r.data.decode("utf-8") and "Sprachprobe l" in r.data.decode("utf-8")
     r = client.get(f"/vc/{rec['resume_token']['value']}/resume", headers={"Accept-Language": "fr"})
     assert "Reprendre" in r.data.decode("utf-8")
@@ -547,6 +550,12 @@ def test_le_pagine_dei_link_email_seguono_la_lingua_del_browser(client, tmp_path
     corpo = r.data.decode("utf-8")
     # «creator» e' un nome interno: a chi legge si dice da dove e' entrato
     assert "Dispositivo" in corpo and "Creazione" in corpo and "creator" not in corpo
+    assert f'href="/vc/{tok}/delete"' in corpo
+    # «Annulla cancellazione» e' la scelta predefinita e torna alla gestione
+    corpo = client.get(f"/vc/{tok}/delete", headers={"Accept-Language": "it"}).data.decode("utf-8")
+    assert "Annulla cancellazione" in corpo and "autofocus" in corpo
+    assert corpo.index("Annulla cancellazione") < corpo.index('class="danger"')
+    assert f'action="/vc/{tok}/devices"' in corpo
     r = client.post(f"/vc/{tok}/delete", headers={"Accept-Language": "it"})
     assert "Voce cancellata" in r.data.decode("utf-8")
 
@@ -857,9 +866,9 @@ def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
     # chi apre la pagina riconosce il dispositivo che sta usando
     assert "questo dispositivo" in corpo.lower()
     assert corpo.count("/devices/revoke") == 2          # anche il creatore
-    r = client.post(f"/vc/{tok}/devices/rename?lang=it",
+    r = client.post(f"/vc/{tok}/devices/rename",
                     data={"key": audiobook_app._vc_device_key("cid-r"), "name": "Tablet salotto"})
-    assert r.status_code == 302 and r.headers["Location"].endswith(f"/vc/{tok}/devices?lang=it")
+    assert r.status_code == 302 and r.headers["Location"].endswith(f"/vc/{tok}/devices")
     assert vc.device_of(vc.get(rec["id"]), "cid-r")["name"] == "Tablet salotto"
 
 
@@ -1027,8 +1036,8 @@ def test_pagina_gestione_imposta_la_velocita(client, tmp_path):
     corpo = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"}).data.decode("utf-8")
     assert 'name="speed"' in corpo and '<option value="1.00" selected>' in corpo
     assert f"/vc/{tok}/demo.wav" in corpo
-    r = client.post(f"/vc/{tok}/speed?lang=it", data={"speed": "1.10"})
-    assert r.status_code == 302 and r.headers["Location"].endswith("?lang=it&saved=speed")
+    r = client.post(f"/vc/{tok}/speed", data={"speed": "1.10"})
+    assert r.status_code == 302 and r.headers["Location"].endswith(f"/vc/{tok}/devices?saved=speed")
     assert vc.speed_of(vc.get(rec["id"])) == 1.1
     corpo = client.get(r.headers["Location"]).data.decode("utf-8")
     assert '<option value="1.10" selected>' in corpo

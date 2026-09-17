@@ -46,7 +46,8 @@
     "speed_saved": "saved",
     "cancel_btn": "Cancel",
     "edit_name_btn": "Edit name",
-    "speed_demo_lbl": "Listen to the voice at the chosen speed"
+    "speed_demo_lbl": "Listen to the voice at the chosen speed",
+    "delete_cancel_btn": "Cancel deletion"
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -95,7 +96,8 @@
     "speed_saved": "salvata",
     "cancel_btn": "Annulla",
     "edit_name_btn": "Modifica nome",
-    "speed_demo_lbl": "Ascolta la voce alla velocità scelta"
+    "speed_demo_lbl": "Ascolta la voce alla velocità scelta",
+    "delete_cancel_btn": "Annulla cancellazione"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -144,7 +146,8 @@
     "speed_saved": "enregistrée",
     "cancel_btn": "Annuler",
     "edit_name_btn": "Modifier le nom",
-    "speed_demo_lbl": "Écoutez la voix à la vitesse choisie"
+    "speed_demo_lbl": "Écoutez la voix à la vitesse choisie",
+    "delete_cancel_btn": "Annuler la suppression"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -193,7 +196,8 @@
     "speed_saved": "guardada",
     "cancel_btn": "Cancelar",
     "edit_name_btn": "Editar nombre",
-    "speed_demo_lbl": "Escucha la voz a la velocidad elegida"
+    "speed_demo_lbl": "Escucha la voz a la velocidad elegida",
+    "delete_cancel_btn": "Cancelar eliminación"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -242,7 +246,8 @@
     "speed_saved": "gespeichert",
     "cancel_btn": "Abbrechen",
     "edit_name_btn": "Namen bearbeiten",
-    "speed_demo_lbl": "Hör dir die Stimme im gewählten Tempo an"
+    "speed_demo_lbl": "Hör dir die Stimme im gewählten Tempo an",
+    "delete_cancel_btn": "Löschen abbrechen"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -291,7 +296,8 @@
     "speed_saved": "已保存",
     "cancel_btn": "取消",
     "edit_name_btn": "编辑名称",
-    "speed_demo_lbl": "以所选速度试听声音"
+    "speed_demo_lbl": "以所选速度试听声音",
+    "delete_cancel_btn": "取消删除"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -340,6 +346,7 @@
     "speed_saved": "सहेजा गया",
     "cancel_btn": "रद्द करें",
     "edit_name_btn": "नाम बदलें",
-    "speed_demo_lbl": "चुनी गई गति पर आवाज़ सुनें"
+    "speed_demo_lbl": "चुनी गई गति पर आवाज़ सुनें",
+    "delete_cancel_btn": "हटाना रद्द करें"
   }
 }

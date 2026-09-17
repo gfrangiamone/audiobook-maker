@@ -10047,6 +10047,7 @@ _VC_PAGES_FALLBACK = {
                          "the management link in your email. You can add the device back at any time with "
                          "the voice code you received by email.",
     "revoke_owner_btn": "Revoke this device", "cancel_link": "Cancel",
+    "delete_cancel_btn": "Cancel deletion",
     "delete_title": "Delete your voice sample",
     "delete_p1": "This removes your voice sample and every file derived from it. "
                  "Audiobooks already generated are not affected.",
@@ -10073,12 +10074,10 @@ _VC_PAGES_FALLBACK = {
 
 
 def _vc_page_lang():
-    """Lingua della pagina: `?lang=` se c'e', altrimenti quella del browser,
-    e inglese se non e' fra quelle dell'interfaccia. Stesso criterio di
-    /privacy e /support."""
-    lang = (request.args.get("lang") or "").strip().lower().split("-")[0]
-    if lang not in _VC_PAGES_I18N:
-        lang = _get_browser_lang()
+    """Lingua della pagina: quella del browser, e inglese se non e' fra
+    quelle tradotte. Nessun `?lang=`: chi apre il link dell'email deve
+    ritrovare la lingua del proprio browser su tutte le pagine del giro."""
+    lang = _get_browser_lang()
     return lang if lang in _VC_PAGES_I18N else "en"
 
 
@@ -10136,6 +10135,7 @@ def _vc_page(title, body_html, status=200, lang="en"):
                 f"background:#fbf9f6}}.card h2{{margin:0 0 .3em;font-size:1.2em}}"
                 f".card p{{margin:.2em 0 1em;color:var(--mut)}}"
                 f".speed-row{{display:flex;align-items:center;gap:.6em;flex-wrap:wrap}}"
+                f".actions{{display:flex;gap:.6em;flex-wrap:wrap;margin-top:1.5em}}"
                 f".speed-row select{{min-width:7em;cursor:pointer}}"
                 f".speed-demo{{margin-top:1em;border-top:1px solid var(--bd);padding-top:.9em}}"
                 f".speed-demo .meta{{margin:0 0 .4em}}.speed-demo audio{{width:100%;display:block}}"
@@ -10250,13 +10250,6 @@ def _vc_device_name(nome):
     return voice_clone.normalize_device_name(nome) or _vc_device_name_guess()
 
 
-def _vc_lang_tail():
-    """Chi ha forzato una lingua con ?lang= deve ritrovarla dopo il giro di
-    una POST che rimanda alla pagina dei dispositivi."""
-    ql = (request.args.get("lang") or "").strip().lower()
-    return f"?lang={html_mod.escape(ql)}" if ql in _VC_PAGES_I18N else ""
-
-
 def _vc_device_by_key(rec, key):
     return next((d for d in rec.get("devices") or []
                  if key and (d.get("cid") == key or _vc_device_key(d.get("cid")) == key)), None)
@@ -10272,7 +10265,7 @@ def vc_devices(token):
     lang = _vc_page_lang()
     t = _vc_txt(lang)
     tok = html_mod.escape(token)
-    coda = _vc_lang_tail()
+    coda = ""
     mio = _get_client_id()
     righe = ""
     for d in rec.get("devices") or []:
@@ -10309,7 +10302,7 @@ def vc_devices(token):
     body = (_vc_speed_section(rec, tok, coda, t) +
             f"<p>{html_mod.escape(t['devices_intro'])}</p>"
             f"<ul class=\"devs\">{righe}</ul>{_VC_RENAME_JS}"
-            f"<p><a href=\"/vc/{tok}/delete?lang={html_mod.escape(lang)}\">"
+            f"<p><a href=\"/vc/{tok}/delete\">"
             f"{html_mod.escape(t['delete_link'])}</a></p>")
     return _vc_page(t["devices_title"], body, lang=lang)
 
@@ -10354,10 +10347,10 @@ def vc_speed(token):
         out = voice_clone.set_speed_by_manage(token, request.form.get("speed"))
     except ValueError:
         out = None
-    coda = _vc_lang_tail()
+    coda = ""
     if out is not None:
         _vc_log(out, "VOICE_CLONE_SPEED", str(voice_clone.speed_of(out)))
-        coda = (coda + "&" if coda else "?") + "saved=speed"
+        coda = "?saved=speed"
     return _apply_no_cache(redirect(f"/vc/{token}/devices{coda}", code=302))
 
 
@@ -10390,7 +10383,7 @@ def vc_devices_rename(token):
     d = _vc_device_by_key(rec, (request.form.get("key") or "").strip())
     if d is not None:
         voice_clone.rename_device(token, d.get("cid"), request.form.get("name") or "")
-    return _apply_no_cache(redirect(f"/vc/{token}/devices{_vc_lang_tail()}", code=302))
+    return _apply_no_cache(redirect(f"/vc/{token}/devices", code=302))
 
 
 @app.route("/vc/<token>/devices/revoke", methods=["POST"])
@@ -10402,7 +10395,7 @@ def vc_devices_revoke(token):
         return _vc_manage_gone(token)
     key = (request.form.get("key") or request.form.get("cid") or "").strip()
     d = _vc_device_by_key(rec, key)
-    coda = _vc_lang_tail()
+    coda = ""
     if d is not None and d.get("via") == "creator" and request.form.get("confirm") != "1":
         # Il creatore e' l'unico dispositivo che rinomina e cancella la voce
         # dall'app: prima di toglierlo si dice che dopo restera' solo il link
@@ -10435,9 +10428,16 @@ def vc_delete(token):
     lang = _vc_page_lang()
     t = _vc_txt(lang)
     if request.method == "GET":
+        # «Annulla» e' la scelta predefinita (primaria, con il fuoco: Invio
+        # non cancella nulla) e riporta alla gestione della voce.
+        tok = html_mod.escape(token)
         body = (f"<p>{html_mod.escape(t['delete_p1'])}</p>"
                 f"<p>{html_mod.escape(t['delete_p2'])}</p>"
-                f"<form method=\"post\"><button>{html_mod.escape(t['delete_btn'])}</button></form>")
+                f"<div class=\"actions\">"
+                f"<form method=\"get\" action=\"/vc/{tok}/devices\">"
+                f"<button class=\"primary\" autofocus>{html_mod.escape(t['delete_cancel_btn'])}</button></form>"
+                f"<form method=\"post\"><button class=\"danger\">{html_mod.escape(t['delete_btn'])}</button></form>"
+                f"</div>")
         return _vc_page(t["delete_title"], body, lang=lang)
     out = voice_clone.delete_by_owner(token)
     if out is None:
