@@ -10039,6 +10039,8 @@ _VC_PAGES_FALLBACK = {
     "speed_intro": "The reading speed of audiobooks made with this voice, on every device that uses it. "
                    "Whoever generates a book can still make it faster or slower from there.",
     "speed_btn": "Save", "speed_saved": "saved",
+    "speed_demo_lbl": "Listen to the voice at the chosen speed",
+    "cancel_btn": "Cancel", "edit_name_btn": "Edit name",
     "revoke_owner_title": "Revoke the device that created the voice?",
     "revoke_owner_body": "This is the device the voice was created on. Once revoked, the voice stays on "
                          "our server and on the other devices, but it can be renamed or deleted only from "
@@ -10089,6 +10091,27 @@ def _vc_txt(lang):
     return t
 
 
+_VC_PENCIL_SVG = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+                  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+                  '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>')
+
+# Rinomina a scomparsa: la matita nasconde l'etichetta e mostra il campo,
+# «Annulla» o Esc tornano indietro senza salvare. Senza JavaScript i campi
+# restano sempre visibili (noscript).
+_VC_RENAME_JS = (
+    "<noscript><style>.devs form.dev-rename[hidden]{display:flex!important}"
+    "[data-edit]{display:none!important}</style></noscript>"
+    "<script>(function(){var U=document.querySelector('.devs');if(!U)return;"
+    "function apri(l,on){var v=l.querySelector('[data-view]'),f=l.querySelector('.dev-rename');"
+    "if(!v||!f)return;var i=f.querySelector('input[name=name]');v.hidden=on;f.hidden=!on;"
+    "if(on){i.dataset.orig=i.value;i.focus();i.select();}"
+    "else if(i.dataset.orig!==undefined){i.value=i.dataset.orig;}}"
+    "U.addEventListener('click',function(e){var b=e.target.closest('[data-edit],[data-cancel]');"
+    "if(!b)return;apri(b.closest('li'),b.hasAttribute('data-edit'));});"
+    "U.addEventListener('keydown',function(e){if(e.key==='Escape'&&e.target.name==='name')"
+    "apri(e.target.closest('li'),false);});})();</script>")
+
+
 def _vc_page(title, body_html, status=200, lang="en"):
     t = _vc_txt(lang)
     marchio = html_mod.escape(t["brand"])
@@ -10096,10 +10119,35 @@ def _vc_page(title, body_html, status=200, lang="en"):
                 f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                 f"<meta name=\"robots\" content=\"noindex,nofollow\">"
                 f"<title>{marchio} - {html_mod.escape(title)}</title>"
-                f"<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em}}"
-                f"button{{padding:.6em 1.2em}}input{{padding:.5em;font:inherit;max-width:100%;box-sizing:border-box}}"
+                f"<style>:root{{--acc:#c29a6c;--acc-d:#a67d50;--bd:#dcd6cd;--mut:#666}}"
+                f"body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em;"
+                f"color:#222;background:#fff;line-height:1.5}}"
+                f"[hidden]{{display:none!important}}"
+                f"button{{font:inherit;padding:.5em 1.1em;border:1px solid var(--bd);border-radius:8px;"
+                f"background:#f6f3ee;color:#222;cursor:pointer}}button:hover{{background:#ece7df}}"
+                f"button.primary{{background:var(--acc);border-color:var(--acc);color:#fff}}"
+                f"button.primary:hover{{background:var(--acc-d);border-color:var(--acc-d)}}"
+                f"button.danger{{background:#fff;color:#b3261e;border-color:#e8bdb9}}"
+                f"button.danger:hover{{background:#fdecea}}"
+                f"input,select{{padding:.5em .7em;font:inherit;max-width:100%;box-sizing:border-box;"
+                f"border:1px solid var(--bd);border-radius:8px;background:#fff;color:#222}}"
+                f"input:focus,select:focus{{outline:2px solid var(--acc);outline-offset:1px}}"
+                f".card{{border:1px solid var(--bd);border-radius:12px;padding:1em 1.2em;margin:1.2em 0 2em;"
+                f"background:#fbf9f6}}.card h2{{margin:0 0 .3em;font-size:1.2em}}"
+                f".card p{{margin:.2em 0 1em;color:var(--mut)}}"
+                f".speed-row{{display:flex;align-items:center;gap:.6em;flex-wrap:wrap}}"
+                f".speed-row select{{min-width:7em;cursor:pointer}}"
+                f".speed-demo{{margin-top:1em;border-top:1px solid var(--bd);padding-top:.9em}}"
+                f".speed-demo .meta{{margin:0 0 .4em}}.speed-demo audio{{width:100%;display:block}}"
+                f".ok{{font-size:.85em;background:#e6f4ea;color:#1e6b34;border-radius:1em;padding:.15em .7em}}"
                 f".devs{{list-style:none;padding:0}}.devs li{{border-top:1px solid #ddd;padding:.9em 0}}"
                 f".devs form{{display:inline-flex;gap:.4em;margin:.5em .6em 0 0;flex-wrap:wrap}}"
+                f".dev-head{{display:flex;align-items:center;flex-wrap:wrap;gap:.2em}}"
+                f".devs form.dev-rename{{display:flex;align-items:center;margin:0 0 .3em}}"
+                f".dev-rename input{{flex:1 1 12em}}"
+                f".icon-btn{{padding:.3em .4em;border:none;background:transparent;color:var(--mut);"
+                f"line-height:0;margin-left:.2em}}.icon-btn:hover{{background:#f0ebe3;color:#222}}"
+                f".icon-btn svg{{width:16px;height:16px}}"
                 f".meta{{color:#666;font-size:.9em;margin-top:.2em}}"
                 f".me{{font-size:.8em;background:#eef3ff;border-radius:1em;padding:.1em .6em;margin-left:.4em}}"
                 f".brand{{display:flex;align-items:center;gap:.6em;margin-bottom:1.8em;"
@@ -10241,20 +10289,26 @@ def vc_devices(token):
         chi = str(d.get("identity") or "")
         presentazione = (f"<div class=\"meta\">{html_mod.escape(t['identity_lbl'])}: "
                          f"«{html_mod.escape(chi)}»</div>" if chi else "")
-        righe += (f"<li><div><b>{html_mod.escape(nome or t['device_unnamed'])}</b>{questo}</div>"
-                  f"{presentazione}"
-                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div>"
-                  f"<form method=\"post\" action=\"/vc/{tok}/devices/rename{coda}\">"
+        # Il nome e' un'etichetta: la matita apre il campo al suo posto, e
+        # dopo il salvataggio la pagina si ricarica e torna etichetta.
+        righe += (f"<li><div class=\"dev-head\" data-view><b>{html_mod.escape(nome or t['device_unnamed'])}</b>"
+                  f"<button type=\"button\" class=\"icon-btn\" data-edit "
+                  f"title=\"{html_mod.escape(t['edit_name_btn'])}\" "
+                  f"aria-label=\"{html_mod.escape(t['edit_name_btn'])}\">{_VC_PENCIL_SVG}</button>{questo}</div>"
+                  f"<form class=\"dev-rename\" method=\"post\" action=\"/vc/{tok}/devices/rename{coda}\" hidden>"
                   f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
                   f"<input name=\"name\" maxlength=\"{voice_clone.DEVICE_NAME_MAX}\" "
                   f"value=\"{html_mod.escape(nome)}\" aria-label=\"{html_mod.escape(t['th_device'])}\">"
-                  f"<button>{html_mod.escape(t['rename_btn'])}</button></form>"
+                  f"<button class=\"primary\">{html_mod.escape(t['speed_btn'])}</button>"
+                  f"<button type=\"button\" data-cancel>{html_mod.escape(t['cancel_btn'])}</button></form>"
+                  f"{presentazione}"
+                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div>"
                   f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
                   f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
-                  f"<button>{html_mod.escape(t['revoke_btn'])}</button></form></li>")
+                  f"<button class=\"danger\">{html_mod.escape(t['revoke_btn'])}</button></form></li>")
     body = (_vc_speed_section(rec, tok, coda, t) +
             f"<p>{html_mod.escape(t['devices_intro'])}</p>"
-            f"<ul class=\"devs\">{righe}</ul>"
+            f"<ul class=\"devs\">{righe}</ul>{_VC_RENAME_JS}"
             f"<p><a href=\"/vc/{tok}/delete?lang={html_mod.escape(lang)}\">"
             f"{html_mod.escape(t['delete_link'])}</a></p>")
     return _vc_page(t["devices_title"], body, lang=lang)
@@ -10270,22 +10324,23 @@ def _vc_speed_section(rec, tok, coda, t):
     opzioni = "".join(
         f"<option value=\"{v:.2f}\"{' selected' if abs(v - attuale) < 1e-9 else ''}>"
         f"{v:.2f}×</option>" for v in voice_clone.speed_choices())
-    salvata = (f" <span class=\"me\">{html_mod.escape(t['speed_saved'])}</span>"
+    salvata = (f"<span class=\"ok\">{html_mod.escape(t['speed_saved'])}</span>"
                if request.args.get("saved") == "speed" else "")
     prova = ""
     if rec.get("state") == "ready":
-        prova = (f"<div><audio id=\"vcSpeedDemo\" controls preload=\"none\" "
+        prova = (f"<div class=\"speed-demo\"><div class=\"meta\">{html_mod.escape(t['speed_demo_lbl'])}</div>"
+                 f"<audio id=\"vcSpeedDemo\" controls preload=\"none\" "
                  f"src=\"/vc/{tok}/demo.wav\"></audio></div>"
                  "<script>(function(){var s=document.getElementById('vcSpeed'),"
                  "a=document.getElementById('vcSpeedDemo');if(!s||!a)return;"
                  "var f=function(){var v=parseFloat(s.value)||1;a.defaultPlaybackRate=v;a.playbackRate=v;};"
                  "s.addEventListener('change',f);a.addEventListener('play',f);f();})();</script>")
-    return (f"<h2>{html_mod.escape(t['speed_title'])}</h2>"
+    return (f"<section class=\"card\"><h2>{html_mod.escape(t['speed_title'])}</h2>"
             f"<p>{html_mod.escape(t['speed_intro'])}</p>"
-            f"<form method=\"post\" action=\"/vc/{tok}/speed{coda}\">"
+            f"<form class=\"speed-row\" method=\"post\" action=\"/vc/{tok}/speed{coda}\">"
             f"<select id=\"vcSpeed\" name=\"speed\" aria-label=\"{html_mod.escape(t['speed_title'])}\">"
-            f"{opzioni}</select> <button>{html_mod.escape(t['speed_btn'])}</button>{salvata}</form>"
-            f"{prova}")
+            f"{opzioni}</select><button class=\"primary\">{html_mod.escape(t['speed_btn'])}</button>{salvata}</form>"
+            f"{prova}</section>")
 
 
 @app.route("/vc/<token>/speed", methods=["POST"])

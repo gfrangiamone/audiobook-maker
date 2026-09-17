@@ -43,7 +43,10 @@
     "speed_title": "Voice speed",
     "speed_intro": "The reading speed of audiobooks made with this voice, on every device that uses it. Whoever generates a book can still make it faster or slower from there.",
     "speed_btn": "Save",
-    "speed_saved": "saved"
+    "speed_saved": "saved",
+    "cancel_btn": "Cancel",
+    "edit_name_btn": "Edit name",
+    "speed_demo_lbl": "Listen to the voice at the chosen speed"
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -89,7 +92,10 @@
     "speed_title": "Velocità della voce",
     "speed_intro": "La velocità di lettura degli audiolibri creati con questa voce, su tutti i dispositivi che la usano. Chi genera un libro può comunque accelerarla o rallentarla a partire da qui.",
     "speed_btn": "Salva",
-    "speed_saved": "salvata"
+    "speed_saved": "salvata",
+    "cancel_btn": "Annulla",
+    "edit_name_btn": "Modifica nome",
+    "speed_demo_lbl": "Ascolta la voce alla velocità scelta"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -135,7 +141,10 @@
     "speed_title": "Vitesse de la voix",
     "speed_intro": "La vitesse de lecture des livres audio créés avec cette voix, sur tous les appareils qui l’utilisent. Qui génère un livre peut encore l’accélérer ou la ralentir à partir de là.",
     "speed_btn": "Enregistrer",
-    "speed_saved": "enregistrée"
+    "speed_saved": "enregistrée",
+    "cancel_btn": "Annuler",
+    "edit_name_btn": "Modifier le nom",
+    "speed_demo_lbl": "Écoutez la voix à la vitesse choisie"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -181,7 +190,10 @@
     "speed_title": "Velocidad de la voz",
     "speed_intro": "La velocidad de lectura de los audiolibros creados con esta voz, en todos los dispositivos que la usan. Quien genera un libro puede aún acelerarla o ralentizarla a partir de aquí.",
     "speed_btn": "Guardar",
-    "speed_saved": "guardada"
+    "speed_saved": "guardada",
+    "cancel_btn": "Cancelar",
+    "edit_name_btn": "Editar nombre",
+    "speed_demo_lbl": "Escucha la voz a la velocidad elegida"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -227,7 +239,10 @@
     "speed_title": "Sprechtempo der Stimme",
     "speed_intro": "Das Lesetempo der Hörbücher, die mit dieser Stimme erstellt werden, auf allen Geräten, die sie nutzen. Wer ein Buch erzeugt, kann es von hier aus noch schneller oder langsamer machen.",
     "speed_btn": "Speichern",
-    "speed_saved": "gespeichert"
+    "speed_saved": "gespeichert",
+    "cancel_btn": "Abbrechen",
+    "edit_name_btn": "Namen bearbeiten",
+    "speed_demo_lbl": "Hör dir die Stimme im gewählten Tempo an"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -273,7 +288,10 @@
     "speed_title": "声音语速",
     "speed_intro": "使用此声音制作的有声书的朗读速度，适用于所有使用该声音的设备。生成书籍的人仍可在此基础上加快或放慢。",
     "speed_btn": "保存",
-    "speed_saved": "已保存"
+    "speed_saved": "已保存",
+    "cancel_btn": "取消",
+    "edit_name_btn": "编辑名称",
+    "speed_demo_lbl": "以所选速度试听声音"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -319,6 +337,9 @@
     "speed_title": "आवाज़ की गति",
     "speed_intro": "इस आवाज़ से बनी ऑडियोबुक की पढ़ने की गति, उन सभी डिवाइस पर जो इसका उपयोग करते हैं। किताब बनाने वाला व्यक्ति इसे यहाँ से और तेज़ या धीमा कर सकता है।",
     "speed_btn": "सहेजें",
-    "speed_saved": "सहेजा गया"
+    "speed_saved": "सहेजा गया",
+    "cancel_btn": "रद्द करें",
+    "edit_name_btn": "नाम बदलें",
+    "speed_demo_lbl": "चुनी गई गति पर आवाज़ सुनें"
   }
 }
