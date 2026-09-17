@@ -6886,7 +6886,7 @@ def admin_audit_premium_page():
           <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
-          <option value="v2">VoxCPM v2 (PREMIUM)</option>
+          <option value="v2">VoxCPM2 (PREMIUM)</option>
         </select>
       </div>
       <div>
@@ -7187,6 +7187,11 @@ def admin_audit_premium_page():
     const c = (code||"").toLowerCase();
     return LANG_NAMES[c] ? `${LANG_NAMES[c]} (${c})` : c;
   }
+  // Chiave modello persistita -> etichetta di colonna. "v2" e' la chiave
+  // storica del catalogo VoxCPM (resta nel JSONL e nei filtri), ma a video
+  // il modello si chiama voxcpm2, sia per le voci di catalogo sia campionate.
+  const MODEL_DISPLAY = {"v2": "voxcpm2"};
+  function modelLabel(k){ return MODEL_DISPLAY[k] || k; }
   function esc(s){
     const d = document.createElement('div');
     d.textContent = (s == null ? "" : String(s));
@@ -7327,7 +7332,7 @@ def admin_audit_premium_page():
       return `<tr class="${rowCls}">
         <td>${ts}</td>
         <td><code>${esc(r.job_id)}</code></td>
-        <td>${esc(r.model_key)}</td>
+        <td>${esc(modelLabel(r.model_key))}</td>
         <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
@@ -8046,8 +8051,10 @@ def _synth_running_gemini_audit_records():
                 except Exception:
                     provider_cost_actual = 0.0
                     should_have_been = 0.0
-                if model_key == "?":
-                    model_key = "v2"
+                # Chiave fissa come in _write_voxcpm_audit: per le voci
+                # campionate (voxcpm:mine:<token>) parts[1] e' "mine", non il
+                # modello, e la riga live mostrava "mine" invece di "v2".
+                model_key = "v2"
                 chars_total = chars_metered
                 audio_seconds = float(va.get("audio_seconds", 0) or 0)
                 pricing_cost_field = provider_cost_actual
