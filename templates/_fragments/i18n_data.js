@@ -167,3 +167,10 @@ Object.assign(L.es,{vc_reject_reason:"¿Por qué rechazas la voz? Tu comentario 
 Object.assign(L.de,{vc_reject_reason:"Warum lehnst du die Stimme ab? Dein Feedback hilft uns, besser zu werden.",vc_reject_reason_ph:"Z. B. die Stimme klingt nicht wie ich, die Betonung ist unnatürlich…",vc_err_reject_reason_required:"Bitte nenne den Grund für die Ablehnung (mindestens {n} Zeichen)."});
 Object.assign(L.zh,{vc_reject_reason:"你为什么拒绝这个声音？你的反馈能帮助我们改进。",vc_reject_reason_ph:"例如：声音不像我，语调不自然…",vc_err_reject_reason_required:"请写下拒绝的原因（至少 {n} 个字符）。"});
 Object.assign(L.hi,{vc_reject_reason:"आप यह आवाज़ क्यों अस्वीकार कर रहे हैं? आपकी राय हमें बेहतर बनाने में मदद करती है।",vc_reject_reason_ph:"जैसे: आवाज़ मेरी जैसी नहीं लगती, उतार-चढ़ाव स्वाभाविक नहीं है…",vc_err_reject_reason_required:"कृपया अस्वीकार करने का कारण लिखें (कम से कम {n} अक्षर)।"});
+Object.assign(L.it,{guide_voice_clone:"Audiolibri con la tua voce"});
+Object.assign(L.en,{guide_voice_clone:"Audiobooks in your own voice"});
+Object.assign(L.fr,{guide_voice_clone:"Livres audio avec votre voix"});
+Object.assign(L.es,{guide_voice_clone:"Audiolibros con tu propia voz"});
+Object.assign(L.de,{guide_voice_clone:"Hörbücher mit der eigenen Stimme"});
+Object.assign(L.zh,{guide_voice_clone:"用你自己的声音制作有声书"});
+Object.assign(L.hi,{guide_voice_clone:"अपनी आवाज़ में ऑडियोबुक"});

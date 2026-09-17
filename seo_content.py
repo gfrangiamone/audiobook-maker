@@ -204,6 +204,7 @@ _CONTENT = {
             '<li><a href="/guide/m4b-format/it/">Guida al Formato M4B — Crea Audiolibri con Capitoli</a></li>'
             '<li><a href="/guide/text-to-speech-audiobook/it/">Text-to-Speech per Audiolibri Gratis — Migliori Voci TTS</a></li>'
             '<li><a href="/guide/podcast/it/">Come Pubblicare il Tuo Audiolibro come Podcast Privato</a></li>'
+            '<li><a href="/guide/voice-cloning-audiobook/it/">Come Creare un Audiolibro con la Tua Voce — Guida alla Clonazione Vocale</a></li>'
             '</ul>'
         ),
         "updated_label": "Ultimo aggiornamento",
@@ -367,6 +368,7 @@ _CONTENT = {
             '<li><a href="/guide/m4b-format/">M4B Format Guide — Create Audiobooks with Chapters</a></li>'
             '<li><a href="/guide/text-to-speech-audiobook/">Free Text-to-Speech Audiobook Maker — Best TTS Voices</a></li>'
             '<li><a href="/guide/podcast/">How to Publish Your Audiobook as a Private Podcast</a></li>'
+            '<li><a href="/guide/voice-cloning-audiobook/">How to Create an Audiobook in Your Own Voice — Voice Cloning Guide</a></li>'
             '</ul>'
         ),
         "updated_label": "Last updated",
@@ -534,6 +536,7 @@ _CONTENT = {
             '<li><a href="/guide/m4b-format/fr/">Guide du Format M4B — Créer des Livres Audio avec Chapitres</a></li>'
             '<li><a href="/guide/text-to-speech-audiobook/fr/">Text-to-Speech Livre Audio Gratuit — Meilleures Voix TTS</a></li>'
             '<li><a href="/guide/podcast/fr/">Comment Publier Votre Livre Audio en Podcast Privé</a></li>'
+            '<li><a href="/guide/voice-cloning-audiobook/fr/">Créer un Livre Audio avec Votre Propre Voix — Guide du Clonage Vocal</a></li>'
             '</ul>'
         ),
         "updated_label": "Dernière mise à jour",
@@ -700,6 +703,7 @@ _CONTENT = {
             '<li><a href="/guide/m4b-format/es/">Guía del Formato M4B — Crear Audiolibros con Capítulos</a></li>'
             '<li><a href="/guide/text-to-speech-audiobook/es/">Text-to-Speech para Audiolibros Gratis — Mejores Voces TTS</a></li>'
             '<li><a href="/guide/podcast/es/">Cómo Publicar Tu Audiolibro como Podcast Privado</a></li>'
+            '<li><a href="/guide/voice-cloning-audiobook/es/">Cómo Crear un Audiolibro con Tu Propia Voz — Guía de Clonación de Voz</a></li>'
             '</ul>'
         ),
         "updated_label": "Última actualización",
@@ -868,6 +872,7 @@ _CONTENT = {
             '<li><a href="/guide/m4b-format/de/">M4B Format Guide — Hörbücher mit Kapiteln erstellen</a></li>'
             '<li><a href="/guide/text-to-speech-audiobook/de/">Kostenloser Text-to-Speech Hörbuch Maker — Beste TTS</a></li>'
             '<li><a href="/guide/podcast/de/">Hörbuch als privaten Podcast veröffentlichen — Kostenlose Anleitung</a></li>'
+            '<li><a href="/guide/voice-cloning-audiobook/de/">Hörbuch mit der eigenen Stimme erstellen — Anleitung Stimmklonen</a></li>'
             '</ul>'
         ),
         "updated_label": "Zuletzt aktualisiert",
@@ -1018,6 +1023,7 @@ _CONTENT = {
             '<li><a href="/guide/m4b-format/zh/">M4B格式指南 — 创建带章节的有声书</a></li>'
             '<li><a href="/guide/text-to-speech-audiobook/zh/">免费文字转语音有声书制作 — 最佳TTS语音</a></li>'
             '<li><a href="/guide/podcast/zh/">如何将有声书发布为私人播客 — 免费指南</a></li>'
+            '<li><a href="/guide/voice-cloning-audiobook/zh/">如何用你自己的声音制作有声书 — 声音克隆指南</a></li>'
             '</ul>'
         ),
         "updated_label": "最后更新",
@@ -1168,6 +1174,7 @@ _CONTENT = {
             '<li><a href="/guide/m4b-format/hi/">M4B प्रारूप गाइड — अध्यायों के साथ ऑडियोबुक बनाएं</a></li>'
             '<li><a href="/guide/text-to-speech-audiobook/hi/">मुफ़्त टेक्स्ट-टू-स्पीच ऑडियोबुक निर्माण — सर्वश्रेष्ठ TTS आवाज़ें</a></li>'
             '<li><a href="/guide/podcast/hi/">ऑडियोबुक्स को निजी पॉडकास्ट के रूप में कैसे प्रकाशित करें — मुफ़्त गाइड</a></li>'
+            '<li><a href="/guide/voice-cloning-audiobook/hi/">अपनी आवाज़ में ऑडियोबुक कैसे बनाएँ — वॉइस क्लोनिंग गाइड</a></li>'
             '</ul>'
         ),
         "updated_label": "अंतिम अद्यतन",
