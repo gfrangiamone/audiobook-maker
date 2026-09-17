@@ -1368,12 +1368,18 @@ __REVIEWS_LD__
             <p class="vc-small vc-claim-intro" data-t="vc_claim_intro"></p>
             <div class="vc-claim-row">
               <input type="text" id="vcClaimCode" autocomplete="off" spellcheck="false" data-t-ph="vc_claim_ph">
+              <input type="text" id="vcClaimDevice" maxlength="40" autocomplete="off" data-t-ph="vc_device_name" data-t-title="vc_device_name_hint">
+            </div>
+            <div class="vc-claim-row">
+              <textarea id="vcClaimIdentity" rows="3" maxlength="300" data-t-ph="vc_identity_ph"></textarea>
+              <span class="vc-small" data-t="vc_identity_hint"></span>
+            </div>
+            <div class="vc-claim-row vc-claim-send">
               <button type="button" id="vcClaimBtn" class="btn btn-outline btn-sm" data-t="vc_claim_btn"></button>
             </div>
             <div id="vcConfirmRow" class="vc-claim-row" hidden>
               <span class="vc-small vc-claim-intro" data-t="vc_confirm_intro"></span>
               <input type="text" id="vcConfirmCode" autocomplete="one-time-code" inputmode="numeric" data-t-ph="vc_confirm_ph">
-              <input type="text" id="vcConfirmDevice" maxlength="40" autocomplete="off" data-t-ph="vc_device_name" data-t-title="vc_device_name_hint">
               <button type="button" id="vcConfirmBtn" class="btn btn-outline btn-sm" data-t="vc_confirm_btn"></button>
             </div>
           </details>

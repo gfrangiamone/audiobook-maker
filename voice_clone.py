@@ -93,6 +93,15 @@ class VoiceGone(ValueError):
     """Voce inesistente o senza campione (cancellata, rimborsata, scaduta)."""
 
 
+class ClaimIncomplete(ValueError):
+    """Richiesta con il codice-voce senza il nome del dispositivo o senza la
+    presentazione di chi la fa. `field` dice quale dei due manca."""
+
+    def __init__(self, field):
+        super().__init__(field)
+        self.field = field
+
+
 class SampleUnavailable(Exception):
     """Il campione esiste ma non e' raggiungibile ora (R2 in errore di
     trasporto/credenziali): NON e' una voce sparita, va trattata come
@@ -636,6 +645,18 @@ def normalize_device_name(s):
     return normalize_name(s)[:DEVICE_NAME_MAX].strip()
 
 
+IDENTITY_MIN = 10
+IDENTITY_MAX = 300
+
+
+def normalize_identity(s):
+    """La presentazione che chi usa un codice-voce scrive per il proprietario
+    (§6.4): stessa pulizia del nome, una riga sola, al massimo IDENTITY_MAX
+    caratteri. Finisce nell'email e nella pagina dei dispositivi."""
+    s = _NAME_DROP_RE.sub("", _NAME_CTRL_RE.sub(" ", str(s or "")))
+    return " ".join(s.split())[:IDENTITY_MAX].strip()
+
+
 def device_name_from_ua(ua):
     """Nome di partenza proposto all'utente («Chrome · Windows»), uguale in
     tutte le lingue. '' se lo User-Agent non dice nulla di riconoscibile."""
@@ -1040,7 +1061,9 @@ def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
 # ---------------------------------------------------------------------------
 # dispositivi (§6.3, §6.4)
 # ---------------------------------------------------------------------------
-CONFIRM_TTL_SEC = 900
+# Il proprietario puo' leggere l'email ore dopo: il codice vale un giorno
+# dalla richiesta, non oltre.
+CONFIRM_TTL_SEC = 24 * 3600
 CONFIRM_MAX_TRIES = 5
 CONFIRM_LOCK_SEC = 900
 
@@ -1056,10 +1079,14 @@ def _code_hash(code):
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
-def claim(voice_code, cid, now=None):
+def claim(voice_code, cid, now=None, device_name="", identity=""):
     """Primo passo del recupero/dono: o il cid e' gia' dentro, o parte un
     codice di conferma per il proprietario. Il codice in chiaro torna al
-    chiamante (che lo spedisce) e nel record resta solo l'hash."""
+    chiamante (che lo spedisce) e nel record resta solo l'hash.
+
+    Un dispositivo nuovo deve dire come si chiama e chi c'e' dietro
+    (`ClaimIncomplete` altrimenti): il proprietario li legge nell'email prima
+    di dare il codice, e alla conferma il dispositivo entra con quel nome."""
     t = _now(now)
     with _lock:
         rec = _by_code_alive(voice_code)
@@ -1068,18 +1095,28 @@ def claim(voice_code, cid, now=None):
         locks = rec.get("confirm_locks") or {}
         if locks.get(cid, 0) > t:
             raise ValueError("locked")
+        nome = normalize_device_name(device_name)
+        if not nome:
+            raise ClaimIncomplete("device_name")
+        chi = normalize_identity(identity)
+        if len(chi) < IDENTITY_MIN:
+            raise ClaimIncomplete("identity")
         code = f"{secrets.randbelow(1000000):06d}"
         # Pulizia di passaggio: i lock scaduti non restano per sempre nel
         # record solo perche' nessuno li ha mai riletti dopo la scadenza.
         pruned = {k: v for k, v in locks.items() if v > t}
         rec = store().update(rec["id"], {"pending_confirm": {
             "cid": cid, "code_hash": _code_hash(code),
-            "expires_at": t + CONFIRM_TTL_SEC, "tries": 0},
+            "expires_at": t + CONFIRM_TTL_SEC, "tries": 0,
+            "device_name": nome, "identity": chi},
             "confirm_locks": pruned})
         return "pending", rec, code
 
 
 def confirm(voice_code, cid, confirm_code, now=None, device_name=""):
+    """Il dispositivo entra con il nome e la presentazione della richiesta,
+    cioe' quelli che il proprietario ha letto nell'email. `device_name` serve
+    solo per le richieste aperte prima che la richiesta li portasse con se'."""
     t = _now(now)
     with _lock:
         rec = _by_code_alive(voice_code)
@@ -1092,7 +1129,8 @@ def confirm(voice_code, cid, confirm_code, now=None, device_name=""):
         if hmac.compare_digest(pc.get("code_hash") or "", _code_hash((confirm_code or "").strip())):
             devices = list(rec.get("devices") or [])
             devices.append({"cid": cid, "added_at": t, "via": "code",
-                            "name": normalize_device_name(device_name)})
+                            "name": pc.get("device_name") or normalize_device_name(device_name),
+                            "identity": pc.get("identity") or ""})
             store().update(rec["id"], {"pending_confirm": None, "devices": devices})
             return "ok"
         pc = dict(pc, tries=int(pc.get("tries") or 0) + 1)

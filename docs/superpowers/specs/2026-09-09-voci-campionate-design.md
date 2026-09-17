@@ -53,7 +53,7 @@ autorizza via email.
 | D10 | **Tre rigenerazioni** delle demo incluse. Alla quarta richiesta il bottone sparisce; restano approva o rifiuta. |
 | D11 | **Codice-voce** (leggibile, per l'utente) e **token interno** (`voxcpm:mine:<token>`) sono due valori diversi, mappati server-side. Il token non compare mai in URL né in email. |
 | D12 | Il legame dispositivo↔voce è **server-side**: la voce tiene la lista dei `abm_cid` autorizzati. Nessun cookie aggiuntivo. |
-| D13 | Primo uso del codice su un nuovo dispositivo: **codice-conferma** a 6 cifre inviato al proprietario, valido 15 minuti, 5 tentativi. |
+| D13 | Primo uso del codice su un nuovo dispositivo: chi lo usa deve dare il **nome del dispositivo** e una **presentazione** (10-300 caratteri); il proprietario li riceve per email con un **codice-conferma** a 6 cifre, valido 24 ore dalla richiesta, 5 tentativi. |
 | D14 | Revoca di un dispositivo e cancellazione della voce: **link con token segreto** (`manage_token`, salvato nel record come i token di download) nell'email del proprietario. L'email invita a conservarla. |
 | D15 | Retention `ABM_VOICE_CLONE_RETENTION_DAYS` (default 365) **rinnovata a ogni uso** (generazione o accesso da dispositivo). Avviso email 30 giorni prima della scadenza. |
 | D16 | Dopo il pagamento il server è **autonomo**: genera le demo anche se il browser sparisce. La voce diventa **usabile solo dopo l'approvazione** esplicita delle demo (stato `ready`). |
@@ -339,8 +339,10 @@ Un record per voce:
            "regen_used": 1, "regen_max": 3, "runpod_job_id": "..."},
   "payment": {"type": "paypal", "token": "<order_id>", "amount_eur": 5.0,
               "paid_at": 1789000000},
-  "devices": [{"cid": "abcd1234efgh", "added_at": ..., "via": "creator|code|resume"}],
-  "pending_confirm": {"cid": "...", "code_hash": "...", "expires_at": ..., "tries": 0},
+  "devices": [{"cid": "abcd1234efgh", "added_at": ..., "via": "creator|code|resume",
+               "name": "Telefono di Anna", "identity": "solo per via: code"}],
+  "pending_confirm": {"cid": "...", "code_hash": "...", "expires_at": ..., "tries": 0,
+                      "device_name": "...", "identity": "..."},
   "created_at": ..., "ready_at": ..., "last_used_at": ..., "expires_at": ...,
   "archived": false, "deleted_at": null, "delete_reason": null
 }
@@ -373,21 +375,30 @@ del proprietario, quindi vale come conferma.
 
 Rimozione dal dispositivo: `POST /api/voice_clone/<id>/forget` (cid
 corrente). Revoca da parte del proprietario: link di gestione nell'email
-(§8.3), pagina `/vc/<manage_token>/devices` con l'elenco (data, via, ultimi
-4 caratteri del cid) e un bottone di revoca per riga.
+(§8.3), pagina `/vc/<manage_token>/devices` con l'elenco (nome, data, via,
+ultimi 4 caratteri del cid) e un bottone di revoca per riga. Sotto i
+dispositivi entrati con il codice-voce compare anche la presentazione che
+hanno scritto nella richiesta (§6.4).
 
 ### 6.4 Recupero e dono con il codice
 
-1. Su un dispositivo qualunque: «Aggiungi con codice-voce» →
-   `POST /api/voice_clone/claim {voice_code}`.
-2. Se il cid è già in `devices`: 200, fatto. Altrimenti il server genera un
-   codice-conferma a 6 cifre, lo salva hashato in `pending_confirm` con
-   scadenza 15 min, e lo invia **all'email del proprietario** (§8.2). Risposta
-   202 «codice inviato al proprietario».
+1. Su un dispositivo qualunque: «Aggiungi con codice-voce». Oltre al codice
+   sono obbligatori il **nome del dispositivo** e una **presentazione** di chi
+   fa la richiesta (da 10 a 300 caratteri, una riga, ripulita come i nomi) →
+   `POST /api/voice_clone/claim {voice_code, device_name, identity}`.
+2. Se il cid è già in `devices`: 200, fatto, senza chiedere altro. Se manca
+   il nome o la presentazione: 400 `device_name_required` /
+   `identity_required` (con `min_chars`), nessuna email. Altrimenti il server
+   genera un codice-conferma a 6 cifre, lo salva hashato in `pending_confirm`
+   con nome e presentazione e scadenza **24 ore dalla richiesta**, e lo invia
+   **all'email del proprietario** insieme a nome e presentazione (§8.2),
+   perché decida sapendo a chi sta dando la voce. Risposta 200
+   `status: pending`.
 3. `POST /api/voice_clone/confirm {voice_code, confirm_code}`: 5 tentativi,
    poi `pending_confirm` annullato e 15 minuti di blocco per quel cid.
-   Successo → cid aggiunto con `via: code`, email di avviso al proprietario
-   con il link di revoca.
+   Successo → cid aggiunto con `via: code` e con il nome e la presentazione
+   della richiesta (quelli letti dal proprietario, non modificabili alla
+   conferma), email di avviso al proprietario con il link di revoca.
 
 Un solo `pending_confirm` per voce alla volta: una nuova richiesta lo
 sostituisce e invalida il codice precedente. Il dono è esattamente questo
@@ -477,10 +488,12 @@ condizioni, link cancellazione.
 
 ### 8.2 Codice di conferma (claim da nuovo dispositivo)
 
-Oggetto «Conferma l'uso della tua voce su un nuovo dispositivo». Codice a 6
-cifre, validità 15 minuti, «se non sei stato tu, ignora questa email: senza
-il codice nessuno può usare la tua voce». Dopo la conferma: seconda email
-«Nuovo dispositivo autorizzato» con link revoca.
+Oggetto «Qualcuno chiede di usare la tua voce campione». Riporta il nome del
+dispositivo e la presentazione scritti da chi fa la richiesta (escapati e
+indicati come non verificati), poi il codice a 6 cifre, valido 24 ore dalla
+richiesta, e «se non riconosci chi scrive o non vuoi autorizzarlo, ignora
+questa email: senza il codice nessuno può usare la tua voce». Dopo la
+conferma: seconda email «Nuovo dispositivo autorizzato» con link revoca.
 
 ### 8.3 Voce pronta (all'approvazione)
 

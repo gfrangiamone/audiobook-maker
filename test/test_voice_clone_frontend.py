@@ -806,9 +806,10 @@ def test_codice_voce_raggiungibile_anche_senza_voce_propria():
 def test_sezione_codice_voce_ha_uno_stile_suo():
     """La sezione era una `details` nuda con l'input di default del browser
     accanto a un bottone dell'app: bordi e altezze diversi."""
-    for regola in (".vc-claim{", ".vc-claim>summary{", ".vc-claim-row input{", ".vc-linkbtn{"):
+    campi = ".vc-claim-row input,.vc-claim-row textarea{"
+    for regola in (".vc-claim{", ".vc-claim>summary{", campi, ".vc-linkbtn{"):
         assert regola in CSS, regola
-    assert "border-radius:var(--rs)" in CSS[CSS.index(".vc-claim-row input{"):CSS.index(".vc-claim-row input{") + 400]
+    assert "border-radius:var(--rs)" in CSS[CSS.index(campi):CSS.index(campi) + 400]
 
     # il marcatore e' il triangolo vero, non un escape CSS: scritto come
     # "\25B8" era arrivato nel foglio come carattere di controllo e a video
@@ -952,20 +953,28 @@ def test_richiesta_email_in_evidenza():
 
 def test_nome_del_dispositivo_chiesto_a_ogni_autorizzazione():
     """Senza un nome, nella pagina dei dispositivi autorizzati resta solo un
-    hash: il nome si chiede nel passo delle scelte (creatore) e accanto al
-    codice di conferma (codice-voce), precompilato e modificabile."""
+    hash: il nome si chiede nel passo delle scelte (creatore) e, per il
+    codice-voce, nella richiesta insieme alla presentazione: il proprietario
+    li legge nell'email prima di dare il codice di conferma."""
     setup = HTML[HTML.index('id="vcPSetup"'):HTML.index('id="vcP2"')]
     assert 'id="vcDeviceName"' in setup and 'data-t="vc_device_name"' in setup
     assert 'data-t="vc_device_name_hint"' in setup
-    riga = HTML[HTML.index('id="vcConfirmRow"'):HTML.index('id="vcConfirmBtn"')]
-    assert 'id="vcConfirmDevice"' in riga and 'data-t-ph="vc_device_name"' in riga
+    richiesta = HTML[HTML.index('id="vcClaimCode"'):HTML.index('id="vcClaimBtn"')]
+    assert 'id="vcClaimDevice"' in richiesta and 'data-t-ph="vc_device_name"' in richiesta
+    assert 'id="vcClaimIdentity"' in richiesta and 'maxlength="300"' in richiesta
+    assert 'data-t-ph="vc_identity_ph"' in richiesta and 'data-t="vc_identity_hint"' in richiesta
+    assert "vcConfirmDevice" not in HTML and "vcConfirmDevice" not in VC
     up = _estrai_funzione(VC, "vcUploadSample")
     assert "fd.append('device_name', _val('vcDeviceName'))" in up
     conf = _estrai_funzione(VC, "vcConfirm")
-    assert "device_name: _val('vcConfirmDevice')" in conf
+    assert "device_name" not in conf
+    claim = _estrai_funzione(VC, "vcClaim")
+    assert "{voice_code: code, device_name: nome, identity: chi}" in claim
+    assert "vc_err_device_name_required" in claim and "vc_err_identity_required" in claim
     proposta = _estrai_funzione(VC, "vcDeviceNameDefault")
     assert "device_name" in proposta and "device_name_guess" in proposta
     assert "vcDeviceNameDefault()" in _estrai_funzione(VC, "vcEnsureChoices")
-    assert "vcDeviceNameDefault()" in _estrai_funzione(VC, "vcClaim")
+    assert "device_name_guess" not in _estrai_funzione(VC, "vcInitPanelMine")
     for lang in LANGS:
-        assert {"vc_device_name", "vc_device_name_hint"} <= _chiavi_i18n(lang), lang
+        assert {"vc_device_name", "vc_device_name_hint", "vc_identity_ph", "vc_identity_hint",
+                "vc_err_device_name_required", "vc_err_identity_required"} <= _chiavi_i18n(lang), lang

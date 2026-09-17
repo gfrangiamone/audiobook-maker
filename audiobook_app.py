@@ -9475,12 +9475,16 @@ def api_vc_claim():
     data = request.get_json(silent=True) or {}
     code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
     try:
-        esito = voice_clone.claim(code, cid)
+        esito = voice_clone.claim(code, cid, device_name=str(data.get("device_name") or ""),
+                                  identity=str(data.get("identity") or ""))
     except voice_clone.VoiceGone:
-        # VoiceGone e' un ValueError: deve essere intercettata prima del
-        # ValueError generico sotto (l'unico altro ValueError di claim() e'
-        # il lock, niente sniffing sul messaggio).
+        # VoiceGone e ClaimIncomplete sono ValueError: vanno intercettate
+        # prima del ValueError generico sotto (l'unico altro ValueError di
+        # claim() e' il lock, niente sniffing sul messaggio).
         return _vc_err("code_unknown", "Unknown voice code", 404)
+    except voice_clone.ClaimIncomplete as e:
+        return _vc_err(f"{e.field}_required", f"Missing {e.field}", 400,
+                       min_chars=voice_clone.IDENTITY_MIN)
     except ValueError:
         return _vc_err("code_locked", "Too many wrong codes, try later", 423)
     status, rec, confirm_code = esito
@@ -9488,8 +9492,12 @@ def api_vc_claim():
     if status == "ok":
         return jsonify({"status": "ok", "voice": _vc_view(rec)})
     if rec.get("owner_email"):
+        pc = rec.get("pending_confirm") or {}
         email_service.send_voice_clone_confirm(rec["owner_email"], rec.get("ui_lang") or "en",
-                                                confirm_code=confirm_code)
+                                                confirm_code=confirm_code,
+                                                device_name=pc.get("device_name") or "",
+                                                identity=pc.get("identity") or "",
+                                                hours=voice_clone.CONFIRM_TTL_SEC // 3600)
     return jsonify({"status": "pending"})
 
 
@@ -9510,6 +9518,7 @@ def api_vc_confirm():
     if esito == "ok":
         rec = voice_clone.by_voice_code(code)
         _vc_log(rec, "VOICE_CLONE_DEVICE_ADDED")
+        nome = (voice_clone.device_of(rec, cid) or {}).get("name") or nome
         if rec.get("owner_email"):
             email_service.send_voice_clone_device_added(rec["owner_email"], rec.get("ui_lang") or "en",
                                                          devices_url=_vc_urls(rec)["manage_url"],
@@ -9715,6 +9724,7 @@ _VC_PAGES_FALLBACK = {
     "th_device": "Device", "th_via": "Added via", "th_date": "Date",
     "revoke_btn": "Revoke", "delete_link": "Delete this voice",
     "via_creator": "Creation", "via_resume": "Email link", "via_code": "Voice code",
+    "identity_lbl": "Introduction",
     "device_name_lbl": "Name of this device",
     "device_name_hint": "It lets you recognise this device later in the list of authorised devices.",
     "this_device": "this device", "device_unnamed": "Unnamed device", "rename_btn": "Rename",
@@ -9915,7 +9925,13 @@ def vc_devices(token):
         via = str(d.get("via") or "")
         questo = (f" <span class=\"me\">{html_mod.escape(t['this_device'])}</span>"
                   if mio and d.get("cid") == mio else "")
+        # Chi e' entrato con il codice-voce si e' presentato: il proprietario
+        # deve poterlo rileggere anche dopo, non solo nell'email.
+        chi = str(d.get("identity") or "")
+        presentazione = (f"<div class=\"meta\">{html_mod.escape(t['identity_lbl'])}: "
+                         f"«{html_mod.escape(chi)}»</div>" if chi else "")
         righe += (f"<li><div><b>{html_mod.escape(nome or t['device_unnamed'])}</b>{questo}</div>"
+                  f"{presentazione}"
                   f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div>"
                   f"<form method=\"post\" action=\"/vc/{tok}/devices/rename{coda}\">"
                   f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"

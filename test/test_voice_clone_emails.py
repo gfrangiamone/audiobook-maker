@@ -50,8 +50,11 @@ def test_paid_in_ogni_lingua_e_fallback(inviate, lang):
 
 
 def test_confirm_e_device(inviate):
-    assert es.send_voice_clone_confirm("u@x.it", "it", confirm_code="123456")
-    assert "123456" in inviate[-1][2] and "15" in inviate[-1][2]
+    assert es.send_voice_clone_confirm("u@x.it", "it", confirm_code="123456",
+                                       device_name="Tel <b>", identity="Sono \"Anna\" & co")
+    corpo = inviate[-1][2]
+    assert "123456" in corpo and "24 ore" in corpo
+    assert "Tel &lt;b&gt;" in corpo and "Sono &quot;Anna&quot; &amp; co" in corpo
     assert es.send_voice_clone_device_added("u@x.it", "en", devices_url="https://a/vc/m/devices",
                                             device_name="PC di casa")
     assert inviate[-1][1] == "New device authorized" and "https://a/vc/m/devices" in inviate[-1][2]
@@ -92,7 +95,8 @@ def test_send_email_che_fallisce_non_solleva(monkeypatch):
     def esplode(*a, **k):
         raise RuntimeError("smtp giu")
     monkeypatch.setattr(es, "_send_email", esplode)
-    assert es.send_voice_clone_confirm("u@x.it", "it", confirm_code="1") is False
+    assert es.send_voice_clone_confirm("u@x.it", "it", confirm_code="1", device_name="a",
+                                       identity="b") is False
 
 
 def test_blocco_digest():
@@ -157,3 +161,12 @@ def test_parita_placeholder_fra_le_lingue():
             if lang == "en":
                 continue
             assert placeholders(data[lang][k]) == ref, (lang, k)
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_conferma_con_richiedente_in_ogni_lingua(inviate, lang):
+    assert es.send_voice_clone_confirm("u@x.it", lang, confirm_code="654321", device_name="PC-XYZ",
+                                       identity="IDENTITA-DI-PROVA", hours=24)
+    corpo = inviate[-1][2]
+    for pezzo in ("654321", "PC-XYZ", "IDENTITA-DI-PROVA", "24"):
+        assert pezzo in corpo, (lang, pezzo)

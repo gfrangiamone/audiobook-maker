@@ -215,6 +215,7 @@
     if (code === 'sample_rejected') return vcRejectMsg(d);
     /* Il limite va detto: senza il segnaposto l'utente leggeva «il limite e' {mb} MB». */
     if (code === 'too_large') return tt('vc_err_too_large', {mb: (S.cfg && S.cfg.max_upload_mb) || 20});
+    if (code === 'identity_required') return tt('vc_err_identity_required', {n: (d && d.min_chars) || VC_IDENTITY_MIN});
     var k = code ? 'vc_err_' + code : (fallbackKey || 'vc_err_generic');
     var s = tt(k);
     return (s && s !== k) ? s : tt(fallbackKey || 'vc_err_generic');
@@ -1101,19 +1102,30 @@
     });
   }
 
+  /* Stesso minimo del server (voice_clone.IDENTITY_MIN): il controllo qui
+     evita solo un giro a vuoto, decide sempre il server. */
+  var VC_IDENTITY_MIN = 10;
+
   function vcClaim() {
     if (S.busy) return;
     var code = ($('vcClaimCode').value || '').trim().toUpperCase();
-    if (!code) return;
+    if (!code) { $('vcClaimCode').focus(); return; }
+    /* Il proprietario decide leggendo nome e presentazione nell'email:
+       senza tutti e due la richiesta non parte. */
+    var nome = _val('vcClaimDevice').trim();
+    var chi = ($('vcClaimIdentity').value || '').replace(/\s+/g, ' ').trim();
+    if (!nome) { vcErr(tt('vc_err_device_name_required')); $('vcClaimDevice').focus(); return; }
+    if (chi.length < VC_IDENTITY_MIN) {
+      vcErr(tt('vc_err_identity_required', {n: VC_IDENTITY_MIN})); $('vcClaimIdentity').focus(); return;
+    }
     vcErr('');
     vcSetBusy(true);
-    vcPost('/api/voice_clone/claim', {voice_code: code}).then(function (r) {
+    vcPost('/api/voice_clone/claim', {voice_code: code, device_name: nome, identity: chi}).then(function (r) {
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
       var row = $('vcConfirmRow');
       if (r.data.status === 'pending') {
         if (row) row.hidden = false;
-        var dv = $('vcConfirmDevice'); if (dv && !dv.value) dv.value = vcDeviceNameDefault();
         $('vcConfirmCode').value = ''; $('vcConfirmCode').focus(); return;
       }
       if (row) row.hidden = true;
@@ -1128,11 +1140,11 @@
     if (!code || !cc) return;
     vcErr('');
     vcSetBusy(true);
-    vcPost('/api/voice_clone/confirm', {voice_code: code, confirm_code: cc, device_name: _val('vcConfirmDevice')}).then(function (r) {
+    vcPost('/api/voice_clone/confirm', {voice_code: code, confirm_code: cc}).then(function (r) {
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
       var row = $('vcConfirmRow'); if (row) row.hidden = true;
-      $('vcClaimCode').value = ''; $('vcConfirmCode').value = '';
+      $('vcClaimCode').value = ''; $('vcConfirmCode').value = ''; $('vcClaimIdentity').value = '';
       vcOpen('mine'); vcReloadCombo();
     }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
@@ -1140,6 +1152,13 @@
   function vcInitPanelMine() {
     vcRenderMine();
     var row = $('vcConfirmRow'); if (row) row.hidden = true;
+    /* Se questo dispositivo ha gia' un nome (dato per un'altra voce) lo si
+       ripropone; il nome indovinato dal browser no: chi chiede una voce
+       altrui deve scegliere lui come farsi riconoscere dal proprietario. */
+    var dv = $('vcClaimDevice');
+    if (dv && !dv.value) for (var i = 0; i < S.mine.length; i++) {
+      if (S.mine[i].device_name) { dv.value = S.mine[i].device_name; break; }
+    }
     /* Chi arriva qui senza voci proprie ci arriva per il codice-voce: la
        sezione si apre da sola invece di restare una riga da scoprire. */
     var box = $('vcClaimBox'); if (box) box.open = !S.mine.length;

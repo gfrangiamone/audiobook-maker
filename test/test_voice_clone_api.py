@@ -60,6 +60,9 @@ def client():
         yield c
 
 
+RICHIESTA = {"device_name": "Telefono di Anna", "identity": "Sono Anna, tua sorella"}
+
+
 def _cid(client, cid):
     client.set_cookie(audiobook_app._CLIENT_COOKIE_NAME, cid)
 
@@ -364,9 +367,9 @@ def test_mine_claim_confirm_forget(client, tmp_path, ambiente):
     assert client.get(d[0]["sample_url"]).status_code == 200
     _cid(client, "cid-due")
     assert client.get("/api/voice_clone/mine").get_json()["voices"] == []
-    r = client.post("/api/voice_clone/claim", json={"voice_code": "ZZZZ-ZZZZ-ZZZZ"})
+    r = client.post("/api/voice_clone/claim", json={"voice_code": "ZZZZ-ZZZZ-ZZZZ", **RICHIESTA})
     assert r.status_code == 404 and r.get_json()["error_code"] == "code_unknown"
-    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"].lower()})
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"].lower(), **RICHIESTA})
     assert r.status_code == 200 and r.get_json()["status"] == "pending"
     codice = vc.get(rec["id"])["pending_confirm"]
     assert ambiente[-1][0] == "u@example.com"
@@ -586,7 +589,7 @@ def test_voice_code_non_trapela_a_dispositivi_non_proprietari(client, tmp_path, 
     for s in ("demos_generating", "demos_ready"):
         vc.transition(rec["id"], s)
     _cid(client, "cid-due")
-    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
     assert r.status_code == 200 and r.get_json()["status"] == "pending"
     codice = re.search(r"\b(\d{6})\b", ambiente[-1][2]).group(1)
     r = client.post("/api/voice_clone/confirm", json={"voice_code": rec["voice_code"], "confirm_code": codice})
@@ -614,7 +617,7 @@ def test_confirm_codice_sconosciuto(client):
 def test_claim_codice_sconosciuto(client):
     """Fix round 1 (IMPORTANT): claim() su codice sconosciuto deve dare
     404 code_unknown via except VoiceGone, senza sniffing sul messaggio."""
-    r = client.post("/api/voice_clone/claim", json={"voice_code": "ZZZZ-ZZZZ-ZZZZ"})
+    r = client.post("/api/voice_clone/claim", json={"voice_code": "ZZZZ-ZZZZ-ZZZZ", **RICHIESTA})
     assert r.status_code == 404 and r.get_json()["error_code"] == "code_unknown"
 
 
@@ -626,14 +629,14 @@ def test_claim_locked_dopo_troppi_tentativi_di_conferma(client, tmp_path, ambien
     for s in ("demos_generating", "demos_ready"):
         vc.transition(rec["id"], s)
     _cid(client, "cid-due")
-    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
     assert r.status_code == 200 and r.get_json()["status"] == "pending"
     r = None
     for _ in range(vc.CONFIRM_MAX_TRIES):
         r = client.post("/api/voice_clone/confirm",
                         json={"voice_code": rec["voice_code"], "confirm_code": "000000"})
     assert r.status_code == 423 and r.get_json()["error_code"] == "code_locked"
-    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
     assert r.status_code == 423 and r.get_json()["error_code"] == "code_locked"
 
 
@@ -704,7 +707,7 @@ def test_confirm_scaduto_via_api(client, tmp_path, monkeypatch, ambiente):
     ora = [1_000_000.0]
     monkeypatch.setattr(vc, "_now", lambda now=None: int(now if now is not None else ora[0]))
     _cid(client, "cid-due")
-    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
     assert r.status_code == 200 and r.get_json()["status"] == "pending"
     ora[0] += vc.CONFIRM_TTL_SEC + 1
     r = client.post("/api/voice_clone/confirm",
@@ -789,14 +792,37 @@ def test_confirm_salva_il_nome_e_lo_scrive_nellemail(client, tmp_path, ambiente)
     import re
     rec = _paid(tmp_path)
     _cid(client, "cid-due")
-    client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
-    codice = re.search(r"\b(\d{6})\b", ambiente[-1][2]).group(1)
+    r = client.post("/api/voice_clone/claim", json={
+        "voice_code": rec["voice_code"], "device_name": "Telefono <b>",
+        "identity": "Sono <i>Anna</i>, tua sorella"})
+    assert r.status_code == 200 and r.get_json()["status"] == "pending"
+    # l'email con il codice dice al proprietario chi chiede e da quale dispositivo
+    to, _, corpo = ambiente[-1]
+    assert to == "u@example.com"
+    assert "Telefono &lt;b&gt;" in corpo and "Sono &lt;i&gt;Anna&lt;/i&gt;, tua sorella" in corpo
+    assert "<i>Anna" not in corpo and "24" in corpo
+    codice = re.search(r"\b(\d{6})\b", corpo).group(1)
     r = client.post("/api/voice_clone/confirm", json={
-        "voice_code": rec["voice_code"], "confirm_code": codice, "device_name": "Telefono <b>"})
+        "voice_code": rec["voice_code"], "confirm_code": codice, "device_name": "Altro"})
     assert r.status_code == 200
-    assert vc.device_of(vc.get(rec["id"]), "cid-due")["name"] == "Telefono <b>"
+    d = vc.device_of(vc.get(rec["id"]), "cid-due")
+    assert d["name"] == "Telefono <b>" and d["identity"] == "Sono <i>Anna</i>, tua sorella"
     corpo = ambiente[-1][2]
     assert "Telefono &lt;b&gt;" in corpo and "Telefono <b>" not in corpo
+
+
+@pytest.mark.parametrize("campi, errore", [
+    ({"identity": "Sono Anna, tua sorella"}, "device_name_required"),
+    ({"device_name": "Telefono", "identity": "Anna"}, "identity_required"),
+])
+def test_claim_senza_nome_o_presentazione_non_manda_email(client, tmp_path, ambiente, campi, errore):
+    rec = _paid(tmp_path)
+    _cid(client, "cid-due")
+    prima = len(ambiente)
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **campi})
+    assert r.status_code == 400 and r.get_json()["error_code"] == errore
+    assert r.get_json()["min_chars"] == vc.IDENTITY_MIN
+    assert len(ambiente) == prima and vc.get(rec["id"])["pending_confirm"] is None
 
 
 def test_resume_chiede_il_nome_e_lo_salva(client, tmp_path):
@@ -815,12 +841,17 @@ def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
     rec = _paid(tmp_path)
     tok = rec["manage_token"]
     vc.add_resume_device(rec["id"], "cid-r", "Tablet <cucina>")
+    vc.store().update(rec["id"], {"devices": [dict(d, identity="Sono <b>Rita</b>") if d["cid"] == "cid-r" else d
+                                              for d in vc.get(rec["id"])["devices"]]})
     vc.store().update(rec["id"], {"devices": [dict(d, name="") if d["cid"] == "cid-uno" else d
                                               for d in vc.get(rec["id"])["devices"]]})
     chiave = audiobook_app._vc_device_key("cid-uno")
     r = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"})
     corpo = r.data.decode("utf-8")
     assert "Tablet &lt;cucina&gt;" in corpo and "<cucina>" not in corpo
+    # la presentazione di chi e' entrato con il codice resta leggibile
+    assert "Presentazione: «Sono &lt;b&gt;Rita&lt;/b&gt;»" in corpo
+    assert corpo.count("Presentazione:") == 1
     # un dispositivo registrato prima dei nomi resta riconoscibile dalla chiave
     assert chiave in corpo
     # chi apre la pagina riconosce il dispositivo che sta usando

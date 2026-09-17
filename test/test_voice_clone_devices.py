@@ -23,6 +23,13 @@ def ambiente(tmp_path, monkeypatch):
     voxcpm_catalog.invalidate_cache()
 
 
+def _claim(*a, **kw):
+    """Una richiesta completa: nome del dispositivo e presentazione."""
+    kw.setdefault("device_name", "Telefono di Anna")
+    kw.setdefault("identity", "Sono Anna, tua sorella")
+    return vc.claim(*a, **kw)
+
+
 def _pronta(tmp_path, cid="cid-owner"):
     s = tmp_path / f"{cid}-s.wav"; s.write_bytes(b"RIFF")
     o = tmp_path / f"{cid}-o.webm"; o.write_bytes(b"webm")
@@ -36,13 +43,13 @@ def _pronta(tmp_path, cid="cid-owner"):
 
 def test_claim_da_cid_gia_autorizzato(tmp_path):
     rec = _pronta(tmp_path)
-    esito, got, code = vc.claim(rec["voice_code"], "cid-owner")
+    esito, got, code = _claim(rec["voice_code"], "cid-owner")
     assert esito == "ok" and got["id"] == rec["id"] and code is None
 
 
 def test_claim_da_cid_nuovo_crea_il_codice_hashato(tmp_path):
     rec = _pronta(tmp_path)
-    esito, got, code = vc.claim(rec["voice_code"].lower(), "cid-nuovo", now=1000)
+    esito, got, code = _claim(rec["voice_code"].lower(), "cid-nuovo", now=1000)
     assert esito == "pending" and len(code) == 6 and code.isdigit()
     pc = vc.get(rec["id"])["pending_confirm"]
     assert pc["cid"] == "cid-nuovo" and pc["tries"] == 0
@@ -53,42 +60,43 @@ def test_claim_da_cid_nuovo_crea_il_codice_hashato(tmp_path):
 
 def test_claim_sconosciuto_o_terminale(tmp_path):
     with pytest.raises(vc.VoiceGone):
-        vc.claim("AAAA-BBBB-CCCC", "cid-x")
+        _claim("AAAA-BBBB-CCCC", "cid-x")
     rec = _pronta(tmp_path)
     vc.transition(rec["id"], "deleted")
     with pytest.raises(vc.VoiceGone):
-        vc.claim(rec["voice_code"], "cid-x")
+        _claim(rec["voice_code"], "cid-x")
 
 
 def test_una_nuova_richiesta_sostituisce_la_precedente(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, c1 = vc.claim(rec["voice_code"], "cid-a", now=1000)
-    _, _, c2 = vc.claim(rec["voice_code"], "cid-b", now=1001)
+    _, _, c1 = _claim(rec["voice_code"], "cid-a", now=1000)
+    _, _, c2 = _claim(rec["voice_code"], "cid-b", now=1001)
     assert vc.confirm(rec["voice_code"], "cid-a", c1, now=1002) == "none"
     assert vc.confirm(rec["voice_code"], "cid-b", c2, now=1002) == "ok"
 
 
 def test_confirm_ok_aggiunge_il_dispositivo(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code = vc.claim(rec["voice_code"], "cid-nuovo", now=1000)
+    _, _, code = _claim(rec["voice_code"], "cid-nuovo", now=1000)
     assert vc.confirm(rec["voice_code"], "cid-nuovo", code, now=1100) == "ok"
     got = vc.get(rec["id"])
     assert got["pending_confirm"] is None
-    assert {"cid": "cid-nuovo", "added_at": 1100, "via": "code", "name": ""} in got["devices"]
+    assert {"cid": "cid-nuovo", "added_at": 1100, "via": "code", "name": "Telefono di Anna",
+            "identity": "Sono Anna, tua sorella"} in got["devices"]
     assert vc.authorized(vc.voice_id_of(got), "cid-nuovo")
-    assert vc.claim(rec["voice_code"], "cid-nuovo")[0] == "ok"
+    assert _claim(rec["voice_code"], "cid-nuovo")[0] == "ok"
 
 
 def test_confirm_scaduto(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code = vc.claim(rec["voice_code"], "cid-nuovo", now=1000)
+    _, _, code = _claim(rec["voice_code"], "cid-nuovo", now=1000)
     assert vc.confirm(rec["voice_code"], "cid-nuovo", code, now=1000 + vc.CONFIRM_TTL_SEC + 1) == "expired"
     assert vc.get(rec["id"])["pending_confirm"] is None
 
 
 def test_cinque_tentativi_poi_blocco(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code = vc.claim(rec["voice_code"], "cid-nuovo", now=1000)
+    _, _, code = _claim(rec["voice_code"], "cid-nuovo", now=1000)
     for _ in range(4):
         assert vc.confirm(rec["voice_code"], "cid-nuovo", "000000", now=1001) == "wrong"
     assert vc.confirm(rec["voice_code"], "cid-nuovo", "000000", now=1001) == "locked"
@@ -98,13 +106,13 @@ def test_cinque_tentativi_poi_blocco(tmp_path):
     # il codice giusto ormai non vale, e un nuovo claim e' bloccato
     assert vc.confirm(rec["voice_code"], "cid-nuovo", code, now=1002) == "none"
     with pytest.raises(ValueError, match="locked"):
-        vc.claim(rec["voice_code"], "cid-nuovo", now=1002)
-    assert vc.claim(rec["voice_code"], "cid-nuovo", now=1001 + vc.CONFIRM_LOCK_SEC + 1)[0] == "pending"
+        _claim(rec["voice_code"], "cid-nuovo", now=1002)
+    assert _claim(rec["voice_code"], "cid-nuovo", now=1001 + vc.CONFIRM_LOCK_SEC + 1)[0] == "pending"
 
 
 def test_forget_e_revoke(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code = vc.claim(rec["voice_code"], "cid-b", now=1000)
+    _, _, code = _claim(rec["voice_code"], "cid-b", now=1000)
     vc.confirm(rec["voice_code"], "cid-b", code, now=1001)
     assert vc.forget(rec["id"], "cid-b") is True
     assert vc.forget(rec["id"], "cid-b") is False
@@ -117,7 +125,7 @@ def test_forget_e_revoke(tmp_path):
 
 def test_is_owner_solo_il_dispositivo_creatore(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code = vc.claim(rec["voice_code"], "cid-b", now=1000)
+    _, _, code = _claim(rec["voice_code"], "cid-b", now=1000)
     vc.confirm(rec["voice_code"], "cid-b", code, now=1001)
     got = vc.get(rec["id"])
     assert vc.is_owner(got, "cid-owner") is True
@@ -138,26 +146,26 @@ def test_forget_rifiuta_il_dispositivo_proprietario(tmp_path):
 
 def test_confirm_locks_scaduti_vengono_potati(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code = vc.claim(rec["voice_code"], "cid-nuovo", now=1000)
+    _, _, code = _claim(rec["voice_code"], "cid-nuovo", now=1000)
     for _ in range(5):
         vc.confirm(rec["voice_code"], "cid-nuovo", "000000", now=1001)
     assert vc.get(rec["id"])["confirm_locks"]["cid-nuovo"] == 1001 + vc.CONFIRM_LOCK_SEC
 
     dopo_scadenza = 1001 + vc.CONFIRM_LOCK_SEC + 1
     # claim (lettura) pota il lock scaduto per un cid diverso
-    vc.claim(rec["voice_code"], "cid-altro", now=dopo_scadenza)
+    _claim(rec["voice_code"], "cid-altro", now=dopo_scadenza)
     assert "cid-nuovo" not in (vc.get(rec["id"])["confirm_locks"] or {})
 
 
 def test_confirm_locks_scaduti_potati_alla_scrittura_di_un_nuovo_blocco(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code_a = vc.claim(rec["voice_code"], "cid-a", now=1000)
+    _, _, code_a = _claim(rec["voice_code"], "cid-a", now=1000)
     for _ in range(5):
         vc.confirm(rec["voice_code"], "cid-a", "000000", now=1001)
     assert vc.get(rec["id"])["confirm_locks"]["cid-a"] == 1001 + vc.CONFIRM_LOCK_SEC
 
     dopo_scadenza = 1001 + vc.CONFIRM_LOCK_SEC + 1
-    _, _, code_b = vc.claim(rec["voice_code"], "cid-b", now=dopo_scadenza)
+    _, _, code_b = _claim(rec["voice_code"], "cid-b", now=dopo_scadenza)
     for _ in range(5):
         vc.confirm(rec["voice_code"], "cid-b", "000000", now=dopo_scadenza)
     locks = vc.get(rec["id"])["confirm_locks"]
@@ -228,9 +236,59 @@ def test_il_nome_del_dispositivo_si_salva_in_creazione_e_in_conferma(tmp_path):
                           sample_wav=str(s), original_path=str(o), original_ext="webm",
                           metrics={}, ui_lang="it", device_name=" PC di casa ")
     assert rec["devices"][0]["name"] == "PC di casa"
-    _, _, code = vc.claim(rec["voice_code"], "cid-b", now=1000)
-    assert vc.confirm(rec["voice_code"], "cid-b", code, now=1001, device_name="Telefono") == "ok"
+    _, _, code = _claim(rec["voice_code"], "cid-b", now=1000, device_name=" Telefono ")
+    # alla conferma vale il nome della richiesta, quello letto dal proprietario
+    assert vc.confirm(rec["voice_code"], "cid-b", code, now=1001, device_name="Altro") == "ok"
     assert vc.device_of(vc.get(rec["id"]), "cid-b")["name"] == "Telefono"
+
+
+def test_confirm_di_una_richiesta_aperta_prima_dei_nomi_usa_il_nome_dato_in_conferma(tmp_path):
+    rec = _pronta(tmp_path)
+    _, _, code = _claim(rec["voice_code"], "cid-b", now=1000)
+    pc = vc.get(rec["id"])["pending_confirm"]
+    pc.pop("device_name"); pc.pop("identity")
+    vc.store().update(rec["id"], {"pending_confirm": pc})
+    assert vc.confirm(rec["voice_code"], "cid-b", code, now=1001, device_name="Telefono") == "ok"
+    d = vc.device_of(vc.get(rec["id"]), "cid-b")
+    assert d["name"] == "Telefono" and d["identity"] == ""
+
+
+@pytest.mark.parametrize("campi, manca", [
+    ({"device_name": ""}, "device_name"),
+    ({"device_name": " \u200b\t "}, "device_name"),
+    ({"identity": ""}, "identity"),
+    ({"identity": "Sono  io\n"}, "identity"),
+])
+def test_claim_senza_nome_o_presentazione_non_parte(tmp_path, campi, manca):
+    rec = _pronta(tmp_path)
+    with pytest.raises(vc.ClaimIncomplete) as e:
+        _claim(rec["voice_code"], "cid-nuovo", now=1000, **campi)
+    assert e.value.field == manca
+    assert vc.get(rec["id"])["pending_confirm"] is None
+
+
+def test_claim_di_un_dispositivo_gia_autorizzato_non_chiede_nulla(tmp_path):
+    rec = _pronta(tmp_path)
+    assert vc.claim(rec["voice_code"], "cid-owner")[0] == "ok"
+
+
+def test_la_richiesta_porta_nome_e_presentazione_ripuliti(tmp_path):
+    rec = _pronta(tmp_path)
+    lunga = "Ciao,\n\tsono\u202e Anna " + "x" * 400
+    _claim(rec["voice_code"], "cid-nuovo", now=1000, device_name="Tel\x00 Anna", identity=lunga)
+    pc = vc.get(rec["id"])["pending_confirm"]
+    assert pc["device_name"] == "Tel Anna"
+    assert pc["identity"].startswith("Ciao, sono Anna xxx") and len(pc["identity"]) == vc.IDENTITY_MAX
+
+
+def test_il_codice_vale_24_ore_dalla_richiesta(tmp_path):
+    assert vc.CONFIRM_TTL_SEC == 24 * 3600
+    rec = _pronta(tmp_path)
+    _, _, code = _claim(rec["voice_code"], "cid-nuovo", now=1000)
+    assert vc.confirm(rec["voice_code"], "cid-nuovo", code, now=1000 + 24 * 3600 - 60) == "ok"
+    rec2 = _pronta(tmp_path, cid="cid-altro")
+    _, _, code = _claim(rec2["voice_code"], "cid-nuovo", now=1000)
+    assert vc.confirm(rec2["voice_code"], "cid-nuovo", code, now=1000 + 24 * 3600 + 1) == "expired"
 
 
 def test_add_resume_device_con_nome(tmp_path):
@@ -253,7 +311,7 @@ def test_rename_device_dal_link_di_gestione(tmp_path):
 
 def test_revocato_il_creatore_nessuno_e_piu_proprietario(tmp_path):
     rec = _pronta(tmp_path)
-    _, _, code = vc.claim(rec["voice_code"], "cid-b", now=1000)
+    _, _, code = _claim(rec["voice_code"], "cid-b", now=1000)
     vc.confirm(rec["voice_code"], "cid-b", code, now=1001)
     assert vc.revoke_device(rec["manage_token"], "cid-owner") is True
     got = vc.get(rec["id"])

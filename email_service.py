@@ -856,9 +856,13 @@ def send_voice_clone_paid(email, lang, *, voice_code, amount_eur, resume_url, ma
                     manage_url=manage_url, delete_url=delete_url)
 
 
-def send_voice_clone_confirm(email, lang, *, confirm_code, minutes=15):
+def send_voice_clone_confirm(email, lang, *, confirm_code, device_name, identity, hours=24):
+    """Il codice arriva al proprietario con quello che chi lo chiede ha
+    dichiarato (nome del dispositivo e presentazione), escapato come ogni
+    altro valore: e' testo libero di uno sconosciuto."""
     return _vc_send(email, lang, "confirm_subject", ("confirm_body",),
-                    confirm_code=confirm_code, minutes=minutes)
+                    confirm_code=confirm_code, device_name=device_name,
+                    identity=identity, hours=hours)
 
 
 def send_voice_clone_device_added(email, lang, *, devices_url, device_name):

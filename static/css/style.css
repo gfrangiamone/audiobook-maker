@@ -1352,10 +1352,12 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-claim-intro{margin:.5rem 0 0}
 .vc-claim-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.55rem 0 0}
 .vc-claim-row[hidden]{display:none}
-.vc-claim-row input{flex:1 1 180px;min-width:0;padding:10px 14px;background:var(--srf2);
+.vc-claim-row input,.vc-claim-row textarea{flex:1 1 180px;min-width:0;padding:10px 14px;background:var(--srf2);
                     border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);
                     font-family:inherit;font-size:.95rem}
-.vc-claim-row input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-claim-row input:focus-visible,.vc-claim-row textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-claim-row textarea{flex:1 1 100%;resize:vertical;font:inherit}
+.vc-claim-send{justify-content:flex-end}
 .vc-claim-row .vc-small{flex:1 1 100%;margin:0}
 /* Scorciatoia dalle condizioni: il codice-voce di un altro si aggiunge anche
    senza aver mai campionato la propria voce. */
