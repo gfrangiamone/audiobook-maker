@@ -1077,10 +1077,34 @@
       var act = document.createElement('div'); act.className = 'vc-actions';
       var mk = function (key, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-outline btn-sm'; b.textContent = tt(key); b.onclick = fn; act.appendChild(b); return b; };
       if (m.pending) mk('vc_resume_btn', function () { vcResume(m.id); });
-      if (!m.owner) mk('vc_forget', function () { vcAction2(m.id, 'forget').then(function (ok) { if (ok) vcOpen('mine'); }); });
+      if (!m.owner) mk('vc_forget', function () { vcAskForget(m, act); });
       if (act.childNodes.length) li.appendChild(act);
       ul.appendChild(li);
     });
+  }
+
+  /* «Rimuovi da questo dispositivo» chiede conferma sul posto: per riavere
+     la voce servirebbero di nuovo il codice-voce e l'ok del proprietario. */
+  function vcAskForget(m, act) {
+    if (S.busy) return;
+    var box = document.createElement('div'); box.className = 'vc-forget-ask';
+    var p = document.createElement('p'); p.className = 'vc-small';
+    p.textContent = tt('vc_forget_ask', {name: m.name || ''});
+    var row = document.createElement('div'); row.className = 'vc-actions';
+    var yes = document.createElement('button'); yes.type = 'button'; yes.className = 'btn btn-outline btn-sm';
+    yes.textContent = tt('vc_forget_yes');
+    var no = document.createElement('button'); no.type = 'button'; no.className = 'btn btn-outline btn-sm';
+    no.textContent = tt('vc_forget_no');
+    yes.onclick = function () {
+      vcAction2(m.id, 'forget').then(function (ok) {
+        if (ok) { vcOpen('mine'); vcReloadCombo(); }
+      });
+    };
+    no.onclick = function () { if (S.busy) return; box.parentNode.replaceChild(act, box); };
+    row.appendChild(yes); row.appendChild(no);
+    box.appendChild(p); box.appendChild(row);
+    act.parentNode.replaceChild(box, act);
+    no.focus();
   }
 
   function vcAction2(id, name) {

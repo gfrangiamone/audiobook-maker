@@ -1338,6 +1338,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-mine-list{list-style:none;padding:0;margin:.5rem 0}
 .vc-mine-item{border:1px solid var(--brd);border-radius:8px;padding:.6rem;margin:.4rem 0}
 .vc-mine-item .vc-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}
+.vc-forget-ask{margin-top:.4rem}
+.vc-forget-ask>.vc-small{margin:0}
 /* Sezione del codice-voce: era una `details` nuda con l'input di default del
    browser accanto a un bottone dell'app, di altezze e bordi diversi. Ora e'
    una scheda come le altre e i campi hanno lo stile dei campi del wizard. */

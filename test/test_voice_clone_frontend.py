@@ -986,3 +986,15 @@ def test_nome_del_dispositivo_chiesto_a_ogni_autorizzazione():
         assert {"vc_device_name", "vc_device_name_hint", "vc_identity_ph", "vc_identity_hint",
                 "vc_err_device_name_required", "vc_err_identity_required",
                 "vc_err_claim_busy"} <= _chiavi_i18n(lang), lang
+
+
+def test_rimuovi_da_questo_dispositivo_chiede_conferma():
+    corpo = _estrai_funzione(VC, "vcRenderMine")
+    assert "vcAskForget(m, act)" in corpo and "'forget'" not in corpo
+    ask = _estrai_funzione(VC, "vcAskForget")
+    assert "vc_forget_ask" in ask and "vc_forget_yes" in ask and "vc_forget_no" in ask
+    assert "vcAction2(m.id, 'forget')" in ask
+    for lang in LANGS:
+        assert {"vc_forget_ask", "vc_forget_yes", "vc_forget_no"} <= _chiavi_i18n(lang), lang
+    # la voce puo' essere arrivata da un altro: la didascalia non dice «che hai registrato»
+    assert 'vc_mine_sample:"Il campione vocale registrato:"' in I18N
