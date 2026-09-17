@@ -266,6 +266,11 @@ select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color
 
 /* ═══ BUTTONS ═══ */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:14px 28px;border-radius:var(--rs);font-family:inherit;font-size:.95rem;font-weight:600;border:none;cursor:pointer;transition:all .2s;width:100%}
+/* .btn{display:inline-flex} e' una regola d'autore e batte [hidden]{display:none}
+   della UA: senza questa riga ogni bottone nascosto con l'attributo hidden (il
+   wizard delle voci campionate ne usa parecchi) resterebbe a schermo. Stesso
+   inciampo gia' documentato per .form-row[hidden]. */
+.btn[hidden]{display:none}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn-p{background:var(--ac);color:#fff}
 .btn-p:hover:not(:disabled){background:var(--ach);transform:translateY(-1px);box-shadow:0 4px 16px rgba(196,122,42,.25)}
@@ -1120,6 +1125,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .prem-coach-x { position:absolute; top:4px; right:6px; background:none; border:0;
                 color:var(--txm,#9e9890); font-size:18px; line-height:1;
                 cursor:pointer; padding:2px; }
+.vc-promo-go { display:block; background:none; border:0; padding:0; margin:0; text-align:left;
+               color:inherit; font:inherit; cursor:pointer; }
+.vc-promo-cta { display:block; margin-top:6px; color:#d4a83a; text-decoration:underline; }
+.vc-promo-go:hover .vc-promo-cta, .vc-promo-go:focus-visible .vc-promo-cta { color:#e8c065; }
+.prem-coach[hidden] { display:none; }
 @keyframes premCoachIn { from { opacity:0; transform:translateY(4px); }
                          to   { opacity:1; transform:none; } }
 @media (max-width:720px) {
@@ -1201,6 +1211,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .payment-modal .btn-primary.pay-armed { animation:none; box-shadow:0 0 0 3px rgba(160,125,58,.55); } }
 .payment-modal .btn-secondary { background:transparent; color:var(--tx,#222);
                                 border:1px solid var(--brd,#ccc); padding:8px 14px; border-radius:6px; cursor:pointer; }
+.payment-modal .btn-secondary:disabled { opacity:.5; cursor:not-allowed; }
 
 /* ── Ascolta la voce (VoxCPM, §17.4): box compatto, clip e volume unico ── */
 .voxcpm-listen-box{border:1px solid var(--brd);border-radius:10px;background:var(--srf);padding:12px 14px;display:flex;flex-direction:column;gap:10px}
@@ -1229,3 +1240,217 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* La parentesi che nega l'anteprima del libro: stesso accento dei bottoni di
    ascolto, altrimenti si perde nel grigio della nota (§17.5). */
 .voxcpm-hint-em{color:var(--ac);font-weight:600}
+
+/* Voci campionate */
+.vc-btn-row{margin:.6rem 0 0;display:flex;flex-direction:column;gap:.5rem}
+.vc-btn-row[hidden]{display:none}
+/* Combo delle voci PREMIUM + bottone microfono: la combo resta elastica
+   (min-width:0, altrimenti il select non si stringe), il bottone e' quadrato e
+   alto quanto lei (align-items:stretch). */
+.vc-voice-row{display:flex;align-items:stretch;gap:8px}
+.vc-voice-row select{flex:1 1 auto;min-width:0}
+.vc-mic-btn{flex:0 0 auto;width:44px;display:inline-flex;align-items:center;justify-content:center;
+            padding:0;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs);
+            color:var(--ac);cursor:pointer;transition:border-color .2s,color .2s,background .2s}
+.vc-mic-btn:hover{border-color:var(--ac);background:var(--acs)}
+.vc-mic-btn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+/* [hidden] va riaffermato: display:inline-flex d'autore batte la regola UA. */
+.vc-mic-btn[hidden]{display:none}
+.vc-mic-btn svg{width:20px;height:20px}
+.vc-resume{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
+.vc-resume[hidden]{display:none}
+.vc-modal{max-width:560px}
+.vc-modal .modal-body{max-height:70vh;overflow-y:auto}
+.vc-terms{padding-left:1.2rem;margin:.5rem 0}
+.vc-terms li{margin:.25rem 0}
+.vc-consent{display:flex;gap:.5rem;align-items:flex-start;margin:.8rem 0;font-weight:600}
+.vc-footer{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem;padding:0;border:0}
+.vc-prompt{background:var(--srf2);border-radius:8px;padding:.8rem;font-size:1.05rem;line-height:1.5;margin:.6rem 0}
+.vc-rec-row{display:flex;align-items:center;gap:.6rem;margin:.6rem 0;flex-wrap:wrap}
+.vc-rec-row meter{flex:1;min-width:120px;height:14px}
+.vc-timer{font-variant-numeric:tabular-nums;min-width:3.5em}
+/* label{display:block} e' una regola d'autore e batte [hidden]{display:none}
+   della UA: senza questa riga la combo dell'accento restava a schermo anche
+   per le lingue che di accenti ne hanno uno solo (l'italiano), pur essendo
+   marcata hidden. Stesso inciampo gia' documentato per .btn[hidden]. */
+#vcLocaleWrap[hidden]{display:none}
+/* Riquadro della cattura: microfono in uso + comandi di registrazione. Sta in
+   una cornice propria per distinguersi a colpo d'occhio dal caricamento di un
+   file qui sotto, che prima si confondeva con la riga dei bottoni. */
+.vc-cap{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;background:var(--srf);
+        display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:.6rem;row-gap:.5rem;align-items:center}
+/* Le due righe condividono le colonne della cornice (subgrid): la combo del
+   microfono e' larga esattamente quanto la barra del livello, e l'icona sta
+   nella colonna dei bottoni, accostata alla combo. */
+.vc-cap .vc-rec-row{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;margin:0}
+.vc-mic-pick{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;margin:0;
+             font-size:.82rem;text-transform:none;letter-spacing:normal}
+.vc-mic-pick[hidden]{display:none}
+.vc-mic-ico{grid-column:1;justify-self:end;width:20px;height:20px;color:var(--ac)}
+.vc-mic-pick select{grid-column:2;min-width:0;width:100%}
+.vc-rec-btns{grid-column:1;display:flex;align-items:center;gap:.6rem}
+.vc-cap .vc-rec-row meter{grid-column:2;width:100%;min-width:0}
+.vc-cap .vc-timer{grid-column:3}
+/* A larghezza di telefono i bottoni prendono la riga intera, altrimenti
+   «Ferma» + «Annulla» lascerebbero alla barra pochi pixel. */
+@media (max-width:480px){
+  .vc-rec-btns{grid-column:1/-1}
+  .vc-cap .vc-rec-row meter{grid-column:1/3}
+}
+.vc-or{text-align:center;color:var(--txm);margin:.7rem 0;font-size:.78rem;
+       text-transform:uppercase;letter-spacing:.08em}
+/* Caricamento da file: l'input di sistema (disegnato a modo suo da ogni
+   browser) sparisce dietro un bottone vero, con accanto il nome del file
+   scelto e, scritto per esteso, il limite in MB. */
+.vc-up{border:1px dashed var(--brd);border-radius:10px;padding:.8rem;text-align:center}
+#vcUpBlock[hidden]{display:none}
+#vcUpOffer[hidden]{display:none}
+.vc-up-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.vc-up-input:focus-visible+.vc-up-btn{outline:2px solid var(--ac);outline-offset:2px}
+.vc-up-btn{display:inline-flex;align-items:center;gap:.4rem;margin:0;padding:.5rem 1rem;
+           border:1px solid var(--brd);border-radius:var(--rs);background:var(--srf2);
+           color:var(--ac);cursor:pointer;font-size:.9rem;font-weight:600;
+           text-transform:none;letter-spacing:normal}
+.vc-up-btn:hover{border-color:var(--ac);background:var(--acs)}
+/* Durante l'invio del campione l'input e' disabilitato: il bottone che lo
+   copre deve dirlo, o sembra solo rotto. */
+.vc-up-input:disabled+.vc-up-btn{opacity:.4;cursor:not-allowed}
+.vc-up-name{display:block;margin-top:.4rem;color:var(--txd);font-size:.85rem;word-break:break-all}
+.vc-up-hint{margin:.4rem 0 0}
+/* Riascolto della propria registrazione: resta disponibile anche quando il
+   campione viene scartato, altrimenti non c'e' modo di accorgersi da soli di
+   aver letto male (il campione del server nasce solo se il controllo passa). */
+/* Etichetta e player sulla stessa riga, staccati bene dalla cornice della
+   cattura: e' un'altra fase, non un comando di registrazione. */
+.vc-local{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem .7rem;margin:1.3rem 0 .7rem}
+.vc-local[hidden]{display:none}
+.vc-local audio{flex:1 1 240px;min-width:0}
+/* «Indietro» a sinistra, le conferme del campione a destra, sulla stessa riga. */
+.vc-footer-split{justify-content:space-between;align-items:center;flex-wrap:wrap}
+.vc-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-left:auto}
+.vc-actions[hidden]{display:none}
+.vc-rec-dot{width:12px;height:12px;border-radius:50%;background:#c33;display:inline-block;animation:vcblink 1s infinite}
+.vc-rec-dot[hidden]{display:none}
+@keyframes vcblink{50%{opacity:.2}}
+.vc-code{font-family:monospace;font-size:1.3rem;letter-spacing:.15em;background:var(--srf2);padding:.5rem .8rem;border-radius:8px;display:inline-block;margin:.4rem 0}
+.vc-demo-row{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0}
+/* La conferma del rifiuto e' una riga a se': quando e' nascosta non deve
+   lasciare un vuoto sotto i due bottoni, da qui la guardia [hidden]. */
+.vc-confirm{display:flex;align-items:center;justify-content:flex-end;gap:.5rem;
+            flex-wrap:wrap;margin:.6rem 0}
+.vc-confirm[hidden]{display:none}
+/* Rifiuto: prima il motivo (obbligatorio), poi la conferma. */
+.vc-reject-box{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0}
+.vc-reject-box[hidden]{display:none}
+.vc-reject-box textarea{width:100%;box-sizing:border-box;padding:10px 14px;background:var(--srf2);
+  color:var(--tx);border:1px solid var(--brd);border-radius:var(--rs);font-family:inherit;font-size:.95rem;resize:vertical}
+.vc-reject-box textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-reject-box .vc-confirm{margin:0}
+.vc-demo-row audio{width:100%}
+.vc-mine-list{list-style:none;padding:0;margin:.5rem 0}
+.vc-mine-item{border:1px solid var(--brd);border-radius:8px;padding:.6rem;margin:.4rem 0}
+.vc-mine-item .vc-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}
+.vc-forget-ask{margin-top:.4rem}
+.vc-forget-ask>.vc-small{margin:0}
+/* Sezione del codice-voce: era una `details` nuda con l'input di default del
+   browser accanto a un bottone dell'app, di altezze e bordi diversi. Ora e'
+   una scheda come le altre e i campi hanno lo stile dei campi del wizard. */
+.vc-claim{border:1px solid var(--brd);border-radius:10px;background:var(--srf);
+          padding:.6rem .8rem;margin:.9rem 0}
+.vc-claim>summary{cursor:pointer;font-weight:600;list-style:none;
+                  display:flex;align-items:center;gap:.4rem}
+.vc-claim>summary::-webkit-details-marker{display:none}
+.vc-claim>summary::before{content:"▸";display:inline-block;color:var(--ac);
+                         font-size:.9em;transition:transform .15s}
+.vc-claim[open]>summary::before{transform:rotate(90deg)}
+.vc-claim-intro{margin:.5rem 0 0}
+.vc-claim-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.55rem 0 0}
+.vc-claim-row[hidden]{display:none}
+.vc-claim-row input,.vc-claim-row textarea{flex:1 1 180px;min-width:0;padding:10px 14px;background:var(--srf2);
+                    border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);
+                    font-family:inherit;font-size:.95rem}
+.vc-claim-row input:focus-visible,.vc-claim-row textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-claim-row textarea{flex:1 1 100%;resize:vertical;font:inherit}
+.vc-claim-send{justify-content:flex-end}
+.vc-claim-row .vc-small{flex:1 1 100%;margin:0}
+/* Scorciatoia dalle condizioni: il codice-voce di un altro si aggiunge anche
+   senza aver mai campionato la propria voce. */
+.vc-alt{margin:.8rem 0 0;font-size:.86rem;color:var(--txm)}
+.vc-linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--ac);
+            text-decoration:underline;cursor:pointer}
+.vc-linkbtn:hover{color:var(--tx)}
+.vc-linkbtn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+/* Player del campione con, a destra, l'icona che rimanda l'email col codice. */
+.vc-sample-row{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 0}
+.vc-sample-row audio{flex:1 1 auto;min-width:0}
+.vc-icon-btn{flex:0 0 auto;width:36px;height:36px;display:inline-flex;align-items:center;
+             justify-content:center;padding:0;background:var(--srf2);border:1px solid var(--brd);
+             border-radius:var(--rs);color:var(--ac);cursor:pointer;
+             transition:border-color .2s,color .2s,background .2s}
+.vc-icon-btn:hover:not(:disabled){border-color:var(--ac);background:var(--acs)}
+.vc-icon-btn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.vc-icon-btn svg{width:18px;height:18px}
+.vc-wait{display:flex;align-items:center;gap:.6rem;margin:.6rem 0}
+.vc-wait[hidden]{display:none}
+.vc-small{font-size:.82rem;color:var(--txm)}
+/* Pannello del pagamento. Prima le due email erano due `label` d'autore
+   (display:block, testo maiuscolo) con dentro l'input inline a larghezza di
+   default del browser: etichette e campi finivano di larghezze diverse e
+   disallineati. Qui l'etichetta sta sopra e il campo occupa la riga. */
+/* La richiesta dell'email va vista: e' l'unico passo del pannello in cui
+   l'utente deve scrivere qualcosa, e in mezzo a bottoni e avvisi passava
+   inosservata. Il grassetto sta qui e non nella stringa: vale per tutte le
+   lingue (data-t scrive testo, non markup). */
+.vc-intro{font-weight:600}
+.vc-form{display:grid;gap:.7rem;margin:.8rem 0}
+.vc-fld{display:block;margin:0}
+.vc-fld input,.vc-fld select{width:100%;box-sizing:border-box}
+.vc-fld input{padding:10px 14px;background:var(--srf2);border:1px solid var(--brd);
+              border-radius:var(--rs);color:var(--tx);font-family:inherit;font-size:.95rem}
+.vc-fld input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+/* L'email non e' un dato qualsiasi: e' l'unica chiave per ritrovare e
+   gestire la voce. L'avviso sta attaccato ai campi e si legge. */
+.vc-warn{margin:-.3rem 0 0;color:var(--txd);border-left:2px solid var(--ac);padding-left:.6rem}
+/* Il campione gia' accettato: l'utente deve poterlo riconoscere, rifare o
+   buttare via senza uscire dal pannello. */
+.vc-card{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;
+         background:var(--srf);margin:0 0 .9rem}
+.vc-card[hidden]{display:none}
+.vc-card-t{margin:0 0 .4rem;font-weight:600}
+.vc-card audio{width:100%}
+.vc-card-act{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
+.vc-danger{color:var(--err)}
+/* Lingua, accento e voce hanno un passo tutto loro: combo larghe, etichetta
+   sopra e un'icona dentro il campo, che dice di che scelta si tratta senza
+   affidarsi alle bandiere (su Windows restano due lettere). */
+.vc-setup-t{margin:0 0 .3rem;font-weight:600;font-size:1.02rem}
+.vc-picks{display:grid;gap:.85rem;margin:1rem 0 .4rem}
+.vc-pick{display:block}
+.vc-pick[hidden]{display:none}
+.vc-pick-lbl{display:block;font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;
+             color:var(--txm);margin-bottom:.25rem}
+.vc-pick-in{position:relative;display:block}
+.vc-pick-ico{position:absolute;left:.65rem;top:50%;transform:translateY(-50%);
+             width:18px;height:18px;color:var(--ac);pointer-events:none}
+.vc-pick-ico[hidden]{display:none}
+.vc-pick-in select{width:100%;padding-left:2.2rem}
+.vc-pick-in input{width:100%;box-sizing:border-box;padding:10px 14px 10px 2.2rem;background:var(--srf2);
+                  border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);font:inherit;font-size:.95rem;line-height:1.25}
+.vc-pick-in input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-pick-hint{display:block;margin-top:.25rem;text-transform:none;letter-spacing:normal;font-weight:400}
+/* Nome della voce nella lista «Le tue voci»: titolo, matita per rinominare
+   (solo il proprietario) e, al clic, il campo con Salva/Annulla sulla riga. */
+.vc-mine-head{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.vc-mine-name{font-weight:600}
+.vc-mine-head .vc-icon-btn{width:30px;height:30px}
+.vc-mine-head .vc-icon-btn svg{width:15px;height:15px}
+.vc-rename{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:.1rem 0 .2rem}
+.vc-rename input{flex:1 1 180px;min-width:0;padding:7px 10px;background:var(--srf2);border:1px solid var(--brd);
+                 border-radius:var(--rs);color:var(--tx);font:inherit;font-size:.9rem}
+.vc-rename input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-danger:hover:not(:disabled){color:var(--err);border-color:var(--err);background:var(--errs)}
+/* Che cosa succede dopo il pagamento, in una riga sola: i testi dei brani
+   qui non servivano a decidere e spingevano il pagamento sotto la piega. */
+.vc-demos-t{margin:.9rem 0;font-weight:600}
+.vc-resend-manage{margin:.45rem 0 0}
+.vc-resend-manage[hidden]{display:none}

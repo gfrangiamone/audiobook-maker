@@ -419,6 +419,13 @@ __REVIEWS_LD__
           <span class="prem-coach-text" data-t="premium_hint_text"></span>
           <button type="button" class="prem-coach-x" aria-label="Close" onclick="_dismissPremiumHint()">&times;</button>
         </div>
+        <div id="vcPromoCoach" class="prem-coach vc-promo" hidden role="status" aria-live="polite">
+          <button type="button" class="vc-promo-go" onclick="_vcPromoGo()">
+            <span class="prem-coach-text" data-t="vc_promo_text"></span>
+            <span class="vc-promo-cta" data-t="vc_promo_cta"></span>
+          </button>
+          <button type="button" class="prem-coach-x" aria-label="Close" onclick="_dismissVcPromo()">&times;</button>
+        </div>
       </div>
 
       <!-- Il motivo per cui il tab PREMIUM e' spento sta FUORI dai tab-panel:
@@ -463,7 +470,27 @@ __REVIEWS_LD__
         <div class="form-row">
           <div class="form-group">
             <label for="vvPremium" data-t="lbl_voice">Voce</label>
-            <select id="vvPremium"></select>
+            <!-- Il campionamento della propria voce vive QUI dentro, accanto alla
+                 combo: sta nel pannello PREMIUM (quindi mai visibile sulla scheda
+                 Standard) e vcSyncButton lo scopre solo col modello VoxCPM. -->
+            <div class="vc-voice-row">
+              <select id="vvPremium"></select>
+              <button type="button" id="vcOpenBtn" class="vc-mic-btn" data-t-title="vc_btn_tip"
+                      aria-label="Create an audiobook using your own voice" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+                  <path d="M5 10v2a7 7 0 0 0 14 0v-2"></path>
+                  <line x1="12" y1="19" x2="12" y2="22"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="vcBtnRow" class="vc-btn-row" hidden>
+          <div id="vcResumeBanner" class="al al-i vc-resume" hidden>
+            <span data-t="vc_resume_banner">You have a pending voice sample:</span>
+            <button type="button" id="vcResumeBtn" class="btn btn-outline btn-sm" data-t="vc_resume_btn">resume</button>
           </div>
         </div>
         <div class="form-row" id="geminiStyleRow">
@@ -1166,6 +1193,213 @@ __REVIEWS_LD__
         <button type="button" class="btn-secondary" id="btnPayCancel2" data-t="pay_cancel">Annulla</button>
         <button type="button" class="btn-primary" id="btnPayConfirm" data-t="pay_confirm" disabled>Conferma</button>
       </footer>
+    </div>
+  </div>
+
+  <!-- VOICE CLONE MODAL (Campiona la tua voce) -->
+  <div id="vcModal" class="modal-backdrop" hidden>
+    <div class="modal payment-modal vc-modal" role="dialog" aria-modal="true" aria-labelledby="vcTitle">
+      <header class="modal-header">
+        <h3 id="vcTitle" data-t="vc_title">Sample your voice</h3>
+        <button type="button" id="vcClose" class="modal-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <div id="vcErr" class="al al-e" hidden></div>
+
+        <section id="vcP1" hidden>
+          <p data-t-html="vc_p1_intro"></p>
+          <ul class="vc-terms">
+            <li data-t="vc_p1_t1"></li>
+            <li data-t="vc_p1_t2"></li>
+            <li data-t="vc_p1_t3"></li>
+            <li data-t="vc_p1_t4"></li>
+            <li data-t="vc_p1_t5"></li>
+          </ul>
+          <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcP1Price"></strong></p>
+          <label class="vc-consent"><input type="checkbox" id="vcConsent"> <span data-t="vc_consent"></span></label>
+          <p class="vc-alt"><span data-t="vc_p1_have_code"></span>
+            <button type="button" id="vcP1Claim" class="vc-linkbtn" data-t="vc_claim_title"></button></p>
+          <div class="modal-footer vc-footer">
+            <button type="button" id="vcP1Cancel" class="btn-secondary" data-t="vc_cancel"></button>
+            <button type="button" id="vcP1Next" class="btn-primary" data-t="vc_next" disabled></button>
+          </div>
+        </section>
+
+        <section id="vcPSetup" hidden>
+          <p class="vc-setup-t" data-t="vc_setup_t"></p>
+          <p class="vc-small" data-t="vc_setup_intro"></p>
+          <div class="vc-picks">
+            <label class="vc-pick">
+              <span class="vc-pick-lbl" data-t="vc_lang"></span>
+              <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><select id="vcLang"></select></span>
+            </label>
+            <label class="vc-pick" id="vcLocaleWrap">
+              <span class="vc-pick-lbl" data-t="vc_locale"></span>
+              <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><select id="vcLocale"></select></span>
+            </label>
+            <label class="vc-pick">
+              <span class="vc-pick-lbl" data-t="vc_gender"></span>
+              <span class="vc-pick-in"><svg id="vcGenderIcoF" class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="5"/><line x1="12" y1="13" x2="12" y2="22"/><line x1="9" y1="19" x2="15" y2="19"/></svg><svg id="vcGenderIcoM" class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><circle cx="10" cy="14" r="6"/><line x1="14.5" y1="9.5" x2="20.5" y2="3.5"/><polyline points="15 3 21 3 21 9"/></svg><select id="vcGender">
+                <option value="f" data-t="vc_gender_f"></option>
+                <option value="m" data-t="vc_gender_m"></option>
+              </select></span>
+            </label>
+            <label class="vc-pick">
+              <span class="vc-pick-lbl" data-t="vc_name"></span>
+              <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><input type="text" id="vcName" maxlength="40" autocomplete="off" data-t-ph="vc_name_ph"></span>
+              <span class="vc-small vc-pick-hint" data-t="vc_name_hint"></span>
+            </label>
+            <label class="vc-pick">
+              <span class="vc-pick-lbl" data-t="vc_device_name"></span>
+              <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><input type="text" id="vcDeviceName" maxlength="40" autocomplete="off"></span>
+              <span class="vc-small vc-pick-hint" data-t="vc_device_name_hint"></span>
+            </label>
+          </div>
+          <div class="modal-footer vc-footer">
+            <button type="button" id="vcSetupBack" class="btn-secondary" data-t="vc_back"></button>
+            <button type="button" id="vcSetupNext" class="btn-primary" data-t="vc_next"></button>
+          </div>
+        </section>
+
+        <section id="vcP2" hidden>
+          <p data-t="vc_p2_read"></p>
+          <div id="vcPromptText" class="vc-prompt"></div>
+          <div class="vc-cap">
+            <label id="vcMicWrap" class="vc-mic-pick"><svg class="vc-mic-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg><select id="vcMic" aria-label="Microphone" data-t-title="vc_mic"></select></label>
+            <div class="vc-rec-row">
+              <span class="vc-rec-btns">
+                <button type="button" id="vcRecBtn" class="btn-primary" data-t="vc_rec_start"></button>
+                <button type="button" id="vcRecCancel" class="btn-secondary" data-t="vc_rec_cancel" hidden></button>
+                <span id="vcRecDot" class="vc-rec-dot" hidden></span>
+              </span>
+              <meter id="vcLevel" min="0" max="1" value="0"></meter>
+              <span id="vcTimer" class="vc-timer">0.0 s</span>
+            </div>
+          </div>
+          <div id="vcUpBlock">
+            <p class="vc-or" data-t="vc_or"></p>
+            <div class="vc-up">
+              <input type="file" id="vcFile" class="vc-up-input" accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4,audio/*">
+              <label for="vcFile" class="vc-up-btn" data-t="vc_up_pick"></label>
+              <span id="vcUpName" class="vc-up-name"></span>
+              <p class="vc-up-hint vc-small"><span data-t="vc_up_hint"></span> <b id="vcUpMb"></b></p>
+            </div>
+          </div>
+          <div id="vcUploading" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_checking"></span></div>
+          <div id="vcLocalBlock" class="vc-local" hidden>
+            <span class="vc-small" data-t="vc_local_listen"></span>
+            <audio id="vcLocalAudio" controls preload="none"></audio>
+          </div>
+          <div id="vcErr2" class="al al-e" hidden></div>
+          <p id="vcUpOffer" class="vc-alt vc-up-offer" hidden><button type="button" id="vcUpOfferBtn" class="vc-linkbtn" data-t="vc_up_offer"></button></p>
+          <div id="vcSampleBlock" class="vc-local" hidden>
+            <span class="vc-small" data-t="vc_sample_listen"></span>
+            <audio id="vcSampleAudio" controls preload="none"></audio>
+          </div>
+          <div class="vc-footer vc-footer-split">
+            <button type="button" id="vcP2Back" class="btn-secondary" data-t="vc_back"></button>
+            <span id="vcSampleActions" class="vc-actions" hidden>
+              <button type="button" id="vcSampleRedo" class="btn-secondary" data-t="vc_sample_redo"></button>
+              <button type="button" id="vcSampleNext" class="btn-primary" data-t="vc_sample_ok"></button>
+            </span>
+          </div>
+        </section>
+        <section id="vcP3" hidden>
+          <div class="vc-card">
+            <p class="vc-card-t" data-t="vc_p3_sample_ok"></p>
+            <audio id="vcP3Sample" controls preload="none"></audio>
+            <div class="vc-card-act">
+              <button type="button" id="vcP3Redo" class="btn btn-outline btn-sm" data-t="vc_p3_redo"></button>
+              <button type="button" id="vcP3Discard" class="btn btn-ghost btn-sm vc-danger" data-t="vc_p3_discard"></button>
+              <span id="vcP3DiscardAsk" hidden><span class="vc-small" data-t="vc_p3_discard_ask"></span>
+                <button type="button" id="vcP3DiscardYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
+                <button type="button" id="vcP3DiscardNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
+            </div>
+          </div>
+          <p class="vc-intro" data-t="vc_p3_intro"></p>
+          <div class="vc-form">
+            <label class="vc-fld"><span data-t="vc_email"></span> <input type="email" id="vcEmail" autocomplete="email" required></label>
+            <label class="vc-fld"><span data-t="vc_email2"></span> <input type="email" id="vcEmail2" autocomplete="off" required></label>
+          </div>
+          <div id="vcErr3" class="al al-e" hidden></div>
+          <p class="vc-resend-manage" id="vcResendManageWrap" hidden><button type="button" id="vcResendManage" class="btn btn-outline btn-sm" data-t="vc_resend_manage"></button></p>
+          <p class="vc-small vc-warn" data-t="vc_p3_email_warn"></p>
+          <p class="vc-demos-t" data-t="vc_p3_demos_t"></p>
+          <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcPrice"></strong></p>
+          <div class="vc-footer">
+            <button type="button" id="vcP3Back" class="btn-secondary" data-t="vc_back"></button>
+            <button type="button" id="vcPayBtn" class="btn-primary" data-t="vc_pay_btn"></button>
+          </div>
+        </section>
+        <section id="vcP4" hidden>
+          <div id="vcCodeBox" hidden>
+            <p data-t="vc_code_intro"></p>
+            <div id="vcCode" class="vc-code"></div>
+            <p class="vc-small" data-t="vc_code_note"></p>
+          </div>
+          <div id="vcWait" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_wait"></span></div>
+          <div id="vcDemos" hidden>
+            <p data-t="vc_demos_intro"></p>
+            <div class="vc-demo-row">
+              <span data-t="vc_demo_common"></span><audio id="vcDemoCommon" controls preload="none"></audio>
+              <span data-t="vc_demo_extra"></span><audio id="vcDemoExtra" controls preload="none"></audio>
+            </div>
+            <div class="vc-footer">
+              <button type="button" id="vcReject" class="btn-secondary" data-t="vc_reject"></button>
+              <button type="button" id="vcApprove" class="btn-primary" data-t="vc_approve"></button>
+            </div>
+            <div id="vcRejectConfirm" class="vc-reject-box" hidden>
+              <label for="vcRejectReason" data-t="vc_reject_reason"></label>
+              <textarea id="vcRejectReason" rows="3" maxlength="1000" data-t-ph="vc_reject_reason_ph"></textarea>
+              <span class="vc-confirm"><span data-t="vc_reject_sure"></span>
+                <button type="button" id="vcRejectYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
+                <button type="button" id="vcRejectNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
+            </div>
+          </div>
+          <div id="vcFailed" hidden>
+            <p class="al al-e" data-t="vc_demo_failed"></p>
+            <div class="vc-footer">
+              <button type="button" id="vcReject2" class="btn-secondary" data-t="vc_reject"></button>
+              <button type="button" id="vcRetry" class="btn-primary" data-t="vc_retry"></button>
+            </div>
+          </div>
+          <div id="vcDone" hidden>
+            <p class="al al-i" data-t="vc_done"></p>
+            <div class="vc-footer"><button type="button" id="vcDoneClose" class="btn-primary" data-t="vc_close"></button></div>
+          </div>
+          <div id="vcRefunded" hidden>
+            <p class="al al-i" data-t="vc_refunded"></p>
+            <div class="vc-footer"><button type="button" id="vcRefundedClose" class="btn-primary" data-t="vc_close"></button></div>
+          </div>
+        </section>
+        <section id="vcPMine" hidden>
+          <ul id="vcMineList" class="vc-mine-list"></ul>
+          <details id="vcClaimBox" class="vc-claim">
+            <summary data-t="vc_claim_title"></summary>
+            <p class="vc-small vc-claim-intro" data-t="vc_claim_intro"></p>
+            <div class="vc-claim-row">
+              <input type="text" id="vcClaimCode" autocomplete="off" spellcheck="false" data-t-ph="vc_claim_ph">
+              <input type="text" id="vcClaimDevice" maxlength="40" autocomplete="off" data-t-ph="vc_device_name" data-t-title="vc_device_name_hint">
+            </div>
+            <div class="vc-claim-row">
+              <textarea id="vcClaimIdentity" rows="3" maxlength="300" data-t-ph="vc_identity_ph"></textarea>
+              <span class="vc-small" data-t="vc_identity_hint"></span>
+            </div>
+            <div id="vcClaimSend" class="vc-claim-row vc-claim-send">
+              <button type="button" id="vcClaimBtn" class="btn btn-outline btn-sm" data-t="vc_claim_btn"></button>
+            </div>
+            <div id="vcConfirmRow" class="vc-claim-row" hidden>
+              <span class="vc-small vc-claim-intro" data-t="vc_confirm_intro"></span>
+              <input type="text" id="vcConfirmCode" autocomplete="one-time-code" inputmode="numeric" data-t-ph="vc_confirm_ph">
+              <button type="button" id="vcConfirmBtn" class="btn btn-outline btn-sm" data-t="vc_confirm_btn"></button>
+            </div>
+          </details>
+          <div class="vc-footer">
+            <button type="button" id="vcMineClose" class="btn-secondary" data-t="vc_close"></button>
+            <button type="button" id="vcNewVoice" class="btn-primary" data-t="vc_new_voice"></button>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 

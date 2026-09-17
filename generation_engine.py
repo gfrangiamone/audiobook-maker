@@ -52,6 +52,7 @@ import translation_cost_audit
 import optimization_cost_audit
 import speechify_tts
 import voxcpm_tts
+import voxcpm_ranking
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
@@ -1803,7 +1804,9 @@ def _friendly_voice_name(voice):
         # v2 ne' mine) -> ultimo segmento ':' come ripiego, meglio di niente.
         parti = v.split(":")
         if len(parti) >= 2 and parti[1] == "mine":
-            return "La tua voce"
+            # Etichetta monolingua in inglese (niente traduzioni sparse):
+            # le email localizzate la traducono a valle se serve (Task 8).
+            return "Your voice"
         return parti[-1].strip()
     if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
@@ -1825,7 +1828,7 @@ def _generation_details_lines(job, lang):
     resta nei chiamanti."""
     d = _email_details_i18n.get(lang, _email_details_i18n["en"])
     voice = (job.get("voice") or "").strip()
-    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice)
+    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice) or _is_voxcpm_voice(voice)
     lines = []
 
     # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
@@ -3667,6 +3670,12 @@ def _engine_for_voice(voice):
     return "edge"
 
 
+def _ranking_point_allowed(voice):
+    """Le voci personali (voxcpm:mine:) non entrano nella classifica d'uso:
+    e' una voce campione di un solo utente, non una voce del catalogo."""
+    return _is_voxcpm_voice(voice) and not (voice or "").startswith("voxcpm:mine:")
+
+
 def _pcm_sample_rate(job, use_speechify, use_voxcpm):
     """Sample rate del flusso PCM in corso: unica fonte di verita', usata sia
     per il calcolo delle durate sia per generare il silenzio fra i capitoli
@@ -4174,18 +4183,29 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
             # `abm_language` e lasciava `abm_model` vuoto (M4B consegnati il
             # 15/09/2026 con `abm_language=voxcpm:v2:it-IT/Lorenzo`).
             model_label = getattr(voxcpm_tts, "MODEL_LABEL", "") or model_label
-            try:
-                import voxcpm_catalog
-                rec = voxcpm_catalog.parse_voice_id(voice_id)
-                voice_name = voxcpm_catalog._display_name(rec)
-                # Come per Simba: l'accento non e' un parametro a se', e' la
-                # locale della voce (il filtro ACCENTO sceglie fra le varianti).
-                language = rec["locale"] or ""
-                accent = language
-            except Exception:
-                # Voce sparita dal catalogo dopo una rigenerazione (§9.4): non
-                # e' un errore, restano l'id e la lingua del libro.
-                pass
+            if voice_id.startswith("voxcpm:mine:"):
+                # Voce campione: non e' nel catalogo e il suo nome e' roba del
+                # proprietario. Nei tag va un'etichetta neutra, e la lingua la
+                # sa solo il record (vedi voice_clone.py).
+                voice_name = "user-voice"
+                try:
+                    import voice_clone as _vcl
+                    language = _vcl.language_of(voice_id) or ""
+                except Exception:
+                    pass
+            else:
+                try:
+                    import voxcpm_catalog
+                    rec = voxcpm_catalog.parse_voice_id(voice_id)
+                    voice_name = voxcpm_catalog._display_name(rec)
+                    # Come per Simba: l'accento non e' un parametro a se', e' la
+                    # locale della voce (il filtro ACCENTO sceglie fra le varianti).
+                    language = rec["locale"] or ""
+                    accent = language
+                except Exception:
+                    # Voce sparita dal catalogo dopo una rigenerazione (§9.4): non
+                    # e' un errore, restano l'id e la lingua del libro.
+                    pass
         elif engine == "speechify":
             try:
                 _mk, _vn, _loc = speechify_tts.parse_voice_id(voice_id)
@@ -4209,7 +4229,13 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
 
         tags["abm_model"] = model_label
         tags["abm_voice"] = voice_name
-        tags["abm_voice_id"] = voice_id
+        # Voce campione: l'id completo porta il token, un segreto (vedi
+        # voice_clone.py) - nei metadati del file consegnato (ri-condivisibile
+        # dall'utente) va solo il prefisso, mai il token.
+        if voice_id.startswith("voxcpm:mine:"):
+            tags["abm_voice_id"] = "voxcpm:mine"
+        else:
+            tags["abm_voice_id"] = voice_id
         tags["abm_language"] = language
         if accent:
             tags["abm_accent"] = accent
@@ -4943,9 +4969,22 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         except (TypeError, ValueError):
             rate_pct_val = 0
 
+        # Voce campionata: l'id `vc_...` (mai il token, che e' segreto) e il
+        # libro consegnato contato sulla voce per la tab admin.
+        voice_clone_id = ""
+        if str(voice_id or "").startswith("voxcpm:mine:"):
+            try:
+                import voice_clone
+                voice_clone_id = voice_clone.clone_id_of(voice_id) or ""
+                if voice_clone_id and outcome == "completed":
+                    voice_clone.note_book(voice_clone_id, job_id)
+            except Exception:
+                voice_clone_id = ""
+
         rec = {
             "job_id": job_id,
             "provider": "voxcpm",
+            "voice_clone_id": voice_clone_id,
             "model_key": "v2",
             "language": language or "",
             "rate_pct": rate_pct_val,
@@ -5919,6 +5958,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     use_speechify = (engine == "speechify")
     use_voxcpm = (engine == "voxcpm")
     use_pcm = use_gemini or use_speechify or use_voxcpm
+    if use_voxcpm and _ranking_point_allowed(voice):
+        # La voce e' usata davvero: pagamento o quota gia' passati, la
+        # sintesi sta per partire. Un punto alla voce, una volta per job
+        # (il recovery rientra da qui e non deve contare due volte). Le voci
+        # personali (voxcpm:mine:) restano fuori dalla classifica.
+        try:
+            voxcpm_ranking.punto(voice, job_id)
+        except Exception as _e:      # noqa: BLE001
+            print(f"[{job_id}] classifica voci VoxCPM non aggiornata: {_e}")
     if use_speechify:
         speechify_emotion = speechify_emotion or job.get("speechify_emotion")
     # Sample rate reale del PCM: vedi `_pcm_sample_rate` per la scelta motore

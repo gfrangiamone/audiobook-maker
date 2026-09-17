@@ -5,7 +5,7 @@ Nessun dato dinamico: testo approvato dal titolare. Pattern self-contained
 come le altre pagine HTML servite dall'app.
 """
 
-_LAST_UPDATED = {"it": "17 luglio 2026", "en": "July 17, 2026"}
+_LAST_UPDATED = {"it": "10 settembre 2026", "en": "September 10, 2026"}
 
 _TXT = {
     "it": {
@@ -16,11 +16,11 @@ _TXT = {
         "switch_href": "/privacy?lang=en",
         "crumb": "Privacy",
         "footer": "Audiobook Maker — convertitore gratuito e open source da EPUB/PDF ad audiolibri.",
-        "cookie_h": "9. Cookie e consenso",
+        "cookie_h": "10. Cookie e consenso",
         "cookie_p": "Il sito web usa cookie analitici (Google Analytics) solo previo tuo consenso, per misurare il traffico in forma aggregata; nessun cookie analitico viene impostato senza il tuo consenso. Puoi rivedere o modificare la tua scelta in qualsiasi momento.",
         "cookie_p2": "L'app mobile non usa cookie né analytics di terze parti.",
         "cookie_btn": "Gestisci preferenze cookie",
-        "changes_h": "10. Modifiche",
+        "changes_h": "11. Modifiche",
         "changes_p": "Eventuali modifiche a questa informativa saranno pubblicate in questa pagina con l'indicazione della data di aggiornamento.",
         "body": """
 <h1>Informativa sulla privacy — Audiobook Maker &amp; Player</h1>
@@ -104,7 +104,7 @@ completamento e il link di download. Base giuridica: esecuzione del servizio.</l
 viene elaborato da DeepSeek. Base giuridica: esecuzione del servizio richiesto.</li>
 <li><strong>Dati di pagamento (servizi premium)</strong>: gestiti direttamente da
 PayPal; non trattiamo né conserviamo i dati della tua carta.</li>
-<li><strong>Cookie analitici</strong>: vedi §9.</li>
+<li><strong>Cookie analitici</strong>: vedi §10.</li>
 </ul>
 
 <h2>5. Fornitori e destinatari dei dati</h2>
@@ -118,6 +118,7 @@ colonna indica da quale canale possono riceverli:</p>
 <tr><td>Google LLC / Google Ireland</td><td>Notifiche push (Firebase Cloud Messaging)</td><td>App</td></tr>
 <tr><td>Google LLC / Google Ireland</td><td>Voci premium ed elaborazione del testo</td><td>Solo sito web</td></tr>
 <tr><td>Speechify</td><td>Voci premium</td><td>Solo sito web</td></tr>
+<tr><td>RunPod, Inc.</td><td>Sintesi vocale delle voci campionate (voci premium)</td><td>Solo sito web</td></tr>
 <tr><td>DeepSeek</td><td>Ottimizzazione del testo tramite IA</td><td>Solo sito web</td></tr>
 <tr><td>PayPal (Europe)</td><td>Pagamenti dei servizi premium</td><td>Solo sito web</td></tr>
 <tr><td>serverSMTP</td><td>Invio delle email di notifica</td><td>Solo sito web</td></tr>
@@ -152,6 +153,11 @@ protezione dei dati personali.</p>
 una persona: per esercitare i tuoi diritti scrivi a
 <a href="mailto:support@audiobook-maker.com">support@audiobook-maker.com</a>. I file che carichi si
 cancellano comunque da soli entro circa 24 ore senza alcuna richiesta.</p>
+
+<h2>9. Voci campionate</h2>
+<p>Se scegli di campionare la tua voce, registri o carichi un breve campione audio (circa 15 secondi) leggendo una frase che ti proponiamo. Il campione viene analizzato automaticamente (livelli, pause, rumore) e trascritto da un servizio di riconoscimento vocale per verificare che tu abbia letto la frase; questa trascrizione avviene sui nostri stessi server e l'audio non viene inviato a terzi per questa finalità. La trascrizione serve solo a questa verifica e non viene conservata oltre l'esito.</p>
+<p>Conserviamo il campione normalizzato, i due brani di prova generati con la tua voce, la lingua e il genere dichiarati, l'email indicata, il consenso prestato («è la mia voce e ho il diritto di usarla») con data e ora, e l'elenco dei dispositivi autorizzati (identificati dal cookie tecnico di sessione). Il campione è inviato al fornitore che esegue la sintesi vocale esclusivamente per generare i brani di prova e gli audiolibri che richiedi.</p>
+<p>La voce è utilizzabile solo dai dispositivi che autorizzi con il codice-voce, previa conferma via email al titolare. Puoi eliminare la voce in qualsiasi momento dal link di gestione contenuto nell'email: l'eliminazione cancella campione, brani di prova e riferimento nel catalogo. Una voce non utilizzata per un lungo periodo viene eliminata automaticamente; te lo ricordiamo via email prima della scadenza. I dati di pagamento seguono le regole della sezione dedicata.</p>
 """,
     },
     "en": {
@@ -162,11 +168,11 @@ cancellano comunque da soli entro circa 24 ore senza alcuna richiesta.</p>
         "switch_href": "/privacy?lang=it",
         "crumb": "Privacy",
         "footer": "Audiobook Maker — free &amp; open-source EPUB/PDF to audiobook converter.",
-        "cookie_h": "9. Cookies and consent",
+        "cookie_h": "10. Cookies and consent",
         "cookie_p": "The website uses analytics cookies (Google Analytics) only with your consent, to measure aggregate traffic; no analytics cookie is set without your consent. You can review or change your choice at any time.",
         "cookie_p2": "The mobile app uses no cookies and no third-party analytics.",
         "cookie_btn": "Manage cookie preferences",
-        "changes_h": "10. Changes",
+        "changes_h": "11. Changes",
         "changes_p": "Any changes to this policy will be published on this page together with the update date.",
         "body": """
 <h1>Privacy Policy — Audiobook Maker &amp; Player</h1>
@@ -249,7 +255,7 @@ Google (Gemini) or Speechify. Legal basis: performance of the requested service.
 by DeepSeek. Legal basis: performance of the requested service.</li>
 <li><strong>Payment data (premium services)</strong>: handled directly by PayPal; we
 do not process or store your card details.</li>
-<li><strong>Analytics cookies</strong>: see §9.</li>
+<li><strong>Analytics cookies</strong>: see §10.</li>
 </ul>
 
 <h2>5. Providers and recipients of the data</h2>
@@ -263,6 +269,7 @@ column indicates from which channel they may receive it:</p>
 <tr><td>Google LLC / Google Ireland</td><td>Push notifications (Firebase Cloud Messaging)</td><td>App</td></tr>
 <tr><td>Google LLC / Google Ireland</td><td>Premium voices and text processing</td><td>Website only</td></tr>
 <tr><td>Speechify</td><td>Premium voices</td><td>Website only</td></tr>
+<tr><td>RunPod, Inc.</td><td>Voice synthesis for sampled voices (premium voices)</td><td>Website only</td></tr>
 <tr><td>DeepSeek</td><td>AI text optimization</td><td>Website only</td></tr>
 <tr><td>PayPal (Europe)</td><td>Premium services payment</td><td>Website only</td></tr>
 <tr><td>serverSMTP</td><td>Sending notification emails</td><td>Website only</td></tr>
@@ -296,6 +303,11 @@ authority.</p>
 exercise your rights, write to
 <a href="mailto:support@audiobook-maker.com">support@audiobook-maker.com</a>. The files you upload
 delete themselves anyway within about 24 hours without any request.</p>
+
+<h2>9. Sampled voices</h2>
+<p>If you choose to sample your voice, you record or upload a short audio sample (about 15 seconds) reading a sentence we propose. The sample is analysed automatically (levels, pauses, noise) and transcribed by a speech-recognition service to check that you read the sentence; this transcription runs on our own servers and the audio is not sent to third parties for this purpose. The transcription serves only this check and is not kept beyond the result.</p>
+<p>We keep the normalised sample, the two trial passages generated with your voice, the declared language and gender, the email you provide, the consent given (“this is my voice and I have the right to use it”) with date and time, and the list of authorised devices (identified by the technical session cookie). The sample is sent to the provider that performs speech synthesis solely to generate the trial passages and the audiobooks you request.</p>
+<p>The voice can be used only by the devices you authorise with the voice code, after email confirmation by the owner. You can delete the voice at any time from the management link in the email: deletion removes the sample, the trial passages and the catalogue entry. A voice unused for a long period is deleted automatically; we remind you by email before it expires. Payment data follows the rules of the dedicated section.</p>
 """,
     },
 }

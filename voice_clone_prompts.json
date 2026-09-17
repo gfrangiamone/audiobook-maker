@@ -1,0 +1,14 @@
+{
+  "schema": "abm-voice-clone-prompts/1",
+  "prompts": {
+    "it": {"text": "Ogni mattina, prima che la città si svegli, scelgo di camminare lungo il fiume e ascoltare il rumore dell'acqua. Vi siete mai fermati a guardare come il cielo cambia colore, mentre gli uccelli cominciano a cantare tra gli alberi? È un momento di silenzio semplice, ma mi aiuta a pensare con più chiarezza."},
+    "en": {"text": "Every morning, before the town wakes up, I like to walk along the river and listen to the gentle sound of the water. Have you ever stopped to watch how the sky slowly changes color, while the birds begin to sing among the trees? It's just a simple, quiet moment, but the fresh air helps me think more clearly."},
+    "fr": {"text": "Chaque matin, avant que la ville ne se réveille, j'aime marcher le long de la rivière et écouter le bruit de l'eau. Vous êtes-vous déjà arrêtés pour regarder le ciel changer lentement de couleur, pendant que les oiseaux commencent à chanter dans les arbres ? C'est un moment simple et tranquille, mais il m'aide à penser plus clairement."},
+    "es": {"text": "Cada mañana, antes de que la ciudad despierte, me gusta caminar junto al río y escuchar el rumor del agua. ¿Alguna vez te has detenido a mirar cómo el cielo cambia de color lentamente, mientras los pájaros empiezan a cantar entre los árboles? Es un momento sencillo y tranquilo, pero me ayuda a pensar con más claridad."},
+    "de": {"text": "Jeden Morgen, bevor die Stadt erwacht, gehe ich gern am Fluss entlang und höre dem Rauschen des Wassers zu. Hast du schon einmal beobachtet, wie sich der Himmel langsam verfärbt, während die Vögel in den Bäumen zu singen beginnen? Es ist ein ruhiger Augenblick, doch er hilft mir, klarer zu denken."},
+    "nl": {"text": "Elke ochtend, voordat de stad wakker wordt, wandel ik graag langs de rivier en luister ik naar het geruis van het water. Heb je wel eens gekeken hoe de lucht langzaam van kleur verandert, terwijl de vogels in de bomen beginnen te zingen? Het is een rustig moment, maar het helpt mij helderder te denken."},
+    "pt": {"text": "Todas as manhãs, antes que a cidade acorde, gosto de caminhar ao longo do rio e ouvir o som da água. Já parou alguma vez para olhar como o céu muda de cor lentamente, enquanto os pássaros começam a cantar entre as árvores? É um momento simples e tranquilo, mas ajuda a pensar com mais clareza."},
+    "hi": {"text": "हर सुबह, शहर के जागने से पहले, मुझे नदी किनारे टहलना और पानी की आवाज़ सुनना पसंद है। क्या आपने देखा है कि आसमान कैसे रंग बदलता है, और पेड़ों पर चिड़ियाँ गाने लगती हैं? यह एक शांत पल है, जो मुझे साफ़ सोचने में मदद करता है।"},
+    "zh": {"text": "每天早晨，在城市醒来之前，我喜欢沿着河边散步，听河水轻轻流过的声音。你有没有停下来看过，天空怎样慢慢变换颜色，而小鸟开始在绿树上歌唱？这是一个平常而安静的时刻，但清新的空气让我想得更清楚。"}
+  }
+}

@@ -41,7 +41,7 @@ from pathlib import Path
 
 from flask import (
     Flask, request, jsonify,
-    send_file, Response, stream_with_context, redirect, after_this_request
+    send_file, Response, stream_with_context, redirect, after_this_request, abort
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 import storage_backend
@@ -87,6 +87,13 @@ except Exception as _voxcpm_err:      # noqa: BLE001
     print(f"VoxCPM non disponibile: {_voxcpm_err}")
     voxcpm_catalog = None
     voxcpm_tts = None
+# La classifica d'uso delle voci VoxCPM: modulo foglia (json + voice_utils),
+# quindi importato senza rete di protezione.
+import voxcpm_ranking
+import voice_clone
+import voice_clone_audio
+import voice_clone_demo
+import voice_clone_prompts
 
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
@@ -150,6 +157,16 @@ try:
         _DL_PAGES_I18N = json.load(_f)
 except Exception as _e:
     print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
+
+# Le pagine dei link dell'email (ripresa, dispositivi, cancellazione) nelle
+# lingue dell'interfaccia: chi riceve l'email non passa dal sito e non ha modo
+# di cambiare lingua da li'.
+_VC_PAGES_I18N = {}
+try:
+    with open(SCRIPT_DIR / "i18n" / "voice_clone_pages.json", encoding="utf-8") as _f:
+        _VC_PAGES_I18N = json.load(_f)
+except Exception as _e:
+    print(f"WARNING: Could not load i18n/voice_clone_pages.json: {_e}", file=sys.stderr)
 
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
 # (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
@@ -346,7 +363,7 @@ def add_security_headers(response):
     # /dl/<token>: pagine e file di download fuori dall'indice. Difesa in
     # profondità: sono già in Disallow nel robots.txt, ma alcuni crawler lo
     # ignorano e potrebbero indicizzare l'URL token (thin/duplicate content).
-    if path.startswith('/dl/'):
+    if path.startswith('/dl/') or path.startswith('/vc/'):
         response.headers['X-Robots-Tag'] = 'noindex, nofollow'
     return response
 
@@ -372,6 +389,8 @@ if gemini_tts is not None:
 community_store.init(_DATA_DIR)
 pending_jobs.init()  # richiede community_store.init() già chiamato
 tts_backend_state.init(_DATA_DIR)
+voice_clone.init(_DATA_DIR)
+voice_clone_audio.init(_DATA_DIR)
 
 if gemini_tts is not None:
     def _on_tts_backend_switch(model_key, reason, detail, job_id):
@@ -1503,7 +1522,8 @@ def _recovery_generate_gate(job_id, rec, info):
     out = {"info": info, "estimate_key": None, "estimate": None, "quota_charge": None}
     is_gem = _is_gemini_voice(voice)
     is_spx = _is_speechify_voice(voice)
-    if not (is_gem or is_spx):
+    is_vox = _is_voxcpm_voice(voice)
+    if not (is_gem or is_spx or is_vox):
         return out
     total_chars = sum(getattr(ch, "char_count", 0) or 0 for ch in chs)
     max_chars = _effective_max_text_chars(voice, None)
@@ -1518,9 +1538,22 @@ def _recovery_generate_gate(job_id, rec, info):
         est = gemini_tts.estimate_book_cost(chs, voice, language=lang,
                                             rate_pct=rec.get("rate", "+0%"))
         key = "gemini_estimate"
-    else:
+    elif is_spx:
         est = speechify_tts.estimate_book_cost(chs, language="en")
         key = "speechify_estimate"
+    else:
+        if voxcpm_tts is None:
+            raise _RecoveryRejected("modulo voxcpm_tts non disponibile")
+        if voice.startswith(voice_clone.VOICE_ID_PREFIX):
+            # Stesso ruling di /api/generate: locale del DESCRITTORE (non
+            # della voce, altrimenti il confronto sarebbe tautologico) - ''
+            # se il descrittore non lo porta, resta il solo confronto lingua.
+            _vc_locale = (rec.get("locale") or "").strip()
+            _err = voice_clone.check_use(voice, (rec.get("client_id") or "").strip(), lang, _vc_locale)
+            if _err:
+                raise _RecoveryRejected(f"voce campione non usabile: {_err}")
+        est = voxcpm_tts.estimate_book_cost(chs, language=lang)
+        key = "voxcpm_estimate"
     if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
         raise _RecoveryRejected("stima ex-ante su testo vuoto")
     out["estimate_key"] = key
@@ -1667,7 +1700,7 @@ def _reenqueue_orphan(job_id, rec):
         try:
             _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                           job.get("client_id", ""), job.get("client_ip", ""),
-                          job["voice"], job.get("browser_lang", ""),
+                          _voice_for_log(job["voice"]), job.get("browser_lang", ""),
                           epoch=job.get("gen_epoch"),
                           platform=job.get("platform", ""))
         except Exception:
@@ -2764,9 +2797,9 @@ async def _fetch_voices():
             # Un catalogo illeggibile toglie un motore, non l'applicazione.
             print(f"Error merging VoxCPM voices: {e}")
 
-    # Sorting
-    for lang in languages.values():
-        lang["voices"].sort(key=lambda x: (x["gender"], x["name"]))
+    # Sorting: Female prima di Male, poi per nome; fra le voci VoxCPM
+    # decidono prima i punti d'uso (mese corrente, poi assoluti).
+    voxcpm_ranking.ordina(languages)
 
     # Priority sorting for languages
     priority = {"it": 0, "en": 1, "fr": 2, "de": 3, "es": 4, "pt": 5}
@@ -2779,8 +2812,12 @@ def get_voices():
     global _voices_cache
     with _voices_lock:
         if _voices_cache is not None:
+            # La cache si costruisce una volta (le voci Edge arrivano dalla
+            # rete), ma i punti VoxCPM cambiano a ogni generazione: il
+            # riordino e' sul posto e costa quanto un sort di poche liste.
+            voxcpm_ranking.ordina(_voices_cache)
             return _voices_cache
-            
+
     import asyncio
     try:
         # Create new loop for this thread (or use existing if in main)
@@ -2860,6 +2897,21 @@ def _init_log_dedup():
                 parts = line.strip().split(" # ")
                 if len(parts) >= 4:
                     _logged_sids_ops.add((parts[0], parts[3]))
+
+def _voice_for_log(voice):
+    """C2: l'id di una voce campionata (voxcpm:mine:<token>) non deve mai
+    finire scritto in un log/dossier/digest persistito - il token e' un
+    segreto (vedi vincoli globali della feature voci campionate). Ogni
+    chiamante che passa una voce a _log_activity/_abuse_note/
+    _admin_notify_generation deve filtrarla da qui. Passthrough per ogni
+    altra voce (edge-tts, gemini:, speechify:, voxcpm:v2:...)."""
+    try:
+        if voice and voice.startswith(voice_clone.VOICE_ID_PREFIX):
+            return "user-voice"
+    except Exception:
+        pass
+    return voice
+
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
     """Scrive una riga nel business log mensile, deduplicando per (job_id, operazione).
@@ -4235,7 +4287,7 @@ def _abuse_apply_verdict(group, verdict):
         try:
             _log_activity(jid, job.get("original_filename", ""), "QUOTA_ABUSE_KILL",
                           job.get("client_id", ""), job.get("client_ip", ""),
-                          job.get("voice", ""), browser_lang=job.get("browser_lang", ""))
+                          _voice_for_log(job.get("voice", "")), browser_lang=job.get("browser_lang", ""))
         except Exception:
             pass
         try:
@@ -6715,9 +6767,9 @@ def admin_forensic_zip(job_id):
 
 @app.route("/admin/audit-premium", methods=["GET"])
 def admin_audit_premium_page():
-    """Admin dashboard unificata dei servizi premium: 3 tab (Audit TTS,
-    Audit Traduzioni, Audit AI Optimization). Sostituisce /admin/audit-tts e
-    /admin/audit-translations."""
+    """Admin dashboard unificata dei servizi premium: 4 tab (Audit TTS,
+    Audit Traduzioni, Audit AI Optimization, Voci campionate). Sostituisce
+    /admin/audit-tts e /admin/audit-translations."""
     if not ADMIN_TOKEN:
         return ("Admin audit premium UI disabled.", 404,
                 {"Content-Type": "text/plain; charset=utf-8"})
@@ -6785,7 +6837,7 @@ def admin_audit_premium_page():
   </div>
   <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
     <h1 style="margin:0">Admin - Audit Premium Services <span id="periodLabel" style="font-size:.85rem;color:var(--muted);font-weight:500"></span></h1>
-    <div title="Somma dei margini netti dei tre servizi premium (Audit TTS + Traduzioni + AI Optimization), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
+    <div title="Somma dei margini netti dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
       <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Margine netto totale</div>
       <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
     </div>
@@ -6819,6 +6871,7 @@ def admin_audit_premium_page():
   <button type="button" class="tab-btn active" data-tab="tts">Audit TTS</button>
   <button type="button" class="tab-btn" data-tab="translations">Audit Traduzioni</button>
   <button type="button" class="tab-btn" data-tab="optimization">Audit AI Optimization</button>
+  <button type="button" class="tab-btn" data-tab="voices">Voci campionate</button>
 </div>
 
 <div class="tab-panel active" id="tab_tts">
@@ -7032,6 +7085,74 @@ def admin_audit_premium_page():
   </div>
 </div>
 
+<div class="tab-panel" id="tab_voices">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="vcaStateFilter">Stato</label>
+        <select id="vcaStateFilter">
+          <option value="paid">Pagate (tutte)</option>
+          <option value="ready">Attive</option>
+          <option value="demos">In demo</option>
+          <option value="refunded">Rimborsate</option>
+          <option value="expired">Scadute</option>
+          <option value="deleted">Cancellate</option>
+          <option value="drafts">Bozze (campioni non confermati)</option>
+          <option value="all">Tutte, bozze comprese</option>
+        </select>
+      </div>
+      <div>
+        <label for="vcaLangFilter">Lingua</label>
+        <select id="vcaLangFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="vcaDateFrom" title="Data di pagamento (per le bozze: data di creazione)">Pagata dal</label>
+        <input type="date" id="vcaDateFrom">
+      </div>
+      <div>
+        <label for="vcaDateTo">Al</label>
+        <input type="date" id="vcaDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="vcaRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6">
+      <div class="agg-box"><div class="agg-label">Voci</div><div class="agg-value" id="vcaAggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Incassato meno i rimborsi (voucher o riaccredito).">Ricavi</div><div class="agg-value" id="vcaAggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="GPU delle demo (ritentativi compresi). La generazione dei libri e' nella tab Audit TTS.">Costo GPU demo</div><div class="agg-value" id="vcaAggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Ricavi - Costo GPU demo - fee PayPal (zero per voucher e voci gratuite).">Margine netto</div><div class="agg-value" id="vcaAggNet">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Rimborsi riconosciuti sulle voci del periodo.">Rimborsi</div><div class="agg-value" id="vcaAggRefund">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Libri completati con le voci del periodo.">Libri generati</div><div class="agg-value" id="vcaAggBooks">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Voci (ultime 200)</h2>
+    <table>
+      <thead><tr>
+        <th title="Data di pagamento (bozze: creazione)">Data</th><th>Voce</th><th>Lingua</th><th>Proprietario</th>
+        <th>Pagamento</th>
+        <th title="Incassato meno i rimborsi">Ricavo &euro;</th>
+        <th title="GPU delle demo">Costo GPU &euro;</th>
+        <th title="Margine = Ricavo - Costo GPU (lordo)">Margine &euro;</th>
+        <th title="Margine netto = Margine - fee PayPal">Margine netto &euro;</th>
+        <th title="Dispositivi che la usano (passa sopra per i nomi)">Dispositivi</th>
+        <th>Attivazione</th><th>Scadenza</th>
+        <th title="Libri completati con questa voce">Libri</th><th>Stato</th>
+        <th title="Motivo scritto dall'utente che ha rifiutato la voce, tradotto in italiano (passa sopra per l'originale)">Motivo rifiuto</th>
+      </tr></thead>
+      <tbody id="vcaRecordsBody">
+        <tr><td colspan="15" class="empty-msg">Premi "Aggiorna" per caricare le voci.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <script>
 (function(){
   const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
@@ -7112,15 +7233,15 @@ def admin_audit_premium_page():
     codes = codes.slice().sort((a,b) => langLabel(a).localeCompare(langLabel(b), "it"));
     fillSelect($("tts_auditLangFilter"), codes, langLabel);
   }
-  // ---- Totale margine netto: somma dei 3 servizi premium ----
+  // ---- Totale margine netto: somma dei servizi premium ----
   // Ogni tab, dopo il suo fetch, deposita qui il proprio net_margin_eur; il
   // box in alto a destra mostra la somma dei valori gia' caricati.
-  const netMarginByService = { tts: null, translations: null, optimization: null };
+  const netMarginByService = { tts: null, translations: null, optimization: null, voices: null };
   function updateTotalNetMargin(){
     const el = $("totalNetMarginValue");
     if (!el) return;
     const loaded = [netMarginByService.tts, netMarginByService.translations,
-                    netMarginByService.optimization].filter(v => v != null);
+                    netMarginByService.optimization, netMarginByService.voices].filter(v => v != null);
     if (!loaded.length) { el.textContent = "-"; el.style.color = ""; return; }
     const total = loaded.reduce((s, v) => s + Number(v || 0), 0);
     el.textContent = fmtEur(total);
@@ -7649,6 +7770,101 @@ def admin_audit_premium_page():
   }
   $("optRefreshBtn").addEventListener("click", optFetch);
 
+  // ===================== Tab Voci campionate =====================
+  const VCA_STATE_BADGE = {
+    "sample_ok":["badge-muted","bozza"],
+    "paid":["badge-live","pagata"],
+    "demos_generating":["badge-live","demo in corso"],
+    "demos_ready":["badge-info","demo pronte"],
+    "demo_failed":["badge-warn","demo fallite"],
+    "ready":["badge-ok","attiva"],
+    "refunded":["badge-err","rimborsata"],
+    "expired":["badge-muted","scaduta"],
+    "deleted":["badge-muted","cancellata"],
+  };
+  const VCA_METHOD = {"paypal":"PayPal","voucher":"Voucher","free":"Gratis"};
+  function vcaDate(ts){
+    if (!ts) return "-";
+    const d = new Date(Number(ts) * 1000);
+    if (isNaN(d.getTime())) return "-";
+    const p = (n) => String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  async function vcaFetch(){
+    const p = new URLSearchParams();
+    const st=$("vcaStateFilter").value, l=$("vcaLangFilter").value;
+    const df=$("vcaDateFrom").value, dt=$("vcaDateTo").value;
+    if (st) p.set("state",st);
+    if (l && l!=="all") p.set("language",l);
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","200");
+    const r = await fetch("/admin/api/voice_clone_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento audit voci: "+r.status); return; }
+    const d = await r.json();
+    fillSelect($("vcaLangFilter"), (d.languages||[]).slice()
+      .sort((a,b)=>langLabel(a).localeCompare(langLabel(b),"it")), langLabel);
+    const a = d.aggregates||{};
+    $("vcaAggCount").textContent = a.count ?? 0;
+    $("vcaAggRevenue").textContent = fmtEur(a.revenue_eur);
+    $("vcaAggCost").textContent = fmtEur(a.gpu_cost_eur);
+    $("vcaAggNet").textContent = fmtEur(a.net_margin_eur);
+    $("vcaAggRefund").textContent = fmtEur(a.refund_eur);
+    $("vcaAggBooks").textContent = a.books ?? 0;
+    netMarginByService.voices = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
+    vcaRender(d.records||[], d.count||0);
+  }
+  function vcaRender(recs, total){
+    const tb = $("vcaRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="15" class="empty-msg">Nessuna voce trovata.</td></tr>'; return; }
+    tb.innerHTML = recs.map(r=>{
+      const marg = Number(r.margin_eur||0), net = Number(r.net_margin_eur||0);
+      const fee = Number(r.paypal_fee_eur||0);
+      const dCls = marg>=0?"delta-positive":"delta-negative";
+      const nCls = net>=0?"delta-positive":"delta-negative";
+      const method = VCA_METHOD[r.payment_method] || (r.payment_method ? r.payment_method : "-");
+      let pay = r.payment_method ? `${esc(method)} ${fmtEur(r.charged_eur)}` : "-";
+      if (Number(r.refund_eur||0) > 0 || r.state === "refunded")
+        pay += `<br><small title="${esc(r.refund_reason)}">rimborso ${fmtEur(r.refund_eur)}</small>`;
+      const netTip = r.payment_method==="paypal" ? `PayPal fee: ${fmtEur(fee)}`
+        : (r.payment_method==="voucher" ? "Voucher: nessuna fee PayPal" : "Nessuna fee");
+      const costTip = `${Number(r.gpu_seconds||0).toFixed(1)} s GPU, ${r.gpu_jobs||0} job, ${Number(r.gpu_cost_usd||0).toFixed(4)} $`;
+      const names = (r.device_names||[]).filter(Boolean).join(", ");
+      const gender = r.gender==="f"?"F":(r.gender==="m"?"M":"");
+      let end = vcaDate(r.expires_at);
+      if (["refunded","expired","deleted"].includes(r.state))
+        end = `<span title="fine: ${esc(r.state)}${r.delete_reason?" ("+esc(r.delete_reason)+")":""}">${vcaDate(r.ended_at)}</span>`;
+      const [bcls,blab] = VCA_STATE_BADGE[r.state]||["badge-muted", r.state||"?"];
+      const fails = r.demo_fail_count ? ` title="demo fallite ${r.demo_fail_count} volte"` : "";
+      let why = "-";
+      if (r.reject_note_original){
+        const tip = `Originale${r.reject_note_lang?" ("+r.reject_note_lang+")":""}: ${r.reject_note_original}`;
+        why = r.reject_note_it
+          ? `<span class="vca-why" title="${esc(tip)}">${esc(r.reject_note_it)}</span>`
+          : `<span class="vca-why" title="${esc(tip)}"><i>traduzione in corso…</i><br><small>${esc(r.reject_note_original)}</small></span>`;
+      }
+      return `<tr>
+        <td>${vcaDate(r.ref_ts)}</td>
+        <td><b>${esc(r.name||"-")}</b><br><code>${esc(r.id)}</code></td>
+        <td>${esc(langLabel(r.lang))}<br><small>${esc(r.locale)} ${esc(gender)}${r.demo_extra_id?" · "+esc(r.demo_extra_id):""}</small></td>
+        <td>${esc(r.owner_email||"-")}</td>
+        <td>${pay}</td>
+        <td>${fmtEur(r.revenue_eur)}</td>
+        <td title="${esc(costTip)}">${fmtEur(r.gpu_cost_eur)}</td>
+        <td class="${dCls}">${fmtEur(marg)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
+        <td title="${esc(names)}">${Number(r.devices||0)}</td>
+        <td>${vcaDate(r.ready_at)}</td>
+        <td>${end}</td>
+        <td>${Number(r.books||0)}</td>
+        <td><span class="badge ${bcls}"${fails}>${esc(blab)}</span></td>
+        <td style="min-width:14rem;max-width:24rem;white-space:normal">${why}</td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 15);
+  }
+  $("vcaRefreshBtn").addEventListener("click", vcaFetch);
+
   // ===================== Tab switching =====================
   function showTab(name){
     document.querySelectorAll(".tab-btn").forEach(b => {
@@ -7664,6 +7880,10 @@ def admin_audit_premium_page():
     if (name === "optimization" && !window._optLoaded) {
       window._optLoaded = true;
       optLoadLanguages().finally(optFetch);
+    }
+    if (name === "voices" && !window._vcaLoaded) {
+      window._vcaLoaded = true;
+      vcaFetch();
     }
     if (location.hash !== "#tab-" + name) location.hash = "#tab-" + name;
   }
@@ -7686,10 +7906,10 @@ def admin_audit_premium_page():
     const firstDay = ym + "-01";
     const lastDay = (ym === cur)
       ? "" : ym + "-" + String(new Date(y, m, 0).getDate()).padStart(2,"0");
-    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom"].forEach(id => {
+    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom","vcaDateFrom"].forEach(id => {
       const el = $(id); if (el && !el.value) el.value = firstDay;
     });
-    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo"].forEach(id => {
+    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo","vcaDateTo"].forEach(id => {
       const el = $(id); if (el && !el.value) el.value = lastDay;
     });
     const per = $("periodLabel");
@@ -7711,11 +7931,14 @@ def admin_audit_premium_page():
   trLoadFilters().finally(trFetch);
   window._optLoaded = true;
   optLoadLanguages().finally(optFetch);
+  window._vcaLoaded = true;
+  vcaFetch();
 
   // Deep-link hash: apre direttamente la tab richiesta dai vecchi URL redirected.
   const _h = location.hash;
   if (_h === "#tab-translations") showTab("translations");
   else if (_h === "#tab-optimization") showTab("optimization");
+  else if (_h === "#tab-voices") showTab("voices");
 })();
 </script>
 </body></html>"""
@@ -8742,6 +8965,55 @@ def admin_api_optimization_cost_audit():
     return jsonify({"records": page, "count": total, "aggregates": agg})
 
 
+@app.route("/admin/api/voice_clone_audit", methods=["GET"])
+def admin_api_voice_clone_audit():
+    """Una riga per voce campionata: incassi, costo GPU delle demo, margini,
+    dispositivi, attivazione/scadenza, libri generati. Admin-only.
+
+    `state`: paid (default: tutte le voci con un pagamento) | drafts | all |
+    ready | demos | refunded | expired | deleted. `date_from`/`date_to`
+    (YYYY-MM-DD, UTC) sulla data di pagamento; per le bozze la creazione.
+    Mai il token della voce: solo l'id `vc_...`.
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import voice_clone_audit
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+    language = request.args.get("language")
+    try:
+        recs = voice_clone._all()
+    except Exception as e:
+        return jsonify({"error": f"voice store unavailable: {e}"}), 503
+    try:
+        usd_eur = float(speechify_tts.usd_eur_rate())
+    except Exception:
+        usd_eur = 1.0
+    # Motivi di rifiuto ancora senza traduzione italiana: si ritentano qui.
+    for r in recs:
+        note = r.get("reject_note") if isinstance(r, dict) else None
+        if isinstance(note, dict) and note.get("text") and not note.get("it"):
+            _vc_translate_reject_note(r.get("id"))
+    out = voice_clone_audit.report(
+        recs,
+        state=request.args.get("state") or "paid",
+        language=language if language and language != "all" else None,
+        date_from=request.args.get("date_from") or None,
+        date_to=request.args.get("date_to") or None,
+        usd_eur=usd_eur,
+        fee_fn=lambda rev, method: _compute_paypal_fee_eur(rev, method),
+        limit=limit, offset=offset,
+    )
+    return jsonify(out)
+
+
 @app.route("/admin/api/optimization_cost_audit/languages", methods=["GET"])
 def admin_api_optimization_cost_audit_languages():
     """Codici lingua distinti nei record audit ottimizzazione. Popola i filtri
@@ -8886,6 +9158,15 @@ def api_voices():
             except Exception:
                 voices["_voxcpm"] = {"available": False, "model_label": "",
                                      "personas": []}
+        # Voci campionate dell'utente (spec voci-campionate, piano 2): calcolo
+        # per richiesta, mai dentro _fetch_voices (la cache e' condivisa fra
+        # tutti gli utenti, "_mine" no).
+        try:
+            voices["_mine"] = (voice_clone.mine(_get_client_id())
+                               if (voxcpm_tts is not None and voice_clone.enabled()) else [])
+        except Exception as e:      # noqa: BLE001
+            print(f"[voice_clone] mine failed: {type(e).__name__}", flush=True)
+            voices["_mine"] = []
         # Disponibilita' traduzione libro: backend LLM configurato + modello di
         # traduzione esplicito (ABM_TRANSLATE_MODEL). Se False la UI nasconde il
         # bottone "Traduci" invece di farlo fallire dopo la selezione capitoli.
@@ -8952,6 +9233,1056 @@ def api_voice_demo():
     except FileNotFoundError:
         return jsonify({"error": "clip non disponibile"}), 404
     return send_file(percorso, mimetype="audio/wav", conditional=True)
+
+
+# ---------------------------------------------------------------------------
+# Voci campionate (spec 2026-09-09, piano 2)
+# ---------------------------------------------------------------------------
+_VC_ID_RE = re.compile(r"^vc_[A-Za-z0-9_\-]{4,64}$")
+# I4: quanti dispositivi diversi possono autorizzarsi tramite il link di
+# resume della stessa voce, prima che il link vada considerato compromesso/
+# condiviso oltre l'uso personale previsto.
+RESUME_DEVICES_MAX = 10
+
+
+def _vc_err(code, msg, status, **extra):
+    body = {"error": msg, "error_code": code}
+    body.update(extra)
+    return jsonify(body), status
+
+
+def _vc_gate():
+    """None se la feature e' attiva, altrimenti la risposta 404."""
+    if voxcpm_tts is None or not voice_clone.enabled():
+        return _vc_err("voice_clone_disabled", "Voice samples are not available", 404)
+    return None
+
+
+def _vc_rec_or_404(clone_id):
+    if not _VC_ID_RE.match(clone_id or ""):
+        return None
+    return voice_clone.get(clone_id)
+
+
+def _vc_urls(rec):
+    base = BASE_URL or ""
+    return {"resume_url": f"{base}/vc/{rec['resume_token']['value']}/resume",
+            "manage_url": f"{base}/vc/{rec['manage_token']}/devices",
+            "delete_url": f"{base}/vc/{rec['manage_token']}/delete"}
+
+
+def _vc_view(rec):
+    """Vista pubblica per progress/approve/retry/reject/claim/confirm.
+
+    `voice_code` va restituito solo da `commit` (il pagante, che costruisce la
+    propria risposta a parte) e da `mine()` (solo al proprietario): qui va
+    tolto sempre, anche a chi e' gia' autorizzato, perche' questa vista e'
+    condivisa da tutti i dispositivi con accesso (es. dopo un resume/confirm).
+    """
+    pub = voice_clone.public_view(rec)
+    pub.pop("voice_code", None)
+    demo = rec.get("demo") or {}
+    if demo:
+        pub["extra_id"] = demo.get("extra_id")
+    if rec.get("state") in ("demos_ready", "ready"):
+        pub["demo_urls"] = {"common": f"/api/voice_clone/{rec['id']}/demo/common",
+                            "extra": f"/api/voice_clone/{rec['id']}/demo/extra"}
+    return pub
+
+
+def _vc_log(rec_or_id, op, extra=""):
+    cid_pub = rec_or_id["id"] if isinstance(rec_or_id, dict) else rec_or_id
+    try:
+        _log_activity(cid_pub, extra, op, client_id=_get_client_id(), client_ip=_client_ip())
+    except Exception:
+        pass
+
+
+def _vc_demo_texts(locale):
+    """Frase comune + frasi extra dedup per testo, dal catalogo (§3.4)."""
+    if voxcpm_catalog is None:
+        return None
+    comune, extra, visti = None, [], set()
+    for rec in voxcpm_catalog.voices():
+        if rec.get("locale") != locale:
+            continue
+        for d in rec.get("demos") or []:
+            if d.get("common"):
+                if comune is None:
+                    comune = {"id": d["id"], "text": d.get("text") or ""}
+                    visti.add(comune["text"])
+                continue
+            testo = d.get("text") or ""
+            if testo and testo not in visti:
+                visti.add(testo)
+                extra.append({"id": d["id"], "text": testo})
+    if comune is None:
+        return None
+    extra.sort(key=lambda e: e["id"])
+    return {"common": comune, "extra": extra}
+
+
+def _voice_clone_notify(event, rec, **extra):
+    """Eventi da voice_clone_demo / voice_clone.sweep -> email + log."""
+    email = rec.get("owner_email") or ""
+    lang = rec.get("ui_lang") or "en"
+    urls = _vc_urls(rec)
+    if event == "demos_ready":
+        _vc_log(rec, "VOICE_CLONE_DEMOS_READY")
+    elif event == "demo_failed":
+        # m3: solo il nome del tipo (prima dei ':'), mai il testo dell'eccezione.
+        err_kind = str(extra.get("error") or "").split(":", 1)[0].strip()[:60]
+        _vc_log(rec, "VOICE_CLONE_DEMO_FAILED", err_kind)
+        print(f"[voice_clone] demo fallita per {rec['id']}: {err_kind}", flush=True)
+    elif event == "refunded":
+        _vc_log(rec, "VOICE_CLONE_REFUNDED", extra.get("reason") or "")
+        if email:
+            try:
+                email_service.send_voice_clone_refunded(
+                    email, lang, amount_eur=extra.get("amount_eur") or 0.0,
+                    method=extra.get("method") or "free", reason=extra.get("reason") or "user_rejected",
+                    voucher_code=extra.get("voucher_code"),
+                    voucher_amount=extra.get("bonus_amount") or extra.get("amount_eur"))
+            except Exception as e:      # noqa: BLE001 - m3: mai loggare str(e), puo' contenere l'email
+                print(f"[voice_clone] notify refunded fallita: {type(e).__name__}", flush=True)
+    elif event == "expiring":
+        _vc_log(rec, "VOICE_CLONE_EXPIRING")
+        if email:
+            try:
+                email_service.send_voice_clone_expiring(email, lang, days=extra.get("days", 30),
+                                                         manage_url=urls["manage_url"])
+            except Exception as e:      # noqa: BLE001
+                print(f"[voice_clone] notify expiring fallita: {type(e).__name__}", flush=True)
+    elif event == "expired":
+        _vc_log(rec, "VOICE_CLONE_EXPIRED")
+    elif event == "approval_reminder":
+        _vc_log(rec, "VOICE_CLONE_REMINDER", str(extra.get("stage")))
+        if email:
+            try:
+                email_service.send_voice_clone_reminder(email, lang, resume_url=urls["resume_url"],
+                                                         stage=extra.get("stage", 1))
+            except Exception as e:      # noqa: BLE001
+                print(f"[voice_clone] notify reminder fallita: {type(e).__name__}", flush=True)
+
+
+@app.route("/api/voice_clone/config")
+def api_vc_config():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    g = voice_clone_audio.gate_from_env()
+    price = payment.voice_clone_price_eur()
+    return jsonify({"enabled": True, "price_eur": price, "free": price <= 0,
+                    "max_upload_mb": voice_clone.max_upload_mb(),
+                    "languages": voice_clone.offered_languages(),
+                    "min_sec": g.min_sec, "max_sec": g.max_sec,
+                    "asr": voice_clone_audio.asr_enabled(),
+                    "device_name_guess": _vc_device_name_guess()})
+
+
+@app.route("/api/voice_clone/prompt")
+def api_vc_prompt():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    lang = (request.args.get("lang") or "").strip().lower()
+    gender = (request.args.get("gender") or "").strip().lower()
+    if lang not in voice_clone.offered_languages() or gender not in ("m", "f"):
+        return _vc_err("bad_request", "Unknown language or gender", 400)
+    text = voice_clone_prompts.prompt_for(lang, gender)
+    return jsonify({"text": text, "version": voice_clone_prompts.prompt_version(text),
+                    "lang": lang, "gender": gender})
+
+
+@app.route("/api/voice_clone/sample", methods=["POST"])
+def api_vc_sample():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    from werkzeug.utils import secure_filename
+    cid = _get_client_id()
+    ip = _client_ip()
+    ok, retry = _ip_rl_check("vc_sample", ip, 10, 30)
+    if ok:
+        ok, retry = _ip_rl_check("vc_sample_cid", cid or ip, 10, 10)
+    if not ok:
+        return _vc_err("rate_limited", "Too many samples, try later", 429, retry_after=retry)
+    f = request.files.get("file")
+    lang = (request.form.get("lang") or "").strip().lower()
+    locale = (request.form.get("locale") or "").strip()
+    gender = (request.form.get("gender") or "").strip().lower()
+    offerte = voice_clone.offered_languages()
+    if f is None or lang not in offerte or locale not in offerte[lang] or gender not in ("m", "f"):
+        return _vc_err("bad_request", "Missing file, language, locale or gender", 400)
+    ext = (secure_filename(f.filename or "").rsplit(".", 1)[-1].lower() or "webm")[:5]
+    if ext not in voice_clone.accepted_ext():
+        ext = "webm"
+    tmp_id = uuid.uuid4().hex
+    src = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}.{ext}")
+    # Il suffisso `_norm` non e' cosmesi: con un caricamento gia' in .wav i due
+    # percorsi coincidevano, prepare_sample scriveva il campione normalizzato
+    # SOPRA l'originale e create_draft, dopo aver spostato sample.wav, non
+    # trovava piu' niente da spostare in original.wav (500 sull'endpoint).
+    wav = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}_norm.wav")
+    prompt_text = voice_clone_prompts.prompt_for(lang, gender)
+    max_bytes = voice_clone.max_upload_mb() * 1024 * 1024
+    try:
+        f.save(src)
+        if os.path.getsize(src) > max_bytes:
+            return _vc_err("too_large", f"Sample over {voice_clone.max_upload_mb()} MB", 413)
+        try:
+            mt = voice_clone_audio.prepare_sample(src, wav)
+        except voice_clone_audio.SampleRejected as e:
+            # Il dettaglio elenca TUTTI i motivi di scarto (il campo `reason`
+            # ne porta uno solo): in log e in console servono le misure, o
+            # dell'ennesimo scarto resta solo la parola «scartato».
+            _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", str(e))
+            metrics = getattr(e, "metrics", None)
+            print(f"[voice_clone] campione scartato: {e} "
+                  f"{metrics.as_dict() if metrics is not None else ''}", flush=True)
+            return _vc_err("sample_rejected", str(e), 400, reason=e.reason,
+                           metrics=(metrics.as_dict() if metrics is not None else {}))
+        cer = None
+        if voice_clone_audio.asr_enabled():
+            try:
+                asr = voice_clone_audio.check_transcript(wav, lang, prompt_text)
+            except voice_clone_audio.AsrUnavailable as e:
+                return _vc_err("asr_unavailable", f"Transcript check unavailable: {e}", 503)
+            cer = asr["cer"]
+            if cer > voice_clone_audio.max_cer():
+                _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", "vc_gate_transcript")
+                return _vc_err("sample_rejected", "Transcript does not match", 400,
+                               reason="vc_gate_transcript", cer=cer, heard=asr.get("heard", ""))
+        rec = voice_clone.create_draft(cid, lang=lang, locale=locale, gender=gender,
+                                       prompt_text=prompt_text, sample_wav=wav, original_path=src,
+                                       original_ext=ext, metrics=mt.as_dict(),
+                                       ui_lang=_get_browser_lang() or "en",
+                                       name=request.form.get("name") or "",
+                                       device_name=_vc_device_name(request.form.get("device_name")))
+        _vc_log(rec, "VOICE_CLONE_SAMPLE_OK")
+        return jsonify({"clone_id": rec["id"], "state": rec["state"], "expires_at": rec["expires_at"],
+                        "metrics": rec.get("metrics") or {}, "cer": cer})
+    finally:
+        for p in (src, wav):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+@app.route("/api/voice_clone/demo_texts")
+def api_vc_demo_texts():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    d = _vc_demo_texts((request.args.get("locale") or "").strip())
+    if d is None:
+        return _vc_err("bad_request", "No voices for this locale", 400)
+    return jsonify(d)
+
+
+@app.route("/api/voice_clone/check_email", methods=["POST"])
+def api_vc_check_email():
+    """Dice subito se l'email ha gia' una voce viva.
+
+    Senza questa rotta il conflitto si scopriva solo dentro `commit`, cioe'
+    DOPO aver pagato: il pagamento viene rilasciato, ma l'utente si vede
+    l'errore a cose fatte. Serve la bozza del proprio dispositivo, altrimenti
+    la rotta diventerebbe un modo per sondare gli indirizzi altrui.
+    """
+    gate = _vc_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone.is_owner(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return _vc_err("bad_request", "Invalid email", 400)
+    return jsonify({"ok": True,
+                    "taken": bool(voice_clone.email_has_active_voice(email, exclude_id=rec["id"]))})
+
+
+@app.route("/api/voice_clone/commit", methods=["POST"])
+def api_vc_commit():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    cid = _get_client_id()
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    e1 = (data.get("email") or "").strip().lower()
+    e2 = (data.get("email2") or "").strip().lower()
+    if not e1 or "@" not in e1 or e1 != e2:
+        return _vc_err("email_mismatch", "The two email addresses differ", 400)
+    testi = _vc_demo_texts(rec.get("locale") or "") or {"common": None, "extra": []}
+    # Il secondo brano non si sceglie piu': una combo in piu' da leggere prima
+    # di pagare non aggiungeva nulla, e uno a sorte fra i candidati vale
+    # esattamente quanto uno scelto a mano.
+    if not testi["extra"] or testi["common"] is None:
+        return _vc_err("bad_request", "No demo phrases for this locale", 400)
+    extra = secrets.choice(testi["extra"])
+    price = payment.voice_clone_price_eur()
+    try:
+        out, created = voice_clone.commit(
+            rec["id"], cid, email=e1, extra_id=extra["id"], extra_text=extra["text"],
+            common_text=testi["common"]["text"], payment_token=(data.get("payment_token") or "").strip(),
+            price_eur=price)
+    except voice_clone.EmailHasVoice:
+        return _vc_err("email_has_voice", "This email already has a voice sample", 409)
+    except voice_clone.VoiceGone:
+        # C1 item 1: una capture vc:<clone_id> gia' incassata (payment_token
+        # consumato in un tentativo precedente) su una voce ormai sparita/
+        # terminale non deve restare orfana: nessun altro punto la rimborsera'.
+        payment.refund_unused_captures_for_job("vc:" + rec["id"], reason="voice_clone_gone")
+        return _vc_err("voice_gone", "Voice no longer available", 410)
+    except PermissionError:
+        return _vc_err("not_authorized", "Not authorized", 403)
+    except voice_clone.PaymentInvalid as e:
+        return _vc_err("payment_invalid", f"Payment not valid: {e}", 402)
+    if created:
+        _vc_log(out, "VOICE_CLONE_PAID", (out.get("payment") or {}).get("type") or "")
+        try:
+            voice_clone_demo.start_demos(out["id"])
+        except Exception as e:      # noqa: BLE001 - lo sweeper/recover riprendera'
+            print(f"[voice_clone] start_demos {out['id']}: {e}", flush=True)
+
+        def _send_paid_email():
+            try:
+                email_service.send_voice_clone_paid(
+                    out["owner_email"], out.get("ui_lang") or "en", voice_code=out["voice_code"],
+                    amount_eur=(out.get("payment") or {}).get("amount_eur") or 0.0, **_vc_urls(out))
+            except Exception as e:      # noqa: BLE001 - m3: mai loggare str(e)
+                print(f"[voice_clone] send_voice_clone_paid {out['id']}: {type(e).__name__}", flush=True)
+
+        try:
+            threading.Thread(target=_send_paid_email, daemon=True,
+                             name=f"vc-paid-email-{out['id']}").start()
+        except Exception:
+            _send_paid_email()
+    return jsonify({"clone_id": out["id"], "voice_code": out["voice_code"],
+                    "state": out["state"], "created": created})
+
+
+@app.route("/api/paypal_create_order_voice_clone", methods=["POST"])
+def api_paypal_create_order_voice_clone():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    if not _paypal_available():
+        return jsonify({"error": "PayPal not configured"}), 503
+    data = request.get_json(silent=True) or {}
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone._has_cid(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    if rec.get("state") != "sample_ok":
+        return _vc_err("bad_state", "Voice already paid", 409)
+    amount_eur = payment.voice_clone_price_eur()
+    if amount_eur <= 0:
+        return jsonify({"error": "No payment required"}), 400
+    try:
+        order = _paypal_create_order(amount_eur, "Voice sample - Audiobook Maker",
+                                     custom_id="vc:" + rec["id"])
+    except Exception as e:
+        print(f"[paypal] voice clone create_order failed: {e}")
+        return jsonify({"error": f"PayPal error: {e}"}), 500
+    return jsonify({"order_id": order.get("id"), "amount_eur": amount_eur,
+                    "status": order.get("status")})
+
+
+_VC_SSE_END = ("demos_ready", "demo_failed", "ready", "refunded", "expired", "deleted")
+
+
+@app.route("/api/voice_clone/progress/<clone_id>")
+def api_vc_progress(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone._has_cid(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+
+    def stream():
+        fine = time.time() + 1800
+        while True:
+            cur = voice_clone.get(clone_id) or rec
+            yield "data: " + json.dumps(_vc_view(cur)) + "\n\n"
+            if cur.get("state") in _VC_SSE_END or time.time() > fine:
+                return
+            time.sleep(2)
+    return Response(stream(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _vc_action(clone_id, fn):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    try:
+        out = fn(rec, _get_client_id())
+    except voice_clone.BadTransition:
+        return _vc_err("bad_state", "Action not allowed in this state", 409)
+    except voice_clone.VoiceGone:
+        return _vc_err("voice_gone", "Voice no longer available", 410)
+    except PermissionError:
+        return _vc_err("not_authorized", "Not authorized", 403)
+    return jsonify(_vc_view(out))
+
+
+class _VcBadRequest(ValueError):
+    pass
+
+
+@app.route("/api/voice_clone/<clone_id>/approve", methods=["POST"])
+def api_vc_approve(clone_id):
+    def go(rec, cid):
+        out = voice_clone_demo.approve(rec["id"], cid)
+        _vc_log(out, "VOICE_CLONE_READY")
+        if out.get("owner_email"):
+            email_service.send_voice_clone_ready(
+                out["owner_email"], out.get("ui_lang") or "en", voice_code=out["voice_code"],
+                manage_url=_vc_urls(out)["manage_url"], delete_url=_vc_urls(out)["delete_url"],
+                retention_days=int(voice_clone.retention_sec() // 86400))
+        return out
+    return _vc_action(clone_id, go)
+
+
+@app.route("/api/voice_clone/<clone_id>/retry", methods=["POST"])
+def api_vc_retry(clone_id):
+    return _vc_action(clone_id, lambda rec, cid: voice_clone_demo.retry(rec["id"], cid))
+
+
+_vc_reject_translating = set()
+_vc_reject_translating_lock = threading.Lock()
+
+
+def _vc_translate_reject_note(clone_id):
+    """Traduce in italiano, in background, il motivo del rifiuto (tab admin
+    «Voci campionate»). Una sola traduzione per voce alla volta; se fallisce
+    la ritenta la prossima apertura della tab."""
+    with _vc_reject_translating_lock:
+        if clone_id in _vc_reject_translating:
+            return
+        _vc_reject_translating.add(clone_id)
+
+    def run():
+        try:
+            note = (voice_clone.get(clone_id) or {}).get("reject_note") or {}
+            text = note.get("text") if isinstance(note, dict) else ""
+            if not text or note.get("it"):
+                return
+            out = community_translator.translate_to_italian(text)
+            if out:
+                voice_clone.set_reject_translation(clone_id, out["it"], out.get("source_lang"))
+        except Exception as e:      # noqa: BLE001 - la traduzione non e' critica
+            print(f"[voice_clone] reject note translation failed for {clone_id}: {type(e).__name__}")
+        finally:
+            with _vc_reject_translating_lock:
+                _vc_reject_translating.discard(clone_id)
+
+    threading.Thread(target=run, daemon=True, name=f"vc-reject-it-{clone_id}").start()
+
+
+@app.route("/api/voice_clone/<clone_id>/reject", methods=["POST"])
+def api_vc_reject(clone_id):
+    data = request.get_json(silent=True) or {}
+    note = voice_clone.normalize_reject_note(data.get("reason") if isinstance(data, dict) else "")
+    rec0 = _vc_rec_or_404(clone_id)
+    # Chi rifiuta le demo pronte deve dire perche'; se le demo sono fallite
+    # il motivo e' gia' noto e non si chiede. Solo per chi ne ha diritto: agli
+    # altri risponde _vc_action (403/410), senza rivelare lo stato.
+    if (rec0 and rec0.get("state") == "demos_ready"
+            and voice_clone._has_cid(rec0, _get_client_id())
+            and len(note) < voice_clone.REJECT_NOTE_MIN):
+        return _vc_err("reject_reason_required", "Please tell us why", 400,
+                       min_chars=voice_clone.REJECT_NOTE_MIN)
+
+    def go(rec, cid):
+        if rec.get("state") == "refunded":
+            return rec
+        out = voice_clone_demo.reject(rec["id"], cid, note=note)
+        _vc_log(out, "VOICE_CLONE_REJECTED")
+        if note:
+            _vc_translate_reject_note(rec["id"])
+        return out
+    return _vc_action(clone_id, go)
+
+
+@app.route("/api/voice_clone/mine")
+def api_vc_mine():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    return jsonify({"voices": voice_clone.mine(_get_client_id())})
+
+
+@app.route("/api/voice_clone/claim", methods=["POST"])
+def api_vc_claim():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    cid = _get_client_id()
+    ok, retry = _ip_rl_check("vc_claim_cid", cid or _client_ip(), 5, 5)
+    if not ok:
+        return _vc_err("rate_limited", "Too many attempts, try later", 429, retry_after=retry)
+    data = request.get_json(silent=True) or {}
+    code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
+    try:
+        esito = voice_clone.claim(code, cid, device_name=str(data.get("device_name") or ""),
+                                  identity=str(data.get("identity") or ""))
+    except voice_clone.VoiceGone:
+        # VoiceGone e ClaimIncomplete sono ValueError: vanno intercettate
+        # prima del ValueError generico sotto (l'unico altro ValueError di
+        # claim() e' il lock, niente sniffing sul messaggio).
+        return _vc_err("code_unknown", "Unknown voice code", 404)
+    except voice_clone.ClaimIncomplete as e:
+        return _vc_err(f"{e.field}_required", f"Missing {e.field}", 400,
+                       min_chars=voice_clone.IDENTITY_MIN)
+    except voice_clone.TooManyPending:
+        return _vc_err("claim_busy", "Too many pending requests for this voice", 429)
+    except ValueError:
+        return _vc_err("code_locked", "Too many wrong codes, try later", 423)
+    status, rec, confirm_code = esito
+    _vc_log(rec, "VOICE_CLONE_CLAIM", status if confirm_code or status == "ok" else "pending_again")
+    if status == "ok":
+        return jsonify({"status": "ok", "voice": _vc_view(rec)})
+    if confirm_code is None:
+        # Richiesta gia' aperta da questo dispositivo: il proprietario ha gia'
+        # l'email con il codice, non gliene arriva un'altra.
+        return jsonify({"status": "pending", "already_sent": True})
+    if rec.get("owner_email"):
+        pc = voice_clone.pending_of(rec, cid) or {}
+        email_service.send_voice_clone_confirm(rec["owner_email"], rec.get("ui_lang") or "en",
+                                                confirm_code=confirm_code,
+                                                device_name=pc.get("device_name") or "",
+                                                identity=pc.get("identity") or "",
+                                                hours=voice_clone.CONFIRM_TTL_SEC // 3600)
+    return jsonify({"status": "pending"})
+
+
+@app.route("/api/voice_clone/confirm", methods=["POST"])
+def api_vc_confirm():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    cid = _get_client_id()
+    data = request.get_json(silent=True) or {}
+    code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
+    try:
+        nome = _vc_device_name(data.get("device_name"))
+        esito = voice_clone.confirm(code, cid, str(data.get("confirm_code") or "").strip(),
+                                    device_name=nome)
+    except voice_clone.VoiceGone:
+        return _vc_err("code_unknown", "Unknown voice code", 404)
+    if esito == "ok":
+        rec = voice_clone.by_voice_code(code)
+        _vc_log(rec, "VOICE_CLONE_DEVICE_ADDED")
+        nome = (voice_clone.device_of(rec, cid) or {}).get("name") or nome
+        if rec.get("owner_email"):
+            email_service.send_voice_clone_device_added(rec["owner_email"], rec.get("ui_lang") or "en",
+                                                         devices_url=_vc_urls(rec)["manage_url"],
+                                                         device_name=nome or _vc_device_key(cid))
+        return jsonify({"status": "ok", "voice": _vc_view(rec)})
+    mappa = {"wrong": ("confirm_wrong", 400), "expired": ("confirm_expired", 410),
+             "none": ("confirm_none", 404), "locked": ("code_locked", 423)}
+    ec, sc = mappa.get(esito, ("confirm_none", 404))
+    return _vc_err(ec, f"Confirmation {esito}", sc)
+
+
+@app.route("/api/voice_clone/<clone_id>/discard", methods=["POST"])
+def api_vc_discard(clone_id):
+    """Butta via una bozza mai pagata: e' l'unica via d'uscita prima del
+    pagamento, visto che il link di gestione arriva solo dopo."""
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    out = voice_clone.discard_draft(clone_id, _get_client_id())
+    if out is None:
+        return _vc_err("bad_state", "Only an unpaid draft of this device can be discarded", 409)
+    _vc_log(out, "VOICE_CLONE_DRAFT_DISCARDED")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/voice_clone/<clone_id>/forget", methods=["POST"])
+def api_vc_forget(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    try:
+        ok = voice_clone.forget(clone_id, _get_client_id())
+    except voice_clone.BadTransition:
+        # m1: il dispositivo creatore non puo' essere dimenticato (perderebbe
+        # per sempre il voice_code) - va cancellato con "Cancella" (delete_by_owner).
+        return _vc_err("bad_state", "The owner device cannot be forgotten; delete the voice instead", 409)
+    if not ok:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/voice_clone/<clone_id>/rename", methods=["POST"])
+def api_vc_rename(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    data = request.get_json(silent=True) or {}
+    out = voice_clone.rename(clone_id, _get_client_id(), data.get("name"))
+    if out is None:
+        return _vc_err("bad_state", "Only the owner device can rename a live voice", 409)
+    return jsonify({"ok": True, "name": out.get("name") or ""})
+
+
+def _vc_is_owner(rec, cid):
+    return voice_clone.is_owner(rec, cid)
+
+
+@app.route("/api/voice_clone/<clone_id>/resend", methods=["POST"])
+def api_vc_resend(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not _vc_is_owner(rec, _get_client_id()) or rec.get("state") in voice_clone._TERMINAL:
+        return _vc_err("not_authorized", "Only the owner can resend the email", 403)
+    try:
+        ok, retry = voice_clone.check_and_record_resend(rec["id"])
+    except voice_clone.VoiceGone:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not ok:
+        return _vc_err("rate_limited", "Limit of 3 emails per day reached", 429, retry_after=retry)
+    sent = _vc_send_manage_email(rec)
+    _vc_log(rec, "VOICE_CLONE_RESEND")
+    return jsonify({"ok": bool(sent)})
+
+
+def _vc_send_manage_email(rec):
+    """Rimanda a chi possiede la voce il codice e i link di gestione.
+
+    Prima del «pronto» la voce non ha ancora le prove approvate: l'email da
+    rimandare e' quella del pagamento, che porta gli stessi link.
+    """
+    urls = _vc_urls(rec)
+    lang = rec.get("ui_lang") or "en"
+    if rec.get("state") == "ready":
+        return email_service.send_voice_clone_ready(
+            rec["owner_email"], lang, voice_code=rec["voice_code"],
+            manage_url=urls["manage_url"], delete_url=urls["delete_url"],
+            retention_days=int(voice_clone.retention_sec() // 86400))
+    return email_service.send_voice_clone_paid(
+        rec["owner_email"], lang, voice_code=rec["voice_code"],
+        amount_eur=(rec.get("payment") or {}).get("amount_eur") or 0.0, **urls)
+
+
+@app.route("/api/voice_clone/resend_manage", methods=["POST"])
+def api_vc_resend_manage():
+    """Rimanda il link di gestione all'indirizzo che risulta gia' occupato.
+
+    Chi si vede rifiutare l'email deve cancellare la vecchia voce dal link
+    ricevuto a suo tempo: se quell'email e' andata persa non ha nessuna via
+    d'uscita. Il link parte SOLO verso quell'indirizzo, quindi lo legge solo
+    chi possiede quella casella; a chi lo chiede non torna niente oltre
+    all'esito. Il limite di invii e' quello della voce che li subisce
+    (RESEND_MAX al giorno), condiviso col resend del proprietario: nessuno
+    puo' usare questa rotta per bersagliare un indirizzo.
+    """
+    gate = _vc_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone.is_owner(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return _vc_err("bad_request", "Invalid email", 400)
+    occupante = voice_clone.active_voice_for_email(email, exclude_id=rec["id"])
+    if occupante is None or not occupante.get("owner_email"):
+        # niente conflitto: l'indirizzo e' libero, non c'e' nessun link da
+        # rimandare (e nessun modo di scoprirlo da qui, la risposta e' uguale).
+        return _vc_err("voice_not_found", "No voice for that address", 404)
+    try:
+        ok, retry = voice_clone.check_and_record_resend(occupante["id"])
+    except voice_clone.VoiceGone:
+        return _vc_err("voice_not_found", "No voice for that address", 404)
+    if not ok:
+        return _vc_err("rate_limited", "Limit of 3 emails per day reached", 429, retry_after=retry)
+    sent = _vc_send_manage_email(occupante)
+    _vc_log(occupante, "VOICE_CLONE_RESEND_CONFLICT")
+    return jsonify({"ok": bool(sent)})
+
+
+def _vc_send_audio(clone_id, name):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone._has_cid(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    try:
+        path = voice_clone._ensure_local(rec, name)
+    except Exception:
+        path = None
+    if not path or not os.path.exists(path):
+        return _vc_err("voice_not_found", "File not available", 404)
+    return send_file(path, mimetype="audio/wav", conditional=True)
+
+
+@app.route("/api/voice_clone/<clone_id>/sample.wav")
+def api_vc_sample_file(clone_id):
+    return _vc_send_audio(clone_id, "sample.wav")
+
+
+@app.route("/api/voice_clone/<clone_id>/demo/<which>")
+def api_vc_demo_file(clone_id, which):
+    if which not in ("common", "extra"):
+        return _vc_err("voice_not_found", "File not available", 404)
+    return _vc_send_audio(clone_id, f"demo_{which}.wav")
+
+
+# Lo stesso marchio dell'intestazione del sito: chi arriva qui da un link
+# dell'email deve riconoscere subito di chi e' la pagina che gli chiede di
+# cancellare o autorizzare qualcosa.
+_VC_LOGO_SVG = (
+    '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+    '<rect width="64" height="64" rx="14" fill="#c29a6c"/>'
+    '<path d="M16 44V20c0-2 1.5-3.5 3.5-3.5C23 16.5 28 17 32 19c4-2 9-2.5 12.5-2.5 2 0 3.5 1.5 3.5 3.5v24"'
+    ' fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M32 19v25" stroke="white" stroke-width="2" stroke-linecap="round"/>'
+    '<path d="M17 36c0-9 6.7-15 15-15s15 6 15 15" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/>'
+    '<rect x="13" y="34" width="7" height="10" rx="3" fill="white"/>'
+    '<rect x="44" y="34" width="7" height="10" rx="3" fill="white"/>'
+    '<path d="M22 37.5c1.2-1 1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/>'
+    '<path d="M42 37.5c-1.2-1-1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/></svg>')
+
+# Se il file i18n non si carica le pagine devono restare in piedi lo stesso:
+# sono l'unica via per revocare un dispositivo o cancellare una voce.
+_VC_PAGES_FALLBACK = {
+    "brand": "Audiobook Maker",
+    "resume_title": "Resume your voice sample",
+    "resume_q": "Resume the voice sample procedure on this device?",
+    "resume_btn": "Resume",
+    "toomany_title": "Too many devices",
+    "toomany_body": "Too many devices have used this link. Revoke one from the "
+                    "management link in your email, then try again.",
+    "devices_title": "Your voice sample: devices",
+    "devices_intro": "Devices allowed to use your voice sample.",
+    "th_device": "Device", "th_via": "Added via", "th_date": "Date",
+    "revoke_btn": "Revoke", "delete_link": "Delete this voice",
+    "via_creator": "Creation", "via_resume": "Email link", "via_code": "Voice code",
+    "identity_lbl": "Introduction",
+    "device_name_lbl": "Name of this device",
+    "device_name_hint": "It lets you recognise this device later in the list of authorised devices.",
+    "this_device": "this device", "device_unnamed": "Unnamed device", "rename_btn": "Rename",
+    "revoke_owner_title": "Revoke the device that created the voice?",
+    "revoke_owner_body": "This is the device the voice was created on. Once revoked, the voice stays on "
+                         "our server and on the other devices, but it can be renamed or deleted only from "
+                         "the management link in your email. You can add the device back at any time with "
+                         "the voice code you received by email.",
+    "revoke_owner_btn": "Revoke this device", "cancel_link": "Cancel",
+    "delete_title": "Delete your voice sample",
+    "delete_p1": "This removes your voice sample and every file derived from it. "
+                 "Audiobooks already generated are not affected.",
+    "delete_p2": "If you have not approved the voice yet and want a refund, "
+                 "reject it from the app instead.",
+    "delete_btn": "Delete my voice",
+    "deleted_title": "Voice deleted",
+    "deleted_body": "Your voice sample and its files have been deleted.",
+    "gone_title": "This voice is no longer available",
+    "gone_deleted": "The voice sample this link points to has been deleted, "
+                    "together with every file derived from it.",
+    "gone_expired": "The voice sample this link points to has expired and has "
+                    "been removed, together with every file derived from it.",
+    "gone_refunded": "The voice sample this link points to was rejected and "
+                     "refunded, and its files have been removed.",
+    "gone_generic": "This link no longer opens anything: the voice it pointed "
+                    "to does not exist any more, or the address is incomplete.",
+    "gone_refund": "If you had paid for it, you received a voucher for the "
+                   "amount spent by email.",
+    "gone_books": "Audiobooks already generated with that voice are not "
+                  "affected: they stay yours.",
+    "gone_home": "Back to Audiobook Maker",
+}
+
+
+def _vc_page_lang():
+    """Lingua della pagina: `?lang=` se c'e', altrimenti quella del browser,
+    e inglese se non e' fra quelle dell'interfaccia. Stesso criterio di
+    /privacy e /support."""
+    lang = (request.args.get("lang") or "").strip().lower().split("-")[0]
+    if lang not in _VC_PAGES_I18N:
+        lang = _get_browser_lang()
+    return lang if lang in _VC_PAGES_I18N else "en"
+
+
+def _vc_txt(lang):
+    """Stringhe della lingua sopra l'inglese: una chiave non ancora tradotta
+    esce in inglese invece che vuota."""
+    t = dict(_VC_PAGES_FALLBACK)
+    t.update(_VC_PAGES_I18N.get("en") or {})
+    t.update(_VC_PAGES_I18N.get(lang) or {})
+    return t
+
+
+def _vc_page(title, body_html, status=200, lang="en"):
+    t = _vc_txt(lang)
+    marchio = html_mod.escape(t["brand"])
+    html_doc = (f"<!doctype html><html lang=\"{html_mod.escape(lang)}\"><head><meta charset=\"utf-8\">"
+                f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                f"<meta name=\"robots\" content=\"noindex,nofollow\">"
+                f"<title>{marchio} - {html_mod.escape(title)}</title>"
+                f"<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em}}"
+                f"button{{padding:.6em 1.2em}}input{{padding:.5em;font:inherit;max-width:100%;box-sizing:border-box}}"
+                f".devs{{list-style:none;padding:0}}.devs li{{border-top:1px solid #ddd;padding:.9em 0}}"
+                f".devs form{{display:inline-flex;gap:.4em;margin:.5em .6em 0 0;flex-wrap:wrap}}"
+                f".meta{{color:#666;font-size:.9em;margin-top:.2em}}"
+                f".me{{font-size:.8em;background:#eef3ff;border-radius:1em;padding:.1em .6em;margin-left:.4em}}"
+                f".brand{{display:flex;align-items:center;gap:.6em;margin-bottom:1.8em;"
+                f"color:inherit;text-decoration:none}}"
+                f".brand svg{{width:42px;height:42px;flex:none}}"
+                f".brand span{{font-size:1.1em;font-weight:600}}</style>"
+                f"</head><body><a class=\"brand\" href=\"/\">{_VC_LOGO_SVG}<span>{marchio}</span></a>"
+                f"<h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
+    # I5: pagine di gestione voce (link email) mai in cache: contengono stato
+    # per-dispositivo che cambia dopo ogni azione (revoke, delete, resume).
+    resp = _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))
+    # La lingua dipende dall'header: senza Vary una cache intermedia servirebbe
+    # a tutti la prima lingua capitata.
+    vary = resp.headers.get("Vary")
+    resp.headers["Vary"] = f"{vary}, Accept-Language" if vary else "Accept-Language"
+    return resp
+
+
+def _vc_rec_by_manage(token):
+    rec = voice_clone.by_manage_token(token or "")
+    if rec is None or rec.get("state") in voice_clone._TERMINAL:
+        return None
+    return rec
+
+
+def _vc_gone(stato=""):
+    """Pagina di cortesia per i link dell'email che non aprono piu' nulla.
+
+    Quei link restano nella casella di posta per sempre, ma la voce a cui
+    puntano puo' essere stata cancellata (o scaduta, o rifiutata col
+    rimborso): un «Not Found» nudo del server sembra un guasto nostro e
+    lascia l'utente senza sapere ne' perche' ne' che fine hanno fatto i suoi
+    soldi. `stato` e' lo stato terminale del record quando lo conosciamo:
+    410 Gone con la spiegazione precisa; se il token e' ignoto resta 404 con
+    il testo generico (potrebbe essere anche un indirizzo copiato a meta').
+    """
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
+    motivo = t.get("gone_" + stato) if stato else None
+    righe = [motivo or t["gone_generic"]]
+    if motivo:
+        righe += [t["gone_refund"], t["gone_books"]]
+    body = "".join(f"<p>{html_mod.escape(p)}</p>" for p in righe)
+    body += f"<p><a href=\"/\">{html_mod.escape(t['gone_home'])}</a></p>"
+    return _vc_page(t["gone_title"], body, status=410 if motivo else 404, lang=lang)
+
+
+def _vc_manage_gone(token):
+    """`_vc_gone` per un link di gestione: rilegge il record ignorando il
+    filtro sugli stati terminali, cosi' la pagina puo' dire *perche'* quel
+    link non apre piu' nulla invece di un generico «non trovato»."""
+    rec = voice_clone.by_manage_token(token or "")
+    stato = str((rec or {}).get("state") or "")
+    return _vc_gone(stato if stato in voice_clone._TERMINAL else "")
+
+
+@app.route("/vc/<token>/resume", methods=["GET", "POST"])
+def vc_resume(token):
+    # I4: GET non deve mutare nulla (link cliccato da un client mail/preview
+    # che pre-carica gli URL delle pagine) - solo una pagina di conferma con
+    # un form POST. Solo la POST autorizza il dispositivo.
+    if _vc_gate():
+        abort(404)
+    rec = voice_clone.by_resume_token(token)
+    if rec is None or rec.get("state") in voice_clone._TERMINAL:
+        return _vc_gone(str((rec or {}).get("state") or ""))
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
+    if request.method == "GET":
+        body = (f"<p>{html_mod.escape(t['resume_q'])}</p>"
+                f"<form method=\"post\">"
+                f"<p><label>{html_mod.escape(t['device_name_lbl'])}<br>"
+                f"<input name=\"device_name\" maxlength=\"{voice_clone.DEVICE_NAME_MAX}\" "
+                f"value=\"{html_mod.escape(_vc_device_name_guess())}\"></label><br>"
+                f"<small>{html_mod.escape(t['device_name_hint'])}</small></p>"
+                f"<button>{html_mod.escape(t['resume_btn'])}</button></form>")
+        return _vc_page(t["resume_title"], body, lang=lang)
+    cid = _get_client_id()
+    if cid and not voice_clone._has_cid(rec, cid):
+        resume_devices = [d for d in (rec.get("devices") or []) if d.get("via") == "resume"]
+        if len(resume_devices) >= RESUME_DEVICES_MAX:
+            body = f"<p>{html_mod.escape(t['toomany_body'])}</p>"
+            return _vc_page(t["toomany_title"], body, status=409, lang=lang)
+        voice_clone.add_resume_device(rec["id"], cid, _vc_device_name(request.form.get("device_name")))
+        _vc_log(rec, "VOICE_CLONE_RESUME")
+    return _apply_no_cache(redirect(f"/?vc={rec['id']}", code=302))
+
+
+def _vc_device_key(cid):
+    return hashlib.sha256((cid or "").encode("utf-8")).hexdigest()[:8]
+
+
+def _vc_device_name_guess():
+    return voice_clone.device_name_from_ua(request.headers.get("User-Agent"))
+
+
+def _vc_device_name(nome):
+    """Il nome scritto dall'utente o, se l'ha lasciato vuoto, quello proposto
+    dal browser: un dispositivo senza nome non si riconosce piu' dopo."""
+    return voice_clone.normalize_device_name(nome) or _vc_device_name_guess()
+
+
+def _vc_lang_tail():
+    """Chi ha forzato una lingua con ?lang= deve ritrovarla dopo il giro di
+    una POST che rimanda alla pagina dei dispositivi."""
+    ql = (request.args.get("lang") or "").strip().lower()
+    return f"?lang={html_mod.escape(ql)}" if ql in _VC_PAGES_I18N else ""
+
+
+def _vc_device_by_key(rec, key):
+    return next((d for d in rec.get("devices") or []
+                 if key and (d.get("cid") == key or _vc_device_key(d.get("cid")) == key)), None)
+
+
+@app.route("/vc/<token>/devices")
+def vc_devices(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        return _vc_manage_gone(token)
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
+    tok = html_mod.escape(token)
+    coda = _vc_lang_tail()
+    mio = _get_client_id()
+    righe = ""
+    for d in rec.get("devices") or []:
+        when = datetime.fromtimestamp(float(d.get("added_at") or 0), timezone.utc).strftime("%Y-%m-%d")
+        chiave = _vc_device_key(d.get("cid"))
+        nome = str(d.get("name") or "")
+        # «creator», «resume» e «code» sono nomi interni: a chi legge si dice
+        # da dove e' entrato quel dispositivo, nella sua lingua.
+        via = str(d.get("via") or "")
+        questo = (f" <span class=\"me\">{html_mod.escape(t['this_device'])}</span>"
+                  if mio and d.get("cid") == mio else "")
+        # Chi e' entrato con il codice-voce si e' presentato: il proprietario
+        # deve poterlo rileggere anche dopo, non solo nell'email.
+        chi = str(d.get("identity") or "")
+        presentazione = (f"<div class=\"meta\">{html_mod.escape(t['identity_lbl'])}: "
+                         f"«{html_mod.escape(chi)}»</div>" if chi else "")
+        righe += (f"<li><div><b>{html_mod.escape(nome or t['device_unnamed'])}</b>{questo}</div>"
+                  f"{presentazione}"
+                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div>"
+                  f"<form method=\"post\" action=\"/vc/{tok}/devices/rename{coda}\">"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
+                  f"<input name=\"name\" maxlength=\"{voice_clone.DEVICE_NAME_MAX}\" "
+                  f"value=\"{html_mod.escape(nome)}\" aria-label=\"{html_mod.escape(t['th_device'])}\">"
+                  f"<button>{html_mod.escape(t['rename_btn'])}</button></form>"
+                  f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
+                  f"<button>{html_mod.escape(t['revoke_btn'])}</button></form></li>")
+    body = (f"<p>{html_mod.escape(t['devices_intro'])}</p>"
+            f"<ul class=\"devs\">{righe}</ul>"
+            f"<p><a href=\"/vc/{tok}/delete?lang={html_mod.escape(lang)}\">"
+            f"{html_mod.escape(t['delete_link'])}</a></p>")
+    return _vc_page(t["devices_title"], body, lang=lang)
+
+
+@app.route("/vc/<token>/devices/rename", methods=["POST"])
+def vc_devices_rename(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        return _vc_manage_gone(token)
+    d = _vc_device_by_key(rec, (request.form.get("key") or "").strip())
+    if d is not None:
+        voice_clone.rename_device(token, d.get("cid"), request.form.get("name") or "")
+    return _apply_no_cache(redirect(f"/vc/{token}/devices{_vc_lang_tail()}", code=302))
+
+
+@app.route("/vc/<token>/devices/revoke", methods=["POST"])
+def vc_devices_revoke(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        return _vc_manage_gone(token)
+    key = (request.form.get("key") or request.form.get("cid") or "").strip()
+    d = _vc_device_by_key(rec, key)
+    coda = _vc_lang_tail()
+    if d is not None and d.get("via") == "creator" and request.form.get("confirm") != "1":
+        # Il creatore e' l'unico dispositivo che rinomina e cancella la voce
+        # dall'app: prima di toglierlo si dice che dopo restera' solo il link
+        # dell'email. Il codice-voce non si perde, e' nell'email di consegna.
+        lang = _vc_page_lang()
+        t = _vc_txt(lang)
+        tok = html_mod.escape(token)
+        nome = str(d.get("name") or "") or t["device_unnamed"]
+        body = (f"<p><b>{html_mod.escape(nome)}</b></p>"
+                f"<p>{html_mod.escape(t['revoke_owner_body'])}</p>"
+                f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
+                f"<input type=\"hidden\" name=\"key\" value=\"{html_mod.escape(key)}\">"
+                f"<input type=\"hidden\" name=\"confirm\" value=\"1\">"
+                f"<button>{html_mod.escape(t['revoke_owner_btn'])}</button></form>"
+                f"<p><a href=\"/vc/{tok}/devices{coda}\">{html_mod.escape(t['cancel_link'])}</a></p>")
+        return _vc_page(t["revoke_owner_title"], body, lang=lang)
+    if d is not None:
+        voice_clone.revoke_device(token, d.get("cid"))
+        _vc_log(rec, "VOICE_CLONE_DEVICE_REVOKED")
+    return _apply_no_cache(redirect(f"/vc/{token}/devices{coda}", code=302))
+
+
+@app.route("/vc/<token>/delete", methods=["GET", "POST"])
+def vc_delete(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        return _vc_manage_gone(token)
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
+    if request.method == "GET":
+        body = (f"<p>{html_mod.escape(t['delete_p1'])}</p>"
+                f"<p>{html_mod.escape(t['delete_p2'])}</p>"
+                f"<form method=\"post\"><button>{html_mod.escape(t['delete_btn'])}</button></form>")
+        return _vc_page(t["delete_title"], body, lang=lang)
+    out = voice_clone.delete_by_owner(token)
+    if out is None:
+        return _vc_manage_gone(token)
+    _vc_log(out, "VOICE_CLONE_DELETED")
+    return _vc_page(t["deleted_title"], f"<p>{html_mod.escape(t['deleted_body'])}</p>", lang=lang)
 
 
 @app.route("/api/community/stats/today")
@@ -11013,6 +12344,20 @@ def api_generate():
     if _is_voxcpm_voice(voice):
         if voxcpm_tts is None or not voxcpm_tts.is_available():
             return jsonify({"error": "voxcpm_not_configured"}), 400
+    # Voce campione (spec §9 riga 479): cid autorizzato, voce ancora `ready`,
+    # lingua/accento del libro compatibili. Il locale e' quello mandato dal
+    # chiamante per QUESTO libro (non quello della voce: confrontare la voce
+    # con se stessa sarebbe tautologico) - '' se assente, il confronto resta
+    # allora solo sulla lingua.
+    if voice.startswith(voice_clone.VOICE_ID_PREFIX):
+        _vc_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+        _vc_locale = (data.get("locale") or "").strip()
+        _vc_err_code = voice_clone.check_use(voice, _get_client_id(), _vc_lang, _vc_locale)
+        if _vc_err_code:
+            _vc_status = {"voice_gone": 410, "voice_not_authorized": 403,
+                          "voice_lang_mismatch": 400}.get(_vc_err_code, 400)
+            return jsonify({"error": f"Voice sample not usable: {_vc_err_code}",
+                            "error_code": _vc_err_code}), _vc_status
 
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
@@ -11335,7 +12680,7 @@ def api_generate():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=voice)
+                                      voice=_voice_for_log(voice))
                     except Exception:
                         pass
                 return jsonify({
@@ -11493,7 +12838,7 @@ def api_generate():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=voice)
+                                      voice=_voice_for_log(voice))
                     except Exception:
                         pass
                 return jsonify({
@@ -11572,7 +12917,7 @@ def api_generate():
             except Exception:
                 pass
             _log_activity(job_id, job.get("original_filename", ""), "QUOTA_ABUSE_BLOCK",
-                          client_id, client_ip, voice,
+                          client_id, client_ip, _voice_for_log(voice),
                           browser_lang=job.get("browser_lang", ""))
             print(f"[{job_id}] abuse_watch: job rifiutato (gruppo {_abuse_group})", flush=True)
             return jsonify({"error": "Processing interrupted.",
@@ -11729,9 +13074,9 @@ def api_generate():
                     if job["status"] == "generating":
                         job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
                 _log_activity(job_id, job.get("original_filename", ""), "QUOTA_BLOCK",
-                              client_id, client_ip, voice,
+                              client_id, client_ip, _voice_for_log(voice),
                               browser_lang=job.get("browser_lang", ""))
-                _abuse_note(job_id, job, "quota_block", chars=selected_chars, voice=voice)
+                _abuse_note(job_id, job, "quota_block", chars=selected_chars, voice=_voice_for_log(voice))
                 print(f"[{job_id}] free TTS quota: {_ftq_dec['used_chars']:,}+"
                       f"{selected_chars:,} > {_ftq_dec['limit_chars']:,} chars "
                       f"-> email gate", flush=True)
@@ -11784,12 +13129,23 @@ def api_generate():
                   f"{' (gated)' if _ftq_gated else ''}", flush=True)
             if _ftq_gated:
                 _log_activity(job_id, job.get("original_filename", ""), "QUOTA_GATE",
-                              client_id, client_ip, voice,
+                              client_id, client_ip, _voice_for_log(voice),
                               browser_lang=job.get("browser_lang", ""))
-                _abuse_note(job_id, job, "quota_gate", chars=_ftq_chars, voice=voice)
+                _abuse_note(job_id, job, "quota_gate", chars=_ftq_chars, voice=_voice_for_log(voice))
         except Exception as _ftq_err:
             print(f"[{job_id}] free_tts_quota consume failed (non-fatal): {_ftq_err}",
                   flush=True)
+
+    # Voce campione: da qui il job e' certo di partire (vedi commento sopra),
+    # quindi e' il punto giusto per rinnovare la retention all'uso (D15).
+    # L'etichetta amichevole per email/pannello di completamento e' gia'
+    # risolta da generation_engine._friendly_voice_name(job["voice"]) ("Your
+    # voice") - job["voice_label"] non aveva alcun lettore (C2, rimosso).
+    if voice.startswith(voice_clone.VOICE_ID_PREFIX):
+        _vc_rec2 = voice_clone.by_token(voice_clone.token_of(voice))
+        if _vc_rec2 is not None:
+            voice_clone.touch_used(_vc_rec2["id"])
+            _vc_log(_vc_rec2, "VOICE_CLONE_USED", job_id)
 
     # Descrittore di recovery (ri)scritto ALLA PARTENZA con i parametri di
     # questa generazione. Quello scritto da register_email puo' non esistere
@@ -11817,12 +13173,12 @@ def api_generate():
     )
     thread.start()
     _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
-                  client_id, client_ip, voice,
+                  client_id, client_ip, _voice_for_log(voice),
                   browser_lang=job.get("browser_lang", ""),
                   epoch=job.get("gen_epoch"),
                   platform=job.get("platform", ""))
-    _abuse_note(job_id, job, "generate", chars=selected_chars, voice=voice)
-    _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
+    _abuse_note(job_id, job, "generate", chars=selected_chars, voice=_voice_for_log(voice))
+    _admin_notify_generation(job_id, info, _voice_for_log(voice), job.get("original_filename", ""))
     _resp = {"status": "started"}
     # Job pagato portato in modalita' batch sull'email del pagamento: comunica
     # al frontend l'email (mascherata) cosi' l'utente sa dove ricevera' il file
@@ -14135,7 +15491,7 @@ def api_optimize():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=_voice_for_est)
+                                      voice=_voice_for_log(_voice_for_est))
                     except Exception:
                         pass
                 _release_opt_claim()
@@ -14296,7 +15652,7 @@ def api_optimize():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=_voice_spx)
+                                      voice=_voice_for_log(_voice_spx))
                     except Exception:
                         pass
                 _release_opt_claim()
@@ -14445,7 +15801,7 @@ def api_optimize():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=_voice_vox)
+                                      voice=_voice_for_log(_voice_vox))
                     except Exception:
                         pass
                 _release_opt_claim()
@@ -16984,6 +18340,25 @@ CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimoss
 # l'encode: oltre, il job torna purgabile e non puo' restare vivo per sempre.
 CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 
+# Nel data dir non ci sono solo le cartelle dei job: `user_voices/` e' la casa
+# delle voci campionate (registro `_voice_clones.json` e cartelle dei campioni),
+# e su R2 e' il prefisso con lo stesso nome, uno specchio permanente tenuto
+# allineato da voice_clone (replica del registro + sync_r2). Lo sweep delle
+# cartelle orfane la scambiava per una job dir abbandonata e la cancellava da
+# disco E da cold (12/09/2026: campioni e demo di tutte le voci distrutti, con
+# i record ancora in stato ready e i file spariti). Ogni scansione del data dir
+# passa da _is_job_dir, e il cold delete rifiuta i prefissi riservati.
+# "voices" e' il nome storico della stessa cartella: resta riservato perche'
+# una copia rimasta da prima del rename non deve finire nel tritacarne.
+_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices"})
+
+
+def _is_job_dir(entry):
+    """True se la voce del data dir e' (o e' stata) la cartella di un job."""
+    return (entry.is_dir()
+            and not entry.name.startswith("_")
+            and entry.name not in _RESERVED_DATA_DIRS)
+
 
 def _assembly_purge_hold(job, now):
     """True se il job va risparmiato dal purge perche' e' in fase di assembly.
@@ -17091,7 +18466,7 @@ def _evict_hot_local():
         job_by_id = dict(jobs)
     try:
         for jdir in UPLOAD_DIR.iterdir():
-            if not jdir.is_dir() or jdir.name.startswith("_"):
+            if not _is_job_dir(jdir):
                 continue
             job = job_by_id.get(jdir.name, {})
             hot = storage_tiering.hot_window_sec(job)
@@ -17207,7 +18582,7 @@ def _reconcile_cold_offload():
         job_by_id = dict(jobs)
     try:
         for jdir in UPLOAD_DIR.iterdir():
-            if not jdir.is_dir() or jdir.name.startswith("_"):
+            if not _is_job_dir(jdir):
                 continue
             # Salta i job ANCORA ATTIVI: offloaderanno al proprio COMPLETE.
             # Toccarli ora rischierebbe di copiare file mid-write (vedi F1);
@@ -17275,6 +18650,10 @@ def _delete_cold_for_job(job_id):
     il backend non è configurato. Tollerante agli errori: non deve mai bloccare
     il cleanup locale."""
     if not storage_backend.is_enabled() or not job_id:
+        return
+    if job_id in _RESERVED_DATA_DIRS:
+        # Non e' un job: sotto quel prefisso ci sono i campioni vocali.
+        print(f"[cleanup] Cold delete rifiutato sul prefisso riservato {job_id}/")
         return
     try:
         storage_backend.delete_prefix(f"{job_id}/")
@@ -17979,6 +19358,30 @@ def _cleanup_supervisor():
             time.sleep(5)
 
 
+def _voice_clone_sweep_supervisor():
+    """Sweep del ciclo di vita delle voci campionate, riavviato su crash
+    come _cleanup_supervisor (incidente 2026-06-15). Ogni giro, e subito
+    all'avvio, allinea anche lo specchio R2 di `user_voices/` (file mancanti
+    caricati, voci finite cancellate): gira anche a feature spenta, perche' i
+    campioni gia' registrati vanno replicati comunque."""
+    import traceback
+    while True:
+        try:
+            sync = voice_clone.sync_r2()
+            if any(sync.values()):
+                print(f"[voice_clone] sync R2: {sync}", flush=True)
+            time.sleep(voice_clone.SWEEP_INTERVAL_SEC)
+            if voxcpm_tts is None or not voice_clone.enabled():
+                continue
+            out = voice_clone.sweep()
+            if any(out.values()):
+                print(f"[voice_clone] sweep: {out}", flush=True)
+        except Exception as e:      # noqa: BLE001
+            traceback.print_exc()
+            print(f"[voice_clone] sweep crashed, restarting: {type(e).__name__}: {e}", flush=True)
+            time.sleep(60)
+
+
 def _cleanup_loop():
     """Background thread: periodically clean up finished/abandoned jobs."""
     while True:
@@ -18194,7 +19597,7 @@ def _cleanup_loop():
                             pass
         try:
             for jdir in UPLOAD_DIR.iterdir():
-                if not jdir.is_dir() or jdir.name.startswith("_"):
+                if not _is_job_dir(jdir):
                     continue
                 for od in jdir.iterdir():
                     if not od.is_dir():
@@ -18252,9 +19655,7 @@ def _cleanup_loop():
         _all_known = _known_job_ids | _known_token_jobs
         try:
             for entry in UPLOAD_DIR.iterdir():
-                if not entry.is_dir():
-                    continue
-                if entry.name.startswith("_"):
+                if not _is_job_dir(entry):
                     continue
                 if entry.name in _all_known:
                     continue
@@ -18406,7 +19807,26 @@ def _ensure_background_threads():
         abuse_watch.start_worker(_abuse_apply_verdict)
     except Exception as _aw_err:
         print(f"[startup] abuse_watch init failed (non-fatal): {_aw_err}", flush=True)
-    
+
+    # Voci campionate (spec 2026-09-09, piano 2): notifier, hook di rilancio
+    # e rimborso, provider del digest, recovery al boot, sweeper supervisionato.
+    try:
+        voice_clone_demo.configure(notifier=_voice_clone_notify)
+        voice_clone.set_hooks(
+            notify=_voice_clone_notify,
+            relaunch=lambda cid: voice_clone_demo.start_demos(cid),
+            refund=lambda cid, reason: voice_clone_demo.refund(
+                cid, reason, bonus=(reason == "demo_failed_timeout")))
+        email_service.set_voice_clone_provider(voice_clone.digest_data)
+        if voxcpm_tts is not None and voice_clone.enabled():
+            n = voice_clone_demo.recover()
+            if n:
+                print(f"[voice_clone] recover: {n} generazioni demo rilanciate", flush=True)
+        threading.Thread(target=_voice_clone_sweep_supervisor, daemon=True,
+                         name="voice-clone-sweep").start()
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] cablaggio non riuscito: {e}", flush=True)
+
     # Verifica dipendenze audio (ffmpeg/ffprobe) per formato M4B
     ffmpeg_ok, ffprobe_ok = _check_audio_dependencies()
     if not ffmpeg_ok or not ffprobe_ok:

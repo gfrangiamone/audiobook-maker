@@ -821,6 +821,7 @@ function _applyPremiumAvailability(){
   // rimuovi badge e coachmark; se è disponibile e siamo nello step Audio, rivaluta.
   if(!_premiumTabAvailable()){
     _dismissPremiumHint();
+    _dismissVcPromo();
     const _b=document.getElementById('premiumTabBadge');
     if(_b)_b.hidden=true;
   }else if(_wizStep===3 && wizMode==='audio'){
@@ -1353,6 +1354,7 @@ function _onPremiumModelChanged(){
   }
   updVoicesPremium();
   if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+  if(typeof vcSyncButton==='function')vcSyncButton();
 }
 
 function _populateSpeechifyAccents(){
@@ -1457,6 +1459,9 @@ function _voxcpmSelectedVoice(){
   const id=sel?sel.value:'';
   if(!_isVoxcpmVoiceId(id))return null;
   for(const v of _voxcpmVoicesForLang())if(v.id===id)return v;
+  // Voci personali (campionate): stessa forma delle voci di catalogo.
+  const mie=(typeof vociMie==='function')?vociMie(voices,bookLangState.code||'it',''):[];
+  for(const v of mie)if(v.id===id)return v;
   return null;
 }
 
@@ -1625,8 +1630,30 @@ function updVoicesPremium(){
   if(vmEl&&vmEl.value==='voxcpm'){
     const loc=_voxcpmAccentSel;
     const lista=_voxcpmVoicesForLang().filter(v=>!loc||v.locale===loc);
-    const prevVoice=_voxcpmVoiceSel||sel.value;
+    let prevVoice=_voxcpmVoiceSel||sel.value;
     sel.innerHTML='';
+    // Le voci personali del dispositivo con lingua e accento coincidenti
+    // stanno in un gruppo in testa (spec §3.8). Se ce n'e' una sola ed e' la
+    // prima popolazione dopo la creazione, e' preselezionata.
+    const mie=(typeof vociMie==='function')?vociMie(voices,bookLangState.code||'it',loc):[];
+    if(mie.length){
+      const gm=document.createElement('optgroup');
+      gm.label=t('vc_group_mine');
+      for(const v of mie){
+        const o=document.createElement('option');
+        o.value=v.id;
+        // Il nome dato alla voce al campionamento, se c'e', al posto
+        // dell'etichetta generica: con piu' voci proprie e' l'unico modo di
+        // distinguerle.
+        o.textContent=(v.name||(v.owner?t('vc_voice_own'):t('vc_voice_shared')))+' · '+_voxcpmLocaleLabel(v.locale);
+        gm.appendChild(o);
+      }
+      sel.appendChild(gm);
+    }
+    if(window._vcJustCreated&&mie.some(v=>v.id===window._vcJustCreated)){
+      prevVoice=window._vcJustCreated;
+    }
+    window._vcJustCreated=null;
     let lg='';
     for(const v of lista){
       if(v.gender!==lg){
@@ -1651,6 +1678,7 @@ function updVoicesPremium(){
       _loadVoxcpmSample();
       if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
     };
+    if(typeof vcSyncButton==='function')vcSyncButton();
     return;
   }
   // --- Ramo Speechify Simba-3.2: voci filtrate per accento (locale), non per lingua ---
@@ -1777,6 +1805,15 @@ function _premiumTabAvailable(){
 }
 function _showPremiumCoach(){
   const coach=document.getElementById('premiumCoach');
+  if(!_coachOnPremiumTab(coach))return false;
+  if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
+  _premiumCoachTimer=setTimeout(_dismissPremiumHint,12000);
+  return true;
+}
+// Apre una bolla (.prem-coach) sopra la tab Premium con la freccia sulla
+// parola "PREMIUM". Condiviso dal coachmark Premium e dal fumetto delle voci
+// campionate: stanno nello stesso punto, ne compare uno alla volta.
+function _coachOnPremiumTab(coach){
   const btn=document.getElementById('tabPremiumBtn');
   if(!coach||!btn)return false;
   // Allinea la bolla all'inizio del tab Premium.
@@ -1800,8 +1837,6 @@ function _showPremiumCoach(){
     }
     coach.style.setProperty('--arrow-left',(targetX-coachX-6)+'px'); // -6 = metà larghezza freccia
   }catch(e){}
-  if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
-  _premiumCoachTimer=setTimeout(_dismissPremiumHint,12000);
   return true;
 }
 function _dismissPremiumHint(){
@@ -1819,17 +1854,65 @@ function _markPremiumDiscovered(){
 // Valuta e (se del caso) mostra badge + coachmark. Idempotente.
 function maybeShowPremiumHint(){
   if(!_premiumTabAvailable())return;
+  // Il fumetto delle voci campionate ha la precedenza: quando esce (o e' gia'
+  // aperto) il coachmark Premium resta chiuso e non consuma un'apparizione.
+  const vcPromo=_maybeShowVcPromo();
   if(wizardState && wizardState.audioTab==='premium')return;
   const st=_premiumHintLoad();
   if(st.discovered)return;
   // Badge: sempre quando non scoperto e tab disponibile.
   const badge=document.getElementById('premiumTabBadge');
   if(badge)badge.hidden=false;
+  if(vcPromo)return;
   // Coachmark: gate cap totale + 1/giorno.
   if(st.shows>=_PREMIUM_HINT_MAX)return;
   if(st.lastDay===_premiumHintToday())return;
   if(!_showPremiumCoach())return;
   st.shows++; st.lastDay=_premiumHintToday(); _premiumHintSave(st);
+}
+
+// ═══════════════ Fumetto «Campiona la tua voce» ═══════════════
+// Promuove le voci campionate: la prima volta allo step Audio, poi una volta
+// ogni 7 giorni (data dell'ultima apparizione in localStorage, gestita da
+// voice_clone.js). Solo se la funzione e' attiva per la lingua del libro, il
+// modello VoxCPM e' fra quelli PREMIUM offerti e il dispositivo non ha ancora
+// voci campionate. Click sul testo = tab Premium, modello VoxCPM, wizard.
+let _vcPromoTimer=null;
+function _vcPromoModelOffered(){
+  const vm=document.getElementById('vmPremium');
+  return !!vm&&Array.prototype.some.call(vm.options,o=>o.value==='voxcpm'&&!o.disabled);
+}
+function _maybeShowVcPromo(){
+  const coach=document.getElementById('vcPromoCoach');
+  if(!coach)return false;
+  if(!coach.hidden)return true;
+  if(typeof window.vcPromoEligible!=='function'||!window.vcPromoEligible())return false;
+  if(!_vcPromoModelOffered())return false;
+  _dismissPremiumHint();
+  if(!_coachOnPremiumTab(coach))return false;
+  if(typeof window.vcPromoShown==='function')window.vcPromoShown();
+  if(_vcPromoTimer)clearTimeout(_vcPromoTimer);
+  _vcPromoTimer=setTimeout(_dismissVcPromo,15000);
+  return true;
+}
+function _dismissVcPromo(){
+  const coach=document.getElementById('vcPromoCoach');
+  if(coach)coach.hidden=true;
+  if(_vcPromoTimer){clearTimeout(_vcPromoTimer);_vcPromoTimer=null;}
+}
+function _vcPromoGo(){
+  _dismissVcPromo();
+  if(wizardState.audioTab!=='premium'){
+    switchAudioTab('premium');
+    // Manutenzione o selezione troppo lunga: la tab non si e' aperta.
+    if(wizardState.audioTab!=='premium')return;
+  }
+  const vm=document.getElementById('vmPremium');
+  if(vm&&vm.value!=='voxcpm'&&_vcPromoModelOffered()){
+    vm.value='voxcpm';
+    vm.dispatchEvent(new Event('change'));
+  }
+  if(typeof window.vcOpen==='function')window.vcOpen();
 }
 
 function switchAudioTab(tab){
@@ -1862,6 +1945,7 @@ function switchAudioTab(tab){
   // Premium hint: qualsiasi switch riuscito chiude il coachmark; aprire la tab
   // Premium = "scoperta" → soppressione definitiva di coachmark e badge.
   _dismissPremiumHint();
+  _dismissVcPromo();
   if(tab==='premium')_markPremiumDiscovered();
   document.querySelectorAll('.tab-bar .tab').forEach(t=>{
     const active=t.dataset.tab===tab;
@@ -1919,6 +2003,7 @@ function switchAudioTab(tab){
     if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
   }
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+  if(typeof vcSyncButton==='function')vcSyncButton();
 }
 
 // Helper: ritorna l'id della voce attualmente attiva, in base al tab selezionato.
@@ -2121,6 +2206,22 @@ function _openPayModalCtx(ctx) {
   _payCtx = ctx;
   _payConfirmed = false;
   _payState = { total: ctx.total, gemini: ctx.geminiAmount || 0, token: null, method: null };
+  // Titolo e avviso: personalizzabili per flusso (default = quelli storici del
+  // markup). La funzione è condivisa da tutti i flussi di pagamento e viene
+  // richiamata a ogni apertura: basta la scelta con `||` per ripristinare la
+  // chiave di default quando il ctx non la specifica.
+  const titleEl = document.getElementById('geminiPayModalTitle');
+  if (titleEl) {
+    const tk = ctx.titleKey || 'pay_modal_title';
+    titleEl.setAttribute('data-t', tk);
+    titleEl.textContent = (typeof t === 'function') ? t(tk) : tk;
+  }
+  const noticeEl = document.getElementById('payEmailNotice');
+  if (noticeEl) {
+    const nk = ctx.noticeKey || 'pay_email_notice';
+    noticeEl.setAttribute('data-t', nk);
+    noticeEl.textContent = (typeof t === 'function') ? t(nk) : nk;
+  }
   // Mappa fissa ctx.lines[i] -> (etichetta, importo) nel markup.
   const rowMap = [
     { labelId: 'payLineGeminiLabel', amountId: 'payLineGemini' },
@@ -2206,6 +2307,16 @@ function _disarmPayConfirm(){
   btn.classList.remove('pay-armed');
   btn.style.removeProperty('--cd');
   btn.textContent = _payConfirmLabel();
+}
+// Flussi senza nulla da decidere dopo il pagamento (ctx.autoConfirm): la
+// conferma si da' da sola, subito, invece di far guardare un countdown di
+// cinque secondi a chi ha gia' pagato. Torna true se ha confermato lei.
+function _payAfterPaid(){
+  const btn = document.getElementById('btnPayConfirm');
+  if (btn) btn.disabled = false;
+  if (!(_payCtx && _payCtx.autoConfirm)) return false;
+  onPayConfirm();
+  return true;
 }
 function _armPayConfirm(){
   const btn = document.getElementById('btnPayConfirm');
@@ -2321,7 +2432,7 @@ async function renderPaypalGeminiButtons(){
     },
     onApprove:async function(data,actions){
       try{
-        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
+        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:(_payCtx&&_payCtx.paypal&&_payCtx.paypal.captureJobId)||jobId})});
         const d=await r.json();
         if(d.error||!d.payment_token){
           // Capture rifiutata dall'emittente (INSTRUMENT_DECLINED): flusso
@@ -2353,10 +2464,11 @@ async function renderPaypalGeminiButtons(){
           _payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
         _geminiPayCaptured=true;  // capture ok: blocca ulteriori creazioni ordine
         _payState.token=d.payment_token;_payState.method='paypal';
-        // Bottone in evidenza + countdown di auto-conferma: il pagamento e' gia'
-        // incassato, restare fermi sul modale non ha alcun senso per l'utente.
-        _armPayConfirm();
+        // Pagamento incassato: restare fermi sul modale non ha senso. Dove c'e'
+        // ancora qualcosa da confermare il bottone si accende col countdown,
+        // altrove la conferma parte da sola.
         const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
+        if(!_payAfterPaid())_armPayConfirm();
       }catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
     },
     onError:function(err){
@@ -2422,11 +2534,10 @@ async function validateVoucherForPayment() {
     // di notifica durante la generazione: l'utente la conferma esplicitamente.
     lastVoucherEmail = email;
     try { localStorage.setItem('abm_v_email', email); } catch (e) {}
-    const btn = document.getElementById('btnPayConfirm');
-    if (btn) btn.disabled = false;
     errEl.style.color = '#27ae60';
     const rem = (typeof d.remaining_eur === 'number') ? d.remaining_eur.toFixed(2) : '0.00';
     errEl.textContent = ((typeof t === 'function' && t('pay_ok_remaining')) || 'Saldo disponibile') + ` €${rem}`;
+    _payAfterPaid();
   } catch (e) {
     errEl.textContent = (typeof t === 'function' && t('pay_err_network')) || 'Errore di rete';
   }
@@ -3690,6 +3801,11 @@ async function startCombinedGeneration(combinedPaymentToken){
         if(gd.error_code==='free_quota_exhausted'||gd.error_code==='payment_required'){
           _handlePremiumPaymentRequired(gd);return;
         }
+        if(_handleVcGenerateError(gd)){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          unlockUI();generating=false;return;
+        }
         if(gd.error_code==='gemini_overload'){
           // Pre-flight block sincrono: nessun job avviato, nessun payment consumato.
           unlockUI();generating=false;
@@ -4124,6 +4240,11 @@ async function startGen(){
         // questo case l'utente vedrebbe la stringa cruda del 402 e resterebbe
         // senza modale di pagamento (incidente "402 Speechify").
         _handlePremiumPaymentRequired(d);return;
+      }
+      if(_handleVcGenerateError(d)){
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        unlockUI();generating=false;return;
       }
       if(d.error_code==='server_busy'){
         const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
@@ -5780,6 +5901,17 @@ function _handlePremiumPaymentRequired(d){
     quota_used_eur:Number(d.quota_used_eur)||0,
     quota_limit_eur:Number(d.quota_limit_eur)||0,
   });
+}
+// Errori di /api/generate dovuti a una voce campionata (spec §3.8): la voce
+// non c'e' piu', il dispositivo non e' autorizzato o la lingua del libro non
+// coincide. Messaggio dedicato e combo ricaricata: mai il testo del server.
+function _handleVcGenerateError(gd){
+  const code=gd&&gd.error_code;
+  if(code!=='voice_gone'&&code!=='voice_not_authorized'&&code!=='voice_lang_mismatch')return false;
+  showErr('s3err',t('vc_err_'+code));
+  _voxcpmVoiceSel='';
+  loadVoices().then(()=>{updVoicesPremium();if(typeof vcSyncButton==='function')vcSyncButton();}).catch(()=>{if(typeof vcSyncButton==='function')vcSyncButton();});
+  return true;
 }
 function tryGoToAudioSettings(){
   const sel=_getSelectedChapterIndexes();

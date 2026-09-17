@@ -435,6 +435,48 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_PROGRESS` | `1` Il client ascolta gli avanzamenti parziali del worker (`chunks_done` dal polling di `/status`) e la barra si muove coi chunk. A `0` la barra torna a muoversi solo a capitolo consegnato: interruttore da girare se il polling dovesse mai pesare, senza ricostruire l'immagine sulla GPU. | `voxcpm_tts.py` | 506 |
 | `ABM_MAX_VOXCPM_TEXT_CHARS` | Cap caratteri testo per job con voce VoxCPM. Default = `ABM_MAX_SPEECHIFY_TEXT_CHARS` (a sua volta `800000` di default). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `voxcpm:`. | `audiobook_app.py` | 504 |
 | `ABM_VOXCPM_DIGEST` | `1` Digest quotidiano dei ritentativi delle code tagliate, spedito a `ABM_ADMIN_EMAIL` una volta per giornata (sempre quella di **ieri**, in UTC: un giorno ancora aperto darebbe conti parziali). Valori falsi: `0`/`false`/`off`/`no`. Senza `ABM_ADMIN_EMAIL` o senza SMTP non parte comunque. Il giorno gia' spedito e' segnato in `voxcpm_digest_last.txt` dentro `ABM_DATA_DIR`, cosi' un riavvio non salta ne' duplica una giornata. | `email_service.py` | 41 |
+| `ABM_VOICE_CLONE_MIN_SEC` / `ABM_VOICE_CLONE_MAX_SEC` | `12` / `20` — finestra di durata accettata dal gate del campione vocale (voci campionate, D7). Il target dichiarato all'utente resta 15-18 s. | `voice_clone_audio.py` | `gate_from_env`, 244 |
+| `ABM_VOICE_CLONE_MIN_BAND_RATIO` | `0.60` — banda utile minima del campione vocale, in frazione di Nyquist (7200 Hz sui 24 kHz della pipeline). Sotto questa soglia lo scarto è `vc_gate_band`. Tarata su misure reali: una registrazione sana a 44,1 kHz arriva a 0,71, una a 16 kHz a 0,65, la banda telefonica a 0,35. | `voice_clone_audio.py` | `gate_from_env` |
+| `ABM_VOICE_CLONE_MAX_CER` | `0.25` — soglia di CER (faster-whisper contro la frase guidata) sopra la quale il campione e' respinto con `vc_gate_text`. Da calibrare su registrazioni reali nelle nove lingue prima del rilascio. Accetta la virgola decimale. | `voice_clone_audio.py` | `max_cer`, 473 |
+| `ABM_VOICE_CLONE_ASR` | `1` — `0` salta la verifica ASR (solo sviluppo). | `voice_clone_audio.py` | `asr_enabled`, 469 |
+| `ABM_VOICE_CLONE_ASR_MODEL` | `base` — modello faster-whisper su CPU (`base` ~150 MB, `small` ~460 MB), scaricato al primo uso in `ABM_DATA_DIR/whisper/`, caricato a richiesta e scaricato dalla RAM dopo 600 s di inattivita' (`ASR_IDLE_UNLOAD_SEC`). Impronta stimata 0,4-0,6 GB per `base`: verificare contro la RAM libera di produzione. | `voice_clone_audio.py` | `_asr_model_name`, 477 |
+| `ABM_VOICE_CLONE_ASR_TIMEOUT_SEC` | `120` — timeout della trascrizione; scaduto, il campione non passa (`vc_gate_asr_unavailable`). | `voice_clone_audio.py` | `_asr_timeout`, 481 |
+| `ABM_VOICE_CLONE_SAMPLE_TTL_H` | `24` — vita di un campione approvato ma non pagato (`sample_ok`); oltre, file e record vengono rimossi da `purge_stale_drafts`. | `voice_clone.py` | `sample_ttl_sec`, 92 |
+| `ABM_VOICE_CLONE_RETENTION_DAYS` | `365` — retention della voce, rinnovata a ogni uso (`touch_used`). | `voice_clone.py` | `retention_sec`, 96 |
+| `ABM_VOICE_CLONE_ENABLED` | Interruttore della feature voci campionate. `0`/`false`/`no`/`off` spengono gli endpoint `/api/voice_clone/*` (404 `voice_clone_disabled`), la chiave `_mine` di `/api/voices`, lo sweeper e il recovery. | `voice_clone.py` | `enabled`, 132 |
+| `ABM_EUR_CLONED_VOICE` | Prezzo fisso in EUR della voce campione (§7.1); virgola decimale ammessa; `<= 0` = gratis (pannello pagamento saltato, `payment.type="free"`). | `payment.py` | `EUR_CLONED_VOICE`, 64 |
+| `ABM_VOICE_CLONE_MAX_UPLOAD_MB` | Dimensione massima del campione caricato (413 `too_large` oltre). Minimo 1. | `voice_clone.py` | `max_upload_mb`, 145 |
+| `ABM_VOICE_CLONE_DEMO_RETRIES` | Tentativi per ogni frase demo sul worker prima di `demo_failed` (pausa 2^n s, tetto 30 s). Minimo 1. | `voice_clone.py` | `demo_retries`, 141 |
+
+**Costanti interne (non configurabili):**
+
+- `RESUME_TOKEN_DAYS = 30` — validita' del link di ripresa (`/vc/<token>/resume`) inviato per email.
+- `SWEEP_INTERVAL_SEC = 3600` — intervallo fra due cicli dello sweeper del ciclo di vita (`voice_clone.sweep`).
+- `EXPIRY_WARN_SEC = 30 * 86400` (30 giorni) — avviso di scadenza verso il proprietario.
+- `DEMO_FAILED_RELAUNCH_SEC = 6 * 3600` (6 ore) — attesa prima di un nuovo tentativo automatico su `demo_failed`.
+- `DEMO_FAILED_REFUND_SEC = 7 * 86400` (7 giorni) — scadenza del rimborso automatico da `demo_failed`.
+- `APPROVAL_REMINDER_SEC = (24 * 3600, 7 * 86400)` (24 ore e 7 giorni) — istanti dei promemoria da `demos_ready`.
+- `APPROVAL_REFUND_SEC = 30 * 86400` (30 giorni) — rimborso automatico se la voce resta in `demos_ready` senza approvazione.
+- `RECORD_PURGE_SEC = 90 * 86400` (90 giorni) — purga del record dopo l'ingresso in uno stato terminale (`refunded`/`expired`/`deleted`).
+- `CONFIRM_TTL_SEC = 900` (15 minuti) — validita' del codice di conferma del claim.
+- `CONFIRM_MAX_TRIES = 5` — tentativi di conferma prima del lock.
+- `CONFIRM_LOCK_SEC = 900` (15 minuti) — durata del lock post-esaurimento tentativi.
+- `STALE_INFLIGHT_SEC = 3600` (1 ora) — `paid`/`demos_generating` senza cambio di stato oltre questa soglia vengono rilanciati dallo sweeper (guardia anti-stallo, I1).
+- `RESEND_MAX = 3` / `RESEND_WINDOW_SEC = 86400` — resend manuale (§ sotto): 3 invii per voce in una finestra scorrevole di 24h, tracciata in `rec["resend_ts"]` (non un bucket per-IP).
+- `RESUME_DEVICES_MAX = 10` (in `audiobook_app.py`) — dispositivi diversi che possono autorizzarsi tramite lo stesso link di resume (`/vc/<token>/resume`) prima del 409.
+
+**Rate limit (in `audiobook_app.py`, `_ip_rl_check`):**
+
+- `vc_sample`: 10/min e 30/ora per IP; 10/min e 10/ora per cid.
+- `vc_claim_cid`: 5/min e 5/ora per cid.
+
+**Resend (`voice_clone.check_and_record_resend`, non `_ip_rl_check`):**
+
+- `vc_resend`: 3 invii per voce (clone_id) in una finestra scorrevole di 24h (`RESEND_MAX`/`RESEND_WINDOW_SEC`), non un bucket per-IP — il limite segue la voce, non il dispositivo che lo richiede.
+
+**Log della activity:**
+
+- `VOICE_CLONE_*` — registrati con il solo id pubblico della voce, mai email, token ne' identificativi dell'owner.
 
 I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si ricavano dai campi `worker_verify_*` che `generation_engine` scrive nel libro mastro (`gemini_cost_audit_YYYY-MM.jsonl`, righe con `"provider": "voxcpm"`): `worker_verify_chunks` i chunk passati sotto l'ASR del worker, `worker_verify_sospetti` i ritentativi giudicati necessari, `worker_verify_rinunciati` i sospetti lasciati fuori dal tetto `ABM_VOXCPM_VERIFY_MAX_FRAC` del worker, `worker_verify_giri` i giri di rigenerazione spesi. I record scritti prima di questa versione non li hanno: il digest li conta a parte, come «job senza misure». Dal 3 settembre 2026 ci sono anche `worker_verify_numerali` (code in cui compariva un numero) e `worker_verify_falsi_numerali` (di quelle, gli allarmi che il rilevatore ha spento perche' l'unica differenza era la grafia: l'ASR scrive «1967» dove il testo dice «millenovecentosessantasette»). Sono ritentativi non comprati, non difetti recuperati, e stanno in un riquadro loro; i job di un worker precedente alla regola si contano come «ciechi sui numeri», perche' uno zero li' vorrebbe dire «nessun numero in giro».
 
@@ -1221,4 +1263,5 @@ il giudice vedeva solo volume e conteggio cid.
 | Push FCM app mobile (`push_service.py`) | 5 |
 | Telemetria di carico (`load_metrics.py`) | 4 |
 | Quota voci standard / riuso / power user | 3 |
-| **Totale** | **119** |
+| Voci campionate (`voice_clone.py`, `voice_clone_audio.py`) | 8 |
+| **Totale** | **127** |
