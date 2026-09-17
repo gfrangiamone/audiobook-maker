@@ -2960,8 +2960,22 @@ _GUIDE_BODY_ZH = {
 """,
 }
 
+# Guida «Audiolibri con la tua voce»: contenuti in guide_voice_clone.py, in 7 lingue.
+import guide_voice_clone as _gvc  # noqa: E402
+
+_GUIDE_META[_gvc.GUIDE_ID] = _gvc.META
+for _gl, _gd in (("en", _GUIDE_BODY_EN), ("it", _GUIDE_BODY_IT), ("fr", _GUIDE_BODY_FR),
+                 ("es", _GUIDE_BODY_ES), ("de", _GUIDE_BODY_DE), ("zh", _GUIDE_BODY_ZH)):
+    _gd[_gvc.GUIDE_ID] = _gvc.body(_gl)
+# Hindi: solo le guide tradotte, le altre ricadono su EN.
+_GUIDE_BODY_HI = {_gvc.GUIDE_ID: _gvc.body("hi")}
+
 # Missing languages fall back to EN.
-_GUIDE_BODY = {"it": _GUIDE_BODY_IT, "fr": _GUIDE_BODY_FR, "es": _GUIDE_BODY_ES, "de": _GUIDE_BODY_DE, "zh": _GUIDE_BODY_ZH}
+_GUIDE_BODY = {"it": _GUIDE_BODY_IT, "fr": _GUIDE_BODY_FR, "es": _GUIDE_BODY_ES, "de": _GUIDE_BODY_DE, "zh": _GUIDE_BODY_ZH,
+               "hi": _GUIDE_BODY_HI}
+
+# JSON-LD aggiuntivi per guida (HowTo, FAQPage): fn(lang, canonical, meta) -> [json, ...]
+_GUIDE_EXTRA_LD = {_gvc.GUIDE_ID: _gvc.extra_ld}
 
 
 
@@ -2973,6 +2987,7 @@ _GUIDE_PUBLISHED = {
     "text-to-speech-audiobook": "2024-11-10",
     "podcast": "2025-01-20",
     "gemini-tts": "2026-06-09",
+    _gvc.GUIDE_ID: _gvc.PUBLISHED,
 }
 
 _GUIDE_SECTION = {
@@ -2981,6 +2996,7 @@ _GUIDE_SECTION = {
     "text-to-speech-audiobook": "Text-to-Speech",
     "podcast": "Podcast Publishing",
     "gemini-tts": "Text-to-Speech",
+    _gvc.GUIDE_ID: _gvc.SECTION,
 }
 
 
@@ -3142,6 +3158,18 @@ def build_guide_html(
 
     # App home URL for internal links
     app_home = f"{base_url}/{lang}/" if base_url else "/"
+    cta_label = {
+        "it": "Prova Audiobook Maker gratis", "en": "Try Audiobook Maker Free",
+        "fr": "Essayez Audiobook Maker gratuitement", "es": "Prueba Audiobook Maker gratis",
+        "de": "Audiobook Maker kostenlos testen", "zh": "免费试用 Audiobook Maker",
+        "hi": "Audiobook Maker मुफ़्त आज़माएँ",
+    }.get(lang, "Try Audiobook Maker Free")
+
+    _extra_fn = _GUIDE_EXTRA_LD.get(guide_id)
+    extra_ld_block = "".join(
+        f'\n<script type="application/ld+json">{ld}</script>'
+        for ld in (_extra_fn(lang, canonical, meta) if _extra_fn else [])
+    )
 
     # Open Graph locale + alternates
     og_locale = _OG_LOCALE_MAP.get(lang, "en_US")
@@ -3181,7 +3209,7 @@ def build_guide_html(
 <meta name="twitter:description" content="{meta["desc"]}">
 <meta name="twitter:image" content="{base_url}/og-image.png">
 <script type="application/ld+json">{article_ld}</script>
-<script type="application/ld+json">{breadcrumb_ld}</script>
+<script type="application/ld+json">{breadcrumb_ld}</script>{extra_ld_block}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
@@ -3219,7 +3247,7 @@ footer{{margin-top:48px;padding-top:24px;border-top:1px solid var(--brd);font-si
 <h1>{meta["h1"]}</h1>
 {article_dates_html}
 {body}
-<a class="cta" href="{app_home}">Try Audiobook Maker Free &rarr;</a>
+<a class="cta" href="{app_home}">{cta_label} &rarr;</a>
 </article>
 <footer>
 <p><strong>Audiobook Maker</strong> — Free & open-source EPUB/PDF to audiobook converter. 400+ AI voices, 50+ languages. <a href="{app_home}">Start converting</a>.</p>

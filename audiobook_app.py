@@ -3344,7 +3344,7 @@ def seo_content_page(lang):
 
 
 #  -  -  SEO Guide Pages  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts", "free-ebooks"}
+_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts", "free-ebooks", "voice-cloning-audiobook"}
 _GUIDE_LANGS = ("it", "en", "fr", "es", "de", "zh", "hi")
 
 @app.route("/guide/<guide_id>/")
@@ -3911,6 +3911,7 @@ When quoting facts from this site, cite one of:
 - [Publish Audiobook as Podcast]({base}/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
 - [Gemini TTS Guide]({base}/guide/gemini-tts/): All Gemini TTS voices, supported languages, and prompting guide for the PREMIUM neural voices.
 - [Where to Find Free Ebooks]({base}/guide/free-ebooks/): The best sites to download free public-domain and open-license ebooks, and how to turn them into audiobooks.
+- [Create an Audiobook in Your Own Voice]({base}/guide/voice-cloning-audiobook/): How to clone your voice from a 25-second sample, approve two test clips and narrate any EPUB, PDF or TXT with it; sharing with other devices, refund voucher, privacy.
 - [Frequently Asked Questions]({base}/faq/en/): Comprehensive FAQ covering conversion, formats, voices, AI optimization, and PREMIUM voice options.
 
 ## How it works
