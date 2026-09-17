@@ -39,7 +39,11 @@
     "revoke_owner_title": "Revoke the device that created the voice?",
     "revoke_owner_body": "This is the device the voice was created on. Once revoked, the voice stays on our server and on the other devices, but it can be renamed or deleted only from the management link in your email. You can add the device back at any time with the voice code you received by email.",
     "revoke_owner_btn": "Revoke this device",
-    "cancel_link": "Cancel"
+    "cancel_link": "Cancel",
+    "speed_title": "Voice speed",
+    "speed_intro": "The reading speed of audiobooks made with this voice, on every device that uses it. Whoever generates a book can still make it faster or slower from there.",
+    "speed_btn": "Save",
+    "speed_saved": "saved"
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -81,7 +85,11 @@
     "revoke_owner_title": "Revocare il dispositivo che ha creato la voce?",
     "revoke_owner_body": "È il dispositivo su cui hai creato la voce. Dopo la revoca la voce resta sul nostro server e sugli altri dispositivi, ma potrai rinominarla o cancellarla solo dal link di gestione nella tua email. Puoi riaggiungere il dispositivo quando vuoi con il codice-voce che hai ricevuto per email.",
     "revoke_owner_btn": "Revoca questo dispositivo",
-    "cancel_link": "Annulla"
+    "cancel_link": "Annulla",
+    "speed_title": "Velocità della voce",
+    "speed_intro": "La velocità di lettura degli audiolibri creati con questa voce, su tutti i dispositivi che la usano. Chi genera un libro può comunque accelerarla o rallentarla a partire da qui.",
+    "speed_btn": "Salva",
+    "speed_saved": "salvata"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -123,7 +131,11 @@
     "revoke_owner_title": "Révoquer l'appareil qui a créé la voix ?",
     "revoke_owner_body": "C'est l'appareil sur lequel tu as créé la voix. Après la révocation, la voix reste sur notre serveur et sur les autres appareils, mais tu ne pourras la renommer ou la supprimer qu'avec le lien de gestion reçu par e-mail. Tu peux rajouter l'appareil à tout moment avec le code-voix reçu par e-mail.",
     "revoke_owner_btn": "Révoquer cet appareil",
-    "cancel_link": "Annuler"
+    "cancel_link": "Annuler",
+    "speed_title": "Vitesse de la voix",
+    "speed_intro": "La vitesse de lecture des livres audio créés avec cette voix, sur tous les appareils qui l’utilisent. Qui génère un livre peut encore l’accélérer ou la ralentir à partir de là.",
+    "speed_btn": "Enregistrer",
+    "speed_saved": "enregistrée"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -165,7 +177,11 @@
     "revoke_owner_title": "¿Revocar el dispositivo que creó la voz?",
     "revoke_owner_body": "Es el dispositivo en el que se creó la voz. Tras la revocación, la voz sigue en nuestro servidor y en los demás dispositivos, pero solo podrás cambiarle el nombre o eliminarla desde el enlace de gestión de tu correo. Puedes volver a añadir el dispositivo cuando quieras con el código de voz que recibiste por correo.",
     "revoke_owner_btn": "Revocar este dispositivo",
-    "cancel_link": "Cancelar"
+    "cancel_link": "Cancelar",
+    "speed_title": "Velocidad de la voz",
+    "speed_intro": "La velocidad de lectura de los audiolibros creados con esta voz, en todos los dispositivos que la usan. Quien genera un libro puede aún acelerarla o ralentizarla a partir de aquí.",
+    "speed_btn": "Guardar",
+    "speed_saved": "guardada"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -207,7 +223,11 @@
     "revoke_owner_title": "Das Gerät widerrufen, auf dem die Stimme erstellt wurde?",
     "revoke_owner_body": "Auf diesem Gerät wurde die Stimme erstellt. Nach dem Widerruf bleibt die Stimme auf unserem Server und auf den anderen Geräten, lässt sich aber nur noch über den Verwaltungslink in deiner E-Mail umbenennen oder löschen. Du kannst das Gerät jederzeit mit dem Stimmcode aus der E-Mail wieder hinzufügen.",
     "revoke_owner_btn": "Dieses Gerät widerrufen",
-    "cancel_link": "Abbrechen"
+    "cancel_link": "Abbrechen",
+    "speed_title": "Sprechtempo der Stimme",
+    "speed_intro": "Das Lesetempo der Hörbücher, die mit dieser Stimme erstellt werden, auf allen Geräten, die sie nutzen. Wer ein Buch erzeugt, kann es von hier aus noch schneller oder langsamer machen.",
+    "speed_btn": "Speichern",
+    "speed_saved": "gespeichert"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -249,7 +269,11 @@
     "revoke_owner_title": "要撤销创建该声音的设备吗？",
     "revoke_owner_body": "这是创建该声音的设备。撤销后，声音仍保留在我们的服务器和其他设备上，但只能通过你邮件中的管理链接来重命名或删除。你可以随时使用邮件中收到的声音代码重新添加这台设备。",
     "revoke_owner_btn": "撤销此设备",
-    "cancel_link": "取消"
+    "cancel_link": "取消",
+    "speed_title": "声音语速",
+    "speed_intro": "使用此声音制作的有声书的朗读速度，适用于所有使用该声音的设备。生成书籍的人仍可在此基础上加快或放慢。",
+    "speed_btn": "保存",
+    "speed_saved": "已保存"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -291,6 +315,10 @@
     "revoke_owner_title": "आवाज़ बनाने वाले डिवाइस की अनुमति हटाएँ?",
     "revoke_owner_body": "इसी डिवाइस पर आवाज़ बनाई गई थी। अनुमति हटाने के बाद आवाज़ हमारे सर्वर और बाकी डिवाइसों पर बनी रहेगी, लेकिन उसका नाम बदलना या उसे हटाना सिर्फ़ आपके ईमेल के प्रबंधन लिंक से हो पाएगा। ईमेल में मिले वॉइस कोड से आप इस डिवाइस को कभी भी फिर से जोड़ सकते हैं।",
     "revoke_owner_btn": "इस डिवाइस की अनुमति हटाएँ",
-    "cancel_link": "रद्द करें"
+    "cancel_link": "रद्द करें",
+    "speed_title": "आवाज़ की गति",
+    "speed_intro": "इस आवाज़ से बनी ऑडियोबुक की पढ़ने की गति, उन सभी डिवाइस पर जो इसका उपयोग करते हैं। किताब बनाने वाला व्यक्ति इसे यहाँ से और तेज़ या धीमा कर सकता है।",
+    "speed_btn": "सहेजें",
+    "speed_saved": "सहेजा गया"
   }
 }

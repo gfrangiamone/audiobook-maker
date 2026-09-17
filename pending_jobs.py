@@ -38,6 +38,16 @@ def register(job_id: str, phase: str, descriptor: dict) -> None:
         s.add(rec)
 
 
+def patch(job_id: str, fields: dict) -> bool:
+    """Aggiunge campi a un descrittore esistente, senza toccare attempts/state.
+    False se il job non ha descrittore (non batch): nulla da persistere."""
+    s = _require()
+    if s.get(job_id) is None:
+        return False
+    s.update(job_id, dict(fields))
+    return True
+
+
 def mark_running_bump(job_id: str) -> int:
     """Incrementa attempts e marca running. Persiste PRIMA del run (crash-safe).
     Ritorna il nuovo valore di attempts."""

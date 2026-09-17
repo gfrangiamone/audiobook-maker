@@ -59,3 +59,14 @@ def test_register_same_id_upserts(tmp_path):
     orph = pending_jobs.orphans()
     assert len(orph) == 1
     assert orph[0]["voice"] == "v2"
+
+
+def test_patch_solo_su_descrittore_esistente(tmp_path):
+    _fresh(tmp_path)
+    assert pending_jobs.patch("J9", {"voxcpm_voice_pace": 1.1}) is False
+    assert pending_jobs.orphans() == []
+    pending_jobs.register("J1", "generate", {"voice": "v"})
+    pending_jobs.mark_running_bump("J1")
+    assert pending_jobs.patch("J1", {"voxcpm_voice_pace": 1.1}) is True
+    rec = pending_jobs.orphans()[0]
+    assert rec["voxcpm_voice_pace"] == 1.1 and rec["attempts"] == 1 and rec["state"] == "running"

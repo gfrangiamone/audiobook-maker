@@ -3882,7 +3882,21 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
 
     # Il passo da chiedere al worker: quello della clip comune della voce,
     # per il cursore dell'utente (spec 2026-09-14). Una volta per libro.
-    passo = voxcpm_tts.speed_effettiva(voxcpm_tts.passo_di_voce(voice), rate)
+    # Il passo della voce si congela sul job al primo avvio: per le voci
+    # campionate il proprietario puo' cambiarlo in qualunque momento, e un
+    # recovery che riusa i capitoli gia' fatti non deve mescolare due
+    # velocita' nello stesso libro.
+    passo_voce = (job or {}).get("voxcpm_voice_pace")
+    if passo_voce is None:
+        passo_voce = voxcpm_tts.passo_di_voce(voice)
+        if job is not None:
+            job["voxcpm_voice_pace"] = passo_voce
+            try:
+                pending_jobs.patch(job_id, {"voxcpm_voice_pace": passo_voce})
+            except Exception as _e:
+                print(f"[{job_id}] pending_jobs.patch (voxcpm_voice_pace) failed (non-fatal): {_e}",
+                      flush=True)
+    passo = voxcpm_tts.speed_effettiva(passo_voce, rate)
 
     def _uno(gruppo):
         ci, indici = gruppo

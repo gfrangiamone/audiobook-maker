@@ -901,13 +901,29 @@ def _lingua_voce(voice_id):
     return voxcpm_catalog.parse_voice_id(voice_id)["locale"].split("-")[0].lower()
 
 
+# Passo base delle voci campionate, prima della velocita' del proprietario.
+# Le voci di catalogo hanno il loro in `_velocita.csv` (default 0,93).
+PASSO_VOCE_CAMPIONATA = 1.0
+
+
 def passo_di_voce(voice_id):
     """Il passo a cui e' stirata la clip comune della voce, dal catalogo.
 
-    Una voce che non e' di catalogo (clonata, o sparita da una rigenerazione)
-    legge al default: e' lo stesso passo con cui escono le clip che non hanno
-    una riga in `_velocita.csv`.
+    Una voce campionata (`voxcpm:mine:`) legge a `PASSO_VOCE_CAMPIONATA` per la
+    velocita' scelta dal proprietario (`voice_clone.speed_of`): il campione e'
+    la sua voce vera, non una clip stirata a 0,93.
+
+    Una voce di catalogo sparita da una rigenerazione legge al default: e' lo
+    stesso passo con cui escono le clip che non hanno una riga in
+    `_velocita.csv`.
     """
+    if voice_clone_token(voice_id) is not None:
+        import voice_clone
+        try:
+            k = voice_clone.speed_for_voice_id(voice_id)
+        except Exception:
+            k = voice_clone.SPEED_DEFAULT
+        return round(PASSO_VOCE_CAMPIONATA * float(k), 3)
     try:
         return float(voxcpm_catalog.parse_voice_id(voice_id)["speed"])
     except ValueError:

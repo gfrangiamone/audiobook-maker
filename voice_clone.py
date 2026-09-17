@@ -706,6 +706,75 @@ def rename(clone_id, cid, name):
         return store().update(rec["id"], {"name": normalize_name(name)})
 
 
+# ---------------------------------------------------------------------------
+# velocita' della voce (decisa dal proprietario, vale per tutti i dispositivi)
+# ---------------------------------------------------------------------------
+# Moltiplicatore sulla stessa scala del cursore del pannello: 1,10 = «+10%».
+# Il cursore dell'utente finale si applica sopra (voxcpm_tts.speed_effettiva).
+SPEED_MIN = 0.70
+SPEED_MAX = 1.30
+SPEED_STEP = 0.05
+SPEED_DEFAULT = 1.0
+
+
+def speed_choices():
+    n = int(round((SPEED_MAX - SPEED_MIN) / SPEED_STEP))
+    return [round(SPEED_MIN + i * SPEED_STEP, 2) for i in range(n + 1)]
+
+
+def normalize_speed(value):
+    """Il valore sul gradino piu' vicino, o None se non e' un numero
+    nell'intervallo. Accetta la virgola decimale."""
+    try:
+        v = float(str(value).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    if v != v or v < SPEED_MIN - 1e-9 or v > SPEED_MAX + 1e-9:
+        return None
+    return round(round((v - SPEED_MIN) / SPEED_STEP) * SPEED_STEP + SPEED_MIN, 2)
+
+
+def speed_of(rec):
+    """La velocita' della voce: quella salvata o il default. Un valore sporco
+    nel registro non deve arrivare al worker."""
+    s = normalize_speed((rec or {}).get("speed", SPEED_DEFAULT))
+    return SPEED_DEFAULT if s is None else s
+
+
+def speed_for_voice_id(voice_id):
+    """Velocita' della voce campionata dietro `voice_id`; il default se la voce
+    non c'e' (la generazione fallira' altrove, con l'errore giusto)."""
+    tok = token_of(voice_id)
+    rec = by_token(tok) if tok else None
+    return speed_of(rec)
+
+
+def _set_speed(rec, value):
+    s = normalize_speed(value)
+    if s is None:
+        raise ValueError("speed fuori intervallo")
+    return store().update(rec["id"], {"speed": s})
+
+
+def set_speed(clone_id, cid, value):
+    """Dal pannello «Le tue voci»: solo il dispositivo creatore, solo su una
+    voce viva. None se non e' possibile; ValueError su valore non valido."""
+    with _lock:
+        rec = get(clone_id)
+        if rec is None or rec.get("state") in _TERMINAL or not is_owner(rec, cid):
+            return None
+        return _set_speed(rec, value)
+
+
+def set_speed_by_manage(manage_token, value):
+    """Dal link di gestione dell'email. None se il link non apre una voce viva."""
+    with _lock:
+        rec = by_manage_token(manage_token)
+        if rec is None or rec.get("state") in _TERMINAL:
+            return None
+        return _set_speed(rec, value)
+
+
 def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
                  original_path, original_ext, metrics, ui_lang, name="", device_name="", now=None):
     """Il campione approvato dal gate diventa una voce in stato `sample_ok`.
@@ -979,6 +1048,7 @@ def mine(cid, now=None):
         pub = public_view(rec)
         pub["owner"] = is_owner(rec, cid)
         pub["pending"] = rec.get("state") != "ready"
+        pub["speed"] = speed_of(rec)
         # Il nome con cui questo dispositivo e' gia' registrato: il wizard lo
         # ripropone alla voce successiva invece di chiederne uno nuovo.
         pub["device_name"] = (device_of(rec, cid) or {}).get("name") or ""

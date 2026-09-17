@@ -356,3 +356,52 @@ def test_storage_download_file_usa_il_client(monkeypatch, tmp_path):
             raise ClientError({"Error": {"Code": "404"}}, "GetObject")
     monkeypatch.setattr(storage_backend, "_get_client", lambda: _Manca())
     assert storage_backend.download_file("voices/t/no.wav", str(tmp_path / "no.wav")) is False
+
+
+# ---------------------------------------------------------------------------
+# velocita' della voce campionata
+# ---------------------------------------------------------------------------
+def test_normalize_speed_gradini_e_intervallo():
+    assert vc.normalize_speed("1,1") == 1.1
+    assert vc.normalize_speed(1.07) == 1.05
+    assert vc.normalize_speed("0.70") == 0.7 and vc.normalize_speed(1.3) == 1.3
+    for cattivo in (0.69, 1.31, "abc", None, float("nan")):
+        assert vc.normalize_speed(cattivo) is None
+    scelte = vc.speed_choices()
+    assert scelte[0] == 0.7 and scelte[-1] == 1.3 and 1.0 in scelte and len(scelte) == 13
+
+
+def test_set_speed_solo_proprietario_e_voce_viva(tmp_path):
+    rec = bozza(tmp_path)
+    assert vc.speed_of(rec) == vc.SPEED_DEFAULT == 1.0
+    assert vc.set_speed(rec["id"], "cid-altro", 1.1) is None
+    assert vc.speed_of(vc.set_speed(rec["id"], "cid-uno", "1,1")) == 1.1
+    with pytest.raises(ValueError):
+        vc.set_speed(rec["id"], "cid-uno", 2)
+    assert vc.speed_for_voice_id("voxcpm:mine:" + rec["token"]) == 1.1
+    assert vc.speed_for_voice_id("voxcpm:mine:" + "0" * 32) == 1.0
+    assert vc.set_speed("vc_inesistente", "cid-uno", 1.1) is None
+    # un valore sporco nel registro non arriva al worker
+    vc.store().update(rec["id"], {"speed": 9})
+    assert vc.speed_of(vc.get(rec["id"])) == 1.0
+
+
+def test_set_speed_dal_link_di_gestione(tmp_path):
+    rec = bozza(tmp_path)
+    tok = vc.get(rec["id"]).get("manage_token")
+    if not tok:
+        tok = "m" * 32
+        vc.store().update(rec["id"], {"manage_token": tok})
+    assert vc.speed_of(vc.set_speed_by_manage(tok, 0.9)) == 0.9
+    assert vc.set_speed_by_manage("sconosciuto", 0.9) is None
+
+
+def test_passo_di_voce_campionata_segue_la_velocita(tmp_path):
+    import voxcpm_tts
+    rec = bozza(tmp_path)
+    vid = "voxcpm:mine:" + rec["token"]
+    assert voxcpm_tts.passo_di_voce(vid) == 1.0
+    vc.set_speed(rec["id"], "cid-uno", 1.1)
+    assert voxcpm_tts.passo_di_voce(vid) == 1.1
+    # il cursore dell'utente si applica sopra: +10% su 1,1
+    assert voxcpm_tts.speed_effettiva(voxcpm_tts.passo_di_voce(vid), "+10%") == 1.21

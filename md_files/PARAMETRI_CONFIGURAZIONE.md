@@ -458,6 +458,8 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 - `APPROVAL_REMINDER_SEC = (24 * 3600, 7 * 86400)` (24 ore e 7 giorni) — istanti dei promemoria da `demos_ready`.
 - `APPROVAL_REFUND_SEC = 30 * 86400` (30 giorni) — rimborso automatico se la voce resta in `demos_ready` senza approvazione.
 - `RECORD_PURGE_SEC = 90 * 86400` (90 giorni) — purga del record dopo l'ingresso in uno stato terminale (`refunded`/`expired`/`deleted`).
+- `SPEED_MIN = 0.70`, `SPEED_MAX = 1.30`, `SPEED_STEP = 0.05`, `SPEED_DEFAULT = 1.0` (`voice_clone.py`) — velocita' della voce campionata impostata dal proprietario (pannello «Le tue voci» sul dispositivo creatore, `POST /api/voice_clone/<id>/speed`, oppure pagina del link email `/vc/<manage_token>/devices` → `POST /vc/<token>/speed`). E' un moltiplicatore salvato nel record (`speed`) e vale per tutti i dispositivi che condividono la voce; valori fuori scala o sporchi ripiegano sul default. Il cursore dell'utente in generazione si applica sopra: passo al worker = `PASSO_VOCE_CAMPIONATA × speed × (1 + cursore)`, clamp 0,5–2,0.
+- `PASSO_VOCE_CAMPIONATA = 1.0` (`voxcpm_tts.py`) — base del passo delle voci `voxcpm:mine:` (passo nativo del worker, lo stesso delle prove). Fino al 17/09/2026 le voci campionate prendevano il default del catalogo `0.93`: le voci esistenti ora suonano ~7,5% piu' veloci a parita' di impostazioni. Il passo della voce si **congela sul job** al primo avvio (`job["voxcpm_voice_pace"]`, persistito nel descrittore `pending_jobs` e riletto dal recovery): un cambio di velocita' a libro in corso non mescola due passi nello stesso audiolibro.
 - `CONFIRM_TTL_SEC = 900` (15 minuti) — validita' del codice di conferma del claim.
 - `CONFIRM_MAX_TRIES = 5` — tentativi di conferma prima del lock.
 - `CONFIRM_LOCK_SEC = 900` (15 minuti) — durata del lock post-esaurimento tentativi.
@@ -1263,5 +1265,5 @@ il giudice vedeva solo volume e conteggio cid.
 | Push FCM app mobile (`push_service.py`) | 5 |
 | Telemetria di carico (`load_metrics.py`) | 4 |
 | Quota voci standard / riuso / power user | 3 |
-| Voci campionate (`voice_clone.py`, `voice_clone_audio.py`) | 8 |
-| **Totale** | **127** |
+| Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
+| **Totale** | **132** |

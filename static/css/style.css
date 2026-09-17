@@ -1383,6 +1383,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* Player del campione con, a destra, l'icona che rimanda l'email col codice. */
 .vc-sample-row{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 0}
 .vc-sample-row audio{flex:1 1 auto;min-width:0}
+.vc-speed-row{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;margin:.5rem 0 0}
+.vc-speed-row p{flex-basis:100%;margin:0}
 .vc-icon-btn{flex:0 0 auto;width:36px;height:36px;display:inline-flex;align-items:center;
              justify-content:center;padding:0;background:var(--srf2);border:1px solid var(--brd);
              border-radius:var(--rs);color:var(--ac);cursor:pointer;

@@ -1349,6 +1349,9 @@ def _build_job_descriptor(job, phase):
         "platform": job.get("platform", ""),
         "gemini_accent": job.get("gemini_accent"),
         "speechify_emotion": job.get("speechify_emotion", ""),
+        # Passo VoxCPM congelato al primo avvio (velocita' della voce
+        # campionata): il recovery non deve rileggere quella corrente.
+        "voxcpm_voice_pace": job.get("voxcpm_voice_pace"),
         "original_filename": fname,
         "client_id": job.get("client_id", ""),
         "client_ip": job.get("client_ip", ""),
@@ -1642,6 +1645,7 @@ def _reenqueue_orphan(job_id, rec):
         "gemini_accent": rec.get("gemini_accent"),
         # Senza questa riga un job Speechify recuperato ripartiva in tono neutro.
         "speechify_emotion": rec.get("speechify_emotion", ""),
+        "voxcpm_voice_pace": rec.get("voxcpm_voice_pace"),
         "email_registered": True,
         "client_id": rec.get("client_id", ""),
         # Slot imputato al client originale: il recovery NON e' soggetto al
@@ -9862,6 +9866,28 @@ def api_vc_rename(clone_id):
     return jsonify({"ok": True, "name": out.get("name") or ""})
 
 
+@app.route("/api/voice_clone/<clone_id>/speed", methods=["POST"])
+def api_vc_speed(clone_id):
+    """Velocita' della voce, per tutti i dispositivi che la usano. Solo dal
+    dispositivo creatore; l'altra via e' il link di gestione dell'email."""
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    data = request.get_json(silent=True) or {}
+    try:
+        out = voice_clone.set_speed(clone_id, _get_client_id(), data.get("speed"))
+    except ValueError:
+        return _vc_err("bad_speed",
+                       f"Speed must be between {voice_clone.SPEED_MIN} and {voice_clone.SPEED_MAX}", 400)
+    if out is None:
+        return _vc_err("bad_state", "Only the owner device can change the speed of a live voice", 409)
+    _vc_log(out, "VOICE_CLONE_SPEED", str(voice_clone.speed_of(out)))
+    return jsonify({"ok": True, "speed": voice_clone.speed_of(out)})
+
+
 def _vc_is_owner(rec, cid):
     return voice_clone.is_owner(rec, cid)
 
@@ -10009,6 +10035,10 @@ _VC_PAGES_FALLBACK = {
     "device_name_lbl": "Name of this device",
     "device_name_hint": "It lets you recognise this device later in the list of authorised devices.",
     "this_device": "this device", "device_unnamed": "Unnamed device", "rename_btn": "Rename",
+    "speed_title": "Voice speed",
+    "speed_intro": "The reading speed of audiobooks made with this voice, on every device that uses it. "
+                   "Whoever generates a book can still make it faster or slower from there.",
+    "speed_btn": "Save", "speed_saved": "saved",
     "revoke_owner_title": "Revoke the device that created the voice?",
     "revoke_owner_body": "This is the device the voice was created on. Once revoked, the voice stays on "
                          "our server and on the other devices, but it can be renamed or deleted only from "
@@ -10222,11 +10252,77 @@ def vc_devices(token):
                   f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
                   f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
                   f"<button>{html_mod.escape(t['revoke_btn'])}</button></form></li>")
-    body = (f"<p>{html_mod.escape(t['devices_intro'])}</p>"
+    body = (_vc_speed_section(rec, tok, coda, t) +
+            f"<p>{html_mod.escape(t['devices_intro'])}</p>"
             f"<ul class=\"devs\">{righe}</ul>"
             f"<p><a href=\"/vc/{tok}/delete?lang={html_mod.escape(lang)}\">"
             f"{html_mod.escape(t['delete_link'])}</a></p>")
     return _vc_page(t["devices_title"], body, lang=lang)
+
+
+def _vc_speed_section(rec, tok, coda, t):
+    """Velocita' della voce sulla pagina di gestione: un menu, un «Salva» e
+    la prova della voce riprodotta alla velocita' scelta (playbackRate), cosi'
+    il proprietario la sente prima di salvare senza rigenerare nulla. Le prove
+    escono dal worker al passo nativo, lo stesso della base delle voci
+    campionate: il moltiplicatore del menu e' esattamente quello da applicare."""
+    attuale = voice_clone.speed_of(rec)
+    opzioni = "".join(
+        f"<option value=\"{v:.2f}\"{' selected' if abs(v - attuale) < 1e-9 else ''}>"
+        f"{v:.2f}×</option>" for v in voice_clone.speed_choices())
+    salvata = (f" <span class=\"me\">{html_mod.escape(t['speed_saved'])}</span>"
+               if request.args.get("saved") == "speed" else "")
+    prova = ""
+    if rec.get("state") == "ready":
+        prova = (f"<div><audio id=\"vcSpeedDemo\" controls preload=\"none\" "
+                 f"src=\"/vc/{tok}/demo.wav\"></audio></div>"
+                 "<script>(function(){var s=document.getElementById('vcSpeed'),"
+                 "a=document.getElementById('vcSpeedDemo');if(!s||!a)return;"
+                 "var f=function(){var v=parseFloat(s.value)||1;a.defaultPlaybackRate=v;a.playbackRate=v;};"
+                 "s.addEventListener('change',f);a.addEventListener('play',f);f();})();</script>")
+    return (f"<h2>{html_mod.escape(t['speed_title'])}</h2>"
+            f"<p>{html_mod.escape(t['speed_intro'])}</p>"
+            f"<form method=\"post\" action=\"/vc/{tok}/speed{coda}\">"
+            f"<select id=\"vcSpeed\" name=\"speed\" aria-label=\"{html_mod.escape(t['speed_title'])}\">"
+            f"{opzioni}</select> <button>{html_mod.escape(t['speed_btn'])}</button>{salvata}</form>"
+            f"{prova}")
+
+
+@app.route("/vc/<token>/speed", methods=["POST"])
+def vc_speed(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        return _vc_manage_gone(token)
+    try:
+        out = voice_clone.set_speed_by_manage(token, request.form.get("speed"))
+    except ValueError:
+        out = None
+    coda = _vc_lang_tail()
+    if out is not None:
+        _vc_log(out, "VOICE_CLONE_SPEED", str(voice_clone.speed_of(out)))
+        coda = (coda + "&" if coda else "?") + "saved=speed"
+    return _apply_no_cache(redirect(f"/vc/{token}/devices{coda}", code=302))
+
+
+@app.route("/vc/<token>/demo.wav")
+def vc_speed_demo(token):
+    """La prova comune della voce per la pagina di gestione: chi apre il link
+    dell'email puo' non essere un dispositivo autorizzato, quindi l'accesso
+    passa dal token di gestione e non dal cookie."""
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None or rec.get("state") != "ready":
+        abort(404)
+    try:
+        path = voice_clone._ensure_local(rec, "demo_common.wav")
+    except Exception:
+        path = None
+    if not path or not os.path.exists(path):
+        abort(404)
+    return _apply_no_cache(send_file(path, mimetype="audio/wav", conditional=True))
 
 
 @app.route("/vc/<token>/devices/rename", methods=["POST"])

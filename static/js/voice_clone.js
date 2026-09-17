@@ -1139,6 +1139,7 @@
         }
         li.appendChild(row);
       }
+      if (m.state === 'ready') li.appendChild(vcSpeedRow(m));
       var act = document.createElement('div'); act.className = 'vc-actions';
       var mk = function (key, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-outline btn-sm'; b.textContent = tt(key); b.onclick = fn; act.appendChild(b); return b; };
       if (m.pending) mk('vc_resume_btn', function () { vcResume(m.id); });
@@ -1146,6 +1147,51 @@
       if (act.childNodes.length) li.appendChild(act);
       ul.appendChild(li);
     });
+  }
+
+  /* Velocita' della voce: la decide il proprietario e vale per tutti i
+     dispositivi; il cursore di chi genera il libro si applica sopra. Gli
+     altri dispositivi la vedono soltanto. */
+  var VC_SPEED_MIN = 0.70, VC_SPEED_MAX = 1.30, VC_SPEED_STEP = 0.05;
+
+  function vcSpeedFmt(v) { return Number(v).toFixed(2) + '×'; }
+
+  function vcSpeedRow(m) {
+    var cur = Number(m.speed) || 1;
+    var box = document.createElement('div'); box.className = 'vc-speed-row';
+    var lab = document.createElement('span'); lab.className = 'vc-small';
+    lab.textContent = tt('vc_speed') + ': ';
+    box.appendChild(lab);
+    if (!m.owner) {
+      var val = document.createElement('b'); val.textContent = vcSpeedFmt(cur);
+      box.appendChild(val);
+      return box;
+    }
+    var sel = document.createElement('select'); sel.setAttribute('aria-label', tt('vc_speed'));
+    var n = Math.round((VC_SPEED_MAX - VC_SPEED_MIN) / VC_SPEED_STEP);
+    for (var i = 0; i <= n; i++) {
+      var v = Math.round((VC_SPEED_MIN + i * VC_SPEED_STEP) * 100) / 100;
+      var o = document.createElement('option'); o.value = v.toFixed(2); o.textContent = vcSpeedFmt(v);
+      if (Math.abs(v - cur) < 1e-9) o.selected = true;
+      sel.appendChild(o);
+    }
+    var ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn btn-outline btn-sm';
+    ok.textContent = tt('vc_save');
+    ok.onclick = function () {
+      if (S.busy) return;
+      vcErr('');
+      vcSetBusy(true);
+      vcPost('/api/voice_clone/' + encodeURIComponent(m.id) + '/speed', {speed: sel.value}).then(function (r) {
+        vcSetBusy(false);
+        if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+        m.speed = r.data.speed;
+        vcErr(tt('vc_speed_saved'), true);
+      }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
+    };
+    box.appendChild(sel); box.appendChild(ok);
+    var hint = document.createElement('p'); hint.className = 'vc-small'; hint.textContent = tt('vc_speed_hint');
+    box.appendChild(hint);
+    return box;
   }
 
   /* «Rimuovi da questo dispositivo» chiede conferma sul posto: per riavere

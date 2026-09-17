@@ -847,3 +847,16 @@ def test_capitolo_fallito_con_credito_non_abbassa_la_barra(tmp_path, monkeypatch
     # conta, e che il difetto viola, e' che non arretra mai.
     valori = [v for v, _ in job.storia]
     assert valori == sorted(valori)
+
+
+def test_il_passo_della_voce_si_congela_sul_job(tmp_path, sintesi_finta, monkeypatch):
+    # Primo avvio: il passo del catalogo finisce sul job. Un recovery che
+    # riparte con un passo gia' congelato non rilegge quello corrente.
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job)
+    assert job["voxcpm_voice_pace"] == 0.88
+    sintesi_finta.chiamate.clear()
+    job = {"voxcpm_voice_pace": 1.1}
+    monkeypatch.setattr(voxcpm_tts, "passo_di_voce", lambda v: pytest.fail("non va riletto"))
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+10%", tmp_path, "job-2", set(), job=job)
+    assert {c["speed"] for c in sintesi_finta.chiamate} == {1.21}

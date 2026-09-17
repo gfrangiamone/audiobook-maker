@@ -146,8 +146,9 @@ def test_passo_di_voce_dal_catalogo(monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", fixture)
     voxcpm_catalog.invalidate_cache()
     assert voxcpm_tts.passo_di_voce("voxcpm:v2:it-IT/Stefano") == 0.88
-    # Una voce clonata (`mine`) o sparita non e' di catalogo: il default.
-    assert voxcpm_tts.passo_di_voce("voxcpm:mine:abc123") == 0.93
+    # Una voce clonata (`mine`) sconosciuta prende la base delle campionate
+    # (1,0, passo nativo); una di catalogo sparita il default del catalogo.
+    assert voxcpm_tts.passo_di_voce("voxcpm:mine:abc123") == 1.0
     assert voxcpm_tts.passo_di_voce("voxcpm:v2:it-IT/Nessuno") == 0.93
 
 

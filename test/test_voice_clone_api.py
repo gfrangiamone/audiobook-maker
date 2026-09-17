@@ -995,3 +995,60 @@ def test_audit_admin_ritenta_la_traduzione_mancante(client, tmp_path, monkeypatc
     riga = next(x for x in r.get_json()["records"] if x["id"] == rec["id"])
     assert riga["reject_note_original"] == "La voce è troppo robotica"
     assert vc.get(rec["id"])["reject_note"]["it"] == "La voce è troppo robotica"
+
+
+# ---------------------------------------------------------------------------
+# velocita' della voce: pannello e pagina di gestione
+# ---------------------------------------------------------------------------
+def _pronta(tmp_path):
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready", "ready"):
+        vc.transition(rec["id"], s)
+    return vc.get(rec["id"])
+
+
+def test_api_velocita_solo_proprietario(client, tmp_path):
+    rec = _pronta(tmp_path)
+    r = client.post(f"/api/voice_clone/{rec['id']}/speed", json={"speed": "1,1"})
+    assert r.status_code == 200 and r.get_json() == {"ok": True, "speed": 1.1}
+    r = client.post(f"/api/voice_clone/{rec['id']}/speed", json={"speed": 3})
+    assert r.status_code == 400 and r.get_json()["error_code"] == "bad_speed"
+    assert client.get("/api/voice_clone/mine").get_json()["voices"][0]["speed"] == 1.1
+    vc.store().update(rec["id"], {"devices": rec["devices"] + [{"cid": "cid-due", "via": "confirm"}]})
+    _cid(client, "cid-due")
+    r = client.post(f"/api/voice_clone/{rec['id']}/speed", json={"speed": 0.9})
+    assert r.status_code == 409 and r.get_json()["error_code"] == "bad_state"
+    assert vc.speed_of(vc.get(rec["id"])) == 1.1
+
+
+def test_pagina_gestione_imposta_la_velocita(client, tmp_path):
+    rec = _pronta(tmp_path)
+    tok = rec["manage_token"]
+    corpo = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"}).data.decode("utf-8")
+    assert 'name="speed"' in corpo and '<option value="1.00" selected>' in corpo
+    assert f"/vc/{tok}/demo.wav" in corpo
+    r = client.post(f"/vc/{tok}/speed?lang=it", data={"speed": "1.10"})
+    assert r.status_code == 302 and r.headers["Location"].endswith("?lang=it&saved=speed")
+    assert vc.speed_of(vc.get(rec["id"])) == 1.1
+    corpo = client.get(r.headers["Location"]).data.decode("utf-8")
+    assert '<option value="1.10" selected>' in corpo
+    # valore fuori scala: nessun salvataggio, nessun badge
+    r = client.post(f"/vc/{tok}/speed", data={"speed": "5"})
+    assert r.status_code == 302 and "saved=speed" not in r.headers["Location"]
+    assert vc.speed_of(vc.get(rec["id"])) == 1.1
+
+
+def test_prova_della_pagina_di_gestione(client, tmp_path):
+    rec = _pronta(tmp_path)
+    tok = rec["manage_token"]
+    assert client.get(f"/vc/{tok}/demo.wav").status_code == 404      # file assente
+    with open(os.path.join(vc.voice_dir(rec["token"]), "demo_common.wav"), "wb") as f:
+        f.write(b"RIFF-prova")
+    client.set_cookie(audiobook_app._CLIENT_COOKIE_NAME, "cid-estraneo")
+    r = client.get(f"/vc/{tok}/demo.wav")
+    assert r.status_code == 200 and r.data == b"RIFF-prova"
+    assert client.get("/vc/nope/demo.wav").status_code == 404
+    vc.transition(rec["id"], "deleted")
+    assert client.get(f"/vc/{tok}/demo.wav").status_code == 404
+    assert client.post(f"/vc/{tok}/speed", data={"speed": "1.2"}).status_code in (302, 410)
+    assert vc.speed_of(vc.get(rec["id"])) == 1.0
