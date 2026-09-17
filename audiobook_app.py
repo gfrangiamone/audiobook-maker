@@ -9488,9 +9488,13 @@ def api_vc_claim():
     except ValueError:
         return _vc_err("code_locked", "Too many wrong codes, try later", 423)
     status, rec, confirm_code = esito
-    _vc_log(rec, "VOICE_CLONE_CLAIM", status)
+    _vc_log(rec, "VOICE_CLONE_CLAIM", status if confirm_code or status == "ok" else "pending_again")
     if status == "ok":
         return jsonify({"status": "ok", "voice": _vc_view(rec)})
+    if confirm_code is None:
+        # Richiesta gia' aperta da questo dispositivo: il proprietario ha gia'
+        # l'email con il codice, non gliene arriva un'altra.
+        return jsonify({"status": "pending", "already_sent": True})
     if rec.get("owner_email"):
         pc = rec.get("pending_confirm") or {}
         email_service.send_voice_clone_confirm(rec["owner_email"], rec.get("ui_lang") or "en",

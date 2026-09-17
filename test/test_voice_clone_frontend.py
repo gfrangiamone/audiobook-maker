@@ -971,6 +971,13 @@ def test_nome_del_dispositivo_chiesto_a_ogni_autorizzazione():
     claim = _estrai_funzione(VC, "vcClaim")
     assert "{voice_code: code, device_name: nome, identity: chi}" in claim
     assert "vc_err_device_name_required" in claim and "vc_err_identity_required" in claim
+    # partita la richiesta, «Aggiungi» sparisce e i campi si bloccano
+    assert 'id="vcClaimSend"' in HTML and HTML.index('id="vcClaimSend"') < HTML.index('id="vcClaimBtn"')
+    assert "vcClaimSent(true)" in claim
+    inviata = _estrai_funzione(VC, "vcClaimSent")
+    assert "$('vcClaimSend')" in inviata and "readOnly" in inviata and "$('vcConfirmRow')" in inviata
+    assert "confirm_wrong" in conf and "vcClaimSent(false)" in conf
+    assert "vcClaimSent(!!S.claimSent)" in _estrai_funzione(VC, "vcInitPanelMine")
     proposta = _estrai_funzione(VC, "vcDeviceNameDefault")
     assert "device_name" in proposta and "device_name_guess" in proposta
     assert "vcDeviceNameDefault()" in _estrai_funzione(VC, "vcEnsureChoices")

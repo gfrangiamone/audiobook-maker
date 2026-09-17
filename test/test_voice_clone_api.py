@@ -877,3 +877,14 @@ def test_revoca_del_creatore_chiede_conferma(client, tmp_path):
     got = vc.get(rec["id"])
     assert vc.device_of(got, "cid-uno") is None and got["state"] != "deleted"
     assert not vc.is_owner(got, "cid-uno")
+
+
+def test_claim_ripetuto_dallo_stesso_dispositivo_non_rimanda_email(client, tmp_path, ambiente):
+    rec = _paid(tmp_path)
+    _cid(client, "cid-due")
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
+    assert r.status_code == 200 and r.get_json()["status"] == "pending"
+    inviate = len(ambiente)
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
+    assert r.status_code == 200 and r.get_json() == {"status": "pending", "already_sent": True}
+    assert len(ambiente) == inviate

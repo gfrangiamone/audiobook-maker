@@ -400,8 +400,14 @@ hanno scritto nella richiesta (§6.4).
    della richiesta (quelli letti dal proprietario, non modificabili alla
    conferma), email di avviso al proprietario con il link di revoca.
 
-Un solo `pending_confirm` per voce alla volta: una nuova richiesta lo
-sostituisce e invalida il codice precedente. Il dono è esattamente questo
+Un solo `pending_confirm` per voce alla volta: una nuova richiesta da un
+altro dispositivo lo sostituisce e invalida il codice precedente. Lo stesso
+dispositivo, con la sua richiesta ancora valida, non ne apre un'altra: 200
+`status: pending, already_sent: true`, nessun codice nuovo e nessuna seconda
+email (niente richieste a raffica). Nella finestra, partita la richiesta,
+«Aggiungi» sparisce e codice, nome e presentazione restano bloccati; tornano
+modificabili quando la richiesta si chiude (conferma riuscita, codice
+scaduto o annullato, troppi tentativi), non per un codice sbagliato. Il dono è esattamente questo
 flusso, fatto dal dispositivo del ricevente con il proprietario che legge il
 codice dalla sua email.
 

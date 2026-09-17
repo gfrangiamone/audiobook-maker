@@ -1086,7 +1086,11 @@ def claim(voice_code, cid, now=None, device_name="", identity=""):
 
     Un dispositivo nuovo deve dire come si chiama e chi c'e' dietro
     (`ClaimIncomplete` altrimenti): il proprietario li legge nell'email prima
-    di dare il codice, e alla conferma il dispositivo entra con quel nome."""
+    di dare il codice, e alla conferma il dispositivo entra con quel nome.
+
+    Una richiesta ancora aperta dallo stesso dispositivo non ne genera
+    un'altra: torna `("pending", rec, None)`, senza codice nuovo e quindi
+    senza una seconda email al proprietario (niente richieste a raffica)."""
     t = _now(now)
     with _lock:
         rec = _by_code_alive(voice_code)
@@ -1095,6 +1099,9 @@ def claim(voice_code, cid, now=None, device_name="", identity=""):
         locks = rec.get("confirm_locks") or {}
         if locks.get(cid, 0) > t:
             raise ValueError("locked")
+        pc = rec.get("pending_confirm") or {}
+        if pc.get("cid") == cid and (pc.get("expires_at") or 0) >= t:
+            return "pending", rec, None
         nome = normalize_device_name(device_name)
         if not nome:
             raise ClaimIncomplete("device_name")

@@ -1106,6 +1106,19 @@
      evita solo un giro a vuoto, decide sempre il server. */
   var VC_IDENTITY_MIN = 10;
 
+  /* Richiesta partita: «Aggiungi» sparisce e i campi restano bloccati su
+     quello che il proprietario leggera' nell'email, cosi' non si possono
+     mandare richieste a raffica. Si riapre quando la richiesta e' chiusa
+     (conferma riuscita, codice scaduto o annullato, troppi tentativi). */
+  function vcClaimSent(on) {
+    S.claimSent = !!on;
+    ['vcClaimCode', 'vcClaimDevice', 'vcClaimIdentity'].forEach(function (id) {
+      var e = $(id); if (e) e.readOnly = !!on;
+    });
+    var send = $('vcClaimSend'); if (send) send.hidden = !!on;
+    var row = $('vcConfirmRow'); if (row) row.hidden = !on;
+  }
+
   function vcClaim() {
     if (S.busy) return;
     var code = ($('vcClaimCode').value || '').trim().toUpperCase();
@@ -1123,12 +1136,11 @@
     vcPost('/api/voice_clone/claim', {voice_code: code, device_name: nome, identity: chi}).then(function (r) {
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
-      var row = $('vcConfirmRow');
       if (r.data.status === 'pending') {
-        if (row) row.hidden = false;
+        vcClaimSent(true);
         $('vcConfirmCode').value = ''; $('vcConfirmCode').focus(); return;
       }
-      if (row) row.hidden = true;
+      vcClaimSent(false);
       vcOpen('mine'); vcReloadCombo();
     }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
@@ -1142,8 +1154,13 @@
     vcSetBusy(true);
     vcPost('/api/voice_clone/confirm', {voice_code: code, confirm_code: cc}).then(function (r) {
       vcSetBusy(false);
-      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
-      var row = $('vcConfirmRow'); if (row) row.hidden = true;
+      if (!r.ok) {
+        /* Solo il codice sbagliato lascia aperta la richiesta: scaduta,
+           annullata o bloccata va rifatta, e «Aggiungi» torna. */
+        if (r.data && r.data.error_code !== 'confirm_wrong') vcClaimSent(false);
+        vcErr(vcApiErrMsg(r.data)); return;
+      }
+      vcClaimSent(false);
       $('vcClaimCode').value = ''; $('vcConfirmCode').value = ''; $('vcClaimIdentity').value = '';
       vcOpen('mine'); vcReloadCombo();
     }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
@@ -1151,7 +1168,8 @@
 
   function vcInitPanelMine() {
     vcRenderMine();
-    var row = $('vcConfirmRow'); if (row) row.hidden = true;
+    /* Riaprendo la finestra la richiesta gia' partita resta in attesa del codice. */
+    vcClaimSent(!!S.claimSent);
     /* Se questo dispositivo ha gia' un nome (dato per un'altra voce) lo si
        ripropone; il nome indovinato dal browser no: chi chiede una voce
        altrui deve scegliere lui come farsi riconoscere dal proprietario. */

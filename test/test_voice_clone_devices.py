@@ -324,3 +324,20 @@ def test_mine_riporta_il_nome_con_cui_questo_dispositivo_e_registrato(tmp_path):
     rec = _pronta(tmp_path)
     vc.rename_device(rec["manage_token"], "cid-owner", "PC di casa")
     assert vc.mine("cid-owner")[0]["device_name"] == "PC di casa"
+
+
+def test_la_stessa_richiesta_ripetuta_non_genera_un_altro_codice(tmp_path):
+    rec = _pronta(tmp_path)
+    _, _, code = _claim(rec["voice_code"], "cid-nuovo", now=1000)
+    esito, _, again = _claim(rec["voice_code"], "cid-nuovo", now=1500, identity="Un'altra presentazione")
+    assert esito == "pending" and again is None
+    pc = vc.get(rec["id"])["pending_confirm"]
+    assert pc["expires_at"] == 1000 + vc.CONFIRM_TTL_SEC and pc["identity"] == "Sono Anna, tua sorella"
+    assert vc.confirm(rec["voice_code"], "cid-nuovo", code, now=1600) == "ok"
+
+
+def test_scaduta_la_richiesta_se_ne_puo_fare_una_nuova(tmp_path):
+    rec = _pronta(tmp_path)
+    _claim(rec["voice_code"], "cid-nuovo", now=1000)
+    esito, _, code = _claim(rec["voice_code"], "cid-nuovo", now=1001 + vc.CONFIRM_TTL_SEC)
+    assert esito == "pending" and code and len(code) == 6
