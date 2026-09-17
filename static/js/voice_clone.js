@@ -303,7 +303,18 @@
   }
   window.vcSyncButton = vcSyncButton;
 
+  /* Chiudere il modal o cambiare pannello ferma ogni riascolto in corso:
+     un campione che continua a suonare dietro il modal chiuso non ha piu'
+     un comando per fermarlo. */
+  function vcPauseAudio() {
+    var m = $('vcModal'); if (!m) return;
+    Array.prototype.forEach.call(m.querySelectorAll('audio'), function (a) {
+      try { a.pause(); } catch (e) {}
+    });
+  }
+
   function vcShow(n) {
+    vcPauseAudio();
     ['vcP1', 'vcPSetup', 'vcP2', 'vcP3', 'vcP4', 'vcPMine'].forEach(function (id) { var e = $(id); if (e) e.hidden = true; });
     var id = (n === 'mine' || n === 'setup') ? ('vcP' + n.charAt(0).toUpperCase() + n.slice(1)) : ('vcP' + n);
     var e = $(id); if (e) e.hidden = false;
@@ -315,6 +326,7 @@
   window.vcShow = vcShow;
 
   function vcClose() {
+    vcPauseAudio();
     var m = $('vcModal'); if (m) m.hidden = true;
     if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
     if (S.esTimer) { clearTimeout(S.esTimer); S.esTimer = null; }

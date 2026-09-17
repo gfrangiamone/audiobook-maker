@@ -1025,3 +1025,10 @@ def test_fumetto_promozionale_delle_voci_campionate():
     elig = VC[idx:VC.index("};", idx)]
     assert "vcVisible(S.cfg" in elig and "S.mine.length" in elig and "vcPromoDue(" in elig
     assert "maybeShowPremiumHint()" in _estrai_funzione(VC, "vcInit")
+
+
+def test_chiudere_il_modal_ferma_il_riascolto():
+    pausa = _estrai_funzione(VC, "vcPauseAudio")
+    assert "querySelectorAll('audio')" in pausa and ".pause()" in pausa
+    assert "vcPauseAudio()" in _estrai_funzione(VC, "vcClose")
+    assert "vcPauseAudio()" in _estrai_funzione(VC, "vcShow")
