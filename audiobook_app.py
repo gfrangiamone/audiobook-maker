@@ -6767,9 +6767,9 @@ def admin_forensic_zip(job_id):
 
 @app.route("/admin/audit-premium", methods=["GET"])
 def admin_audit_premium_page():
-    """Admin dashboard unificata dei servizi premium: 3 tab (Audit TTS,
-    Audit Traduzioni, Audit AI Optimization). Sostituisce /admin/audit-tts e
-    /admin/audit-translations."""
+    """Admin dashboard unificata dei servizi premium: 4 tab (Audit TTS,
+    Audit Traduzioni, Audit AI Optimization, Voci campionate). Sostituisce
+    /admin/audit-tts e /admin/audit-translations."""
     if not ADMIN_TOKEN:
         return ("Admin audit premium UI disabled.", 404,
                 {"Content-Type": "text/plain; charset=utf-8"})
@@ -6837,7 +6837,7 @@ def admin_audit_premium_page():
   </div>
   <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
     <h1 style="margin:0">Admin - Audit Premium Services <span id="periodLabel" style="font-size:.85rem;color:var(--muted);font-weight:500"></span></h1>
-    <div title="Somma dei margini netti dei tre servizi premium (Audit TTS + Traduzioni + AI Optimization), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
+    <div title="Somma dei margini netti dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
       <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Margine netto totale</div>
       <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
     </div>
@@ -6871,6 +6871,7 @@ def admin_audit_premium_page():
   <button type="button" class="tab-btn active" data-tab="tts">Audit TTS</button>
   <button type="button" class="tab-btn" data-tab="translations">Audit Traduzioni</button>
   <button type="button" class="tab-btn" data-tab="optimization">Audit AI Optimization</button>
+  <button type="button" class="tab-btn" data-tab="voices">Voci campionate</button>
 </div>
 
 <div class="tab-panel active" id="tab_tts">
@@ -7084,6 +7085,73 @@ def admin_audit_premium_page():
   </div>
 </div>
 
+<div class="tab-panel" id="tab_voices">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="vcaStateFilter">Stato</label>
+        <select id="vcaStateFilter">
+          <option value="paid">Pagate (tutte)</option>
+          <option value="ready">Attive</option>
+          <option value="demos">In demo</option>
+          <option value="refunded">Rimborsate</option>
+          <option value="expired">Scadute</option>
+          <option value="deleted">Cancellate</option>
+          <option value="drafts">Bozze (campioni non confermati)</option>
+          <option value="all">Tutte, bozze comprese</option>
+        </select>
+      </div>
+      <div>
+        <label for="vcaLangFilter">Lingua</label>
+        <select id="vcaLangFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="vcaDateFrom" title="Data di pagamento (per le bozze: data di creazione)">Pagata dal</label>
+        <input type="date" id="vcaDateFrom">
+      </div>
+      <div>
+        <label for="vcaDateTo">Al</label>
+        <input type="date" id="vcaDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="vcaRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6">
+      <div class="agg-box"><div class="agg-label">Voci</div><div class="agg-value" id="vcaAggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Incassato meno i rimborsi (voucher o riaccredito).">Ricavi</div><div class="agg-value" id="vcaAggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="GPU delle demo (ritentativi compresi). La generazione dei libri e' nella tab Audit TTS.">Costo GPU demo</div><div class="agg-value" id="vcaAggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Ricavi - Costo GPU demo - fee PayPal (zero per voucher e voci gratuite).">Margine netto</div><div class="agg-value" id="vcaAggNet">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Rimborsi riconosciuti sulle voci del periodo.">Rimborsi</div><div class="agg-value" id="vcaAggRefund">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Libri completati con le voci del periodo.">Libri generati</div><div class="agg-value" id="vcaAggBooks">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Voci (ultime 200)</h2>
+    <table>
+      <thead><tr>
+        <th title="Data di pagamento (bozze: creazione)">Data</th><th>Voce</th><th>Lingua</th><th>Proprietario</th>
+        <th>Pagamento</th>
+        <th title="Incassato meno i rimborsi">Ricavo &euro;</th>
+        <th title="GPU delle demo">Costo GPU &euro;</th>
+        <th title="Margine = Ricavo - Costo GPU (lordo)">Margine &euro;</th>
+        <th title="Margine netto = Margine - fee PayPal">Margine netto &euro;</th>
+        <th title="Dispositivi che la usano (passa sopra per i nomi)">Dispositivi</th>
+        <th>Attivazione</th><th>Scadenza</th>
+        <th title="Libri completati con questa voce">Libri</th><th>Stato</th>
+      </tr></thead>
+      <tbody id="vcaRecordsBody">
+        <tr><td colspan="14" class="empty-msg">Premi "Aggiorna" per caricare le voci.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <script>
 (function(){
   const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
@@ -7164,15 +7232,15 @@ def admin_audit_premium_page():
     codes = codes.slice().sort((a,b) => langLabel(a).localeCompare(langLabel(b), "it"));
     fillSelect($("tts_auditLangFilter"), codes, langLabel);
   }
-  // ---- Totale margine netto: somma dei 3 servizi premium ----
+  // ---- Totale margine netto: somma dei servizi premium ----
   // Ogni tab, dopo il suo fetch, deposita qui il proprio net_margin_eur; il
   // box in alto a destra mostra la somma dei valori gia' caricati.
-  const netMarginByService = { tts: null, translations: null, optimization: null };
+  const netMarginByService = { tts: null, translations: null, optimization: null, voices: null };
   function updateTotalNetMargin(){
     const el = $("totalNetMarginValue");
     if (!el) return;
     const loaded = [netMarginByService.tts, netMarginByService.translations,
-                    netMarginByService.optimization].filter(v => v != null);
+                    netMarginByService.optimization, netMarginByService.voices].filter(v => v != null);
     if (!loaded.length) { el.textContent = "-"; el.style.color = ""; return; }
     const total = loaded.reduce((s, v) => s + Number(v || 0), 0);
     el.textContent = fmtEur(total);
@@ -7701,6 +7769,93 @@ def admin_audit_premium_page():
   }
   $("optRefreshBtn").addEventListener("click", optFetch);
 
+  // ===================== Tab Voci campionate =====================
+  const VCA_STATE_BADGE = {
+    "sample_ok":["badge-muted","bozza"],
+    "paid":["badge-live","pagata"],
+    "demos_generating":["badge-live","demo in corso"],
+    "demos_ready":["badge-info","demo pronte"],
+    "demo_failed":["badge-warn","demo fallite"],
+    "ready":["badge-ok","attiva"],
+    "refunded":["badge-err","rimborsata"],
+    "expired":["badge-muted","scaduta"],
+    "deleted":["badge-muted","cancellata"],
+  };
+  const VCA_METHOD = {"paypal":"PayPal","voucher":"Voucher","free":"Gratis"};
+  function vcaDate(ts){
+    if (!ts) return "-";
+    const d = new Date(Number(ts) * 1000);
+    if (isNaN(d.getTime())) return "-";
+    const p = (n) => String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  async function vcaFetch(){
+    const p = new URLSearchParams();
+    const st=$("vcaStateFilter").value, l=$("vcaLangFilter").value;
+    const df=$("vcaDateFrom").value, dt=$("vcaDateTo").value;
+    if (st) p.set("state",st);
+    if (l && l!=="all") p.set("language",l);
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","200");
+    const r = await fetch("/admin/api/voice_clone_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento audit voci: "+r.status); return; }
+    const d = await r.json();
+    fillSelect($("vcaLangFilter"), (d.languages||[]).slice()
+      .sort((a,b)=>langLabel(a).localeCompare(langLabel(b),"it")), langLabel);
+    const a = d.aggregates||{};
+    $("vcaAggCount").textContent = a.count ?? 0;
+    $("vcaAggRevenue").textContent = fmtEur(a.revenue_eur);
+    $("vcaAggCost").textContent = fmtEur(a.gpu_cost_eur);
+    $("vcaAggNet").textContent = fmtEur(a.net_margin_eur);
+    $("vcaAggRefund").textContent = fmtEur(a.refund_eur);
+    $("vcaAggBooks").textContent = a.books ?? 0;
+    netMarginByService.voices = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
+    vcaRender(d.records||[], d.count||0);
+  }
+  function vcaRender(recs, total){
+    const tb = $("vcaRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="14" class="empty-msg">Nessuna voce trovata.</td></tr>'; return; }
+    tb.innerHTML = recs.map(r=>{
+      const marg = Number(r.margin_eur||0), net = Number(r.net_margin_eur||0);
+      const fee = Number(r.paypal_fee_eur||0);
+      const dCls = marg>=0?"delta-positive":"delta-negative";
+      const nCls = net>=0?"delta-positive":"delta-negative";
+      const method = VCA_METHOD[r.payment_method] || (r.payment_method ? r.payment_method : "-");
+      let pay = r.payment_method ? `${esc(method)} ${fmtEur(r.charged_eur)}` : "-";
+      if (Number(r.refund_eur||0) > 0 || r.state === "refunded")
+        pay += `<br><small title="${esc(r.refund_reason)}">rimborso ${fmtEur(r.refund_eur)}</small>`;
+      const netTip = r.payment_method==="paypal" ? `PayPal fee: ${fmtEur(fee)}`
+        : (r.payment_method==="voucher" ? "Voucher: nessuna fee PayPal" : "Nessuna fee");
+      const costTip = `${Number(r.gpu_seconds||0).toFixed(1)} s GPU, ${r.gpu_jobs||0} job, ${Number(r.gpu_cost_usd||0).toFixed(4)} $`;
+      const names = (r.device_names||[]).filter(Boolean).join(", ");
+      const gender = r.gender==="f"?"F":(r.gender==="m"?"M":"");
+      let end = vcaDate(r.expires_at);
+      if (["refunded","expired","deleted"].includes(r.state))
+        end = `<span title="fine: ${esc(r.state)}${r.delete_reason?" ("+esc(r.delete_reason)+")":""}">${vcaDate(r.ended_at)}</span>`;
+      const [bcls,blab] = VCA_STATE_BADGE[r.state]||["badge-muted", r.state||"?"];
+      const fails = r.demo_fail_count ? ` title="demo fallite ${r.demo_fail_count} volte"` : "";
+      return `<tr>
+        <td>${vcaDate(r.ref_ts)}</td>
+        <td><b>${esc(r.name||"-")}</b><br><code>${esc(r.id)}</code></td>
+        <td>${esc(langLabel(r.lang))}<br><small>${esc(r.locale)} ${esc(gender)}${r.demo_extra_id?" · "+esc(r.demo_extra_id):""}</small></td>
+        <td>${esc(r.owner_email||"-")}</td>
+        <td>${pay}</td>
+        <td>${fmtEur(r.revenue_eur)}</td>
+        <td title="${esc(costTip)}">${fmtEur(r.gpu_cost_eur)}</td>
+        <td class="${dCls}">${fmtEur(marg)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
+        <td title="${esc(names)}">${Number(r.devices||0)}</td>
+        <td>${vcaDate(r.ready_at)}</td>
+        <td>${end}</td>
+        <td>${Number(r.books||0)}</td>
+        <td><span class="badge ${bcls}"${fails}>${esc(blab)}</span></td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 14);
+  }
+  $("vcaRefreshBtn").addEventListener("click", vcaFetch);
+
   // ===================== Tab switching =====================
   function showTab(name){
     document.querySelectorAll(".tab-btn").forEach(b => {
@@ -7716,6 +7871,10 @@ def admin_audit_premium_page():
     if (name === "optimization" && !window._optLoaded) {
       window._optLoaded = true;
       optLoadLanguages().finally(optFetch);
+    }
+    if (name === "voices" && !window._vcaLoaded) {
+      window._vcaLoaded = true;
+      vcaFetch();
     }
     if (location.hash !== "#tab-" + name) location.hash = "#tab-" + name;
   }
@@ -7738,10 +7897,10 @@ def admin_audit_premium_page():
     const firstDay = ym + "-01";
     const lastDay = (ym === cur)
       ? "" : ym + "-" + String(new Date(y, m, 0).getDate()).padStart(2,"0");
-    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom"].forEach(id => {
+    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom","vcaDateFrom"].forEach(id => {
       const el = $(id); if (el && !el.value) el.value = firstDay;
     });
-    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo"].forEach(id => {
+    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo","vcaDateTo"].forEach(id => {
       const el = $(id); if (el && !el.value) el.value = lastDay;
     });
     const per = $("periodLabel");
@@ -7763,11 +7922,14 @@ def admin_audit_premium_page():
   trLoadFilters().finally(trFetch);
   window._optLoaded = true;
   optLoadLanguages().finally(optFetch);
+  window._vcaLoaded = true;
+  vcaFetch();
 
   // Deep-link hash: apre direttamente la tab richiesta dai vecchi URL redirected.
   const _h = location.hash;
   if (_h === "#tab-translations") showTab("translations");
   else if (_h === "#tab-optimization") showTab("optimization");
+  else if (_h === "#tab-voices") showTab("voices");
 })();
 </script>
 </body></html>"""
@@ -8792,6 +8954,50 @@ def admin_api_optimization_cost_audit():
                     "date_from": date_from, "date_to": date_to},
     }
     return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
+@app.route("/admin/api/voice_clone_audit", methods=["GET"])
+def admin_api_voice_clone_audit():
+    """Una riga per voce campionata: incassi, costo GPU delle demo, margini,
+    dispositivi, attivazione/scadenza, libri generati. Admin-only.
+
+    `state`: paid (default: tutte le voci con un pagamento) | drafts | all |
+    ready | demos | refunded | expired | deleted. `date_from`/`date_to`
+    (YYYY-MM-DD, UTC) sulla data di pagamento; per le bozze la creazione.
+    Mai il token della voce: solo l'id `vc_...`.
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import voice_clone_audit
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+    language = request.args.get("language")
+    try:
+        recs = voice_clone._all()
+    except Exception as e:
+        return jsonify({"error": f"voice store unavailable: {e}"}), 503
+    try:
+        usd_eur = float(speechify_tts.usd_eur_rate())
+    except Exception:
+        usd_eur = 1.0
+    out = voice_clone_audit.report(
+        recs,
+        state=request.args.get("state") or "paid",
+        language=language if language and language != "all" else None,
+        date_from=request.args.get("date_from") or None,
+        date_to=request.args.get("date_to") or None,
+        usd_eur=usd_eur,
+        fee_fn=lambda rev, method: _compute_paypal_fee_eur(rev, method),
+        limit=limit, offset=offset,
+    )
+    return jsonify(out)
 
 
 @app.route("/admin/api/optimization_cost_audit/languages", methods=["GET"])

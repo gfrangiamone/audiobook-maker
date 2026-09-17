@@ -822,7 +822,10 @@ def transition(clone_id, new_state, patch=None, now=None):
 # vista pubblica
 # ---------------------------------------------------------------------------
 _SECRET_KEYS = ("token", "manage_token", "resume_token", "owner_email",
-                "pending_confirm", "pending_confirms", "confirm_locks")
+                "pending_confirm", "pending_confirms", "confirm_locks",
+                # conti interni dell'audit admin: i libri sono job di tutti i
+                # dispositivi della voce, il costo GPU non riguarda l'utente
+                "demo_cost", "books")
 
 
 def public_view(rec):
@@ -964,6 +967,51 @@ def mine(cid, now=None):
         out.append(pub)
     out.sort(key=lambda p: (p["pending"], -(p.get("created_at") or 0)))
     return out
+
+
+def clone_id_of(voice_id):
+    """L'id `vc_...` della voce dietro `voxcpm:mine:<token>`, o None. E' l'id
+    da scrivere nei log e negli audit: il token resta segreto."""
+    tok = token_of(voice_id)
+    rec = by_token(tok) if tok else None
+    return rec["id"] if rec else None
+
+
+def add_demo_cost(clone_id, cost_usd, gpu_seconds=0.0, jobs=0):
+    """Somma al record il costo GPU di una demo (audit admin). Le demo si
+    rifanno (ritentativi, «Riprova»): il costo si accumula, non si sovrascrive."""
+    try:
+        c, sec, n = float(cost_usd or 0), float(gpu_seconds or 0), int(jobs or 0)
+    except (TypeError, ValueError):
+        return None
+    if c <= 0 and n <= 0:
+        return None
+    with _lock:
+        rec = get(clone_id)
+        if rec is None:
+            return None
+        cur = rec.get("demo_cost") or {}
+        return store().update(clone_id, {"demo_cost": {
+            "usd": round(float(cur.get("usd") or 0) + c, 6),
+            "gpu_seconds": round(float(cur.get("gpu_seconds") or 0) + sec, 2),
+            "jobs": int(cur.get("jobs") or 0) + n,
+        }})
+
+
+def note_book(clone_id, job_id):
+    """Un libro completato con la voce (audit admin). Per job_id: la stessa
+    consegna riscritta dal recovery non conta due volte."""
+    if not clone_id or not job_id:
+        return None
+    with _lock:
+        rec = get(clone_id)
+        if rec is None:
+            return None
+        books = list(rec.get("books") or [])
+        if job_id in books:
+            return rec
+        books.append(job_id)
+        return store().update(clone_id, {"books": books})
 
 
 def touch_used(clone_id, now=None):

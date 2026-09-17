@@ -67,6 +67,19 @@ def _demo_texts(rec):
             (vc.DEMO_NAMES[1], demo.get("extra_text") or ""))
 
 
+def _registra_costo(clone_id, stats):
+    """Costo GPU della demo nel record, per l'audit admin. E' una stima per
+    difetto: un tentativo che solleva non restituisce le sue righe di
+    fattura, e la GPU che ha bruciato resta fuori dal conto."""
+    if not isinstance(stats, dict):
+        return
+    try:
+        f = voxcpm_tts.gpu_cost_usd(stats.get("runpod") or [])
+        vc.add_demo_cost(clone_id, f.get("cost_usd"), f.get("gpu_seconds"), f.get("jobs"))
+    except Exception:       # noqa: BLE001 - l'audit non deve far fallire la demo
+        pass
+
+
 def generate_demos(clone_id, *, sleep=time.sleep):
     """Sincrona. Una demo per volta, ognuna un job da un chunk con audio
     inline (`key=""`). Ritenta `demo_retries()` volte per demo con pausa
@@ -87,7 +100,8 @@ def generate_demos(clone_id, *, sleep=time.sleep):
         ok = False
         for tentativo in range(vc.demo_retries()):
             try:
-                voxcpm_tts.synthesize_chapter([text], voice_id, pcm, key="")
+                stats = voxcpm_tts.synthesize_chapter([text], voice_id, pcm, key="")
+                _registra_costo(clone_id, stats)
                 pcm_to_wav48(pcm, wav)
                 ok = True
                 break

@@ -4969,9 +4969,22 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         except (TypeError, ValueError):
             rate_pct_val = 0
 
+        # Voce campionata: l'id `vc_...` (mai il token, che e' segreto) e il
+        # libro consegnato contato sulla voce per la tab admin.
+        voice_clone_id = ""
+        if str(voice_id or "").startswith("voxcpm:mine:"):
+            try:
+                import voice_clone
+                voice_clone_id = voice_clone.clone_id_of(voice_id) or ""
+                if voice_clone_id and outcome == "completed":
+                    voice_clone.note_book(voice_clone_id, job_id)
+            except Exception:
+                voice_clone_id = ""
+
         rec = {
             "job_id": job_id,
             "provider": "voxcpm",
+            "voice_clone_id": voice_clone_id,
             "model_key": "v2",
             "language": language or "",
             "rate_pct": rate_pct_val,
