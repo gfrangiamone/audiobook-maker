@@ -9448,6 +9448,8 @@ def api_vc_sample():
             try:
                 asr = voice_clone_audio.check_transcript(wav, lang, prompt_text)
             except voice_clone_audio.AsrUnavailable as e:
+                # Senza questa riga il motivo finiva solo nella risposta al browser.
+                print(f"[voice_clone] verifica trascrizione non disponibile: {e}", flush=True)
                 return _vc_err("asr_unavailable", f"Transcript check unavailable: {e}", 503)
             cer = asr["cer"]
             if cer > voice_clone_audio.max_cer():

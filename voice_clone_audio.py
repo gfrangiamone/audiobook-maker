@@ -543,6 +543,13 @@ def cer(ref, hyp):
 
 def _new_model(name, download_root):
     """Fabbrica del modello: i test la sostituiscono."""
+    # La cache di huggingface_hub (token, lock, blocchi xet) sta di default in
+    # ~/.cache/huggingface anche con download_root: in prod il servizio ha
+    # ProtectHome=yes, /root non e' scrivibile e il primo download del modello
+    # falliva con «Permission denied» -> ogni campione rispondeva 503
+    # asr_unavailable. HF_HOME va fissata PRIMA dell'import (huggingface_hub
+    # legge i percorsi quando viene importato).
+    os.environ.setdefault("HF_HOME", os.path.join(download_root, "hf"))
     from faster_whisper import WhisperModel
     return WhisperModel(name, device="cpu", compute_type="int8", download_root=download_root)
 

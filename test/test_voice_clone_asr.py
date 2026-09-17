@@ -143,3 +143,25 @@ def test_env_interruttore_e_soglia(monkeypatch):
     assert vca.asr_enabled() is False
     monkeypatch.setenv("ABM_VOICE_CLONE_MAX_CER", "0,3")
     assert vca.max_cer() == 0.3
+
+
+def test_new_model_porta_la_cache_hf_fuori_dalla_home(monkeypatch, tmp_path):
+    """In prod ProtectHome=yes rende /root non scrivibile: la cache di
+    huggingface_hub deve stare sotto la cartella dei modelli."""
+    import sys
+    import types
+    # setenv+delenv: cosi' monkeypatch ripristina lo stato anche se HF_HOME non c'era.
+    monkeypatch.setenv("HF_HOME", "x")
+    monkeypatch.delenv("HF_HOME")
+    visto = {}
+
+    class _WM:
+        def __init__(self, name, **kw):
+            import os
+            visto["hf_home"] = os.environ.get("HF_HOME")
+            visto["root"] = kw.get("download_root")
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=_WM))
+    root = str(tmp_path / "whisper")
+    vca._new_model("base", root)
+    assert visto["root"] == root
+    assert visto["hf_home"] == str(tmp_path / "whisper" / "hf")
