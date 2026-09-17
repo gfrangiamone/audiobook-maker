@@ -341,8 +341,8 @@ Un record per voce:
               "paid_at": 1789000000},
   "devices": [{"cid": "abcd1234efgh", "added_at": ..., "via": "creator|code|resume",
                "name": "Telefono di Anna", "identity": "solo per via: code"}],
-  "pending_confirm": {"cid": "...", "code_hash": "...", "expires_at": ..., "tries": 0,
-                      "device_name": "...", "identity": "..."},
+  "pending_confirms": {"<cid>": {"code_hash": "...", "requested_at": ..., "expires_at": ...,
+                                 "tries": 0, "device_name": "...", "identity": "..."}},
   "created_at": ..., "ready_at": ..., "last_used_at": ..., "expires_at": ...,
   "archived": false, "deleted_at": null, "delete_reason": null
 }
@@ -389,25 +389,32 @@ hanno scritto nella richiesta (§6.4).
 2. Se il cid è già in `devices`: 200, fatto, senza chiedere altro. Se manca
    il nome o la presentazione: 400 `device_name_required` /
    `identity_required` (con `min_chars`), nessuna email. Altrimenti il server
-   genera un codice-conferma a 6 cifre, lo salva hashato in `pending_confirm`
+   genera un codice-conferma a 6 cifre, lo salva hashato in `pending_confirms[cid]`
    con nome e presentazione e scadenza **24 ore dalla richiesta**, e lo invia
    **all'email del proprietario** insieme a nome e presentazione (§8.2),
    perché decida sapendo a chi sta dando la voce. Risposta 200
    `status: pending`.
 3. `POST /api/voice_clone/confirm {voice_code, confirm_code}`: 5 tentativi,
-   poi `pending_confirm` annullato e 15 minuti di blocco per quel cid.
+   poi la richiesta di quel cid annullata e 15 minuti di blocco per quel cid.
    Successo → cid aggiunto con `via: code` e con il nome e la presentazione
    della richiesta (quelli letti dal proprietario, non modificabili alla
    conferma), email di avviso al proprietario con il link di revoca.
 
-Un solo `pending_confirm` per voce alla volta: una nuova richiesta da un
-altro dispositivo lo sostituisce e invalida il codice precedente. Lo stesso
+Ogni dispositivo ha la sua richiesta (`pending_confirms`, per cid), con
+codice, scadenza di 24 ore e tentativi propri: richieste con lo stesso
+codice-voce da dispositivi diversi vanno avanti in parallelo, ognuna con la
+sua email al proprietario, e confermarne, bloccarne o lasciarne scadere una
+non tocca le altre. Al massimo 10 richieste aperte per voce
+(`CONFIRM_MAX_PENDING`): oltre, 429 `claim_busy` senza email, perché chi
+cambia cookie a ripetizione non possa inondare il proprietario. Lo stesso
 dispositivo, con la sua richiesta ancora valida, non ne apre un'altra: 200
 `status: pending, already_sent: true`, nessun codice nuovo e nessuna seconda
-email (niente richieste a raffica). Nella finestra, partita la richiesta,
-«Aggiungi» sparisce e codice, nome e presentazione restano bloccati; tornano
-modificabili quando la richiesta si chiude (conferma riuscita, codice
-scaduto o annullato, troppi tentativi), non per un codice sbagliato. Il dono è esattamente questo
+email. Nella finestra, partita la richiesta, «Aggiungi» sparisce e codice,
+nome e presentazione restano bloccati; tornano modificabili quando la
+richiesta si chiude (conferma riuscita, codice scaduto, troppi tentativi),
+non per un codice sbagliato. I record scritti con la vecchia forma a
+richiesta singola (`pending_confirm`) vengono letti come la richiesta del
+loro cid e convertiti alla prima scrittura. Il dono è esattamente questo
 flusso, fatto dal dispositivo del ricevente con il proprietario che legge il
 codice dalla sua email.
 
@@ -573,7 +580,7 @@ sample_ok ──commit──> paid ──> demos_generating ──> demos_ready 
 
 - Rate limit `POST /api/voice_clone/sample`: 10/ora per cid, 30/ora per IP
   (schema di `_feedback_check_rate`). `claim`: 5/ora per cid. `confirm`: 5
-  tentativi per `pending_confirm`.
+  tentativi per richiesta; al massimo 10 richieste aperte per voce.
 - La verifica ASR (§5.4) richiede di leggere proprio quella frase: un file
   di terzi non passa, salvo generazione sintetica mirata. Il campione
   originale è conservato per verifica a posteriori (§5.5).

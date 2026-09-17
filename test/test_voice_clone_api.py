@@ -371,7 +371,7 @@ def test_mine_claim_confirm_forget(client, tmp_path, ambiente):
     assert r.status_code == 404 and r.get_json()["error_code"] == "code_unknown"
     r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"].lower(), **RICHIESTA})
     assert r.status_code == 200 and r.get_json()["status"] == "pending"
-    codice = vc.get(rec["id"])["pending_confirm"]
+    assert vc.pending_of(vc.get(rec["id"]), "cid-due")
     assert ambiente[-1][0] == "u@example.com"
     r = client.post("/api/voice_clone/confirm", json={"voice_code": rec["voice_code"], "confirm_code": "000000"})
     assert r.status_code == 400 and r.get_json()["error_code"] == "confirm_wrong"
@@ -822,7 +822,7 @@ def test_claim_senza_nome_o_presentazione_non_manda_email(client, tmp_path, ambi
     r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **campi})
     assert r.status_code == 400 and r.get_json()["error_code"] == errore
     assert r.get_json()["min_chars"] == vc.IDENTITY_MIN
-    assert len(ambiente) == prima and vc.get(rec["id"])["pending_confirm"] is None
+    assert len(ambiente) == prima and vc.pending_of(vc.get(rec["id"]), "cid-due") is None
 
 
 def test_resume_chiede_il_nome_e_lo_salva(client, tmp_path):
@@ -888,3 +888,37 @@ def test_claim_ripetuto_dallo_stesso_dispositivo_non_rimanda_email(client, tmp_p
     r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
     assert r.status_code == 200 and r.get_json() == {"status": "pending", "already_sent": True}
     assert len(ambiente) == inviate
+
+
+def test_claim_da_due_dispositivi_ognuno_con_la_sua_email_e_il_suo_codice(client, tmp_path, ambiente):
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready", "ready"):
+        vc.transition(rec["id"], s)
+    import re
+    codici = {}
+    for cid, nome in (("cid-due", "PC di Anna"), ("cid-tre", "Tablet di Bruno")):
+        _cid(client, cid)
+        r = client.post("/api/voice_clone/claim", json={
+            "voice_code": rec["voice_code"], "device_name": nome, "identity": "Sono io, ti scrivo ora"})
+        assert r.status_code == 200 and r.get_json()["status"] == "pending"
+        corpo = ambiente[-1][2]
+        assert nome in corpo
+        codici[cid] = re.search(r"\b(\d{6})\b", corpo).group(1)
+    for cid in ("cid-tre", "cid-due"):
+        _cid(client, cid)
+        r = client.post("/api/voice_clone/confirm", json={"voice_code": rec["voice_code"],
+                                                          "confirm_code": codici[cid]})
+        assert r.status_code == 200, (cid, r.get_json())
+    assert {"cid-due", "cid-tre"} <= {d["cid"] for d in vc.get(rec["id"])["devices"]}
+
+
+def test_claim_oltre_le_richieste_parallele_ammesse(client, tmp_path, ambiente, monkeypatch):
+    rec = _paid(tmp_path)
+    monkeypatch.setattr(vc, "CONFIRM_MAX_PENDING", 1)
+    _cid(client, "cid-due")
+    assert client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA}).status_code == 200
+    _cid(client, "cid-tre")
+    prima = len(ambiente)
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"], **RICHIESTA})
+    assert r.status_code == 429 and r.get_json()["error_code"] == "claim_busy"
+    assert len(ambiente) == prima

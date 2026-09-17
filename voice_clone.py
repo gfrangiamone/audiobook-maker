@@ -735,7 +735,7 @@ def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
                 "demo": None, "payment": None,
                 "devices": [{"cid": cid, "added_at": t, "via": "creator",
                              "name": normalize_device_name(device_name)}],
-                "pending_confirm": None, "confirm_locks": {},
+                "pending_confirms": {}, "confirm_locks": {},
                 "consent_at": t, "ui_lang": ui_lang,
                 "created_at": t, "ready_at": None, "last_used_at": t,
                 "expires_at": t + sample_ttl_sec(), "expiry_warned_at": None,
@@ -822,7 +822,7 @@ def transition(clone_id, new_state, patch=None, now=None):
 # vista pubblica
 # ---------------------------------------------------------------------------
 _SECRET_KEYS = ("token", "manage_token", "resume_token", "owner_email",
-                "pending_confirm", "confirm_locks")
+                "pending_confirm", "pending_confirms", "confirm_locks")
 
 
 def public_view(rec):
@@ -1064,6 +1064,9 @@ def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
 # Il proprietario puo' leggere l'email ore dopo: il codice vale un giorno
 # dalla richiesta, non oltre.
 CONFIRM_TTL_SEC = 24 * 3600
+# Richieste aperte in parallelo su una voce, una per dispositivo: oltre,
+# chi cambia cookie a ripetizione inonderebbe di email il proprietario.
+CONFIRM_MAX_PENDING = 10
 CONFIRM_MAX_TRIES = 5
 CONFIRM_LOCK_SEC = 900
 
@@ -1079,6 +1082,34 @@ def _code_hash(code):
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
+class TooManyPending(ValueError):
+    """Troppe richieste aperte in parallelo sulla stessa voce."""
+
+
+def _pendings(rec):
+    """Richieste di conferma aperte, una per dispositivo (`cid` -> richiesta).
+
+    I record scritti quando la voce ammetteva una sola richiesta hanno ancora
+    `pending_confirm` (un dict con il suo `cid`): viene letto come la richiesta
+    di quel dispositivo e sparisce alla prima scrittura."""
+    out = {k: dict(v) for k, v in (rec.get("pending_confirms") or {}).items()}
+    old = rec.get("pending_confirm")
+    if isinstance(old, dict) and old.get("cid") and old["cid"] not in out:
+        out[old["cid"]] = {k: v for k, v in old.items() if k != "cid"}
+    return out
+
+
+def pending_of(rec, cid):
+    """La richiesta aperta da `cid` sulla voce, o None."""
+    return _pendings(rec).get(cid)
+
+
+def _save_pendings(rec, pend, t, **extra):
+    """Scrive le richieste potando quelle scadute di altri dispositivi."""
+    vive = {k: v for k, v in pend.items() if (v.get("expires_at") or 0) >= t}
+    return store().update(rec["id"], dict(extra, pending_confirms=vive, pending_confirm=None))
+
+
 def claim(voice_code, cid, now=None, device_name="", identity=""):
     """Primo passo del recupero/dono: o il cid e' gia' dentro, o parte un
     codice di conferma per il proprietario. Il codice in chiaro torna al
@@ -1088,9 +1119,12 @@ def claim(voice_code, cid, now=None, device_name="", identity=""):
     (`ClaimIncomplete` altrimenti): il proprietario li legge nell'email prima
     di dare il codice, e alla conferma il dispositivo entra con quel nome.
 
-    Una richiesta ancora aperta dallo stesso dispositivo non ne genera
-    un'altra: torna `("pending", rec, None)`, senza codice nuovo e quindi
-    senza una seconda email al proprietario (niente richieste a raffica)."""
+    Ogni dispositivo ha la sua richiesta, con codice, scadenza e tentativi
+    propri: richieste da dispositivi diversi sulla stessa voce vanno avanti in
+    parallelo e non si annullano a vicenda (al massimo CONFIRM_MAX_PENDING
+    aperte, `TooManyPending` oltre). Una richiesta ancora aperta dallo stesso
+    dispositivo non ne genera un'altra: torna `("pending", rec, None)`, senza
+    codice nuovo e quindi senza una seconda email (niente richieste a raffica)."""
     t = _now(now)
     with _lock:
         rec = _by_code_alive(voice_code)
@@ -1099,8 +1133,9 @@ def claim(voice_code, cid, now=None, device_name="", identity=""):
         locks = rec.get("confirm_locks") or {}
         if locks.get(cid, 0) > t:
             raise ValueError("locked")
-        pc = rec.get("pending_confirm") or {}
-        if pc.get("cid") == cid and (pc.get("expires_at") or 0) >= t:
+        pend = _pendings(rec)
+        mia = pend.get(cid)
+        if mia and (mia.get("expires_at") or 0) >= t:
             return "pending", rec, None
         nome = normalize_device_name(device_name)
         if not nome:
@@ -1108,45 +1143,56 @@ def claim(voice_code, cid, now=None, device_name="", identity=""):
         chi = normalize_identity(identity)
         if len(chi) < IDENTITY_MIN:
             raise ClaimIncomplete("identity")
+        altre = sum(1 for k, v in pend.items() if k != cid and (v.get("expires_at") or 0) >= t)
+        if altre >= CONFIRM_MAX_PENDING:
+            raise TooManyPending()
         code = f"{secrets.randbelow(1000000):06d}"
+        pend[cid] = {"code_hash": _code_hash(code), "requested_at": t,
+                     "expires_at": t + CONFIRM_TTL_SEC, "tries": 0,
+                     "device_name": nome, "identity": chi}
         # Pulizia di passaggio: i lock scaduti non restano per sempre nel
         # record solo perche' nessuno li ha mai riletti dopo la scadenza.
         pruned = {k: v for k, v in locks.items() if v > t}
-        rec = store().update(rec["id"], {"pending_confirm": {
-            "cid": cid, "code_hash": _code_hash(code),
-            "expires_at": t + CONFIRM_TTL_SEC, "tries": 0,
-            "device_name": nome, "identity": chi},
-            "confirm_locks": pruned})
+        rec = _save_pendings(rec, pend, t, confirm_locks=pruned)
         return "pending", rec, code
 
 
 def confirm(voice_code, cid, confirm_code, now=None, device_name=""):
-    """Il dispositivo entra con il nome e la presentazione della richiesta,
+    """Chiude la richiesta di `cid` e solo quella: le richieste degli altri
+    dispositivi restano aperte con il loro codice.
+
+    Il dispositivo entra con il nome e la presentazione della richiesta,
     cioe' quelli che il proprietario ha letto nell'email. `device_name` serve
     solo per le richieste aperte prima che la richiesta li portasse con se'."""
     t = _now(now)
     with _lock:
         rec = _by_code_alive(voice_code)
-        pc = rec.get("pending_confirm")
-        if not pc or pc.get("cid") != cid:
+        pend = _pendings(rec)
+        pc = pend.get(cid)
+        if not pc:
             return "none"
         if (pc.get("expires_at") or 0) < t:
-            store().update(rec["id"], {"pending_confirm": None})
+            pend.pop(cid)
+            _save_pendings(rec, pend, t)
             return "expired"
         if hmac.compare_digest(pc.get("code_hash") or "", _code_hash((confirm_code or "").strip())):
+            pend.pop(cid)
             devices = list(rec.get("devices") or [])
-            devices.append({"cid": cid, "added_at": t, "via": "code",
-                            "name": pc.get("device_name") or normalize_device_name(device_name),
-                            "identity": pc.get("identity") or ""})
-            store().update(rec["id"], {"pending_confirm": None, "devices": devices})
+            if not _has_cid(rec, cid):
+                devices.append({"cid": cid, "added_at": t, "via": "code",
+                                "name": pc.get("device_name") or normalize_device_name(device_name),
+                                "identity": pc.get("identity") or ""})
+            _save_pendings(rec, pend, t, devices=devices)
             return "ok"
-        pc = dict(pc, tries=int(pc.get("tries") or 0) + 1)
+        pc["tries"] = int(pc.get("tries") or 0) + 1
         if pc["tries"] >= CONFIRM_MAX_TRIES:
+            pend.pop(cid)
             locks = {k: v for k, v in (rec.get("confirm_locks") or {}).items() if v > t}
             locks[cid] = t + CONFIRM_LOCK_SEC
-            store().update(rec["id"], {"pending_confirm": None, "confirm_locks": locks})
+            _save_pendings(rec, pend, t, confirm_locks=locks)
             return "locked"
-        store().update(rec["id"], {"pending_confirm": pc})
+        pend[cid] = pc
+        _save_pendings(rec, pend, t)
         return "wrong"
 
 

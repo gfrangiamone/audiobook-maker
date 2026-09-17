@@ -984,4 +984,5 @@ def test_nome_del_dispositivo_chiesto_a_ogni_autorizzazione():
     assert "device_name_guess" not in _estrai_funzione(VC, "vcInitPanelMine")
     for lang in LANGS:
         assert {"vc_device_name", "vc_device_name_hint", "vc_identity_ph", "vc_identity_hint",
-                "vc_err_device_name_required", "vc_err_identity_required"} <= _chiavi_i18n(lang), lang
+                "vc_err_device_name_required", "vc_err_identity_required",
+                "vc_err_claim_busy"} <= _chiavi_i18n(lang), lang

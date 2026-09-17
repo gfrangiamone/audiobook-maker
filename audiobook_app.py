@@ -9485,6 +9485,8 @@ def api_vc_claim():
     except voice_clone.ClaimIncomplete as e:
         return _vc_err(f"{e.field}_required", f"Missing {e.field}", 400,
                        min_chars=voice_clone.IDENTITY_MIN)
+    except voice_clone.TooManyPending:
+        return _vc_err("claim_busy", "Too many pending requests for this voice", 429)
     except ValueError:
         return _vc_err("code_locked", "Too many wrong codes, try later", 423)
     status, rec, confirm_code = esito
@@ -9496,7 +9498,7 @@ def api_vc_claim():
         # l'email con il codice, non gliene arriva un'altra.
         return jsonify({"status": "pending", "already_sent": True})
     if rec.get("owner_email"):
-        pc = rec.get("pending_confirm") or {}
+        pc = voice_clone.pending_of(rec, cid) or {}
         email_service.send_voice_clone_confirm(rec["owner_email"], rec.get("ui_lang") or "en",
                                                 confirm_code=confirm_code,
                                                 device_name=pc.get("device_name") or "",

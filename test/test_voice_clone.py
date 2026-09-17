@@ -148,7 +148,7 @@ def test_transizioni_ammesse_e_vietate(tmp_path):
 def test_public_view_non_espone_segreti(tmp_path):
     rec = bozza(tmp_path)
     pub = vc.public_view(rec)
-    for k in ("token", "manage_token", "resume_token", "owner_email", "pending_confirm", "confirm_locks"):
+    for k in ("token", "manage_token", "resume_token", "owner_email", "pending_confirm", "pending_confirms", "confirm_locks"):
         assert k not in pub
     assert "voice_id" not in pub            # non e' ready
     assert pub["voice_code"] == rec["voice_code"]
