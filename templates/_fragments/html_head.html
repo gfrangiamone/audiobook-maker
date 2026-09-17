@@ -1242,6 +1242,11 @@ __REVIEWS_LD__
               <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><input type="text" id="vcName" maxlength="40" autocomplete="off" data-t-ph="vc_name_ph"></span>
               <span class="vc-small vc-pick-hint" data-t="vc_name_hint"></span>
             </label>
+            <label class="vc-pick">
+              <span class="vc-pick-lbl" data-t="vc_device_name"></span>
+              <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><input type="text" id="vcDeviceName" maxlength="40" autocomplete="off"></span>
+              <span class="vc-small vc-pick-hint" data-t="vc_device_name_hint"></span>
+            </label>
           </div>
           <div class="modal-footer vc-footer">
             <button type="button" id="vcSetupBack" class="btn-secondary" data-t="vc_back"></button>
@@ -1368,6 +1373,7 @@ __REVIEWS_LD__
             <div id="vcConfirmRow" class="vc-claim-row" hidden>
               <span class="vc-small vc-claim-intro" data-t="vc_confirm_intro"></span>
               <input type="text" id="vcConfirmCode" autocomplete="one-time-code" inputmode="numeric" data-t-ph="vc_confirm_ph">
+              <input type="text" id="vcConfirmDevice" maxlength="40" autocomplete="off" data-t-ph="vc_device_name" data-t-title="vc_device_name_hint">
               <button type="button" id="vcConfirmBtn" class="btn btn-outline btn-sm" data-t="vc_confirm_btn"></button>
             </div>
           </details>

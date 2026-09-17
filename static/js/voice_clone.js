@@ -411,7 +411,16 @@
       var nm = $('vcName'); var name = cur.name || v.name;
       if (nm && !nm.value && name) nm.value = name;
     }
+    var dn = $('vcDeviceName'); if (dn && !dn.value) dn.value = vcDeviceNameDefault();
     return !!(ls.value && loc.value && g.value);
+  }
+
+  /* Il nome proposto per questo dispositivo: quello con cui e' gia'
+     registrato su un'altra voce, altrimenti quello ricavato dal browser
+     («Chrome · Windows»). Serve a riconoscerlo nella pagina dei dispositivi. */
+  function vcDeviceNameDefault() {
+    for (var i = 0; i < S.mine.length; i++) if (S.mine[i].device_name) return S.mine[i].device_name;
+    return (S.cfg && S.cfg.device_name_guess) || '';
   }
 
   function vcLoadPrompt() {
@@ -614,6 +623,7 @@
     fd.append('locale', _val('vcLocale'));
     fd.append('gender', _val('vcGender'));
     fd.append('name', _val('vcName'));
+    fd.append('device_name', _val('vcDeviceName'));
     var wait = $('vcUploading'); if (wait) wait.hidden = false;
     vcSetUploadVisible(false);
     vcSetSampleVisible(false);
@@ -1101,7 +1111,11 @@
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
       var row = $('vcConfirmRow');
-      if (r.data.status === 'pending') { if (row) row.hidden = false; $('vcConfirmCode').value = ''; $('vcConfirmCode').focus(); return; }
+      if (r.data.status === 'pending') {
+        if (row) row.hidden = false;
+        var dv = $('vcConfirmDevice'); if (dv && !dv.value) dv.value = vcDeviceNameDefault();
+        $('vcConfirmCode').value = ''; $('vcConfirmCode').focus(); return;
+      }
       if (row) row.hidden = true;
       vcOpen('mine'); vcReloadCombo();
     }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
@@ -1114,7 +1128,7 @@
     if (!code || !cc) return;
     vcErr('');
     vcSetBusy(true);
-    vcPost('/api/voice_clone/confirm', {voice_code: code, confirm_code: cc}).then(function (r) {
+    vcPost('/api/voice_clone/confirm', {voice_code: code, confirm_code: cc, device_name: _val('vcConfirmDevice')}).then(function (r) {
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
       var row = $('vcConfirmRow'); if (row) row.hidden = true;

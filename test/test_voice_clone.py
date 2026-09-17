@@ -60,7 +60,7 @@ def test_create_draft_sposta_i_file_e_salva_il_record(tmp_path):
     assert os.path.exists(os.path.join(d, "sample.wav"))
     assert os.path.exists(os.path.join(d, "original.webm"))
     assert rec["sample"]["original_ext"] == "webm" and rec["sample"]["snr_db"] == 31.2
-    assert rec["devices"] == [{"cid": "cid-uno", "added_at": rec["created_at"], "via": "creator"}]
+    assert rec["devices"] == [{"cid": "cid-uno", "added_at": rec["created_at"], "via": "creator", "name": ""}]
     assert rec["expires_at"] == rec["created_at"] + 24 * 3600
     assert vc.get(rec["id"])["token"] == rec["token"]
     assert vc.by_token(rec["token"])["id"] == rec["id"]

@@ -755,3 +755,94 @@ def test_rinomina_solo_proprietario_e_voce_viva(client, tmp_path, ambiente):
     vc.transition(rec["id"], "deleted")
     r = client.post(f"/api/voice_clone/{rec['id']}/rename", json={"name": "Tardi"})
     assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# nome dei dispositivi e revoca singola dalla pagina di gestione
+# ---------------------------------------------------------------------------
+UA_CHROME_WIN = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                 "Chrome/128.0.0.0 Safari/537.36")
+
+
+def test_config_propone_il_nome_del_dispositivo(client):
+    r = client.get("/api/voice_clone/config", headers={"User-Agent": UA_CHROME_WIN})
+    assert r.get_json()["device_name_guess"] == "Chrome · Windows"
+
+
+def test_sample_salva_il_nome_del_dispositivo(client, monkeypatch):
+    def prepara(src, dst, **kw):
+        open(dst, "wb").write(b"RIFF-wav")
+        return vca.Metrics(**{f: 0.0 for f in vca.Metrics.__dataclass_fields__})
+    monkeypatch.setattr(vca, "prepare_sample", prepara)
+    dati = {"lang": "it", "locale": "it-IT", "gender": "f"}
+    r = client.post("/api/voice_clone/sample", content_type="multipart/form-data",
+                    data=dict(dati, file=(io.BytesIO(b"w"), "rec.webm"), device_name="PC di casa"))
+    assert vc.get(r.get_json()["clone_id"])["devices"][0]["name"] == "PC di casa"
+    # campo vuoto: vale il nome proposto dal browser, mai un dispositivo anonimo
+    r = client.post("/api/voice_clone/sample", content_type="multipart/form-data",
+                    headers={"User-Agent": UA_CHROME_WIN},
+                    data=dict(dati, file=(io.BytesIO(b"w"), "rec.webm")))
+    assert vc.get(r.get_json()["clone_id"])["devices"][0]["name"] == "Chrome · Windows"
+
+
+def test_confirm_salva_il_nome_e_lo_scrive_nellemail(client, tmp_path, ambiente):
+    import re
+    rec = _paid(tmp_path)
+    _cid(client, "cid-due")
+    client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    codice = re.search(r"\b(\d{6})\b", ambiente[-1][2]).group(1)
+    r = client.post("/api/voice_clone/confirm", json={
+        "voice_code": rec["voice_code"], "confirm_code": codice, "device_name": "Telefono <b>"})
+    assert r.status_code == 200
+    assert vc.device_of(vc.get(rec["id"]), "cid-due")["name"] == "Telefono <b>"
+    corpo = ambiente[-1][2]
+    assert "Telefono &lt;b&gt;" in corpo and "Telefono <b>" not in corpo
+
+
+def test_resume_chiede_il_nome_e_lo_salva(client, tmp_path):
+    rec = _paid(tmp_path)
+    token = rec["resume_token"]["value"]
+    _cid(client, "cid-r")
+    r = client.get(f"/vc/{token}/resume", headers={"User-Agent": UA_CHROME_WIN})
+    corpo = r.data.decode("utf-8")
+    assert 'name="device_name"' in corpo and 'value="Chrome · Windows"' in corpo
+    r = client.post(f"/vc/{token}/resume", data={"device_name": "Tablet cucina"})
+    assert r.status_code == 302
+    assert vc.device_of(vc.get(rec["id"]), "cid-r")["name"] == "Tablet cucina"
+
+
+def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
+    rec = _paid(tmp_path)
+    tok = rec["manage_token"]
+    vc.add_resume_device(rec["id"], "cid-r", "Tablet <cucina>")
+    vc.store().update(rec["id"], {"devices": [dict(d, name="") if d["cid"] == "cid-uno" else d
+                                              for d in vc.get(rec["id"])["devices"]]})
+    chiave = audiobook_app._vc_device_key("cid-uno")
+    r = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"})
+    corpo = r.data.decode("utf-8")
+    assert "Tablet &lt;cucina&gt;" in corpo and "<cucina>" not in corpo
+    # un dispositivo registrato prima dei nomi resta riconoscibile dalla chiave
+    assert chiave in corpo
+    # chi apre la pagina riconosce il dispositivo che sta usando
+    assert "questo dispositivo" in corpo.lower()
+    assert corpo.count("/devices/revoke") == 2          # anche il creatore
+    r = client.post(f"/vc/{tok}/devices/rename?lang=it",
+                    data={"key": audiobook_app._vc_device_key("cid-r"), "name": "Tablet salotto"})
+    assert r.status_code == 302 and r.headers["Location"].endswith(f"/vc/{tok}/devices?lang=it")
+    assert vc.device_of(vc.get(rec["id"]), "cid-r")["name"] == "Tablet salotto"
+
+
+def test_revoca_del_creatore_chiede_conferma(client, tmp_path):
+    rec = _paid(tmp_path)
+    tok = rec["manage_token"]
+    chiave = audiobook_app._vc_device_key("cid-uno")
+    r = client.post(f"/vc/{tok}/devices/revoke", data={"key": chiave},
+                    headers={"Accept-Language": "it"})
+    corpo = r.data.decode("utf-8")
+    assert r.status_code == 200 and 'name="confirm"' in corpo
+    assert vc.device_of(vc.get(rec["id"]), "cid-uno") is not None       # non ancora
+    r = client.post(f"/vc/{tok}/devices/revoke", data={"key": chiave, "confirm": "1"})
+    assert r.status_code == 302
+    got = vc.get(rec["id"])
+    assert vc.device_of(got, "cid-uno") is None and got["state"] != "deleted"
+    assert not vc.is_owner(got, "cid-uno")

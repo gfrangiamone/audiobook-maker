@@ -74,7 +74,7 @@ def test_confirm_ok_aggiunge_il_dispositivo(tmp_path):
     assert vc.confirm(rec["voice_code"], "cid-nuovo", code, now=1100) == "ok"
     got = vc.get(rec["id"])
     assert got["pending_confirm"] is None
-    assert {"cid": "cid-nuovo", "added_at": 1100, "via": "code"} in got["devices"]
+    assert {"cid": "cid-nuovo", "added_at": 1100, "via": "code", "name": ""} in got["devices"]
     assert vc.authorized(vc.voice_id_of(got), "cid-nuovo")
     assert vc.claim(rec["voice_code"], "cid-nuovo")[0] == "ok"
 
@@ -187,3 +187,82 @@ def test_devices_view_mostra_solo_la_coda_del_cid(tmp_path):
     rec = _pronta(tmp_path, cid="abcd1234efgh")
     view = vc.devices_view(vc.get(rec["id"]))
     assert view == [{"cid_tail": "efgh", "added_at": rec["created_at"], "via": "creator"}]
+
+
+# ---------------------------------------------------------------------------
+# nome dei dispositivi: serve a riconoscerli nella pagina di gestione
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("ua, atteso", [
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+     "Chrome/128.0.0.0 Safari/537.36", "Chrome · Windows"),
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+     "Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0", "Edge · Windows"),
+    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+     "Version/17.5 Safari/605.1.15", "Safari · Mac"),
+    ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+     "Version/17.5 Mobile/15E148 Safari/604.1", "Safari · iPhone"),
+    ("Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+     "CriOS/128.0 Mobile/15E148 Safari/604.1", "Chrome · iPad"),
+    ("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+     "Chrome/128.0.0.0 Mobile Safari/537.36", "Chrome · Android"),
+    ("Mozilla/5.0 (X11; Linux x86_64; rv:129.0) Gecko/20100101 Firefox/129.0", "Firefox · Linux"),
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+     "Chrome/128.0.0.0 Safari/537.36 OPR/113.0", "Opera · Windows"),
+    ("curl/8.0", ""),
+    ("", ""),
+])
+def test_nome_proposto_dallo_user_agent(ua, atteso):
+    assert vc.device_name_from_ua(ua) == atteso
+
+
+def test_normalize_device_name():
+    assert vc.normalize_device_name("  PC\u0000 ufficio \u202e ") == "PC ufficio"
+    assert len(vc.normalize_device_name("x" * 200)) == vc.DEVICE_NAME_MAX
+    assert vc.normalize_device_name(None) == ""
+
+
+def test_il_nome_del_dispositivo_si_salva_in_creazione_e_in_conferma(tmp_path):
+    s = tmp_path / "s.wav"; s.write_bytes(b"RIFF")
+    o = tmp_path / "o.webm"; o.write_bytes(b"webm")
+    rec = vc.create_draft("cid-owner", lang="it", locale="it-IT", gender="m", prompt_text="frase",
+                          sample_wav=str(s), original_path=str(o), original_ext="webm",
+                          metrics={}, ui_lang="it", device_name=" PC di casa ")
+    assert rec["devices"][0]["name"] == "PC di casa"
+    _, _, code = vc.claim(rec["voice_code"], "cid-b", now=1000)
+    assert vc.confirm(rec["voice_code"], "cid-b", code, now=1001, device_name="Telefono") == "ok"
+    assert vc.device_of(vc.get(rec["id"]), "cid-b")["name"] == "Telefono"
+
+
+def test_add_resume_device_con_nome(tmp_path):
+    rec = _pronta(tmp_path)
+    assert vc.add_resume_device(rec["id"], "cid-r", "Tablet", now=5) is True
+    assert vc.device_of(vc.get(rec["id"]), "cid-r") == {
+        "cid": "cid-r", "added_at": 5, "via": "resume", "name": "Tablet"}
+    # gia' dentro: nessun duplicato
+    assert vc.add_resume_device(rec["id"], "cid-r", "Altro", now=6) is False
+    assert len(vc.get(rec["id"])["devices"]) == 2
+
+
+def test_rename_device_dal_link_di_gestione(tmp_path):
+    rec = _pronta(tmp_path)
+    assert vc.rename_device(rec["manage_token"], "cid-owner", "  Portatile ") is True
+    assert vc.device_of(vc.get(rec["id"]), "cid-owner")["name"] == "Portatile"
+    assert vc.rename_device(rec["manage_token"], "cid-ignoto", "x") is False
+    assert vc.rename_device("token-sbagliato", "cid-owner", "x") is False
+
+
+def test_revocato_il_creatore_nessuno_e_piu_proprietario(tmp_path):
+    rec = _pronta(tmp_path)
+    _, _, code = vc.claim(rec["voice_code"], "cid-b", now=1000)
+    vc.confirm(rec["voice_code"], "cid-b", code, now=1001)
+    assert vc.revoke_device(rec["manage_token"], "cid-owner") is True
+    got = vc.get(rec["id"])
+    assert got["state"] == "ready"
+    assert not any(vc.is_owner(got, c) for c in ("cid-owner", "cid-b"))
+    assert vc.authorized(vc.voice_id_of(got), "cid-b")
+
+
+def test_mine_riporta_il_nome_con_cui_questo_dispositivo_e_registrato(tmp_path):
+    rec = _pronta(tmp_path)
+    vc.rename_device(rec["manage_token"], "cid-owner", "PC di casa")
+    assert vc.mine("cid-owner")[0]["device_name"] == "PC di casa"

@@ -196,8 +196,8 @@ def test_markup_pannello_delle_scelte():
         assert 'id="' + i + '"' in ps, i
     for k in ("vc_setup_t", "vc_setup_intro", "vc_lang", "vc_locale", "vc_gender"):
         assert 'data-t="' + k + '"' in ps, k
-    # un'icona per ogni campo (tre combo e il nome), dentro il campo
-    assert ps.count('class="vc-pick-ico"') >= 2 and ps.count("<svg") == 5
+    # un'icona per ogni campo (tre combo, il nome e il dispositivo), dentro il campo
+    assert ps.count('class="vc-pick-ico"') >= 2 and ps.count("<svg") == 6
     assert ps.index('id="vcPSetup"') < HTML.index('id="vcP2"')
     for c in (".vc-picks", ".vc-pick-ico", ".vc-pick-in select"):
         assert c + "{" in CSS, c
@@ -948,3 +948,24 @@ def test_riascolto_locale_corregge_la_durata_del_webm():
 def test_richiesta_email_in_evidenza():
     assert '<p class="vc-intro" data-t="vc_p3_intro"></p>' in HTML
     assert re.search(r"(?m)^\.vc-intro\{[^}]*font-weight:\s*600", CSS)
+
+
+def test_nome_del_dispositivo_chiesto_a_ogni_autorizzazione():
+    """Senza un nome, nella pagina dei dispositivi autorizzati resta solo un
+    hash: il nome si chiede nel passo delle scelte (creatore) e accanto al
+    codice di conferma (codice-voce), precompilato e modificabile."""
+    setup = HTML[HTML.index('id="vcPSetup"'):HTML.index('id="vcP2"')]
+    assert 'id="vcDeviceName"' in setup and 'data-t="vc_device_name"' in setup
+    assert 'data-t="vc_device_name_hint"' in setup
+    riga = HTML[HTML.index('id="vcConfirmRow"'):HTML.index('id="vcConfirmBtn"')]
+    assert 'id="vcConfirmDevice"' in riga and 'data-t-ph="vc_device_name"' in riga
+    up = _estrai_funzione(VC, "vcUploadSample")
+    assert "fd.append('device_name', _val('vcDeviceName'))" in up
+    conf = _estrai_funzione(VC, "vcConfirm")
+    assert "device_name: _val('vcConfirmDevice')" in conf
+    proposta = _estrai_funzione(VC, "vcDeviceNameDefault")
+    assert "device_name" in proposta and "device_name_guess" in proposta
+    assert "vcDeviceNameDefault()" in _estrai_funzione(VC, "vcEnsureChoices")
+    assert "vcDeviceNameDefault()" in _estrai_funzione(VC, "vcClaim")
+    for lang in LANGS:
+        assert {"vc_device_name", "vc_device_name_hint"} <= _chiavi_i18n(lang), lang

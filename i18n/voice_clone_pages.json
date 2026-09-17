@@ -29,7 +29,16 @@
     "gone_generic": "This link no longer opens anything: the voice it pointed to does not exist any more, or the address is incomplete.",
     "gone_refund": "If you had paid for it, you received a voucher for the amount spent by email.",
     "gone_books": "Audiobooks already generated with that voice are not affected: they stay yours.",
-    "gone_home": "Back to Audiobook Maker"
+    "gone_home": "Back to Audiobook Maker",
+    "device_name_lbl": "Name of this device",
+    "device_name_hint": "It lets you recognise this device later in the list of authorised devices.",
+    "this_device": "this device",
+    "device_unnamed": "Unnamed device",
+    "rename_btn": "Rename",
+    "revoke_owner_title": "Revoke the device that created the voice?",
+    "revoke_owner_body": "This is the device the voice was created on. Once revoked, the voice stays on our server and on the other devices, but it can be renamed or deleted only from the management link in your email. You can add the device back at any time with the voice code you received by email.",
+    "revoke_owner_btn": "Revoke this device",
+    "cancel_link": "Cancel"
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -61,7 +70,16 @@
     "gone_generic": "Questo link non apre più nulla: la voce a cui puntava non esiste più, oppure l'indirizzo è incompleto.",
     "gone_refund": "Se avevi pagato, hai ricevuto via email un voucher del valore speso.",
     "gone_books": "Gli audiolibri già generati con quella voce non sono toccati: restano tuoi.",
-    "gone_home": "Torna ad Audiobook Maker"
+    "gone_home": "Torna ad Audiobook Maker",
+    "device_name_lbl": "Nome di questo dispositivo",
+    "device_name_hint": "Serve a riconoscerlo in seguito nell'elenco dei dispositivi autorizzati.",
+    "this_device": "questo dispositivo",
+    "device_unnamed": "Dispositivo senza nome",
+    "rename_btn": "Rinomina",
+    "revoke_owner_title": "Revocare il dispositivo che ha creato la voce?",
+    "revoke_owner_body": "È il dispositivo su cui hai creato la voce. Dopo la revoca la voce resta sul nostro server e sugli altri dispositivi, ma potrai rinominarla o cancellarla solo dal link di gestione nella tua email. Puoi riaggiungere il dispositivo quando vuoi con il codice-voce che hai ricevuto per email.",
+    "revoke_owner_btn": "Revoca questo dispositivo",
+    "cancel_link": "Annulla"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -93,7 +111,16 @@
     "gone_generic": "Ce lien n'ouvre plus rien : la voix vers laquelle il pointait n'existe plus, ou l'adresse est incomplète.",
     "gone_refund": "Si vous aviez payé, vous avez reçu par e-mail un bon correspondant au montant dépensé.",
     "gone_books": "Les livres audio déjà générés avec cette voix ne sont pas affectés : ils restent les vôtres.",
-    "gone_home": "Retour à Audiobook Maker"
+    "gone_home": "Retour à Audiobook Maker",
+    "device_name_lbl": "Nom de cet appareil",
+    "device_name_hint": "Il te permet de reconnaître cet appareil plus tard dans la liste des appareils autorisés.",
+    "this_device": "cet appareil",
+    "device_unnamed": "Appareil sans nom",
+    "rename_btn": "Renommer",
+    "revoke_owner_title": "Révoquer l'appareil qui a créé la voix ?",
+    "revoke_owner_body": "C'est l'appareil sur lequel tu as créé la voix. Après la révocation, la voix reste sur notre serveur et sur les autres appareils, mais tu ne pourras la renommer ou la supprimer qu'avec le lien de gestion reçu par e-mail. Tu peux rajouter l'appareil à tout moment avec le code-voix reçu par e-mail.",
+    "revoke_owner_btn": "Révoquer cet appareil",
+    "cancel_link": "Annuler"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -125,7 +152,16 @@
     "gone_generic": "Este enlace ya no abre nada: la voz a la que apuntaba ya no existe, o la dirección está incompleta.",
     "gone_refund": "Si habías pagado, has recibido por correo electrónico un vale por el importe gastado.",
     "gone_books": "Los audiolibros ya generados con esa voz no se ven afectados: siguen siendo tuyos.",
-    "gone_home": "Volver a Audiobook Maker"
+    "gone_home": "Volver a Audiobook Maker",
+    "device_name_lbl": "Nombre de este dispositivo",
+    "device_name_hint": "Te permite reconocer este dispositivo más adelante en la lista de dispositivos autorizados.",
+    "this_device": "este dispositivo",
+    "device_unnamed": "Dispositivo sin nombre",
+    "rename_btn": "Cambiar nombre",
+    "revoke_owner_title": "¿Revocar el dispositivo que creó la voz?",
+    "revoke_owner_body": "Es el dispositivo en el que se creó la voz. Tras la revocación, la voz sigue en nuestro servidor y en los demás dispositivos, pero solo podrás cambiarle el nombre o eliminarla desde el enlace de gestión de tu correo. Puedes volver a añadir el dispositivo cuando quieras con el código de voz que recibiste por correo.",
+    "revoke_owner_btn": "Revocar este dispositivo",
+    "cancel_link": "Cancelar"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -157,7 +193,16 @@
     "gone_generic": "Dieser Link öffnet nichts mehr: Die Stimme, auf die er verwies, existiert nicht mehr, oder die Adresse ist unvollständig.",
     "gone_refund": "Falls du bezahlt hast, hast du per E-Mail einen Gutschein über den gezahlten Betrag erhalten.",
     "gone_books": "Bereits mit dieser Stimme erzeugte Hörbücher sind nicht betroffen: Sie bleiben dir erhalten.",
-    "gone_home": "Zurück zu Audiobook Maker"
+    "gone_home": "Zurück zu Audiobook Maker",
+    "device_name_lbl": "Name dieses Geräts",
+    "device_name_hint": "Daran erkennst du das Gerät später in der Liste der autorisierten Geräte wieder.",
+    "this_device": "dieses Gerät",
+    "device_unnamed": "Gerät ohne Namen",
+    "rename_btn": "Umbenennen",
+    "revoke_owner_title": "Das Gerät widerrufen, auf dem die Stimme erstellt wurde?",
+    "revoke_owner_body": "Auf diesem Gerät wurde die Stimme erstellt. Nach dem Widerruf bleibt die Stimme auf unserem Server und auf den anderen Geräten, lässt sich aber nur noch über den Verwaltungslink in deiner E-Mail umbenennen oder löschen. Du kannst das Gerät jederzeit mit dem Stimmcode aus der E-Mail wieder hinzufügen.",
+    "revoke_owner_btn": "Dieses Gerät widerrufen",
+    "cancel_link": "Abbrechen"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -189,7 +234,16 @@
     "gone_generic": "此链接已无法打开任何内容：它指向的声音不再存在，或者网址不完整。",
     "gone_refund": "如果你已付款，我们已通过电子邮件向你发送等额的代金券。",
     "gone_books": "已经用该声音生成的有声书不受影响，仍然属于你。",
-    "gone_home": "返回 Audiobook Maker"
+    "gone_home": "返回 Audiobook Maker",
+    "device_name_lbl": "此设备的名称",
+    "device_name_hint": "便于你以后在已授权设备列表中认出这台设备。",
+    "this_device": "此设备",
+    "device_unnamed": "未命名设备",
+    "rename_btn": "重命名",
+    "revoke_owner_title": "要撤销创建该声音的设备吗？",
+    "revoke_owner_body": "这是创建该声音的设备。撤销后，声音仍保留在我们的服务器和其他设备上，但只能通过你邮件中的管理链接来重命名或删除。你可以随时使用邮件中收到的声音代码重新添加这台设备。",
+    "revoke_owner_btn": "撤销此设备",
+    "cancel_link": "取消"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -221,6 +275,15 @@
     "gone_generic": "यह लिंक अब कुछ नहीं खोलता: जिस आवाज़ की ओर यह इशारा करता था वह अब मौजूद नहीं है, या पता अधूरा है।",
     "gone_refund": "अगर आपने भुगतान किया था, तो खर्च की गई राशि का वाउचर आपको ईमेल से मिल चुका है।",
     "gone_books": "उस आवाज़ से पहले बनाई गई ऑडियोबुक पर कोई असर नहीं पड़ता: वे आपकी ही रहती हैं।",
-    "gone_home": "Audiobook Maker पर वापस जाएँ"
+    "gone_home": "Audiobook Maker पर वापस जाएँ",
+    "device_name_lbl": "इस डिवाइस का नाम",
+    "device_name_hint": "इससे आप बाद में अधिकृत डिवाइसों की सूची में इस डिवाइस को पहचान पाएँगे।",
+    "this_device": "यह डिवाइस",
+    "device_unnamed": "बिना नाम का डिवाइस",
+    "rename_btn": "नाम बदलें",
+    "revoke_owner_title": "आवाज़ बनाने वाले डिवाइस की अनुमति हटाएँ?",
+    "revoke_owner_body": "इसी डिवाइस पर आवाज़ बनाई गई थी। अनुमति हटाने के बाद आवाज़ हमारे सर्वर और बाकी डिवाइसों पर बनी रहेगी, लेकिन उसका नाम बदलना या उसे हटाना सिर्फ़ आपके ईमेल के प्रबंधन लिंक से हो पाएगा। ईमेल में मिले वॉइस कोड से आप इस डिवाइस को कभी भी फिर से जोड़ सकते हैं।",
+    "revoke_owner_btn": "इस डिवाइस की अनुमति हटाएँ",
+    "cancel_link": "रद्द करें"
   }
 }

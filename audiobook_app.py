@@ -9156,7 +9156,8 @@ def api_vc_config():
                     "max_upload_mb": voice_clone.max_upload_mb(),
                     "languages": voice_clone.offered_languages(),
                     "min_sec": g.min_sec, "max_sec": g.max_sec,
-                    "asr": voice_clone_audio.asr_enabled()})
+                    "asr": voice_clone_audio.asr_enabled(),
+                    "device_name_guess": _vc_device_name_guess()})
 
 
 @app.route("/api/voice_clone/prompt")
@@ -9236,7 +9237,8 @@ def api_vc_sample():
                                        prompt_text=prompt_text, sample_wav=wav, original_path=src,
                                        original_ext=ext, metrics=mt.as_dict(),
                                        ui_lang=_get_browser_lang() or "en",
-                                       name=request.form.get("name") or "")
+                                       name=request.form.get("name") or "",
+                                       device_name=_vc_device_name(request.form.get("device_name")))
         _vc_log(rec, "VOICE_CLONE_SAMPLE_OK")
         return jsonify({"clone_id": rec["id"], "state": rec["state"], "expires_at": rec["expires_at"],
                         "metrics": rec.get("metrics") or {}, "cer": cer})
@@ -9500,7 +9502,9 @@ def api_vc_confirm():
     data = request.get_json(silent=True) or {}
     code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
     try:
-        esito = voice_clone.confirm(code, cid, str(data.get("confirm_code") or "").strip())
+        nome = _vc_device_name(data.get("device_name"))
+        esito = voice_clone.confirm(code, cid, str(data.get("confirm_code") or "").strip(),
+                                    device_name=nome)
     except voice_clone.VoiceGone:
         return _vc_err("code_unknown", "Unknown voice code", 404)
     if esito == "ok":
@@ -9508,7 +9512,8 @@ def api_vc_confirm():
         _vc_log(rec, "VOICE_CLONE_DEVICE_ADDED")
         if rec.get("owner_email"):
             email_service.send_voice_clone_device_added(rec["owner_email"], rec.get("ui_lang") or "en",
-                                                         devices_url=_vc_urls(rec)["manage_url"])
+                                                         devices_url=_vc_urls(rec)["manage_url"],
+                                                         device_name=nome or _vc_device_key(cid))
         return jsonify({"status": "ok", "voice": _vc_view(rec)})
     mappa = {"wrong": ("confirm_wrong", 400), "expired": ("confirm_expired", 410),
              "none": ("confirm_none", 404), "locked": ("code_locked", 423)}
@@ -9710,6 +9715,15 @@ _VC_PAGES_FALLBACK = {
     "th_device": "Device", "th_via": "Added via", "th_date": "Date",
     "revoke_btn": "Revoke", "delete_link": "Delete this voice",
     "via_creator": "Creation", "via_resume": "Email link", "via_code": "Voice code",
+    "device_name_lbl": "Name of this device",
+    "device_name_hint": "It lets you recognise this device later in the list of authorised devices.",
+    "this_device": "this device", "device_unnamed": "Unnamed device", "rename_btn": "Rename",
+    "revoke_owner_title": "Revoke the device that created the voice?",
+    "revoke_owner_body": "This is the device the voice was created on. Once revoked, the voice stays on "
+                         "our server and on the other devices, but it can be renamed or deleted only from "
+                         "the management link in your email. You can add the device back at any time with "
+                         "the voice code you received by email.",
+    "revoke_owner_btn": "Revoke this device", "cancel_link": "Cancel",
     "delete_title": "Delete your voice sample",
     "delete_p1": "This removes your voice sample and every file derived from it. "
                  "Audiobooks already generated are not affected.",
@@ -9762,7 +9776,11 @@ def _vc_page(title, body_html, status=200, lang="en"):
                 f"<meta name=\"robots\" content=\"noindex,nofollow\">"
                 f"<title>{marchio} - {html_mod.escape(title)}</title>"
                 f"<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em}}"
-                f"button{{padding:.6em 1.2em}}table{{border-collapse:collapse}}td{{padding:.3em .8em}}"
+                f"button{{padding:.6em 1.2em}}input{{padding:.5em;font:inherit;max-width:100%;box-sizing:border-box}}"
+                f".devs{{list-style:none;padding:0}}.devs li{{border-top:1px solid #ddd;padding:.9em 0}}"
+                f".devs form{{display:inline-flex;gap:.4em;margin:.5em .6em 0 0;flex-wrap:wrap}}"
+                f".meta{{color:#666;font-size:.9em;margin-top:.2em}}"
+                f".me{{font-size:.8em;background:#eef3ff;border-radius:1em;padding:.1em .6em;margin-left:.4em}}"
                 f".brand{{display:flex;align-items:center;gap:.6em;margin-bottom:1.8em;"
                 f"color:inherit;text-decoration:none}}"
                 f".brand svg{{width:42px;height:42px;flex:none}}"
@@ -9831,7 +9849,12 @@ def vc_resume(token):
     t = _vc_txt(lang)
     if request.method == "GET":
         body = (f"<p>{html_mod.escape(t['resume_q'])}</p>"
-                f"<form method=\"post\"><button>{html_mod.escape(t['resume_btn'])}</button></form>")
+                f"<form method=\"post\">"
+                f"<p><label>{html_mod.escape(t['device_name_lbl'])}<br>"
+                f"<input name=\"device_name\" maxlength=\"{voice_clone.DEVICE_NAME_MAX}\" "
+                f"value=\"{html_mod.escape(_vc_device_name_guess())}\"></label><br>"
+                f"<small>{html_mod.escape(t['device_name_hint'])}</small></p>"
+                f"<button>{html_mod.escape(t['resume_btn'])}</button></form>")
         return _vc_page(t["resume_title"], body, lang=lang)
     cid = _get_client_id()
     if cid and not voice_clone._has_cid(rec, cid):
@@ -9839,15 +9862,35 @@ def vc_resume(token):
         if len(resume_devices) >= RESUME_DEVICES_MAX:
             body = f"<p>{html_mod.escape(t['toomany_body'])}</p>"
             return _vc_page(t["toomany_title"], body, status=409, lang=lang)
-        with voice_clone._lock:
-            devices = list(rec.get("devices") or []) + [{"cid": cid, "added_at": time.time(), "via": "resume"}]
-            voice_clone.store().update(rec["id"], {"devices": devices})
+        voice_clone.add_resume_device(rec["id"], cid, _vc_device_name(request.form.get("device_name")))
         _vc_log(rec, "VOICE_CLONE_RESUME")
     return _apply_no_cache(redirect(f"/?vc={rec['id']}", code=302))
 
 
 def _vc_device_key(cid):
     return hashlib.sha256((cid or "").encode("utf-8")).hexdigest()[:8]
+
+
+def _vc_device_name_guess():
+    return voice_clone.device_name_from_ua(request.headers.get("User-Agent"))
+
+
+def _vc_device_name(nome):
+    """Il nome scritto dall'utente o, se l'ha lasciato vuoto, quello proposto
+    dal browser: un dispositivo senza nome non si riconosce piu' dopo."""
+    return voice_clone.normalize_device_name(nome) or _vc_device_name_guess()
+
+
+def _vc_lang_tail():
+    """Chi ha forzato una lingua con ?lang= deve ritrovarla dopo il giro di
+    una POST che rimanda alla pagina dei dispositivi."""
+    ql = (request.args.get("lang") or "").strip().lower()
+    return f"?lang={html_mod.escape(ql)}" if ql in _VC_PAGES_I18N else ""
+
+
+def _vc_device_by_key(rec, key):
+    return next((d for d in rec.get("devices") or []
+                 if key and (d.get("cid") == key or _vc_device_key(d.get("cid")) == key)), None)
 
 
 @app.route("/vc/<token>/devices")
@@ -9859,26 +9902,47 @@ def vc_devices(token):
         return _vc_manage_gone(token)
     lang = _vc_page_lang()
     t = _vc_txt(lang)
+    tok = html_mod.escape(token)
+    coda = _vc_lang_tail()
+    mio = _get_client_id()
     righe = ""
     for d in rec.get("devices") or []:
         when = datetime.fromtimestamp(float(d.get("added_at") or 0), timezone.utc).strftime("%Y-%m-%d")
         chiave = _vc_device_key(d.get("cid"))
-        azione = ("" if d.get("via") == "creator" else
-                  f"<form method=\"post\" action=\"/vc/{html_mod.escape(token)}/devices/revoke\" style=\"display:inline\">"
-                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
-                  f"<button>{html_mod.escape(t['revoke_btn'])}</button></form>")
+        nome = str(d.get("name") or "")
         # «creator», «resume» e «code» sono nomi interni: a chi legge si dice
         # da dove e' entrato quel dispositivo, nella sua lingua.
         via = str(d.get("via") or "")
-        righe += (f"<tr><td>{chiave}</td><td>{html_mod.escape(t.get('via_' + via, via))}</td>"
-                  f"<td>{when}</td><td>{azione}</td></tr>")
+        questo = (f" <span class=\"me\">{html_mod.escape(t['this_device'])}</span>"
+                  if mio and d.get("cid") == mio else "")
+        righe += (f"<li><div><b>{html_mod.escape(nome or t['device_unnamed'])}</b>{questo}</div>"
+                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div>"
+                  f"<form method=\"post\" action=\"/vc/{tok}/devices/rename{coda}\">"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
+                  f"<input name=\"name\" maxlength=\"{voice_clone.DEVICE_NAME_MAX}\" "
+                  f"value=\"{html_mod.escape(nome)}\" aria-label=\"{html_mod.escape(t['th_device'])}\">"
+                  f"<button>{html_mod.escape(t['rename_btn'])}</button></form>"
+                  f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
+                  f"<button>{html_mod.escape(t['revoke_btn'])}</button></form></li>")
     body = (f"<p>{html_mod.escape(t['devices_intro'])}</p>"
-            f"<table><tr><th>{html_mod.escape(t['th_device'])}</th>"
-            f"<th>{html_mod.escape(t['th_via'])}</th>"
-            f"<th>{html_mod.escape(t['th_date'])}</th><th></th></tr>{righe}</table>"
-            f"<p><a href=\"/vc/{html_mod.escape(token)}/delete?lang={html_mod.escape(lang)}\">"
+            f"<ul class=\"devs\">{righe}</ul>"
+            f"<p><a href=\"/vc/{tok}/delete?lang={html_mod.escape(lang)}\">"
             f"{html_mod.escape(t['delete_link'])}</a></p>")
     return _vc_page(t["devices_title"], body, lang=lang)
+
+
+@app.route("/vc/<token>/devices/rename", methods=["POST"])
+def vc_devices_rename(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        return _vc_manage_gone(token)
+    d = _vc_device_by_key(rec, (request.form.get("key") or "").strip())
+    if d is not None:
+        voice_clone.rename_device(token, d.get("cid"), request.form.get("name") or "")
+    return _apply_no_cache(redirect(f"/vc/{token}/devices{_vc_lang_tail()}", code=302))
 
 
 @app.route("/vc/<token>/devices/revoke", methods=["POST"])
@@ -9889,16 +9953,28 @@ def vc_devices_revoke(token):
     if rec is None:
         return _vc_manage_gone(token)
     key = (request.form.get("key") or request.form.get("cid") or "").strip()
-    for d in rec.get("devices") or []:
-        if d.get("via") != "creator" and (d.get("cid") == key or _vc_device_key(d.get("cid")) == key):
-            voice_clone.revoke_device(token, d.get("cid"))
-            _vc_log(rec, "VOICE_CLONE_DEVICE_REVOKED")
-            break
-    # La revoca rimanda alla stessa pagina: se l'utente aveva forzato una
-    # lingua con ?lang= deve ritrovarla dopo il giro.
-    ql = (request.args.get("lang") or "").strip().lower()
-    coda_lang = f"?lang={html_mod.escape(ql)}" if ql in _VC_PAGES_I18N else ""
-    return _apply_no_cache(redirect(f"/vc/{token}/devices{coda_lang}", code=302))
+    d = _vc_device_by_key(rec, key)
+    coda = _vc_lang_tail()
+    if d is not None and d.get("via") == "creator" and request.form.get("confirm") != "1":
+        # Il creatore e' l'unico dispositivo che rinomina e cancella la voce
+        # dall'app: prima di toglierlo si dice che dopo restera' solo il link
+        # dell'email. Il codice-voce non si perde, e' nell'email di consegna.
+        lang = _vc_page_lang()
+        t = _vc_txt(lang)
+        tok = html_mod.escape(token)
+        nome = str(d.get("name") or "") or t["device_unnamed"]
+        body = (f"<p><b>{html_mod.escape(nome)}</b></p>"
+                f"<p>{html_mod.escape(t['revoke_owner_body'])}</p>"
+                f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
+                f"<input type=\"hidden\" name=\"key\" value=\"{html_mod.escape(key)}\">"
+                f"<input type=\"hidden\" name=\"confirm\" value=\"1\">"
+                f"<button>{html_mod.escape(t['revoke_owner_btn'])}</button></form>"
+                f"<p><a href=\"/vc/{tok}/devices{coda}\">{html_mod.escape(t['cancel_link'])}</a></p>")
+        return _vc_page(t["revoke_owner_title"], body, lang=lang)
+    if d is not None:
+        voice_clone.revoke_device(token, d.get("cid"))
+        _vc_log(rec, "VOICE_CLONE_DEVICE_REVOKED")
+    return _apply_no_cache(redirect(f"/vc/{token}/devices{coda}", code=302))
 
 
 @app.route("/vc/<token>/delete", methods=["GET", "POST"])

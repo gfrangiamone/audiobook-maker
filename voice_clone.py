@@ -367,6 +367,38 @@ def normalize_name(s):
     return " ".join(s.split())[:NAME_MAX].strip()
 
 
+DEVICE_NAME_MAX = 40
+
+# Browser e sistema riconoscibili dallo User-Agent, nell'ordine in cui vanno
+# provati: Edge e Opera si dichiarano anche Chrome, Chrome si dichiara Safari,
+# iPad e iPhone si dichiarano «like Mac OS X».
+_UA_BROWSERS = (("Edg", "Edge"), ("OPR", "Opera"), ("Firefox", "Firefox"), ("FxiOS", "Firefox"),
+                ("CriOS", "Chrome"), ("Chrome", "Chrome"), ("Safari", "Safari"))
+_UA_SYSTEMS = (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+               ("Windows", "Windows"), ("Mac OS X", "Mac"), ("CrOS", "ChromeOS"), ("Linux", "Linux"))
+
+
+def normalize_device_name(s):
+    """Il nome con cui l'utente riconosce un dispositivo nella pagina di
+    gestione: stessa pulizia del nome della voce, al massimo DEVICE_NAME_MAX."""
+    return normalize_name(s)[:DEVICE_NAME_MAX].strip()
+
+
+def device_name_from_ua(ua):
+    """Nome di partenza proposto all'utente («Chrome · Windows»), uguale in
+    tutte le lingue. '' se lo User-Agent non dice nulla di riconoscibile."""
+    ua = str(ua or "")
+    browser = next((n for k, n in _UA_BROWSERS if k in ua), "")
+    sistema = next((n for k, n in _UA_SYSTEMS if k in ua), "")
+    if not (browser and sistema):
+        return ""
+    return f"{browser} · {sistema}"
+
+
+def device_of(rec, cid):
+    return next((d for d in (rec or {}).get("devices") or [] if d.get("cid") == cid), None)
+
+
 def rename(clone_id, cid, name):
     """Rinomina dalla lista «Le tue voci»: solo il dispositivo creatore e solo
     una voce ancora viva. None se non e' possibile; '' toglie il nome."""
@@ -378,7 +410,7 @@ def rename(clone_id, cid, name):
 
 
 def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
-                 original_path, original_ext, metrics, ui_lang, name="", now=None):
+                 original_path, original_ext, metrics, ui_lang, name="", device_name="", now=None):
     """Il campione approvato dal gate diventa una voce in stato `sample_ok`.
 
     Un solo draft per cid (§3.3): il precedente viene cancellato con i suoi
@@ -428,7 +460,8 @@ def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
                 "prompt_version": voice_clone_prompts.prompt_version(prompt_text),
                 "sample": dict(metrics or {}, original_ext=original_ext),
                 "demo": None, "payment": None,
-                "devices": [{"cid": cid, "added_at": t, "via": "creator"}],
+                "devices": [{"cid": cid, "added_at": t, "via": "creator",
+                             "name": normalize_device_name(device_name)}],
                 "pending_confirm": None, "confirm_locks": {},
                 "consent_at": t, "ui_lang": ui_lang,
                 "created_at": t, "ready_at": None, "last_used_at": t,
@@ -644,6 +677,9 @@ def mine(cid, now=None):
         pub = public_view(rec)
         pub["owner"] = is_owner(rec, cid)
         pub["pending"] = rec.get("state") != "ready"
+        # Il nome con cui questo dispositivo e' gia' registrato: il wizard lo
+        # ripropone alla voce successiva invece di chiederne uno nuovo.
+        pub["device_name"] = (device_of(rec, cid) or {}).get("name") or ""
         # Il player della scheda fa sentire il CAMPIONE registrato, non una
         # prova sintetizzata: e' l'unico audio che l'utente riconosce come suo.
         pub["sample_url"] = f"/api/voice_clone/{rec['id']}/sample.wav"
@@ -791,7 +827,7 @@ def claim(voice_code, cid, now=None):
         return "pending", rec, code
 
 
-def confirm(voice_code, cid, confirm_code, now=None):
+def confirm(voice_code, cid, confirm_code, now=None, device_name=""):
     t = _now(now)
     with _lock:
         rec = _by_code_alive(voice_code)
@@ -803,7 +839,8 @@ def confirm(voice_code, cid, confirm_code, now=None):
             return "expired"
         if hmac.compare_digest(pc.get("code_hash") or "", _code_hash((confirm_code or "").strip())):
             devices = list(rec.get("devices") or [])
-            devices.append({"cid": cid, "added_at": t, "via": "code"})
+            devices.append({"cid": cid, "added_at": t, "via": "code",
+                            "name": normalize_device_name(device_name)})
             store().update(rec["id"], {"pending_confirm": None, "devices": devices})
             return "ok"
         pc = dict(pc, tries=int(pc.get("tries") or 0) + 1)
@@ -844,6 +881,33 @@ def revoke_device(manage_token, cid):
     with _lock:
         rec = by_manage_token(manage_token)
         return bool(rec) and _drop_device(rec, cid)
+
+
+def add_resume_device(clone_id, cid, device_name, now=None):
+    """Autorizza il dispositivo arrivato dal link di ripresa. False se era
+    gia' dentro (o la voce non c'e'): nessun duplicato nella lista."""
+    t = _now(now)
+    with _lock:
+        rec = get(clone_id)
+        if rec is None or _has_cid(rec, cid):
+            return False
+        devices = list(rec.get("devices") or []) + [
+            {"cid": cid, "added_at": t, "via": "resume", "name": normalize_device_name(device_name)}]
+        store().update(rec["id"], {"devices": devices})
+        return True
+
+
+def rename_device(manage_token, cid, name):
+    """Rinomina dal link di gestione, l'unico posto dove i dispositivi si
+    vedono tutti insieme."""
+    with _lock:
+        rec = by_manage_token(manage_token)
+        if not rec or device_of(rec, cid) is None:
+            return False
+        devices = [dict(d, name=normalize_device_name(name)) if d.get("cid") == cid else d
+                   for d in rec.get("devices") or []]
+        store().update(rec["id"], {"devices": devices})
+        return True
 
 
 def devices_view(rec):

@@ -52,8 +52,10 @@ def test_paid_in_ogni_lingua_e_fallback(inviate, lang):
 def test_confirm_e_device(inviate):
     assert es.send_voice_clone_confirm("u@x.it", "it", confirm_code="123456")
     assert "123456" in inviate[-1][2] and "15" in inviate[-1][2]
-    assert es.send_voice_clone_device_added("u@x.it", "en", devices_url="https://a/vc/m/devices")
+    assert es.send_voice_clone_device_added("u@x.it", "en", devices_url="https://a/vc/m/devices",
+                                            device_name="PC di casa")
     assert inviate[-1][1] == "New device authorized" and "https://a/vc/m/devices" in inviate[-1][2]
+    assert "PC di casa" in inviate[-1][2]
 
 
 def test_ready_expiring_reminder(inviate):

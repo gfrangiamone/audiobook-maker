@@ -861,8 +861,9 @@ def send_voice_clone_confirm(email, lang, *, confirm_code, minutes=15):
                     confirm_code=confirm_code, minutes=minutes)
 
 
-def send_voice_clone_device_added(email, lang, *, devices_url):
-    return _vc_send(email, lang, "device_subject", ("device_body",), devices_url=devices_url)
+def send_voice_clone_device_added(email, lang, *, devices_url, device_name):
+    return _vc_send(email, lang, "device_subject", ("device_body",), devices_url=devices_url,
+                    device_name=device_name)
 
 
 def send_voice_clone_ready(email, lang, *, voice_code, manage_url, delete_url, retention_days):
