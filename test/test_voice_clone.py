@@ -40,6 +40,11 @@ def bozza(tmp_path, cid="cid-uno", **kw):
     return vc.create_draft(cid, **args)
 
 
+def _cartelle_voci():
+    """Le cartelle delle voci: in `user_voices/` c'e' anche il registro."""
+    return [n for n in os.listdir(vc.voices_dir()) if os.path.isdir(os.path.join(vc.voices_dir(), n))]
+
+
 def test_codici_e_token():
     tok = vc.new_token()
     assert len(tok) == 32 and int(tok, 16) >= 0
@@ -80,10 +85,10 @@ def test_create_draft_rifiuta_lingua_o_genere_fuori_offerta(tmp_path):
 def test_create_draft_rifiuta_original_ext_non_ammessa(tmp_path):
     with pytest.raises(ValueError):
         bozza(tmp_path, original_ext="../evil")
-    assert os.listdir(vc.voices_dir()) == []
+    assert _cartelle_voci() == []
     with pytest.raises(ValueError):
         bozza(tmp_path, original_ext="EXE")     # non nella whitelist, pur regex-valida
-    assert os.listdir(vc.voices_dir()) == []
+    assert _cartelle_voci() == []
 
 
 def test_nuova_bozza_dello_stesso_cid_sostituisce_la_precedente(tmp_path):
@@ -184,7 +189,7 @@ def test_bozza_precedente_sopravvive_se_lo_spostamento_fallisce(tmp_path, monkey
     ancora = vc.draft_for_cid("cid-uno")
     assert ancora["id"] == prima["id"]
     assert os.path.exists(os.path.join(vc.voice_dir(prima["token"]), "sample.wav"))
-    assert os.listdir(vc.voices_dir()) == [prima["token"]]
+    assert _cartelle_voci() == [prima["token"]]
 
 
 def _pronta(tmp_path, cid="cid-uno", **kw):

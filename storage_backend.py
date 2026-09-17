@@ -72,6 +72,13 @@ def upload_file(local_path, key):
     _get_client().upload_file(Filename=str(local_path), Bucket=_BUCKET, Key=_full_key(key))
 
 
+def upload_bytes(data, key, content_type="application/json"):
+    """Carica `data` (bytes) su S3 sotto `key` con un solo PUT. Per oggetti
+    piccoli letti in memoria (es. il registro delle voci). Solleva su errore."""
+    _get_client().put_object(Bucket=_BUCKET, Key=_full_key(key), Body=bytes(data),
+                             ContentType=content_type)
+
+
 def object_exists(key):
     """True se l'oggetto esiste (head_object). False su 404."""
     try:

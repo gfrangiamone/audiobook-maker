@@ -60,14 +60,20 @@ def init(data_dir: str | os.PathLike) -> None:
 class JsonStore:
     """Append-mostly JSON store with id-keyed items list."""
 
-    def __init__(self, filename: str):
+    def __init__(self, filename: str, on_write=None):
+        """`filename` e' relativo al data dir e puo' stare in una sottocartella.
+        `on_write`, se dato, viene chiamato (sotto il lock dello store) dopo
+        ogni scrittura, esclusa la creazione del file vuoto: deve solo
+        segnalare, mai fare I/O lento. Un suo errore non ferma la scrittura."""
         if _data_dir is None:
             raise RuntimeError("community_store.init() must be called first")
         self.path = _data_dir / filename
         self.bak = _data_dir / (filename + ".bak")
         self._lock = threading.Lock()
+        self._on_write = None
         if not self.path.exists():
             self._write_unlocked({"items": []})
+        self._on_write = on_write
 
     def _read_unlocked(self) -> dict[str, Any]:
         try:
@@ -92,6 +98,20 @@ class JsonStore:
         # fsync=False: comportamento storico di questo store (dataset piccoli,
         # best-effort); il .bak sopra copre il recovery.
         atomic_write_json(self.path, data, fsync=False, indent=2)
+        if self._on_write is not None:
+            try:
+                self._on_write()
+            except Exception as e:      # noqa: BLE001
+                print(f"[community_store] on_write fallito per {self.path.name}: {e}")
+
+    def raw_bytes(self) -> bytes | None:
+        """Il contenuto del file cosi' com'e' su disco, letto sotto il lock
+        (nessuna scrittura a meta'). None se il file non si legge."""
+        with self._lock:
+            try:
+                return self.path.read_bytes()
+            except OSError:
+                return None
 
     def all(self, include_archived: bool = False) -> list[dict]:
         with self._lock:

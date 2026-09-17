@@ -59,7 +59,7 @@ autorizza via email.
 | D16 | Dopo il pagamento il server è **autonomo**: genera le demo anche se il browser sparisce. La voce diventa **usabile solo dopo l'approvazione** esplicita delle demo (stato `ready`). |
 | D17 | L'email inviata al pagamento è **lo strumento di ripresa** del wizard: contiene il codice-voce e un link con `resume_token` che riapre il wizard al punto giusto. |
 | D18 | La voce clonata vale **solo per VoxCPM** e **solo se lingua e accento del libro coincidono** con quelli dichiarati. Negli altri casi non compare. |
-| D19 | Il campione vive in `ABM_DATA_DIR/voices/<token>/`, **fuori dal tiering hot/cold dei job**, con copia su R2 sotto `voices/`. |
+| D19 | Il campione vive in `ABM_DATA_DIR/user_voices/<token>/`, **fuori dal tiering hot/cold dei job**; la cartella `user_voices/` (registro compreso) ha uno specchio permanente su R2 sotto `user_voices/`. |
 | D20 | Una voce per email. Una nuova registrazione dallo stesso proprietario è ammessa solo dopo cancellazione della precedente. |
 
 ## 3. Esperienza utente
@@ -275,25 +275,54 @@ Nessuna modifica al worker RunPod per questa feature.
 ### 5.5 Storage
 
 ```
-ABM_DATA_DIR/voices/<token>/
-  sample.wav          wav mono 24 kHz normalizzato (l'unico usato da VoxCPM)
-  original.<ext>      file caricato, conservato per verifica a posteriori
-  demo_common.wav     demo approvata, frase comune (48 kHz)
-  demo_extra.wav      demo approvata, frase extra
-  demo_try_<n>_*.wav  tentativi non approvati (cancellati all'approvazione)
+ABM_DATA_DIR/user_voices/
+  _voice_clones.json        registro delle voci (§6.1)
+  _voice_clones.json.bak    copia precedente, per il recovery locale
+  <token>/
+    sample.wav          wav mono 24 kHz normalizzato (l'unico usato da VoxCPM)
+    original.<ext>      file caricato, conservato per verifica a posteriori
+    demo_common.wav     demo approvata, frase comune (48 kHz)
+    demo_extra.wav      demo approvata, frase extra
+    demo_try_<n>_*.wav  tentativi non approvati (cancellati all'approvazione)
 ```
 
-Copia su R2 con chiave `voices/<token>/<file>` appena scritti (`sample.wav`
-e `original` al commit, demo all'approvazione). Il prefisso `voices/` è
-escluso da `storage_tiering` e da ogni sweep dei job. Se il locale manca (es.
-nuovo server) il resolver scarica da R2 alla prima richiesta.
+`user_voices/` è esclusa da `storage_tiering`, da ogni sweep dei job e dalla
+pulizia delle cartelle orfane (`_RESERVED_DATA_DIRS`, dopo l'incidente del
+12/09/2026). Al primo avvio un registro rimasto in `ABM_DATA_DIR` (layout
+precedente) viene spostato qui con il suo `.bak`; se esistono entrambi non si
+tocca nulla e il log chiede una verifica a mano.
+
+**Specchio permanente su R2** (stessa chiave relativa, prefisso `user_voices/`):
+
+- **File delle voci.** `sample.wav` e `original.<ext>` vengono caricati al
+  commit, le demo approvate all'approvazione. I tentativi `demo_try_*` e i
+  `.pcm` di lavoro non vanno mai su R2. Ogni ora `voice_clone.sync_r2()`
+  (chiamato dal supervisore dello sweep) riallinea: carica i file mancanti
+  delle voci vive (le demo solo se la voce è `ready`) e cancella da R2 i file
+  delle voci cancellate, scadute o rimborsate. Il record resta nel registro
+  finché non viene purgato. I prefissi su R2 senza un record vengono solo
+  contati nel log, mai cancellati.
+- **Registro.** Ogni scrittura del registro lo segna da replicare; un thread
+  in background (debounce di 2 s, nuovo tentativo ogni 30 s) carica
+  `user_voices/_voice_clones.json` fuori dal lock dello store. Un registro
+  illeggibile non viene mai caricato sopra quello buono di R2. Una volta al
+  giorno ne resta una copia in `user_voices/_backup/_voice_clones-<AAAA-MM-GG>.json`;
+  si tengono le ultime 30.
+- **Ripristino all'avvio.** Se il registro locale manca e R2 è attivo, viene
+  scaricato da R2 (3 tentativi). Se su R2 non c'è, si parte vuoti. Se R2 non
+  risponde o il file scaricato non è un registro valido (salvato a parte come
+  `.r2-illeggibile`), la replica del registro resta bloccata fino al riavvio,
+  così un registro vuoto non sovrascrive quello di R2.
+- **File mancanti in locale.** Se `sample.wav` manca (es. nuovo server), il
+  resolver lo scarica da R2 alla prima richiesta.
 
 ## 6. Identità e ciclo di vita
 
 ### 6.1 Il record
 
-`_voice_clones.json` in `ABM_DATA_DIR`, via `community_store.JsonStore`
-(lock, `.bak`, scrittura atomica). Un record per voce:
+`user_voices/_voice_clones.json` in `ABM_DATA_DIR`, via `community_store.JsonStore`
+(lock, `.bak`, scrittura atomica), replicato su R2 come descritto in §5.5.
+Un record per voce:
 
 ```json
 {

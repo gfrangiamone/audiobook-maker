@@ -1,16 +1,27 @@
 """Voci campionate: store, identita', stati, dispositivi, resolver (spec §6,
 §9, §10).
 
-Il record vive in `_voice_clones.json` (community_store.JsonStore: lock,
-scrittura atomica, .bak). I file del campione stanno in
-`<data_dir>/voices/<token>/`, fuori dal tiering hot/cold dei job, con copia
-su R2 sotto `voices/<token>/`. Nessun import di audiobook_app: la data dir
-arriva da `init()`.
+Tutto sta in `<data_dir>/user_voices/`, fuori dal tiering hot/cold dei job:
+
+    user_voices/_voice_clones.json      registro (community_store.JsonStore:
+    user_voices/_voice_clones.json.bak  lock, scrittura atomica, .bak)
+    user_voices/<token>/sample.wav      campione normalizzato
+    user_voices/<token>/original.<ext>  file caricato
+    user_voices/<token>/demo_*.wav      demo
+
+Su R2 la cartella ha uno specchio fedele sotto lo stesso prefisso `user_voices/`
+(vedi la sezione «replica R2»): il registro si ricarica dopo ogni scrittura,
+con in piu' una copia datata al giorno in `user_voices/_backup/` (ultime
+BACKUP_KEEP); i file dei campioni si caricano appena scritti e `sync_r2()`
+ricarica ogni ora quelli mancanti e cancella i prefissi delle voci finite.
+Cancellare una voce la cancella anche da R2. Nessun import di audiobook_app:
+la data dir arriva da `init()`.
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -31,6 +42,15 @@ VOICE_ID_PREFIX = "voxcpm:mine:"
 # il cleanup deve poterla riconoscere a colpo sicuro e non toccarla mai.
 VOICES_DIRNAME = "user_voices"
 R2_PREFIX = VOICES_DIRNAME + "/"
+# Il registro sta nella stessa cartella, cosi' `user_voices/` (e il suo
+# specchio su R2) contiene tutto quel che serve a ricostruire le voci.
+STORE_FILENAME = "_voice_clones.json"
+BACKUP_PREFIX = R2_PREFIX + "_backup/"
+BACKUP_KEEP = 30
+REPLICA_DEBOUNCE_SEC = 2
+REPLICA_RETRY_SEC = 30
+_RESTORE_ATTEMPTS = 3
+_RESTORE_PAUSE_SEC = 2
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # niente 0/O, 1/I/L
 RESUME_TOKEN_DAYS = 30
 NAME_MAX = 40
@@ -105,10 +125,22 @@ _local_locks = {}
 
 
 def init(data_dir):
+    """Prepara `user_voices/` e apre il registro. Con R2 attivo, un registro
+    assente in locale (server nuovo, disco perso) si scarica da R2 PRIMA di
+    aprire lo store: altrimenti ne nascerebbe uno vuoto che la replica
+    caricherebbe sopra quello buono."""
     global _data_dir, _store
     _data_dir = str(data_dir)
-    _store = community_store.JsonStore("_voice_clones.json")
     os.makedirs(voices_dir(), exist_ok=True)
+    _replica_reset()
+    _migrate_legacy_store()
+    stato = "off"
+    if storage_backend.is_enabled():
+        stato = "armed" if os.path.exists(store_path()) else _restore_store_from_r2()
+    with _replica_cv:
+        _replica["state"] = stato
+    _store = community_store.JsonStore(VOICES_DIRNAME + "/" + STORE_FILENAME,
+                                       on_write=_replica_mark_dirty)
 
 
 def store():
@@ -123,6 +155,10 @@ def voices_dir():
 
 def voice_dir(token):
     return os.path.join(voices_dir(), token)
+
+
+def store_path():
+    return os.path.join(voices_dir(), STORE_FILENAME)
 
 
 def _now(now):
@@ -291,6 +327,222 @@ def remove_files(rec):
             storage_backend.delete_prefix(r2_key(rec["token"], ""))
         except Exception as e:
             print(f"[voice_clone] delete R2 fallita per {rec['id']}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# replica R2 di user_voices/
+# ---------------------------------------------------------------------------
+# Il registro e' l'unico file che cambia di continuo: ogni scrittura dello
+# store lo segna "da caricare" e un thread lo carica intero su R2 poco dopo
+# (le scritture ravvicinate diventano un solo PUT, e la rete resta fuori dal
+# lock dello store). Stati: "off" (R2 spento all'avvio), "armed" (si replica),
+# "blocked" (registro locale assente e R2 irraggiungibile all'avvio: non si sa
+# se su R2 ce n'e' uno buono, quindi non si carica nulla fino al riavvio).
+_replica = {"state": "off", "dirty": False, "backup_day": None}
+_replica_cv = threading.Condition()
+_replica_thread = None
+
+
+def _replica_reset():
+    with _replica_cv:
+        _replica.update(state="off", dirty=False, backup_day=None)
+
+
+def _today():
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _migrate_legacy_store():
+    """Il registro stava nella radice del data dir: lo sposta (con il .bak)
+    in `user_voices/`. Se esistono entrambi non tocca nulla e lo segnala."""
+    vecchio = os.path.join(_data_dir, STORE_FILENAME)
+    if not os.path.exists(vecchio):
+        return
+    nuovo = store_path()
+    if os.path.exists(nuovo):
+        print(f"[voice_clone] ATTENZIONE: {STORE_FILENAME} presente sia nel data dir sia in "
+              f"{VOICES_DIRNAME}/: uso quello in {VOICES_DIRNAME}/, l'altro resta da verificare a mano",
+              flush=True)
+        return
+    os.replace(vecchio, nuovo)
+    if os.path.exists(vecchio + ".bak") and not os.path.exists(nuovo + ".bak"):
+        os.replace(vecchio + ".bak", nuovo + ".bak")
+    print(f"[voice_clone] registro spostato in {VOICES_DIRNAME}/{STORE_FILENAME}", flush=True)
+
+
+def _registro_valido(data):
+    try:
+        parsed = json.loads(data)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(parsed, dict) and isinstance(parsed.get("items"), list)
+
+
+def _restore_store_from_r2():
+    """Scarica il registro da R2 se il locale manca. Ritorna lo stato della
+    replica: "armed" se R2 ha risposto (copia recuperata o assente davvero),
+    "blocked" se R2 non risponde o la copia remota non si legge."""
+    key = R2_PREFIX + STORE_FILENAME
+    for tentativo in range(_RESTORE_ATTEMPTS):
+        try:
+            if not storage_backend.download_file(key, store_path()):
+                return "armed"
+            break
+        except Exception as e:      # noqa: BLE001
+            print(f"[voice_clone] download del registro da R2 fallito "
+                  f"({tentativo + 1}/{_RESTORE_ATTEMPTS}): {type(e).__name__}: {e}", flush=True)
+            if tentativo + 1 < _RESTORE_ATTEMPTS:
+                time.sleep(_RESTORE_PAUSE_SEC)
+    else:
+        print("[voice_clone] ATTENZIONE: registro assente in locale e R2 irraggiungibile: "
+              "replica sospesa fino al riavvio", flush=True)
+        return "blocked"
+    with open(store_path(), "rb") as f:
+        valido = _registro_valido(f.read())
+    if valido:
+        print(f"[voice_clone] registro recuperato da R2 ({key})", flush=True)
+        return "armed"
+    os.replace(store_path(), store_path() + ".r2-illeggibile")
+    print("[voice_clone] ATTENZIONE: il registro su R2 non si legge: messo da parte, "
+          "replica sospesa fino al riavvio", flush=True)
+    return "blocked"
+
+
+def _replica_mark_dirty():
+    """Callback dello store (sotto il suo lock): solo segnalare."""
+    with _replica_cv:
+        stato = _replica["state"]
+        if stato == "armed":
+            _replica["dirty"] = True
+            _replica_cv.notify_all()
+    if stato == "armed":
+        _start_replica_thread()
+    elif stato == "blocked":
+        print("[voice_clone] registro modificato ma replica R2 sospesa", flush=True)
+
+
+def flush_replica():
+    """Carica ora il registro su R2 se ci sono scritture non replicate.
+    True se ha caricato. Un errore di rete lascia la replica da rifare; un
+    registro illeggibile non si carica mai (sovrascriverebbe la copia buona)."""
+    with _replica_cv:
+        if _replica["state"] != "armed" or not _replica["dirty"]:
+            return False
+        _replica["dirty"] = False
+    if not storage_backend.is_enabled() or _store is None:
+        with _replica_cv:
+            _replica["dirty"] = True
+        return False
+    data = _store.raw_bytes()
+    if not _registro_valido(data):
+        print("[voice_clone] ATTENZIONE: registro locale illeggibile, non replicato su R2", flush=True)
+        return False
+    try:
+        storage_backend.upload_bytes(data, R2_PREFIX + STORE_FILENAME)
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] replica del registro su R2 fallita: {type(e).__name__}: {e}", flush=True)
+        with _replica_cv:
+            _replica["dirty"] = True
+        return False
+    _backup_daily(data)
+    return True
+
+
+def _backup_daily(data):
+    """Una copia datata al giorno, le ultime BACKUP_KEEP: lo specchio
+    replica anche gli errori, le copie datate permettono di tornare indietro."""
+    giorno = _today()
+    if _replica["backup_day"] == giorno:
+        return
+    stem = STORE_FILENAME[:-len(".json")]
+    try:
+        storage_backend.upload_bytes(data, f"{BACKUP_PREFIX}{stem}-{giorno}.json")
+        _replica["backup_day"] = giorno
+        copie = sorted(storage_backend.list_prefix(BACKUP_PREFIX) or [])
+        for key in copie[:-BACKUP_KEEP]:
+            storage_backend.delete_object(key)
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] copia giornaliera del registro fallita: {type(e).__name__}: {e}", flush=True)
+
+
+def _replica_loop():
+    import traceback
+    while True:
+        try:
+            with _replica_cv:
+                while not _replica["dirty"]:
+                    _replica_cv.wait()
+            time.sleep(REPLICA_DEBOUNCE_SEC)
+            if not flush_replica() and _replica["dirty"]:
+                time.sleep(REPLICA_RETRY_SEC)
+        except Exception:      # noqa: BLE001
+            traceback.print_exc()
+            time.sleep(REPLICA_RETRY_SEC)
+
+
+def _start_replica_thread():
+    global _replica_thread
+    with _replica_cv:
+        if _replica_thread is not None and _replica_thread.is_alive():
+            return
+        _replica_thread = threading.Thread(target=_replica_loop, daemon=True,
+                                           name="voice-clone-replica")
+        _replica_thread.start()
+
+
+def _files_to_replicate(rec):
+    """I file stabili di una voce viva: campione e originale sempre, le demo
+    solo da `ready` (prima si rigenerano; `demo_try_*` e i .pcm mai)."""
+    ext = (rec.get("sample") or {}).get("original_ext") or "wav"
+    nomi = ["sample.wav", f"original.{ext}"]
+    if rec.get("state") == "ready":
+        nomi += list(DEMO_NAMES)
+    return nomi
+
+
+def sync_r2():
+    """Allinea lo specchio R2 di `user_voices/` ai record: carica i file
+    delle voci vive che mancano su R2, cancella da R2 (e dal disco) quelli
+    delle voci finite. I prefissi senza record si contano e basta: un registro
+    perso o rovinato non deve poter cancellare i campioni (incidente del
+    12/09/2026). Non solleva."""
+    out = {"uploaded": 0, "removed": 0, "unknown": 0}
+    if not storage_backend.is_enabled():
+        return out
+    remoti = {}
+    try:
+        chiavi = storage_backend.list_prefix(R2_PREFIX) or []
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] sync R2: elenco fallito: {type(e).__name__}: {e}", flush=True)
+        return out
+    for key in chiavi:
+        token, sep, nome = key[len(R2_PREFIX):].partition("/")
+        if sep and nome and not token.startswith("_"):
+            remoti.setdefault(token, set()).add(nome)
+    noti = set()
+    for rec in list(_all()):
+        token = rec.get("token")
+        if not token:
+            continue
+        noti.add(token)
+        try:
+            if rec.get("state") in HAS_SAMPLE:
+                for nome in _files_to_replicate(rec):
+                    locale = os.path.join(voice_dir(token), nome)
+                    if nome not in remoti.get(token, ()) and os.path.exists(locale):
+                        if upload_to_r2(rec, nome):
+                            out["uploaded"] += 1
+            elif token in remoti or os.path.isdir(voice_dir(token)):
+                remove_files(rec)
+                if token in remoti:
+                    out["removed"] += 1
+        except Exception as e:      # noqa: BLE001
+            print(f"[voice_clone] sync R2 {rec.get('id')}: {type(e).__name__}: {e}", flush=True)
+    out["unknown"] = len(set(remoti) - noti)
+    if out["unknown"]:
+        print(f"[voice_clone] sync R2: {out['unknown']} prefissi su R2 senza record (lasciati intatti)",
+              flush=True)
+    return out
 
 
 def _refund_captures(clone_id, reason):

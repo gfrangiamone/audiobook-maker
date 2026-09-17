@@ -18054,7 +18054,9 @@ CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimoss
 CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 
 # Nel data dir non ci sono solo le cartelle dei job: `user_voices/` e' la casa
-# dei campioni vocali, e su R2 e' il prefisso con lo stesso nome. Lo sweep delle
+# delle voci campionate (registro `_voice_clones.json` e cartelle dei campioni),
+# e su R2 e' il prefisso con lo stesso nome, uno specchio permanente tenuto
+# allineato da voice_clone (replica del registro + sync_r2). Lo sweep delle
 # cartelle orfane la scambiava per una job dir abbandonata e la cancellava da
 # disco E da cold (12/09/2026: campioni e demo di tutte le voci distrutti, con
 # i record ancora in stato ready e i file spariti). Ogni scansione del data dir
@@ -19071,10 +19073,16 @@ def _cleanup_supervisor():
 
 def _voice_clone_sweep_supervisor():
     """Sweep del ciclo di vita delle voci campionate, riavviato su crash
-    come _cleanup_supervisor (incidente 2026-06-15)."""
+    come _cleanup_supervisor (incidente 2026-06-15). Ogni giro, e subito
+    all'avvio, allinea anche lo specchio R2 di `user_voices/` (file mancanti
+    caricati, voci finite cancellate): gira anche a feature spenta, perche' i
+    campioni gia' registrati vanno replicati comunque."""
     import traceback
     while True:
         try:
+            sync = voice_clone.sync_r2()
+            if any(sync.values()):
+                print(f"[voice_clone] sync R2: {sync}", flush=True)
             time.sleep(voice_clone.SWEEP_INTERVAL_SEC)
             if voxcpm_tts is None or not voice_clone.enabled():
                 continue
