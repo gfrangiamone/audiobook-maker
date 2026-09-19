@@ -693,9 +693,14 @@ def record_probe_failure(model_key, detail, *, factor=2.0, max_delay_sec=None):
         entry["probe_next_at"] = time.time() + delay
         entry["probe_delay_sec"] = int(delay)
         _save()
+        # Il motivo va nel log, non solo nello stato: `_tts_backend_state.json`
+        # sta in una data dir leggibile dal solo root, quindi chi indaga un
+        # breaker che non rientra vede "sonda fallita" e non sa se il backend
+        # e' giu' o se e' la sonda stessa a essere tarata male (19/09/2026).
         print(f"[tts-backend-state] sonda {model_key} fallita "
-              f"({entry['probe_attempts']} tentativi): prossimo rientro fra "
-              f"{int(delay)}s")
+              f"({entry['probe_attempts']} tentativi): "
+              f"{entry['probe_last_error'] or 'motivo non riportato'} - "
+              f"prossimo rientro fra {int(delay)}s")
         return entry["probe_next_at"]
 
 

@@ -77,9 +77,42 @@ def test_the_probe_talks_to_cloudflare_directly_not_through_resolve(monkeypatch)
     assert len(visti) == 1
     assert visti[0]["model_id"] == gemini_tts.GEMINI_MODELS["flash31"]["id_cloudflare"]
     assert visti[0]["voice_name"] in gemini_tts.GEMINI_VOICE_NAMES
-    # Timeout della sola sonda, piu' corto di quello di produzione: una sonda
-    # lenta e' gia' una risposta, e nessun utente sta aspettando questo audio.
-    assert visti[0]["timeout_ms"] < gemini_tts._cf_timeout_ms()
+    # La sonda non puo' MAI essere piu' severa della produzione: un verdetto
+    # emesso con meno margine del traffico vero non e' trasferibile al traffico
+    # vero. Il 19/09/2026 una sonda a 15s ha tenuto flash31 su Vertex per ore
+    # bocciando un gateway che serviva le stesse richieste in 12-22s.
+    assert visti[0]["timeout_ms"] >= gemini_tts._cf_timeout_ms()
+
+
+def test_the_probe_timeout_never_falls_below_the_production_one(monkeypatch):
+    monkeypatch.setenv("ABM_CF_TIMEOUT_MS", "45000")
+    monkeypatch.setenv("ABM_CF_PROBE_TIMEOUT_MS", "15000")
+    assert gemini_tts._cf_probe_timeout_ms() == 45000
+
+
+def test_the_probe_timeout_honours_a_value_above_the_production_one(monkeypatch):
+    # Il pavimento alza, non schiaccia: chi vuole dare alla sonda piu' margine
+    # della produzione (un backend noto per rientrare lento) puo' ancora farlo.
+    monkeypatch.setenv("ABM_CF_TIMEOUT_MS", "45000")
+    monkeypatch.setenv("ABM_CF_PROBE_TIMEOUT_MS", "90000")
+    assert gemini_tts._cf_probe_timeout_ms() == 90000
+
+
+def test_a_failed_probe_records_how_long_it_waited(monkeypatch):
+    # Il motivo nudo non distingue un backend fermo da una sonda troppo
+    # stretta: senza durata e tetto l'indagine del 19/09/2026 e' ripartita
+    # da zero.
+    _trip()
+    st.schedule_probe("flash31", 0)
+
+    def _boom(**kw):
+        raise TransportError("timeout verso Cloudflare", kind="retryable")
+
+    monkeypatch.setattr(gemini_tts._transport, "cloudflare_call", _boom)
+    assert gemini_tts.probe_cloudflare("flash31") == "failed"
+    err = st.probe_info("flash31")["last_error"]
+    assert "timeout verso Cloudflare" in err
+    assert "timeout" in err and "s)" in err
 
 
 def test_the_return_pops_the_cache_and_never_forces_cloudflare(monkeypatch):

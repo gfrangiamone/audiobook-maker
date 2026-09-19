@@ -479,13 +479,24 @@ def _cf_probe_max_sec():
 
 
 def _cf_probe_timeout_ms():
-    """Timeout della sola sonda, piu' corto di quello di produzione: una
-    sonda lenta e' gia' una risposta (il backend non e' tornato sano) e
-    nessun utente sta aspettando questo audio."""
+    """Timeout della sola sonda. Mai piu' severo di quello di produzione.
+
+    L'idea originale era una sonda piu' corta - nessun utente aspetta questo
+    audio - ma cosi' scritta si e' rivelata una trappola: il 19/09/2026 il
+    breaker di flash31 e' rimasto giu' perche' la sonda a 15s bocciava un
+    gateway che serviva le stesse richieste in 12-22s. Una sonda piu' stretta
+    della produzione non misura la salute del backend, misura se stessa: puo'
+    dire "ancora giu'" su un backend che in produzione funzionerebbe, e il
+    raddoppio dell'intervallo trasforma quel falso negativo in ore di Vertex.
+    Il valore configurato resta un tetto desiderato, ma il pavimento e'
+    `_cf_timeout_ms()`: la sonda ha almeno lo stesso margine del traffico
+    vero, altrimenti il suo verdetto non e' trasferibile.
+    """
     try:
-        return max(1000, int(os.environ.get("ABM_CF_PROBE_TIMEOUT_MS", "15000") or 15000))
+        wanted = max(1000, int(os.environ.get("ABM_CF_PROBE_TIMEOUT_MS", "15000") or 15000))
     except (TypeError, ValueError):
-        return 15000
+        wanted = 15000
+    return max(wanted, _cf_timeout_ms())
 
 
 def _cf_probe_eligible(model_key):
@@ -513,6 +524,22 @@ def _cf_probe_eligible(model_key):
     if st.get("trip_reason") not in _CF_PROBE_REASONS:
         return False, f"causa di trip non sondabile: {st.get('trip_reason')!r}"
     return True, ""
+
+
+def _probe_failed(model_key, detail, started):
+    """Registra una sonda fallita annotando quanto e' durata e con che tetto.
+
+    Il motivo nudo ("timeout verso Cloudflare") non basta a decidere se il
+    backend e' giu' o se e' la sonda a essere tarata troppo stretta: servono
+    il tempo effettivamente speso e il timeout in vigore. Ritorna sempre
+    "failed" cosi' che i chiamanti restino una riga sola.
+    """
+    elapsed = max(0.0, time.time() - started)
+    budget = _cf_probe_timeout_ms() / 1000.0
+    _backend_state.record_probe_failure(
+        model_key, f"{detail} (dopo {elapsed:.1f}s, timeout {budget:.0f}s)",
+        max_delay_sec=_cf_probe_max_sec())
+    return "failed"
 
 
 def probe_cloudflare(model_key):
@@ -577,22 +604,16 @@ def probe_cloudflare(model_key):
             print(f"[gemini-tts] sonda {model_key}: contenuto rifiutato ma "
                   f"backend raggiungibile, vale come rientro")
             return _finish_cf_return(model_key, started)
-        _backend_state.record_probe_failure(
-            model_key, str(te)[:200], max_delay_sec=_cf_probe_max_sec())
-        return "failed"
+        return _probe_failed(model_key, str(te)[:200], started)
     except Exception as e:
         # Rete di sicurezza: la sonda gira in un thread di servizio e non
         # deve poter uccidere il sorvegliante con un'eccezione inattesa.
-        _backend_state.record_probe_failure(
-            model_key, f"{type(e).__name__}: {str(e)[:160]}",
-            max_delay_sec=_cf_probe_max_sec())
-        return "failed"
+        return _probe_failed(model_key, f"{type(e).__name__}: {str(e)[:160]}",
+                             started)
 
     pcm = (out or {}).get("pcm") or b""
     if not pcm:
-        _backend_state.record_probe_failure(
-            model_key, "risposta senza audio", max_delay_sec=_cf_probe_max_sec())
-        return "failed"
+        return _probe_failed(model_key, "risposta senza audio", started)
 
     # La sonda e' audio vero prodotto da Cloudflare: si paga, quindi si
     # addebita. Un rientro che non passasse dal ledger farebbe divergere in
@@ -2436,20 +2457,30 @@ def _http_timeout_ms(model_key=None):
 def _cf_timeout_ms():
     """Timeout HTTP (ms) per le call al backend Cloudflare Workers AI.
 
-    25s, non piu' 60s. Il costo di un tentativo fallito non e' l'attesa fra
-    un retry e l'altro (2s, 4s, 8s...) ma il timeout stesso: nell'episodio
-    del 14/09/2026 tre timeout consecutivi da 60s hanno tenuto fermo un job
-    PAGATO per 2 minuti e 7 secondi prima che il breaker scattasse, di cui
-    6 secondi soli di backoff. Con 25s la stessa sequenza di tentativi entra
-    in poco piu' di un minuto, cioe' l'utente aspetta meno E il failover
-    arriva prima. Il rischio speculare - troncare una sintesi lenta ma sana -
-    e' tarato sulla realta' del gateway: una chunk da 450 caratteri risponde
-    in pochi secondi, e una che ne impiega piu' di 25 sta gia' andando male.
+    45s. Il valore nasce da due episodi opposti, e sta in mezzo apposta.
+
+    Da un lato 60s erano troppi: il 14/09/2026 tre timeout consecutivi hanno
+    tenuto fermo un job PAGATO per 2 minuti e 7 secondi prima che il breaker
+    scattasse, di cui 6 secondi soli di backoff - il costo di un tentativo
+    fallito e' il timeout stesso, non l'attesa fra un retry e l'altro.
+
+    Dall'altro 25s erano troppo pochi, e la giustificazione che li reggeva
+    ("una chunk da 450 caratteri risponde in pochi secondi") era semplicemente
+    falsa: il log dell'AI Gateway del 19/09/2026 mostra risposte RIUSCITE fra
+    11.9s e 22.5s: 25s tagliava sulla coda della distribuzione normale, non
+    sulle richieste malate. Risultato: 31 timeout in un giorno, un breaker
+    scattato su un backend sano e i job premium dirottati su Vertex.
+
+    A 45s il margine sopra il peggiore caso sano osservato e' doppio, e il
+    failover resta rapido perche' a proteggere il tempo dell'utente non e'
+    piu' il timeout da solo ma `ABM_CF_TRIP_FAILURES` (2 in produzione):
+    due tentativi da 45s scattano in ~92s, meno dei 127s dell'episodio che
+    aveva motivato l'abbassamento.
     """
     try:
-        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "25000") or 25000))
+        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "45000") or 45000))
     except (TypeError, ValueError):
-        return 25000
+        return 45000
 
 
 def _make_genai_client(**kwargs):
