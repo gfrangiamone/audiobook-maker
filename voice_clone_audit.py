@@ -21,6 +21,9 @@ STATE_GROUPS = {
 }
 STATE_FILTERS = ("paid", "drafts", "all", "ready", "demos", "refunded", "expired", "deleted")
 
+# Soglia di "importo zero": mezzo centesimo. Sotto, non c'e' transazione.
+ZERO_EUR = 0.005
+
 
 def _f(v):
     try:
@@ -155,10 +158,15 @@ def aggregate(rows):
 
 
 def report(recs, *, state=None, language=None, date_from=None, date_to=None,
-           usd_eur=1.0, fee_fn=None, limit=200, offset=0):
+           usd_eur=1.0, fee_fn=None, limit=200, offset=0, hide_zero=False):
+    """`hide_zero`: via le voci senza addebito (omaggi, bozze). Criterio:
+    l'importo addebitato, non il ricavo: una voce rimborsata resta una
+    transazione. Filtra prima degli aggregati, come gli altri filtri."""
     chosen = select(recs, state=state, language=language,
                     date_from=date_from, date_to=date_to)
     rows = [row(r, usd_eur=usd_eur, fee_fn=fee_fn) for r in chosen]
+    if hide_zero:
+        rows = [r for r in rows if r["charged_eur"] >= ZERO_EUR]
     languages = sorted({str(r.get("lang")) for r in recs or []
                         if isinstance(r, dict) and r.get("lang")})
     return {
