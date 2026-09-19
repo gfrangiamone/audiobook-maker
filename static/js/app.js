@@ -435,7 +435,10 @@ document.addEventListener('DOMContentLoaded',()=>{
     });
   }
   // Initialize output format to M4B by default
-  setTimeout(()=>{const s=document.getElementById('vOut');if(s){s.value='m4b';onOutputChange();}},50);
+  // Il ripristino di un job in corso arriva dalla rete e puo' battere o
+  // perdere la corsa con questo timer: se ha gia' fissato il formato del job,
+  // il default non deve sovrascriverlo (darebbe i bottoni sbagliati a fine job).
+  setTimeout(()=>{if(_jobRestored)return;const s=document.getElementById('vOut');if(s){s.value='m4b';onOutputChange();}},50);
   // Chapter selection handlers
   const selAll=document.getElementById('selAll');if(selAll)selAll.onclick=chSelAll;
   const selNone=document.getElementById('selNone');if(selNone)selNone.onclick=chSelNone;
@@ -477,6 +480,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('readSquareBrackets')?.addEventListener('change',requestCombinedEstimate);
   // Initialize wizard
   updateWizardSteps(1);
+  // Il job vive sul server: se questa pagina e' un reload durante una
+  // lavorazione, riagganciamola invece di ripartire dal form.
+  if(typeof _restoreActiveJob==='function')_restoreActiveJob();
 });
 
 let outputFormat='m4b';
@@ -679,7 +685,13 @@ async function analyzeEpub(file){
     if(d.error==='pdf_no_text'){d.error=t('err_pdf_no_text')}
     if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');hideUploadProgress();return}
     if(d.existing_job_id && d.is_running){
-      jobId=d.existing_job_id;
+      // Stesso file ricaricato mentre il job gira: ci si riaggancia allo
+      // stream. La reidratazione e' la stessa del ripristino dopo un refresh,
+      // e serve per la stessa ragione: senza, il pannello finale costruiva i
+      // bottoni sul formato di default invece che su quello del job.
+      _rehydrateJobFromServer({job_id:d.existing_job_id,title:d.title,
+        output_format:d.output_format,single_file:d.single_file,
+        total_chapters:d.total_chapters,email_registered:d.email_registered});
       lo.classList.remove('vis');hideUploadProgress();
       let pct=0;
       if(d.status==='optimizing'){
@@ -4807,7 +4819,10 @@ function listenProgress(){
         }
         // ABM button (always supplementary, when optimized text is available)
         if(btnA&&d.has_abm){btnA.style.display='';btnA.onclick=()=>downloadFile('abm');}
-        const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display=(bookData&&bookData.total_chapters>1)?'':'none';
+        // `_restored`: dopo un refresh il client non ha piu' l'elenco dei
+        // capitoli (il server manda solo titolo e conteggio), quindi il
+        // ritorno alla selezione porterebbe a una pagina vuota.
+        const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display=(bookData&&bookData.total_chapters>1&&!bookData._restored)?'':'none';
         // Expiry info
         const expiryRow=document.getElementById('expiryRow');
         if(expiryRow&&d.expires_at){
@@ -4835,6 +4850,118 @@ function listenProgress(){
     };
   }
   connect();
+}
+
+// ═══════════════ RIPRESA DELLA SESSIONE DOPO UN REFRESH ═══════════════
+// Il job vive sul server: ricaricare la pagina non lo ferma. La SPA pero'
+// ripartiva dal form di upload, e chi aveva appena aggiornato la pagina
+// credeva di aver perso il lavoro pagato (segnalazione del 18/09/2026: libro
+// consegnato regolarmente, utente convinto del contrario, stesso libro
+// rilanciato una seconda volta). All'avvio chiediamo al server i job di
+// questo client e ci riagganciamo al piu' recente: barra di avanzamento se e'
+// in corso, pannello di download se e' pronto.
+//
+// Limite dichiarato: i job vivono nella memoria del processo. Dopo un riavvio
+// del servizio la lista torna vuota e la pagina resta al form — in quel caso
+// il job o e' morto o prosegue in batch, e la consegna avviene per email.
+let _jobRestored=false;
+
+// Percentuale gia' raggiunta secondo lo snapshot della lista: serve solo a non
+// mostrare 0% nell'attesa del primo tick dello stream.
+function _restoreEntryPct(e){
+  if(!e)return 0;
+  if(e.status==='optimizing'){
+    const tot=e.opt_total_chars||0;
+    return tot>0?Math.round((e.opt_processed_chars||0)/tot*100):0;
+  }
+  const tot=e.progress_total||0;
+  return tot>0?Math.round((e.progress_current||0)/tot*100):0;
+}
+
+// Rimette nelle variabili globali lo stato che il reload ha azzerato e che solo
+// il server conosce. Usata sia dal ripristino sia dal riaggancio di
+// analyzeEpub (stesso file ricaricato mentre il job gira): senza, il pannello
+// finale costruiva i bottoni con outputFormat di default e offriva un M4B dove
+// il job produce uno ZIP.
+function _rehydrateJobFromServer(d){
+  if(!d)return;
+  if(d.job_id)jobId=d.job_id;
+  wizMode='audio';
+  const fmt=d.output_format||outputFormat||'m4b';
+  const sel=document.getElementById('vOut');
+  const opt=sel?sel.querySelector('option[value="'+fmt+'"]'):null;
+  if(sel&&opt){sel.value=fmt;onOutputChange();}
+  else{outputFormat=fmt;singleFile=(fmt==='m4b'||fmt==='mp3');}
+  if(typeof d.single_file==='boolean')singleFile=d.single_file;
+  if(d.email_registered)emailRegistered=true;
+  if(!bookData){
+    // Stub: il server manda titolo e numero di capitoli, non l'analisi
+    // completa. `_restored` segnala che l'elenco dei capitoli non c'e': il
+    // ritorno alla selezione resta nascosto, porterebbe a una pagina vuota.
+    bookData={title:d.title||'',author:'',total_chapters:d.total_chapters||0,
+              chapters:[],_restored:true};
+  }
+  _jobRestored=true;
+}
+
+function _showRestoreNotice(d,others){
+  const card=document.getElementById('mainCard');
+  if(!card)return;
+  const old=document.getElementById('restoreNotice');if(old)old.remove();
+  const box=document.createElement('div');
+  box.id='restoreNotice';box.className='al al-i';
+  const span=document.createElement('span');
+  span.textContent=t(d.status==='done'?'restore_done':'restore_running',
+                     {title:d.title||''});
+  box.appendChild(span);
+  if(others>0){
+    const more=document.createElement('span');
+    more.textContent=' '+t('restore_other');
+    box.appendChild(more);
+  }
+  box.appendChild(document.createTextNode(' '));
+  const a=document.createElement('a');
+  a.href='#';a.textContent=t('restore_new');
+  a.style.color='inherit';a.style.textDecoration='underline';
+  a.onclick=(ev)=>{ev.preventDefault();box.remove();resetAll();};
+  box.appendChild(a);
+  card.insertBefore(box,card.firstChild);
+}
+
+async function _restoreActiveJob(){
+  let list=[];
+  try{
+    const r=await fetch('/api/my_jobs',{headers:{'Accept':'application/json'}});
+    if(!r.ok)return;
+    const j=await r.json();
+    list=(j&&j.jobs)||[];
+  }catch(e){return}
+  // Solo i job ancora in memoria sul server (`live`): sono gli unici che lo
+  // stream SSE sa seguire. Le voci ricostruite dai soli download token restano
+  // fuori — il loro posto e' il link nell'email di consegna.
+  const cands=list.filter(e=>e&&e.live&&(e.status==='optimizing'||
+                                         e.status==='generating'||
+                                         e.status==='done'));
+  if(!cands.length)return;
+  // Nel frattempo l'utente puo' aver caricato un file: la sua azione vince.
+  if(generating||jobDone||bookData||jobId)return;
+  const d=cands[0];   // il server ordina dal piu' recente
+  _rehydrateJobFromServer(d);
+  if(d.status==='done'){
+    // Nessuna ricostruzione manuale del pannello 5: il primo tick dello stream
+    // e' gia' il payload di completamento e lo costruisce il codice di sempre
+    // (bottoni per formato, dettagli, scadenza, QR).
+    jobDone=true;
+    listenProgress();
+  }else{
+    _showWizProgress();
+    _unlockStep(4);goToStep(4);
+    lockUI();
+    _setWizPct(_restoreEntryPct(d));
+    _setCancelButtonMode(d.status==='optimizing'?'opt':'gen');
+    if(d.status==='optimizing')_listenOptProgressWiz();else listenProgress();
+  }
+  _showRestoreNotice(d,cands.length-1);
 }
 
 // ---- Gate quota mensile voci standard (402 free_tts_quota_exhausted) ----
@@ -5530,6 +5657,10 @@ function _stopAnalyzedHeartbeat(){
 }
 function resetAll(){
   _stopAnalyzedHeartbeat();
+  // L'avviso di ripresa parla di un lavoro che da qui in poi non e' piu' quello
+  // in pagina: va via insieme al resto dello stato.
+  _jobRestored=false;
+  const _rn=document.getElementById('restoreNotice');if(_rn)_rn.remove();
   if(hbInterval){clearInterval(hbInterval);hbInterval=null}
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
   generating=false;jobDone=false;

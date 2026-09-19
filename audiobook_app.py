@@ -6847,6 +6847,11 @@ def admin_audit_premium_page():
       <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
     </div>
   </div>
+  <label class="toggle-row" style="margin:12px 0 0;cursor:pointer"
+         title="Nasconde in tutte le tab le righe senza addebito all'utente (voci standard, ottimizzazioni sotto la soglia gratuita, voci campionate omaggio). Un job rimborsato resta visibile: l'addebito c'e' stato. Anche gli aggregati escludono le righe nascoste.">
+    <input type="checkbox" id="hideZeroAmount">
+    <span>Nascondi transazioni a importo zero</span>
+  </label>
 </div>
 
 <div class="panel" id="killSwitchPanel" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
@@ -7165,6 +7170,18 @@ def admin_audit_premium_page():
   const $ = (id) => document.getElementById(id);
 
   function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
+  // Filtro "importo zero": vale per tutte e quattro le tab e viaggia al
+  // server (hide_zero=1), cosi' anche gli aggregati escludono le righe
+  // nascoste. La scelta resta fra una visita e l'altra.
+  const HIDE_ZERO_KEY = "abm_audit_hide_zero";
+  function hideZeroOn(){
+    const el = $("hideZeroAmount");
+    return !!(el && el.checked);
+  }
+  function applyHideZero(params){
+    if (hideZeroOn()) params.set("hide_zero", "1");
+    return params;
+  }
   function fmtPct(n){
     const v = Number(n)||0;
     const cls = v >= 0 ? "delta-positive" : "delta-negative";
@@ -7271,6 +7288,7 @@ def admin_audit_premium_page():
     if (df) params.set("date_from", df);
     if (dt) params.set("date_to", dt);
     params.set("limit", "200");
+    applyHideZero(params);
     const r = await fetch("/admin/api/gemini_cost_audit?" + params.toString(),
                          {headers: {"X-Admin-Token": ADMIN_TOKEN}});
     if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
@@ -7615,6 +7633,7 @@ def admin_audit_premium_page():
     if (df) params.set("date_from", df);
     if (dt) params.set("date_to", dt);
     params.set("limit", "200");
+    applyHideZero(params);
     const r = await fetch("/admin/api/translation_cost_audit?" + params.toString(),
                          {headers: {"X-Admin-Token": ADMIN_TOKEN}});
     if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
@@ -7725,6 +7744,7 @@ def admin_audit_premium_page():
     if (df) p.set("date_from",df);
     if (dt) p.set("date_to",dt);
     p.set("limit","200");
+    applyHideZero(p);
     const r = await fetch("/admin/api/optimization_cost_audit?"+p.toString(),
                           {headers:{"X-Admin-Token":ADMIN_TOKEN}});
     if (!r.ok){ alert("Errore caricamento audit: "+r.status); return; }
@@ -7809,6 +7829,7 @@ def admin_audit_premium_page():
     if (df) p.set("date_from",df);
     if (dt) p.set("date_to",dt);
     p.set("limit","200");
+    applyHideZero(p);
     const r = await fetch("/admin/api/voice_clone_audit?"+p.toString(),
                           {headers:{"X-Admin-Token":ADMIN_TOKEN}});
     if (!r.ok){ alert("Errore caricamento audit voci: "+r.status); return; }
@@ -7927,6 +7948,19 @@ def admin_audit_premium_page():
     // Il ritorno all'Activity Log resta sullo stesso mese.
     const back = $("backToLog");
     if (back) back.href = "/admin/log-activity?" + ym;
+  })();
+
+  // Filtro "importo zero": ripristina la scelta precedente PRIMA del primo
+  // fetch, poi ricarica tutte le tab a ogni cambio (gli aggregati e il
+  // margine netto totale devono restare coerenti con le tabelle).
+  (function initHideZero(){
+    const el = $("hideZeroAmount");
+    if (!el) return;
+    try { el.checked = localStorage.getItem(HIDE_ZERO_KEY) === "1"; } catch(e) {}
+    el.addEventListener("change", () => {
+      try { localStorage.setItem(HIDE_ZERO_KEY, el.checked ? "1" : "0"); } catch(e) {}
+      ttsFetch(); trFetch(); optFetch(); vcaFetch();
+    });
   })();
 
   // Auto-load: TTS (tab di default) + kill-switch.
@@ -8340,6 +8374,33 @@ def _apply_cancel_effective(rec):
     return rec
 
 
+# Soglia di "importo zero": mezzo centesimo. Sotto, la riga non e' una
+# transazione ma un uso gratuito (voce standard, ottimizzazione sotto la
+# soglia free, voce campionata omaggio).
+_AUDIT_ZERO_EUR = 0.005
+
+
+def _audit_has_amount(rec):
+    """Vero se la riga porta un importo addebitato all'utente.
+
+    Criterio: l'ADDEBITO (`user_price_eur_charged`), non il ricavo effettivo.
+    Un job rimborsato resta una transazione (addebito > 0, ricavo 0) e deve
+    restare visibile; un job gratuito no.
+    """
+    if not isinstance(rec, dict):
+        return True
+    try:
+        charged = float(rec.get("user_price_eur_charged", 0) or 0)
+    except (TypeError, ValueError):
+        charged = 0.0
+    return charged >= _AUDIT_ZERO_EUR
+
+
+def _audit_hide_zero(args):
+    """Il filtro "nascondi transazioni a importo zero" della UI audit."""
+    return str(args.get("hide_zero", "")).strip().lower() in ("1", "true", "yes", "on")
+
+
 @app.route("/admin/api/gemini_cost_audit", methods=["GET"])
 def admin_api_gemini_cost_audit():
     """List Gemini TTS audit records with filters + aggregates. Admin-only.
@@ -8406,6 +8467,10 @@ def admin_api_gemini_cost_audit():
     recs = live + persisted
     for r in recs:
         _apply_cancel_effective(r)
+    # `hide_zero`: via le righe senza addebito. Filtra PRIMA degli aggregati,
+    # come gli altri filtri, cosi' i totali descrivono sempre la tabella.
+    if _audit_hide_zero(request.args):
+        recs = [r for r in recs if _audit_has_amount(r)]
     total = len(recs)
     page = recs[offset:offset + limit]
 
@@ -8836,6 +8901,8 @@ def admin_api_translation_cost_audit():
     recs = live + persisted
     for r in recs:
         _apply_cancel_effective(r)
+    if _audit_hide_zero(request.args):
+        recs = [r for r in recs if _audit_has_amount(r)]
     total = len(recs)
     page = recs[offset:offset + limit]
 
@@ -8947,6 +9014,8 @@ def admin_api_optimization_cost_audit():
     recs = live + persisted
     for r in recs:
         _apply_cancel_effective(r)
+    if _audit_hide_zero(request.args):
+        recs = [r for r in recs if _audit_has_amount(r)]
     total = len(recs)
     page = recs[offset:offset + limit]
 
@@ -9022,6 +9091,7 @@ def admin_api_voice_clone_audit():
         usd_eur=usd_eur,
         fee_fn=lambda rev, method: _compute_paypal_fee_eur(rev, method),
         limit=limit, offset=offset,
+        hide_zero=_audit_hide_zero(request.args),
     )
     return jsonify(out)
 
@@ -11714,6 +11784,7 @@ def api_analyze():
     if existing_job:
         status = existing_job.get("status", "")
         if status in ("optimizing", "generating"):
+            _info_run = existing_job.get("info")
             return jsonify({
                 "existing_job_id": existing_jid,
                 "status": status,
@@ -11722,6 +11793,19 @@ def api_analyze():
                 "progress_total": existing_job.get("progress_total", 0),
                 "opt_progress_current": existing_job.get("opt_progress_current", 0),
                 "opt_progress_total": existing_job.get("opt_progress_total", 0),
+                # Parametri del job in corso: il client si riaggancia allo
+                # stream, ma il pannello finale lo costruisce con le proprie
+                # variabili. Senza questi campi mostrava i bottoni del formato
+                # di default (M4B) anche per un job che produce uno ZIP.
+                "title": (getattr(_info_run, "title", "") or
+                          existing_job.get("original_filename", "")),
+                "output_format": existing_job.get("output_format", ""),
+                "single_file": bool(existing_job.get(
+                    "single_file", existing_job.get("opt_single_file", True))),
+                "total_chapters": int(
+                    existing_job.get("total_chapters")
+                    or len(getattr(_info_run, "chapters", None) or [])),
+                "email_registered": bool(existing_job.get("notify_email")),
             })
         if status in ("analyzed", "optimized"):
             # Reuse existing analyzed/optimized job
@@ -13852,7 +13936,7 @@ def api_device_register():
 
 _MY_JOBS_LIVE_STATUSES = (
     "analyzed", "optimizing", "optimized", "translating", "generating",
-    "done", "error", "cancelled", "interrupted",
+    "done", "partial", "error", "cancelled", "interrupted",
 )
 
 
@@ -13883,6 +13967,11 @@ def api_my_jobs():
         status = job.get("status", "")
         if job.get("server_interrupted"):
             status = "interrupted"
+        if status == "partial":
+            # Terminale e gia' consegnato (alcuni chunk saltati oltre soglia):
+            # per chi legge questa lista e' un job pronto al download, non uno
+            # stato a se'. Stessa normalizzazione del ramo su download token.
+            status = "done"
         if status not in _MY_JOBS_LIVE_STATUSES:
             continue
         info = job.get("info")
@@ -13893,6 +13982,19 @@ def api_my_jobs():
                       job.get("original_filename", "")),
             "output_format": job.get("output_format", ""),
             "created_at": job.get("start_time") or job.get("last_poll") or 0,
+            # Il job e' ancora in memoria: e' l'unica condizione che permette
+            # allo stream SSE di seguirlo. Le voci ricostruite piu' sotto dai
+            # soli download token non hanno questo flag, e la SPA non prova a
+            # riagganciarle dopo un refresh (vedi _restoreActiveJob in app.js).
+            "live": True,
+            # Stato che il reload della pagina azzera e solo il server conosce:
+            # senza, il pannello finale ricostruito dopo un F5 offrirebbe i
+            # bottoni del formato di default invece di quelli del job.
+            "single_file": bool(job.get("single_file",
+                                        job.get("opt_single_file", True))),
+            "total_chapters": int(job.get("total_chapters")
+                                  or len(getattr(info, "chapters", None) or [])),
+            "email_registered": bool(job.get("notify_email")),
         }
         if _is_admin_pending:
             entry["admin_copy"] = True
