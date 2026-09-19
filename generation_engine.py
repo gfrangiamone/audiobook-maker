@@ -37,6 +37,7 @@ import payment
 import pending_jobs
 import cancel_policy
 import chunk_reuse
+import cost_carry
 import free_tts_quota
 import output_reuse
 import abuse_watch
@@ -3769,6 +3770,9 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     gruppi = _voxcpm_chapter_groups(plan, reusable)
     esiti = {}
     if job is not None:
+        # Prima del `setdefault`: il riporto si somma solo se i contatori
+        # nascono adesso. Su un dict gia' in memoria sarebbe un raddoppio.
+        _va_nuovo = "voxcpm_actual" not in job
         job.setdefault("voxcpm_actual", {
             "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
             "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
@@ -3806,6 +3810,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             # non puo' vedere.
             "runpod": [],
         })
+        if _va_nuovo:
+            # Riporto dal tentativo precedente: i capitoli gia' sintetizzati
+            # li riconsegna il riuso, ma il loro costo GPU viveva in RAM.
+            cost_carry.resume(work_dir, "voxcpm", job["voxcpm_actual"])
 
     # Quanto vale un capitolo, e quanto ne vale la coda. I chunk generati non
     # sono il 100% del lavoro: dopo di loro restano i giri di rigenerazione
@@ -4027,6 +4035,9 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         # precedente ha un `voxcpm_actual` senza la chiave.
                         _va.setdefault("runpod", []).extend(
                             stats.get("runpod") or [])
+                        # Il costo del capitolo su disco subito: un riavvio
+                        # fra un capitolo e il successivo non deve perderlo.
+                        cost_carry.write(work_dir, "voxcpm", _va)
                     continue
                 # Coda del capitolo: file vuoto, e un esito a zero perche' le
                 # misure del capitolo sono gia' contate sul primo chunk.
@@ -4387,6 +4398,20 @@ def _check_margin_anomalies(job_id, job, rec, est, provider, threshold_eur):
         print(f"[{job_id}] _check_margin_anomalies failed (non-fatal): {e}", flush=True)
 
 
+def _clear_cost_carry(job_id, engine):
+    """Butta il riporto di costo: il record d'audit lo ha appena assorbito.
+
+    Da qui in avanti quella spesa vive nel JSONL. Lasciare il file sul disco
+    significherebbe che un ulteriore tentativo sullo stesso job la sommerebbe
+    una seconda volta, e i due record d'audit la conterebbero entrambi.
+    """
+    try:
+        if _upload_dir and job_id:
+            cost_carry.clear(Path(_upload_dir) / str(job_id), engine)
+    except Exception:
+        pass
+
+
 def _write_gemini_audit(job_id, job, voice_id, language, outcome):
     """Append audit record at end of Gemini job. Best-effort, non-fatal."""
     try:
@@ -4517,6 +4542,7 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             rec["cancel_partial_audio_delivered"] = bool(
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
+        _clear_cost_carry(job_id, "gemini")
         # Release atomic budget reservation (cost ora persistito nel JSONL,
         # quindi futuri preflight lo conteranno in `spent` direttamente).
         try:
@@ -4765,6 +4791,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             rec["cancel_partial_audio_delivered"] = bool(
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
+        _clear_cost_carry(job_id, "speechify")
         try:
             _free_thr = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.40"))
         except (TypeError, ValueError):
@@ -5090,6 +5117,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             rec["cancel_partial_audio_delivered"] = bool(
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
+        _clear_cost_carry(job_id, "voxcpm")
         # Dopo l'audit e non al posto suo: sono due file con due scopi, e il
         # secondo non deve poter far mancare il primo.
         _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome)
@@ -6063,6 +6091,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             "pricing_cost_eur": 0.0,
             "model_key": None,
         }
+        # Riporto dal tentativo precedente: se il processo e' stato riavviato a
+        # meta' libro, i chunk gia' sintetizzati vengono riusati (sopra) ma il
+        # loro costo era solo in RAM. Senza questa riga il job ripartirebbe con
+        # un libro quasi fatto e una contabilita' a zero.
+        cost_carry.resume(work_dir, "gemini", job["gemini_actual"])
         if use_speechify:
             job["speechify_actual"] = {
                 "chars": 0,
@@ -6070,6 +6103,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 "audio_seconds": 0.0,
                 "model_key": None,
             }
+            cost_carry.resume(work_dir, "speechify", job["speechify_actual"])
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
@@ -6298,6 +6332,23 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # _synthesize_chunk invece di richiamare l'API una seconda volta.
         _speechify_pre = {}
         _voxcpm_pre = {}
+        _carry_every = cost_carry.flush_every()
+
+        def _carry_tick(i):
+            """Deposita su disco il costo accumulato finora, ogni tot chunk.
+
+            Serve solo a un riavvio: quel che e' sul file il tentativo
+            successivo lo ritrova, quel che e' solo in RAM lo perde. L'ultimo
+            chunk lo deposita sempre, cosi' un processo ucciso fra la fine
+            della sintesi e la scrittura dell'audit non perde la coda.
+            """
+            if not (i + 1 >= total_chunks or (i + 1) % _carry_every == 0):
+                return
+            if use_gemini:
+                cost_carry.write(work_dir, "gemini", job.get("gemini_actual"))
+            elif use_speechify:
+                cost_carry.write(work_dir, "speechify",
+                                 job.get("speechify_actual"))
 
         def _synthesize_chunk(i, block):
             """Sintetizza il chunk `i`. Ritorna (result, part_path).
@@ -6598,6 +6649,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     prev_chapter_idx = ch_idx
 
                 result, part_path = _synthesize_chunk(i, block)
+                _carry_tick(i)
                 if result is False:
                     failed_chunks += 1
                     if use_gemini and _ea_ratio <= 1.0:
@@ -6974,6 +7026,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         current_chapter_parts.append(silence_path)
 
                 result, part_path = _synthesize_chunk(i, block)
+                _carry_tick(i)
                 if result is False:
                     failed_chunks += 1
                     if use_gemini and _ea_ratio <= 1.0:
