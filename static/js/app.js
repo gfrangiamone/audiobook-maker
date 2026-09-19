@@ -2085,6 +2085,28 @@ async function _doCombinedEstimate(){
     if(getEstimateCacheKey()===key)renderEstimate(null);
   }
 }
+// ---- Quota gratuita mensile PREMIUM: riga di stato (residuo + ricarica) ----
+// Il gate diceva solo "costo minimo": chi lo leggeva non sapeva ne' quanto
+// credito gli restasse ne' quando tornasse, e un addebito ripetuto sembrava un
+// abbonamento (richiesta di assistenza del 19/09/2026). Queste due funzioni
+// producono la riga che accompagna ogni messaggio di quota esaurita, sia nella
+// stima costo sia nel 402 di regime.
+function _freeQuotaResetDate(){
+  const now=new Date();
+  const d=new Date(now.getFullYear(),now.getMonth()+1,1);
+  try{return d.toLocaleDateString((typeof cl!=='undefined'&&cl)||'en',{day:'numeric',month:'long'});}
+  catch(_){return d.toISOString().slice(0,10);}
+}
+// `used`/`limit` in euro: il 402 li espone come quota_used_eur/quota_limit_eur,
+// la stima dentro lo snapshot `free_quota`. Con quota disattivata (limite 0)
+// non c'e' nulla da dire e la riga sparisce.
+function _freeQuotaStatusLine(used,limit){
+  const lim=Number(limit)||0;
+  if(lim<=0)return '';
+  const rem=Math.max(0,Math.round((lim-(Number(used)||0))*100)/100);
+  const s=(window.t&&t('free_quota_reset',{rem:rem.toFixed(2),limit:lim.toFixed(2),date:_freeQuotaResetDate()}))||'';
+  return (s&&s!=='free_quota_reset')?s:'';
+}
 function renderEstimate(data){
   const valueEl=document.getElementById('costPreviewValue');
   const detailEl=document.getElementById('costPreviewDetail');
@@ -2138,9 +2160,15 @@ function renderEstimate(data){
       if(data.llm_eur>0)parts.push('+ Ottimizzazione testo AI €'+Number(data.llm_eur).toFixed(2));
       const extra=parts.join(' ');
       const segs=[];
-      // Quota gratuita mensile esaurita: spiega perche' un libro breve non e' gratis.
-      if(data.quota_exhausted)segs.push((window.t&&t('free_quota_exhausted'))
-        ||'Free monthly credit for PREMIUM voices used up.');
+      // Quota gratuita mensile esaurita: spiega perche' un libro breve non e'
+      // gratis, che l'addebito e' una tantum e quando il credito torna.
+      if(data.quota_exhausted){
+        segs.push((window.t&&t('free_quota_exhausted'))
+          ||'Free monthly credit for PREMIUM voices used up.');
+        const _fq=data.free_quota||{};
+        const _st=_freeQuotaStatusLine(_fq.used_eur,_fq.limit_eur);
+        if(_st)segs.push(_st);
+      }
       if(extra)segs.push(extra);
       if(minsStr)segs.push(minsStr);
       detailEl.textContent=segs.join(' · ');
@@ -5883,8 +5911,14 @@ function closeSelTooLargeModal(){const m=document.getElementById('selTooLargeMod
 function _handlePremiumPaymentRequired(d){
   const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
   const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
-  const msg=((window.t&&t('free_quota_exhausted'))
+  let msg=((window.t&&t('free_quota_exhausted'))
     ||"You have used up this month's free PREMIUM voice credit. This generation has a minimum charge.");
+  // Solo il ramo quota: su `payment_required` (libro sopra soglia) il credito
+  // mensile non c'entra e la riga sarebbe fuorviante.
+  if(d.error_code==='free_quota_exhausted'){
+    const _st=_freeQuotaStatusLine(d.quota_used_eur,d.quota_limit_eur);
+    if(_st)msg+=' '+_st;
+  }
   showErr('s3err',msg);
   unlockUI();
   generating=false;
