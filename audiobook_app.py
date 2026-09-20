@@ -1383,6 +1383,93 @@ def _build_job_descriptor(job, phase):
     }
 
 
+def _job_paid_eur(job):
+    """Importo incassato per il job: pocket `payment.total_eur` (price lock D1)
+    o, in sua assenza, `payment_amount_eur`."""
+    try:
+        pocket = job.get("payment") or {}
+        v = pocket.get("total_eur")
+        if v is None:
+            v = job.get("payment_amount_eur")
+        return float(v or 0)
+    except Exception:
+        return 0.0
+
+
+def _job_book_title(job):
+    info = job.get("info")
+    return (getattr(info, "title", "") or job.get("original_filename", "") or "")[:200]
+
+
+def _arm_email_delivery(job, job_id, email, *, lang="en", output_format=None,
+                        podcast_base_url="", pending_kind="", engine=""):
+    """Porta il job in modalita' email sull'indirizzo dato: notifica a fine
+    lavoro, esenzione dall'heartbeat (`email_registered`), marker pending e
+    descrittore di recupero. Idempotente: se un'email e' gia' registrata non
+    tocca nulla. Usata dal batch implicito dei job pagati e dalla notifica
+    forzata degli utenti con account."""
+    if job.get("email_registered"):
+        return False
+    email = (email or "").strip()
+    if not email:
+        return False
+    job["notify_email"] = email
+    if output_format is not None:
+        job.setdefault("notify_download_type",
+                       "podcast" if output_format == "zip_rss" else "audio")
+        job.setdefault("notify_base_url", podcast_base_url or "")
+    job["notify_lang"] = lang or "en"
+    job["email_registered"] = True
+    job["_auto_batch_notify"] = True
+    _write_email_pending_marker(UPLOAD_DIR / job_id)
+    if pending_kind:
+        try:
+            pending_jobs.register(job_id, pending_kind,
+                                  _build_job_descriptor(job, pending_kind))
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.register ({engine or 'batch'}) "
+                  f"failed (non-fatal): {_e}", flush=True)
+    print(f"[{job_id}] {engine or 'batch'} -> email mode (notify {email}, "
+          f"heartbeat disabilitato)", flush=True)
+    return True
+
+
+def _acct_forced_batch(batch, email):
+    """Notifica forzata: con sessione attiva il job e' sempre batch
+    sull'email dell'account, qualunque cosa dica il body."""
+    try:
+        if accounts.enabled() and _smtp_available():
+            acct = _current_account()
+            if acct:
+                return True, acct["email"]
+    except Exception as _e:
+        print(f"WARNING _acct_forced_batch: {_e}", flush=True)
+    return batch, email
+
+
+def _apply_account_to_job(job, job_id, kind, *, output_format=None, podcast_base_url="",
+                          voice="", lang=""):
+    """Se la richiesta ha una sessione: consegna via email all'account (senza
+    descrittore: lo scrive la partenza) e riga nello storico. Best-effort."""
+    try:
+        if not accounts.enabled() or not _smtp_available():
+            return None
+        acct = _current_account()
+        if not acct:
+            return None
+        _arm_email_delivery(job, job_id, acct["email"], lang=acct.get("lang") or lang or "en",
+                            output_format=output_format, podcast_base_url=podcast_base_url,
+                            pending_kind="", engine="account")
+        accounts.record_job(acct["id"], job_id, kind=kind, book_title=_job_book_title(job),
+                            output_format=output_format or "", voice=_voice_public_label(voice),
+                            lang=lang or "", paid_eur=_job_paid_eur(job),
+                            source="forced", status="running")
+        return acct
+    except Exception as _e:
+        print(f"[{job_id}] _apply_account_to_job failed (non-fatal): {_e}", flush=True)
+        return None
+
+
 def _register_paid_job_batch(job_id, job, payment_token, *, engine="",
                              lang="", email="", output_format=None,
                              podcast_base_url="", pending_kind="generate"):
@@ -1426,28 +1513,21 @@ def _register_paid_job_batch(job_id, job, payment_token, *, engine="",
             _pay_email = ""
     if not _pay_email:
         return False
-    job["notify_email"] = _pay_email
-    if output_format is not None:
-        job.setdefault("notify_download_type",
-                       "podcast" if output_format == "zip_rss" else "audio")
-        job.setdefault("notify_base_url", podcast_base_url or "")
-    job["notify_lang"] = lang or "en"
-    job["email_registered"] = True
-    # Flag per la UX: la notifica e' stata attivata automaticamente sull'email
-    # del pagamento (non registrata esplicitamente dall'utente). Il frontend
-    # lo mostra.
-    job["_auto_batch_notify"] = True
-    _write_email_pending_marker(UPLOAD_DIR / job_id)
-    if pending_kind:
-        try:
-            pending_jobs.register(job_id, pending_kind,
-                                  _build_job_descriptor(job, pending_kind))
-        except Exception as _e:
-            print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
-                  f"failed (non-fatal): {_e}", flush=True)
-    print(f"[{job_id}] Paid {engine or 'premium'} job -> batch mode "
-          f"(notify {_pay_email}, heartbeat disabilitato)", flush=True)
-    return True
+    armed = _arm_email_delivery(job, job_id, _pay_email, lang=lang,
+                                output_format=output_format,
+                                podcast_base_url=podcast_base_url,
+                                pending_kind=pending_kind, engine=engine)
+    # Storico account: un pagamento con email nota aggancia il job all'account
+    # (se esiste) anche senza sessione; e' l'adozione "in corso d'opera".
+    try:
+        if accounts.enabled() and accounts.attach_if_known(
+                job_id, _pay_email, kind=pending_kind or "generate",
+                book_title=_job_book_title(job), output_format=output_format or "",
+                lang=lang or "", paid_eur=_job_paid_eur(job)):
+            _acct_log("ACCOUNT_ADOPT", _pay_email, job_id)
+    except Exception as _e:
+        print(f"[{job_id}] accounts.attach_if_known failed (non-fatal): {_e}", flush=True)
+    return armed
 
 
 def _sniff_input_kind(path):
@@ -2939,6 +3019,44 @@ def _voice_for_log(voice):
     except Exception:
         pass
     return voice
+
+
+def _voice_public_label(voice):
+    """Nome voce presentabile all'utente (mai il nome del provider AI/TTS,
+    regola UI): 'it-IT-IsabellaNeural' -> 'Isabella', 'gemini:flash25:Zephyr'
+    -> 'Zephyr', 'voxcpm:v2:it-IT/Stefano' -> 'Stefano', 'speechify:...:harper_32'
+    -> 'harper_32'. Una voce campionata (voxcpm:mine:<token>) diventa la
+    generica 'your voice': il token e' un segreto, non un nome da mostrare.
+    Usata dallo storico account (accounts.record_job/_apply_account_to_job),
+    mai dal log (li' resta _voice_for_log). Non solleva mai."""
+    try:
+        v = (voice or "").strip()
+        if not v:
+            return ""
+        if v.startswith(voice_clone.VOICE_ID_PREFIX):
+            return "your voice"
+        if _is_gemini_voice(v):
+            try:
+                _, _, voice_name = gemini_tts.parse_voice_id(v)
+                return voice_name
+            except Exception:
+                return v.rsplit(":", 1)[-1]
+        if _is_voxcpm_voice(v):
+            return v.rsplit("/", 1)[-1] if "/" in v else v.rsplit(":", 1)[-1]
+        if _is_speechify_voice(v):
+            return v.rsplit(":", 1)[-1]
+        if ":" in v:
+            # Provider ignoto: rimuove solo il prefisso "<provider>:".
+            return v.split(":", 1)[1]
+        # edge-tts: '<locale>-<Name>Neural[Multilingual]'
+        name = v.rsplit("-", 1)[-1]
+        if name.endswith("Neural"):
+            name = name[:-len("Neural")]
+        if name.endswith("Multilingual"):
+            name = name[:-len("Multilingual")]
+        return name
+    except Exception:
+        return ""
 
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
@@ -13827,6 +13945,12 @@ def api_generate():
             voice_clone.touch_used(_vc_rec2["id"])
             _vc_log(_vc_rec2, "VOICE_CLONE_USED", job_id)
 
+    # Account: consegna forzata all'email dell'account + riga nello storico.
+    # Prima del descrittore di partenza, cosi' lo cattura gia' in modalita' email.
+    _apply_account_to_job(job, job_id, "generate", output_format=output_format,
+                          podcast_base_url=podcast_base_url, voice=voice,
+                          lang=(data.get("lang") or job.get("browser_lang") or "en"))
+
     # Descrittore di recovery (ri)scritto ALLA PARTENZA con i parametri di
     # questa generazione. Quello scritto da register_email puo' non esistere
     # (job allora in analyzed) o essere vecchio: voce/selezione/pagamento di un
@@ -14269,6 +14393,16 @@ def api_register_email():
 
     if not email or not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
         return jsonify({"error": "Invalid email address"}), 400
+
+    # Con sessione attiva la notifica e' vincolata all'email dell'account.
+    try:
+        _acct = _current_account() if accounts.enabled() else None
+    except Exception:
+        _acct = None
+    if _acct and _acct["email"] != email:
+        return jsonify({"error": "Notifications go to your account email",
+                        "error_code": "logged_in_email_forced",
+                        "email": _acct["email"]}), 409
 
     if not _smtp_available():
         return jsonify({"error": "Email service not configured on this server"}), 503
@@ -15982,6 +16116,9 @@ def api_optimize():
                 "chars_selected": selected_chars_total,
                 "chars_limit": max_text_chars,
             }), 413
+    # Notifica forzata: con sessione attiva il job e' sempre batch sull'email
+    # dell'account, qualunque cosa dica il body.
+    batch, email = _acct_forced_batch(batch, email)
     # Batch mode validation (email + SMTP) — eseguita PRIMA di qualsiasi
     # consumo di pagamento (sia branch LLM standalone che combined-gemini):
     # un'email invalida o SMTP assente non deve mai lasciare un pagamento
@@ -16595,6 +16732,12 @@ def api_optimize():
         job["email_registered"] = True
         _write_email_pending_marker(UPLOAD_DIR / job_id)
 
+    _apply_account_to_job(job, job_id, "optimize",
+                          output_format=(data.get("output_format", "m4b") if auto_generate else None),
+                          podcast_base_url=(data.get("podcast_base_url") or "").strip(),
+                          voice=(data.get("voice", "") if auto_generate else ""),
+                          lang=(lang or "en"))
+
     # Store auto-generate params for batch mode
     if auto_generate:
         job["opt_auto_generate"] = True
@@ -16839,6 +16982,7 @@ def api_translate():
     # o SMTP assente non deve mai lasciare un pagamento consumato (stranded).
     batch = bool(data.get("batch"))
     email = (data.get("email") or "").strip()
+    batch, email = _acct_forced_batch(batch, email)
     if batch:
         if not email or not re.match(
                 r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
@@ -16927,6 +17071,9 @@ def api_translate():
         job["notify_lang"] = data.get("lang", "en")
         job["email_registered"] = True
         job["notify_download_type"] = "translated"
+
+    _apply_account_to_job(job, job_id, "translate", output_format=out_format,
+                          lang=(data.get("lang") or "en"))
 
     job["tr_cancelled"] = False
     job["tr_params"] = {
