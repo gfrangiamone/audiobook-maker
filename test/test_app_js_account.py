@@ -134,6 +134,11 @@ def test_verify_registers_email_on_mid_job_login():
     assert "/api/register_email" in fn
     assert "_updateGenNoticeWarning" in fn
     assert "generating" in fn and "emailRegistered" in fn
+    # round 2: la traduzione partita anonima e vincolata a meta' lavoro deve
+    # ricevere lo stesso trattamento della generazione audio (stesso
+    # onBeforeUnload, stesso endpoint gia' usato da submitEmailLateTr).
+    assert "'translated'" in fn
+    assert "trEmailRegistered" in fn
 
 
 def test_translation_flow_applies_forced_email_state():

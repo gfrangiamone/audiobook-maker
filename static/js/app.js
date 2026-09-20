@@ -7068,13 +7068,18 @@ async function _acctVerify(){
     // partito anonimo). Registriamo l'email dell'account ora, altrimenti il
     // banner promette una consegna che nessuno ha armato e il beacon di
     // chiusura pagina uccide comunque il lavoro.
-    if(_acctLoggedIn()&&generating&&!jobDone&&jobId&&!emailRegistered){
+    if(_acctLoggedIn()&&generating&&!jobDone&&jobId&&!(wizMode==='translate'?trEmailRegistered:emailRegistered)){
       try{
-        const dlType=(outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters');
+        const dlType=wizMode==='translate'?'translated':((outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters'));
         const rr=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({job_id:jobId,email:_acctMe.email,download_type:dlType,lang:cl})});
         const dd=await rr.json().catch(()=>({}));
-        if(rr.ok&&!dd.error){emailRegistered=true;if(typeof _updateGenNoticeWarning==='function')_updateGenNoticeWarning();}
+        if(rr.ok&&!dd.error){
+          // onBeforeUnload guarda emailRegistered per entrambi i flussi.
+          if(wizMode==='translate')trEmailRegistered=true;
+          emailRegistered=true;
+          if(typeof _updateGenNoticeWarning==='function')_updateGenNoticeWarning();
+        }
       }catch(e){}
     }
     _acctRender();
@@ -7104,15 +7109,17 @@ function _acctApplyForcedEmail(){
     else{notice.removeAttribute('data-t');notice.textContent='';}
   }
   // Traduzione: /api/translate vincola gia' la consegna all'account quando il
-  // job e' avviato da loggati (_apply_account_to_job lato server), quindi qui
-  // non serve la stessa cautela della generazione audio.
+  // job e' avviato da loggati (_apply_account_to_job lato server); ma una
+  // traduzione partita anonima e vincolata solo dopo un login a meta' lavoro
+  // (vedi _acctVerify) ricade nello stesso caso della generazione audio.
+  const canForceTr=on&&(!generating||jobDone||trEmailRegistered);
   const noticeTr=document.getElementById('acctForcedNoticeTr');
   if(noticeTr){
-    noticeTr.style.display=on?'block':'none';
-    if(on){noticeTr.setAttribute('data-t','acct_forced_notice');noticeTr.textContent=t('acct_forced_notice',{email:_acctMe.email});}
+    noticeTr.style.display=canForceTr?'block':'none';
+    if(canForceTr){noticeTr.setAttribute('data-t','acct_forced_notice');noticeTr.textContent=t('acct_forced_notice',{email:_acctMe.email});}
     else{noticeTr.removeAttribute('data-t');noticeTr.textContent='';}
   }
-  const areaForce={emailLateArea:canForceGen,emailLateAreaTr:on};
+  const areaForce={emailLateArea:canForceGen,emailLateAreaTr:canForceTr};
   Object.keys(areaForce).forEach(function(id){
     const a=document.getElementById(id);
     if(!a)return;
