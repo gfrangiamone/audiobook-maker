@@ -263,10 +263,10 @@ def open_session(account_id, device_name="", ip_hash="", now=None):
 def resolve_session(token, now=None):
     """Account della sessione (con `session_id`) o None. Rinnovo rolling.
 
-    Il rinnovo scatta solo se sono passati piu' di SESSION_TOUCH_SEC
-    dall'ultima attivita' e la sessione non e' gia' a ridosso della sua
-    scadenza corrente (entro SESSION_TOUCH_SEC): una sessione all'ultimo
-    respiro scade comunque, non viene resuscitata da un'ultima lettura.
+    Se la sessione e' ancora valida e sono passati piu' di SESSION_TOUCH_SEC
+    dall'ultima attivita', il rinnovo scatta sempre (anche nell'ultima ora
+    di vita): e' lettura attiva, non una resurrezione, e la sessione a 90
+    giorni rolling deve restare viva finche' c'e' attivita'.
     """
     if not token:
         return None
@@ -281,8 +281,7 @@ def resolve_session(token, now=None):
         if row is None or row["s_revoked"] is not None or row["s_expires"] <= now \
                 or row["deleted_at"] is not None:
             return None
-        if now - row["s_last_seen"] > SESSION_TOUCH_SEC \
-                and row["s_expires"] - now > SESSION_TOUCH_SEC:
+        if now - row["s_last_seen"] > SESSION_TOUCH_SEC:
             c.execute(
                 "UPDATE sessions SET last_seen_at=?, expires_at=? WHERE id=?",
                 (now, now + SESSION_DAYS * 86400, row["session_id"]),

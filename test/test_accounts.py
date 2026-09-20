@@ -143,8 +143,17 @@ def test_session_open_resolve_revoke(acct_env):
 def test_session_expires_after_session_days(acct_env):
     acct = _login("a@b.it")
     tok = accounts.open_session(acct["id"], now=T0)
-    assert accounts.resolve_session(tok, now=T0 + accounts.SESSION_DAYS * 86400 - 1) is not None
+    assert accounts.resolve_session(tok, now=T0 + 100) is not None   # under one hour: no renewal
     assert accounts.resolve_session(tok, now=T0 + accounts.SESSION_DAYS * 86400 + 1) is None
+
+
+def test_session_read_in_last_hour_still_renews(acct_env):
+    acct = _login("a@b.it")
+    tok = accounts.open_session(acct["id"], now=T0)
+    t_late = T0 + accounts.SESSION_DAYS * 86400 - 1
+    assert accounts.resolve_session(tok, now=t_late) is not None
+    row = db.conn().execute("SELECT expires_at FROM sessions").fetchone()
+    assert row["expires_at"] == t_late + accounts.SESSION_DAYS * 86400
 
 
 def test_session_rolling_renewal_only_after_one_hour(acct_env):
