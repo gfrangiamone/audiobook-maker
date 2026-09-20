@@ -1402,13 +1402,18 @@ def _job_book_title(job):
 
 
 def _arm_email_delivery(job, job_id, email, *, lang="en", output_format=None,
-                        podcast_base_url="", pending_kind="", engine=""):
+                        podcast_base_url="", pending_kind="", engine="", force=False):
     """Porta il job in modalita' email sull'indirizzo dato: notifica a fine
     lavoro, esenzione dall'heartbeat (`email_registered`), marker pending e
-    descrittore di recupero. Idempotente: se un'email e' gia' registrata non
-    tocca nulla. Usata dal batch implicito dei job pagati e dalla notifica
-    forzata degli utenti con account."""
-    if job.get("email_registered"):
+    descrittore di recupero. Idempotente per default: se un'email e' gia'
+    registrata non tocca nulla. `force=True` scavalca il guard e sovrascrive
+    un'email gia' armata (es. quella del pagamento) — usato SOLO da
+    _apply_account_to_job: l'account, quando c'e' una sessione, ha sempre
+    precedenza sull'email del pagamento (PayPal/voucher), qualunque cosa sia
+    gia' stata armata da _register_paid_job_batch o dai blocchi batch di
+    /api/optimize e /api/translate. Usata dal batch implicito dei job pagati e
+    dalla notifica forzata degli utenti con account."""
+    if job.get("email_registered") and not force:
         return False
     email = (email or "").strip()
     if not email:
@@ -1429,7 +1434,7 @@ def _arm_email_delivery(job, job_id, email, *, lang="en", output_format=None,
         except Exception as _e:
             print(f"[{job_id}] pending_jobs.register ({engine or 'batch'}) "
                   f"failed (non-fatal): {_e}", flush=True)
-    print(f"[{job_id}] {engine or 'batch'} -> email mode (notify {email}, "
+    print(f"[{job_id}] {engine or 'batch'} -> email mode (notify {_mask_email(email)}, "
           f"heartbeat disabilitato)", flush=True)
     return True
 
@@ -1450,7 +1455,13 @@ def _acct_forced_batch(batch, email):
 def _apply_account_to_job(job, job_id, kind, *, output_format=None, podcast_base_url="",
                           voice="", lang=""):
     """Se la richiesta ha una sessione: consegna via email all'account (senza
-    descrittore: lo scrive la partenza) e riga nello storico. Best-effort."""
+    descrittore: lo scrive la partenza) e riga nello storico. `force=True`
+    sull'arming: l'account ha sempre la precedenza sull'email del pagamento,
+    anche se un pagamento (PayPal/voucher) l'ha gia' armata su un altro
+    indirizzo prima di questa chiamata. `voice` e' l'id grezzo del provider
+    (es. 'it-IT-IsabellaNeural'): viene convertito in etichetta presentabile
+    via _voice_public_label prima di finire nello storico, mai passato cosi'
+    com'e'. Best-effort."""
     try:
         if not accounts.enabled() or not _smtp_available():
             return None
@@ -1459,7 +1470,7 @@ def _apply_account_to_job(job, job_id, kind, *, output_format=None, podcast_base
             return None
         _arm_email_delivery(job, job_id, acct["email"], lang=acct.get("lang") or lang or "en",
                             output_format=output_format, podcast_base_url=podcast_base_url,
-                            pending_kind="", engine="account")
+                            pending_kind="", engine="account", force=True)
         accounts.record_job(acct["id"], job_id, kind=kind, book_title=_job_book_title(job),
                             output_format=output_format or "", voice=_voice_public_label(voice),
                             lang=lang or "", paid_eur=_job_paid_eur(job),
@@ -3046,8 +3057,9 @@ def _voice_public_label(voice):
         if _is_speechify_voice(v):
             return v.rsplit(":", 1)[-1]
         if ":" in v:
-            # Provider ignoto: rimuove solo il prefisso "<provider>:".
-            return v.split(":", 1)[1]
+            # Provider ignoto: ultimo segmento, mai il nome del modello/provider
+            # che puo' comparire in un id a 3+ segmenti (es. 'foo:model:voice').
+            return v.rsplit(":", 1)[-1]
         # edge-tts: '<locale>-<Name>Neural[Multilingual]'
         name = v.rsplit("-", 1)[-1]
         if name.endswith("Neural"):
@@ -16725,12 +16737,14 @@ def api_optimize():
                 pending_kind="")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
-    # eseguita sopra, prima del consumo del pagamento).
+    # eseguita sopra, prima del consumo del pagamento). force=True: come il
+    # vecchio blocco (assegnazione incondizionata quando batch e' attivo),
+    # anche se un pagamento ha gia' armato il job su un'altra email; il ramo
+    # opt_* piu' sotto resta il proprietario di notify_download_type
+    # (output_format=None qui).
     if batch:
-        job["notify_email"] = email
-        job["notify_lang"] = data.get("lang", "en")
-        job["email_registered"] = True
-        _write_email_pending_marker(UPLOAD_DIR / job_id)
+        _arm_email_delivery(job, job_id, email, lang=data.get("lang", "en"),
+                            output_format=None, pending_kind="", engine="", force=True)
 
     _apply_account_to_job(job, job_id, "optimize",
                           output_format=(data.get("output_format", "m4b") if auto_generate else None),
@@ -17065,11 +17079,13 @@ def api_translate():
                 print(f"[{job_id}] translate settle capture non-fatal: {_e}")
 
     # Batch mode: assegnazione campi notify (validazione gia' eseguita sopra,
-    # prima del pagamento).
+    # prima del pagamento). force=True: come il vecchio blocco (assegnazione
+    # incondizionata quando batch e' attivo). notify_download_type resta
+    # impostato qui esplicitamente (mai derivato da output_format: un job di
+    # traduzione non e' "audio"/"podcast").
     if batch:
-        job["notify_email"] = email
-        job["notify_lang"] = data.get("lang", "en")
-        job["email_registered"] = True
+        _arm_email_delivery(job, job_id, email, lang=data.get("lang", "en"),
+                            output_format=None, pending_kind="", engine="", force=True)
         job["notify_download_type"] = "translated"
 
     _apply_account_to_job(job, job_id, "translate", output_format=out_format,

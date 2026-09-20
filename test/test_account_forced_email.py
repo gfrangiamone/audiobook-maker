@@ -117,14 +117,24 @@ def test_apply_account_to_job_without_session_is_noop(env):
     assert "notify_email" not in job
 
 
-def test_apply_account_keeps_existing_manual_email(env):
+def test_apply_account_overrides_payment_armed_email(env):
+    """L'account ha sempre precedenza sull'email del pagamento (design doc:
+    "Pagamento PayPal con email del pagatore diversa da quella dell'account:
+    la notifica resta forzata all'email dell'account"): force=True sovrascrive
+    un notify_email gia' armato da un pagamento su un indirizzo diverso, e il
+    job resta batch/armato con una sola riga di storico (niente duplicati)."""
     acct = _login(audiobook_app.app.test_client())
-    job = _job("jt-6", notify_email="manual@x.it", email_registered=True)
+    job = _job("jt-6", payment_amount_eur=2.0)
     sess = accounts.open_session(acct["id"])
     with audiobook_app.app.test_request_context("/", headers={**HDR, "Authorization": "Bearer " + sess}):
+        # Arming gia' avvenuto per pagamento (PayPal/voucher), su un'email
+        # diversa da quella dell'account.
+        audiobook_app._arm_email_delivery(job, "jt-6", "payer@paypal.it", lang="en")
+        assert job["notify_email"] == "payer@paypal.it"
         audiobook_app._apply_account_to_job(job, "jt-6", "optimize")
-    assert job["notify_email"] == "manual@x.it"
-    assert accounts.list_jobs(acct["id"])[1] == 1
+    assert job["notify_email"] == "a@b.it" and job["email_registered"] is True
+    rows, total = accounts.list_jobs(acct["id"])
+    assert total == 1 and rows[0]["job_id"] == "jt-6"
 
 
 def test_acct_forced_batch(env):
@@ -195,4 +205,6 @@ def test_voice_public_label_empty_and_unknown():
     f = audiobook_app._voice_public_label
     assert f("") == ""
     assert f(None) == ""
-    assert f("weird:providerid:foo:bar") == "providerid:foo:bar"
+    # Provider ignoto a 3+ segmenti: ultimo segmento soltanto, mai un nome di
+    # modello/provider davanti all'utente.
+    assert f("weird:providerid:foo:bar") == "bar"
