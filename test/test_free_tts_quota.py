@@ -83,3 +83,72 @@ def test_corrupt_file_is_tolerated(tmp_path):
     assert ftq.consume(CID, 7, "j1") == 7
     data = json.loads((tmp_path / "_free_tts_quota.json").read_text(encoding="utf-8"))
     assert ftq._month() in data
+
+
+# ---------------------------------------------------------------------------
+# Identita' di quota legata all'installazione (app mobile): l'identificativo
+# client dell'app si rigenera a ogni pulizia dei dati, il token push no.
+# ---------------------------------------------------------------------------
+
+def test_canonical_of_unknown_cid_is_itself():
+    assert ftq.canonical("cid-sconosciuto") == "cid-sconosciuto"
+    assert ftq.canonical("") == ftq._ANON
+
+
+def test_link_device_first_registration_keeps_cid_canonical():
+    assert ftq.link_device("hash-dev-1", "cid-primo") == "cid-primo"
+    assert ftq.canonical("cid-primo") == "cid-primo"
+
+
+def test_link_device_binds_quota_across_cid_rotation(monkeypatch):
+    monkeypatch.setenv("ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH", "1000")
+    ftq.link_device("hash-dev-1", "cid-vecchio")
+    ftq.consume("cid-vecchio", 900, "j1")
+    # Stessa installazione, identificativo nuovo: il contatore non riparte da zero.
+    assert ftq.link_device("hash-dev-1", "cid-nuovo") == "cid-vecchio"
+    assert ftq.canonical("cid-nuovo") == "cid-vecchio"
+    assert ftq.used_chars("cid-nuovo") == 900
+    assert not ftq.decision("cid-nuovo", 500, "j2")["allowed"]
+
+
+def test_link_device_merges_chars_already_spent_by_the_new_cid(monkeypatch):
+    monkeypatch.setenv("ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH", "1000")
+    ftq.link_device("hash-dev-2", "cid-a")
+    ftq.consume("cid-a", 300, "ja")
+    ftq.consume("cid-b", 200, "jb")  # cid-b ha consumato prima del legame
+    assert ftq.link_device("hash-dev-2", "cid-b") == "cid-a"
+    assert ftq.used_chars("cid-b") == 500 and ftq.used_chars("cid-a") == 500
+    assert ftq.job_charged("cid-b", "jb") and ftq.job_charged("cid-b", "ja")
+
+
+def test_link_device_is_idempotent():
+    assert ftq.link_device("hash-dev-3", "cid-x") == "cid-x"
+    assert ftq.link_device("hash-dev-3", "cid-x") == "cid-x"
+    ftq.consume("cid-x", 100, "j")
+    assert ftq.link_device("hash-dev-3", "cid-x") == "cid-x"
+    assert ftq.used_chars("cid-x") == 100
+
+
+def test_alias_chain_stays_depth_one():
+    """Il secondo device registrato dall'alias resta legato al canonico."""
+    ftq.link_device("hash-d1", "cid-1")
+    ftq.link_device("hash-d1", "cid-2")          # cid-2 -> alias di cid-1
+    assert ftq.link_device("hash-d2", "cid-2") == "cid-1"
+    ftq.link_device("hash-d2", "cid-3")          # cid-3 -> alias di cid-1
+    assert ftq.canonical("cid-3") == "cid-1"
+
+
+def test_consume_and_refund_follow_the_canonical_bucket():
+    ftq.link_device("hash-dev-4", "cid-old")
+    ftq.link_device("hash-dev-4", "cid-new")
+    assert ftq.consume("cid-new", 400, "jx") == 400
+    assert ftq.used_chars("cid-old") == 400
+    assert ftq.refund("cid-old", "jx") == 400
+    assert ftq.used_chars("cid-new") == 0
+
+
+def test_link_device_never_raises_on_broken_state(monkeypatch, tmp_path):
+    (tmp_path / "_free_tts_quota_ids.json").write_text("{not json", encoding="utf-8")
+    assert ftq.link_device("hash-dev-5", "cid-q") == "cid-q"
+    assert ftq.link_device("", "cid-q") == "cid-q"
+    assert ftq.link_device("hash-dev-5", "") == ftq._ANON

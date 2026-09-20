@@ -2560,6 +2560,61 @@ def _save_device_tokens():
         print(f"[device] Failed to save device tokens: {e}")
 
 
+def _device_hash(fcm_token):
+    """Impronta dell'installazione: il token push non finisce mai nei file di
+    quota, solo il suo digest."""
+    import hashlib
+    return hashlib.sha256((fcm_token or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _has_fresh_device(cid):
+    """True se `cid` ha almeno un device push registrato di recente.
+
+    Finestra `ABM_QUOTA_DEVICE_MAX_AGE_DAYS` (0 = nessun limite di eta'): un
+    token registrato mesi fa non garantisce piu' la consegna della notifica.
+    """
+    if not cid:
+        return False
+    try:
+        days = int(float(str(os.environ.get("ABM_QUOTA_DEVICE_MAX_AGE_DAYS", "90")).replace(",", ".")))
+    except (TypeError, ValueError):
+        days = 90
+    cutoff = (time.time() - days * 86400) if days > 0 else 0
+    with _device_tokens_lock:
+        entries = list(_device_tokens.get(cid) or [])
+    for e in entries:
+        try:
+            if float(e.get("registered_at") or 0) >= cutoff:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _push_ack_possible(job):
+    """True se un job oltre quota voci standard puo' partire in batch SENZA email.
+
+    L'email del gate non e' un'identita' (non e' verificata): il suo ruolo e'
+    garantire la consegna di un job che l'utente non attende a schermo. Nell'app
+    quel ruolo lo copre la notifica push, che in piu' e' emessa da un device
+    registrato presso il provider — piu' solido di un indirizzo digitato. Serve
+    tutto insieme: richiesta dall'app, push configurata sul server, device
+    registrato di recente per questo client. `ABM_FREE_TTS_QUOTA_APP_PUSH_ACK=0`
+    spegne la deroga e riporta tutti al gate email.
+    """
+    if str(os.environ.get("ABM_FREE_TTS_QUOTA_APP_PUSH_ACK", "1")).strip().lower() not in ("1", "true", "yes", "on"):
+        return False
+    plat = (job or {}).get("platform") or _client_platform()
+    if plat not in ("android", "ios"):
+        return False
+    try:
+        if not push_service.is_available():
+            return False
+    except Exception:
+        return False
+    return _has_fresh_device(_quota_client_id(job))
+
+
 # Testi notifica push localizzati per lingua del job (`notify_lang`), fallback
 # inglese. Coerente con la localizzazione delle email; chiavi: event -> lang ->
 # (subject, body). Per l'evento 'done' il titolo del libro, se noto, prevale
@@ -13314,6 +13369,17 @@ def api_generate():
         if not _ftq_dec["allowed"]:
             _ftq_ack = (bool(data.get("quota_ack")) and bool(job.get("notify_email"))
                         and bool(job.get("email_registered")))
+            # Ack via push (app mobile): la consegna e' garantita dalla notifica,
+            # nessuna email richiesta. Il batch va forzato qui: senza
+            # `email_registered` l'heartbeat ucciderebbe il job a schermo spento,
+            # e la push arriverebbe per un audiolibro mai prodotto.
+            _ftq_push = _push_ack_possible(job)
+            if not _ftq_ack and _ftq_push and bool(data.get("quota_ack")):
+                _ftq_ack = True
+                job["email_registered"] = True
+                job.setdefault("notify_download_type", "audio")
+                print(f"[{job_id}] free TTS quota: ack via push (app) -> batch "
+                      f"senza email", flush=True)
             if not _ftq_ack and _smtp_available():
                 with _jobs_lock:
                     if job["status"] == "generating":
@@ -13333,6 +13399,10 @@ def api_generate():
                     "quota_limit_chars": _ftq_dec["limit_chars"],
                     "chars_selected": selected_chars,
                     "email_required": True,
+                    # Dice al client mobile quale schermata mostrare senza un
+                    # secondo giro: `true` -> "ricevi con una notifica"
+                    # (ritentare con quota_ack), `false` -> chiedi l'email.
+                    "push_ack_possible": _ftq_push,
                 }), 402
             # Gate superato (email registrata) oppure SMTP assente: il gate
             # sarebbe impassabile, quindi si lascia passare senza marcare.
@@ -13927,6 +13997,16 @@ def api_device_register():
         })
         _device_tokens[cid] = entries[-_MAX_DEVICES_PER_CLIENT:]
         _save_device_tokens()
+    # Lega l'installazione all'identita' di quota: l'app rigenera il proprio
+    # identificativo a ogni pulizia dei dati, il token push no. Senza questo
+    # legame la quota mensile voci standard ripartirebbe da zero a ogni reset.
+    try:
+        _canon = free_tts_quota.link_device(_device_hash(fcm_token), cid)
+        if _canon and _canon != cid:
+            print(f"[device] cid {cid} -> quota identity {_canon} "
+                  f"(stessa installazione)", flush=True)
+    except Exception as _link_err:
+        print(f"[device] quota identity link failed (non-fatal): {_link_err}", flush=True)
     return jsonify({"ok": True})
 
 

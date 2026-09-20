@@ -13,10 +13,18 @@ Struttura del file `ABM_DATA_DIR/_free_tts_quota.json`:
 Nessun dato personale oltre al client_id (cookie anonimo abm_cid).
 Best-effort, thread-safe, scrittura atomica: nessuna eccezione propagata.
 Modulo foglia: solo stdlib + community_store.atomic_write_json.
+
+Identita' di quota (`link_device`/`canonical`): l'app mobile porta il proprio
+identificativo in un header e lo rigenera a ogni pulizia dei dati, quindi il
+contatore ripartirebbe da zero come per un cookie cancellato. Il token push,
+invece, e' legato all'installazione. `ABM_DATA_DIR/_free_tts_quota_ids.json`
+tiene la corrispondenza installazione -> primo client_id visto (canonico) e la
+lista degli alias: tutte le letture e i consumi del mese passano dal canonico.
 """
 import json
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +32,7 @@ from community_store import atomic_write_json
 
 _lock = threading.RLock()
 _KEEP_MONTHS = 3
+_IDS_KEEP_DAYS = 120  # retention dei legami installazione->identita di quota
 _ANON = "_anon"
 DEFAULT_LIMIT_CHARS = 10_000_000
 
@@ -47,8 +56,140 @@ def limit_chars():
         return DEFAULT_LIMIT_CHARS
 
 
+def _ids_file():
+    return Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")) / "_free_tts_quota_ids.json"
+
+
+def _load_ids():
+    """{"devices": {hash: {"cid", "ts"}}, "aliases": {cid: {"cid", "ts"}}}."""
+    try:
+        with open(_ids_file(), "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    for k in ("devices", "aliases"):
+        if not isinstance(d.get(k), dict):
+            d[k] = {}
+    return d
+
+
+def _save_ids(d):
+    """Scrive il registro, scartando i legami piu' vecchi di `_IDS_KEEP_DAYS`."""
+    cutoff = time.time() - _IDS_KEEP_DAYS * 86400
+    for section in ("devices", "aliases"):
+        bucket = d.get(section) or {}
+        for key, rec in list(bucket.items()):
+            if not isinstance(rec, dict) or not rec.get("cid"):
+                bucket.pop(key, None)
+                continue
+            try:
+                if float(rec.get("ts") or 0) < cutoff:
+                    bucket.pop(key, None)
+            except (TypeError, ValueError):
+                bucket.pop(key, None)
+    try:
+        atomic_write_json(_ids_file(), d)
+    except Exception:
+        pass
+
+
+def _resolve(ids, cid):
+    """Segue la catena degli alias (profondita' 1 per costruzione, con guardia)."""
+    aliases = ids.get("aliases") or {}
+    seen = set()
+    cur = cid
+    while cur and cur not in seen:
+        seen.add(cur)
+        rec = aliases.get(cur)
+        nxt = (rec or {}).get("cid") if isinstance(rec, dict) else None
+        if not nxt or nxt == cur:
+            break
+        cur = nxt
+    return cur
+
+
+def canonical(client_id):
+    """Identita' di quota sotto cui e' contabilizzato questo client_id."""
+    cid = (client_id or "").strip() or _ANON
+    with _lock:
+        return _resolve(_load_ids(), cid)
+
+
+def _merge_month_bucket(src, dst):
+    """Sposta il consumo del mese corrente da `src` a `dst`. Caller sotto `_lock`."""
+    if src == dst:
+        return
+    d = _load()
+    month_bucket = d.get(_month())
+    if not isinstance(month_bucket, dict) or not isinstance(month_bucket.get(src), dict):
+        return
+    s = month_bucket.pop(src)
+    t = _bucket(d, dst, create=True)
+    s_jobs = s.get("jobs") if isinstance(s.get("jobs"), dict) else {}
+    moved = 0
+    for jid, amt in s_jobs.items():
+        if jid in t["jobs"]:
+            continue
+        try:
+            a = max(0, int(amt or 0))
+        except (TypeError, ValueError):
+            a = 0
+        t["jobs"][jid] = a
+        t["chars"] += a
+        moved += a
+    try:
+        s_chars = max(0, int(s.get("chars", 0) or 0))
+    except (TypeError, ValueError):
+        s_chars = 0
+    if s_chars > moved:  # residuo senza job (schema legacy): non si perde
+        t["chars"] += s_chars - moved
+    t["gated"] = int(t.get("gated", 0) or 0) + int(s.get("gated", 0) or 0)
+    _save(d)
+
+
+def link_device(device_hash, client_id):
+    """Lega un'installazione (hash del token push) a un'identita' di quota.
+
+    Il primo client_id che registra quel device resta canonico; i successivi
+    diventano suoi alias e il loro consumo del mese in corso viene fuso nel
+    bucket canonico. Cosi' rigenerare l'identificativo in app non azzera il
+    contatore mensile. Ritorna il cid canonico; mai solleva.
+    """
+    try:
+        th = (device_hash or "").strip()
+        cid = (client_id or "").strip()
+        if not th or not cid:
+            return _norm_client(client_id)
+        with _lock:
+            ids = _load_ids()
+            devices, aliases = ids["devices"], ids["aliases"]
+            now = time.time()
+            cur = _resolve(ids, cid)
+            rec = devices.get(th)
+            owner = _resolve(ids, (rec or {}).get("cid") or "") if isinstance(rec, dict) else ""
+            if not owner:
+                devices[th] = {"cid": cur, "ts": now}
+                _save_ids(ids)
+                return cur
+            devices[th] = {"cid": owner, "ts": now}
+            if owner != cur:
+                aliases[cur] = {"cid": owner, "ts": now}
+                for k, v in list(aliases.items()):  # invariante: profondita' 1
+                    if k != cur and isinstance(v, dict) and v.get("cid") == cur:
+                        aliases[k] = {"cid": owner, "ts": v.get("ts", now)}
+                _merge_month_bucket(cur, owner)
+            _save_ids(ids)
+            return owner
+    except Exception:
+        return (client_id or "").strip() or _ANON
+
+
 def _norm_client(client_id):
-    return (client_id or "").strip() or _ANON
+    """Identita' di quota del client: canonico se e' alias di un'installazione."""
+    cid = (client_id or "").strip() or _ANON
+    return _resolve(_load_ids(), cid)
 
 
 def _load():

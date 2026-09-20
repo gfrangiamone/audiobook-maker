@@ -643,3 +643,33 @@ def test_my_jobs_user_cancel_not_interrupted(monkeypatch):
     finally:
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
+
+
+# ------------------------------------------------- Identita' di quota (device)
+
+def test_device_register_links_quota_identity(client, device_env, monkeypatch, tmp_path):
+    """L'identificativo dell'app si rigenera, il token push no: la quota mensile
+    voci standard deve seguire l'installazione."""
+    import free_tts_quota as ftq
+
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH", "1000")
+    tok = {"fcm_token": "tok-stessa-install", "platform": "android"}
+    assert client.post("/api/device/register", headers=HDR, json=tok).status_code == 200
+    ftq.consume("mobile-cid-12345", 900, "job-a")
+    # Pulizia dati dell'app: cid nuovo, stessa installazione (stesso token).
+    assert client.post("/api/device/register",
+                       headers={"X-ABM-Cid": "mobile-cid-99999"},
+                       json=tok).status_code == 200
+    assert ftq.used_chars("mobile-cid-99999") == 900
+    assert not ftq.decision("mobile-cid-99999", 500, "job-b")["allowed"]
+
+
+def test_device_register_does_not_leak_the_push_token_into_quota_files(client, device_env,
+                                                                     monkeypatch, tmp_path):
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    client.post("/api/device/register", headers=HDR,
+                json={"fcm_token": "tok-segretissimo", "platform": "ios"})
+    ids = (tmp_path / "_free_tts_quota_ids.json").read_text(encoding="utf-8")
+    assert "tok-segretissimo" not in ids
+    assert "mobile-cid-12345" in ids

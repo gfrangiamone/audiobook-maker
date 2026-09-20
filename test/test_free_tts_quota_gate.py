@@ -8,6 +8,8 @@ SMTP il gate e' impraticabile e il job passa. Una generazione identica di
 un job gia' consegnato allo stesso client parte come run_reuse senza toccare
 la quota. Errore server -> storno via _set_job_status.
 """
+import time
+
 import pytest
 
 import audiobook_app
@@ -77,10 +79,10 @@ def _mk_job(job_id, n_chars, client_id=CID, text=None):
     return audiobook_app.jobs[job_id]
 
 
-def _post(client, job_id, **extra):
+def _post(client, job_id, headers=None, **extra):
     payload = {"job_id": job_id, "voice": VOICE, "rate": "+0%", "output_format": "mp3", "lang": "en"}
     payload.update(extra)
-    return client.post("/api/generate", json=payload)
+    return client.post("/api/generate", json=payload, headers=headers or {})
 
 
 def _ops(log_calls):
@@ -271,3 +273,93 @@ def test_reuse_disabled_by_env(client, env, tmp_path, monkeypatch):
     assert _post(client, "ftq-dup4").status_code == 200
     assert env["reuse"] == []
     assert [c[0] for c in env["run"]] == ["ftq-dup4"]
+
+
+# ---------------------------------------------------------------------------
+# Ack via push (app mobile): oltre quota il job parte in batch senza email se
+# la consegna e' garantita da un device FCM registrato. Il 402 resta la via per
+# il web e per l'app senza push (fallback email).
+# ---------------------------------------------------------------------------
+
+APP_HDR = {"X-ABM-Cid": CID, "X-ABM-Platform": "android"}
+
+
+@pytest.fixture
+def app_device(monkeypatch, tmp_path):
+    """Client mobile con un device FCM registrato di recente e push configurata."""
+    monkeypatch.setattr(audiobook_app, "_DEVICE_TOKENS_FILE",
+                        tmp_path / "_device_tokens.json")
+    monkeypatch.setattr(audiobook_app, "_device_tokens",
+                        {CID: [{"fcm_token": "tok-app-0001", "platform": "android",
+                                "app_version": "1.0", "registered_at": time.time()}]})
+    monkeypatch.setattr(audiobook_app.push_service, "is_available", lambda: True)
+    yield
+
+
+def test_app_with_registered_device_starts_gated_without_email(client, env, app_device):
+    ftq.consume(CID, 900, "preload")
+    job = _mk_job("ftq-push", 500)
+    r = _post(client, "ftq-push", quota_ack=True, headers=APP_HDR)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert [c[0] for c in env["run"]] == ["ftq-push"]
+    assert ftq.used_chars(CID) == 1400, "oltre quota si addebita comunque"
+    assert ftq.month_table()[CID]["gated"] == 1
+    assert "QUOTA_GATE" in _ops(env["log"])
+    assert job["email_registered"] is True, "batch forzato: l'heartbeat non deve uccidere il job"
+    assert not job.get("notify_email"), "nessuna email: la consegna e' la push"
+
+
+def test_app_without_registered_device_gets_402_with_push_not_possible(client, env, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_device_tokens", {})
+    monkeypatch.setattr(audiobook_app.push_service, "is_available", lambda: True)
+    ftq.consume(CID, 900, "preload")
+    _mk_job("ftq-nodev", 500)
+    r = _post(client, "ftq-nodev", quota_ack=True, headers=APP_HDR)
+    assert r.status_code == 402
+    body = r.get_json()
+    assert body["email_required"] is True and body["push_ack_possible"] is False
+    assert env["run"] == []
+
+
+def test_first_402_tells_the_app_that_push_ack_is_possible(client, env, app_device):
+    """Primo tentativo senza ack: il 402 dice all'app quale schermata mostrare."""
+    ftq.consume(CID, 900, "preload")
+    _mk_job("ftq-hint", 500)
+    r = _post(client, "ftq-hint", headers=APP_HDR)
+    assert r.status_code == 402
+    assert r.get_json()["push_ack_possible"] is True
+
+
+def test_web_client_never_gets_push_ack(client, env, app_device):
+    """Stesso cid, stesso device registrato: dal web l'ack via push non vale."""
+    ftq.consume(CID, 900, "preload")
+    _mk_job("ftq-web", 500)
+    r = _post(client, "ftq-web", quota_ack=True)
+    assert r.status_code == 402
+    assert r.get_json()["push_ack_possible"] is False
+
+
+def test_stale_device_registration_does_not_grant_push_ack(client, env, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_device_tokens",
+                        {CID: [{"fcm_token": "tok-old", "platform": "android",
+                                "registered_at": time.time() - 200 * 86400}]})
+    monkeypatch.setattr(audiobook_app.push_service, "is_available", lambda: True)
+    ftq.consume(CID, 900, "preload")
+    _mk_job("ftq-stale", 500)
+    assert _post(client, "ftq-stale", quota_ack=True, headers=APP_HDR).status_code == 402
+
+
+def test_push_not_configured_falls_back_to_email_gate(client, env, app_device, monkeypatch):
+    monkeypatch.setattr(audiobook_app.push_service, "is_available", lambda: False)
+    ftq.consume(CID, 900, "preload")
+    _mk_job("ftq-nopush", 500)
+    r = _post(client, "ftq-nopush", quota_ack=True, headers=APP_HDR)
+    assert r.status_code == 402
+    assert r.get_json()["push_ack_possible"] is False
+
+
+def test_kill_switch_disables_push_ack(client, env, app_device, monkeypatch):
+    monkeypatch.setenv("ABM_FREE_TTS_QUOTA_APP_PUSH_ACK", "0")
+    ftq.consume(CID, 900, "preload")
+    _mk_job("ftq-killsw", 500)
+    assert _post(client, "ftq-killsw", quota_ack=True, headers=APP_HDR).status_code == 402
