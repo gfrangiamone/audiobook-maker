@@ -124,6 +124,19 @@ def test_verify_purpose_must_match_token(acct_env):
     assert accounts.verify(token=tl, purpose="delete", now=T0 + 1) == ("none", None)
 
 
+def test_peek_reports_state_without_consuming(acct_env):
+    token, code = accounts.request_code("a@b.it", "login", now=T0)
+    assert accounts.peek(token, now=T0 + 1) == "ok"
+    assert accounts.peek(token, now=T0 + 2) == "ok"  # ripetere il peek non consuma
+    assert accounts.peek(token, purpose="delete", now=T0 + 2) == "none"
+    assert accounts.peek("garbage", now=T0 + 2) == "none"
+    assert accounts.peek(token, now=T0 + accounts.CODE_TTL_MIN * 60 + 1) == "expired"
+    for _ in range(5):
+        bad = "000000" if code != "000000" else "111111"
+        accounts.verify(email="a@b.it", code=bad, now=T0 + 3)
+    assert accounts.peek(token, now=T0 + 4) == "locked"
+
+
 def _login(email, now=T0):
     token, _ = accounts.request_code(email, "login", now=now)
     return accounts.verify(token=token, now=now + 1)[1]

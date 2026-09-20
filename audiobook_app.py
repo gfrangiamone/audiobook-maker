@@ -10842,31 +10842,6 @@ def _acct_html(html_doc, status=200):
     return resp
 
 
-def _acct_peek_token(token, purpose):
-    """Stato del token senza consumarlo (solo per il GET di /auth/<token>).
-
-    `accounts.verify()` consuma il codice non appena riconosce lo stato
-    "ok", quindi non e' riusabile per una lettura innocua: qui si rilegge
-    direttamente `auth_codes` (stesso hash di accounts._sha, sha256 nudo,
-    nessun segreto) tramite `db.tx()`, senza toccare accounts.py.
-    """
-    if not token:
-        return "none"
-    with db.tx() as c:
-        row = c.execute(
-            "SELECT expires_at, consumed_at, attempts FROM auth_codes "
-            "WHERE token_hash=? AND purpose=?",
-            (hashlib.sha256(token.encode("utf-8")).hexdigest(), purpose),
-        ).fetchone()
-    if row is None or row["consumed_at"] is not None:
-        return "none"
-    if row["expires_at"] <= int(time.time()):
-        return "expired"
-    if row["attempts"] >= accounts.CODE_MAX_ATTEMPTS:
-        return "locked"
-    return "ok"
-
-
 def _acct_send_code(email, purpose, lang):
     """Genera e spedisce il codice. Sempre silenzioso: risposta neutra a monte."""
     try:
@@ -10960,7 +10935,7 @@ def auth_magic_link(token):
         # Mai consumare al GET: i client di posta pre-aprono i link. Una
         # lettura innocua basta pero' a distinguere un link mai esistito
         # (410) da uno ancora valido in attesa di conferma (200).
-        status = _acct_peek_token(token, purpose)
+        status = accounts.peek(token, purpose)
         if status != "ok":
             return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
         return _acct_html(account_page.render_confirm(

@@ -245,6 +245,25 @@ def verify(token=None, email=None, code=None, purpose="login", now=None):
         return "ok", acct
 
 
+def peek(token, purpose="login", now=None):
+    """Stato di un magic link senza consumarlo, per il GET di /auth/<token>
+    (i client di posta pre-aprono i link). Stessi esiti di verify() tranne
+    "wrong": ok | expired | locked | none. Nessuna scrittura."""
+    if not enabled() or not token:
+        return "none"
+    now = int(now or time.time())
+    row = db.conn().execute(
+        "SELECT expires_at, consumed_at, attempts FROM auth_codes WHERE token_hash=? AND purpose=?",
+        (_sha(token), purpose)).fetchone()
+    if row is None or row["consumed_at"] is not None:
+        return "none"
+    if row["expires_at"] <= now:
+        return "expired"
+    if row["attempts"] >= CODE_MAX_ATTEMPTS:
+        return "locked"
+    return "ok"
+
+
 # ---------------------------------------------------------------- sessions
 
 def open_session(account_id, device_name="", ip_hash="", now=None):
