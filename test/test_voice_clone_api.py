@@ -846,6 +846,18 @@ def test_resume_chiede_il_nome_e_lo_salva(client, tmp_path):
     assert vc.device_of(vc.get(rec["id"]), "cid-r")["name"] == "Tablet cucina"
 
 
+def test_pagina_voce_usa_stile_e_tema_dell_app(client, tmp_path):
+    # Stessa resa dell'area personale (page_brand): tavolozza della SPA,
+    # bottoni bianchi col testo accento, tema letto da localStorage `abm_th`
+    # PRIMA del CSS. Nessun colore fisso della vecchia versione.
+    rec = _paid(tmp_path)
+    corpo = client.get(f"/vc/{rec['manage_token']}/devices").data.decode("utf-8")
+    assert corpo.index("localStorage.getItem('abm_th')") < corpo.index("<style>")
+    assert "[data-theme=dark]{" in corpo and "--ac:#c47a2a" in corpo
+    assert "background:var(--srf);color:var(--ac)" in corpo
+    assert "#f6f3ee" not in corpo and "color:#222" not in corpo and "#c29a6c;--acc-d" not in corpo
+
+
 def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
     rec = _paid(tmp_path)
     tok = rec["manage_token"]
