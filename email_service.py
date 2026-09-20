@@ -915,8 +915,11 @@ def send_account_code(email, lang, *, code, link_url, purpose, minutes):
     """Codice a 6 cifre + magic link. `purpose`: login | delete."""
     if purpose not in ("login", "delete"):
         return False
+    minutes_n = _vc_num(minutes, kind="int")
+    if minutes_n is None:
+        return False
     return _acct_send(email, lang, f"{purpose}_subject", f"{purpose}_body",
-                      code=code, link_url=link_url, minutes=int(minutes))
+                      code=code, link_url=link_url, minutes=minutes_n)
 
 
 def send_account_deleted(email, lang):

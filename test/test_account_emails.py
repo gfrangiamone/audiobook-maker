@@ -70,3 +70,9 @@ def test_send_returns_false_on_smtp_error(monkeypatch):
     monkeypatch.setattr(email_service, "_send_email", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("smtp")))
     assert email_service.send_account_code("a@b.it", "en", code="1", link_url="u",
                                            purpose="login", minutes=10) is False
+
+
+def test_send_account_code_bad_minutes_returns_false(sent):
+    assert email_service.send_account_code("a@b.it", "en", code="123456", link_url="https://x/auth/T",
+                                           purpose="login", minutes="abc") is False
+    assert sent == []
