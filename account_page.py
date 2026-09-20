@@ -59,15 +59,21 @@ def page_html(t, lang, title, body_html):
     )
 
 
-def render_confirm(t, *, lang, purpose, action_url, masked_email=""):
-    """Pagina GET /auth/<token>: un form POST, cosi' il GET non consuma mai."""
+def render_confirm(t, *, lang, purpose, action_url, masked_email="", csrf=""):
+    """Pagina GET /auth/<token>: un form POST, cosi' il GET non consuma mai.
+
+    `csrf` e' il gemello del cookie posato dalla stessa risposta GET
+    (double-submit): il POST che consuma il link vale solo se arriva dal
+    browser che la pagina l'ha davvero aperta."""
     key = "confirm_delete" if purpose == "delete" else "confirm_login"
     cls = "danger" if purpose == "delete" else "primary"
     who = f"<p class=\"who\"><strong>{_e(masked_email)}</strong></p>" if masked_email else ""
+    hidden = f"<input type=\"hidden\" name=\"csrf\" value=\"{_e(csrf)}\">" if csrf else ""
     body = (
         f"<p>{_e(t[key + '_p'])}</p>"
         f"{who}"
         f"<form method=\"post\" action=\"{_e(action_url)}\" class=\"actions\">"
+        f"{hidden}"
         f"<button type=\"submit\" class=\"{cls}\">{_e(t[key + '_btn'])}</button></form>"
     )
     return page_html(t, lang, t[key + "_title"], body)

@@ -410,6 +410,7 @@ try:
         payments_path=Path(_DATA_DIR) / "_payments.json",
         voice_clone_ids_for_email_fn=voice_clone.ids_for_email,
         link_voice_fn=voice_clone.link_account,
+        unlink_voice_fn=voice_clone.unlink_account,
         log_fn=lambda m: print(m, flush=True),
     )
     print(f"[startup] accounts: {'enabled' if accounts.enabled() else 'disabled'} ({db.DB_FILENAME})")
@@ -10946,6 +10947,65 @@ def _acct_clear_cookie(resp):
                     samesite="Lax", secure=_acct_cookie_secure(), path="/")
 
 
+# --- anti login-CSRF sul magic link ------------------------------------
+# Il POST di /auth/<token> apre una sessione: senza guardia un sito terzo puo'
+# auto-inviare un form verso /auth/<token_dell_attaccante> e il browser della
+# vittima riceve Set-Cookie: abm_session (SameSite=Lax impedisce di INVIARE
+# cookie cross-site, non di IMPOSTARLI). La vittima si ritrova loggata
+# nell'account dell'attaccante e i suoi job successivi vengono notificati a
+# quell'indirizzo. La guardia e' un double-submit cookie legato al BROWSER che
+# ha aperto il link: un nonce derivato dal token non servirebbe, perche' il
+# token e' dell'attaccante e il nonce sarebbe leggibile dal suo stesso GET.
+_ACCT_CSRF_COOKIE = "abm_auth_csrf"
+
+
+def _acct_set_csrf_cookie(resp, value):
+    resp.set_cookie(_ACCT_CSRF_COOKIE, value, max_age=accounts.CODE_TTL_MIN * 60,
+                    httponly=True, samesite="Strict", secure=_acct_cookie_secure(),
+                    path="/auth")
+
+
+def _acct_clear_csrf_cookie(resp):
+    resp.set_cookie(_ACCT_CSRF_COOKIE, "", max_age=0, expires=0, httponly=True,
+                    samesite="Strict", secure=_acct_cookie_secure(), path="/auth")
+
+
+def _acct_origin_ok():
+    """False se la richiesta arriva dichiaratamente da un'altra origine.
+
+    Header assenti = consentito: su una navigazione diretta (click sul link
+    dell'email) alcuni browser non mandano ne' Origin ne' Referer.
+    Ammesse due origini: quella dichiarata in BASE_URL (se valorizzata) e
+    quella della richiesta stessa (`host_url`), perche' l'host arriva dal
+    browser e non e' scrivibile da una pagina terza — e' lo stesso criterio
+    del guard globale `_csrf_protect`. Serve a non chiudere fuori un
+    deployment raggiungibile anche su un hostname diverso da ABM_BASE_URL."""
+    origin = (request.headers.get("Origin") or "").strip()
+    if origin.lower() == "null":
+        return False
+    src = origin or (request.headers.get("Referer") or "").strip()
+    if not src:
+        return True
+    from urllib.parse import urlsplit
+    a = urlsplit(src)
+    allowed = {(urlsplit(request.host_url).scheme, urlsplit(request.host_url).netloc)}
+    base = (BASE_URL or "").strip()
+    if base:
+        b = urlsplit(base)
+        allowed.add((b.scheme, b.netloc))
+    return (a.scheme, a.netloc) in allowed
+
+
+def _acct_csrf_ok():
+    """Double-submit: il campo nascosto del form deve combaciare con il cookie
+    posato dal GET sullo stesso browser."""
+    sent = (request.form.get("csrf") or "").strip()
+    cookie = (request.cookies.get(_ACCT_CSRF_COOKIE) or "").strip()
+    if not sent or not cookie:
+        return False
+    return hmac.compare_digest(sent, cookie)
+
+
 def _acct_log(op, email, extra=""):
     """Business log senza email in chiaro: sid = acct-<hash8>."""
     try:
@@ -11076,9 +11136,17 @@ def auth_magic_link(token):
             t = _acct_txt(lang)
         if status != "ok":
             return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
-        return _acct_html(account_page.render_confirm(
+        csrf = secrets.token_urlsafe(16)
+        resp = _acct_html(account_page.render_confirm(
             t, lang=lang, purpose=purpose, action_url=request.full_path.rstrip("?"),
-            masked_email=account_page.mask_email(info["email"])))
+            masked_email=account_page.mask_email(info["email"]), csrf=csrf))
+        _acct_set_csrf_cookie(resp, csrf)
+        return resp
+    # Il token NON viene consumato se la conferma non proviene dal browser che
+    # ha aperto il link: pagina d'errore generica (nessun indizio all'esterno
+    # su validita' o stato del token) e nessun effetto collaterale.
+    if not _acct_origin_ok() or not _acct_csrf_ok():
+        return _acct_html(account_page.render_error(t, lang=lang, status_key="none"), 403)
     status, acct = accounts.verify(token=token, purpose=purpose)
     if acct and acct.get("lang") in _ACCT_PAGES_I18N:
         lang = acct["lang"]
@@ -11089,6 +11157,7 @@ def auth_magic_link(token):
         _acct_do_delete(acct, lang)
         resp = _acct_html(account_page.render_deleted(t, lang=lang))
         _acct_clear_cookie(resp)
+        _acct_clear_csrf_cookie(resp)
         return resp
     session_token = accounts.open_session(
         acct["id"], device_name=(request.headers.get("User-Agent") or "")[:80],
@@ -11096,6 +11165,7 @@ def auth_magic_link(token):
     _acct_log("ACCOUNT_LOGIN", acct["email"])
     resp = redirect("/account", code=302)
     _acct_set_cookie(resp, session_token)
+    _acct_clear_csrf_cookie(resp)
     return resp
 
 
@@ -11150,18 +11220,42 @@ def api_auth_me():
 _ACCT_PER_PAGE = 50
 
 
-def _account_downloads_for(row, now=None):
+def _download_tokens_index():
+    """Indice `job_id -> [(token, info)]` costruito UNA volta per richiesta da
+    uno snapshot di _download_tokens preso sotto _tokens_lock.
+
+    Due motivi, non uno: (a) _download_tokens e' mutato dai thread di
+    generazione (creazione token a fine job) e dal cleanup, quindi scorrerlo
+    senza snapshot e' una `RuntimeError: dictionary changed size during
+    iteration` in attesa del momento giusto — lo stesso schema che uccise il
+    _cleanup_loop; (b) lo storico chiama _account_downloads_for per ogni riga
+    mostrata, e una scansione lineare per riga costa O(righe x token)."""
+    with _tokens_lock:
+        items = list(_download_tokens.items())
+    idx = {}
+    for tok, ti in items:
+        if not isinstance(ti, dict):
+            continue
+        jid = ti.get("job_id")
+        if jid:
+            idx.setdefault(jid, []).append((tok, ti))
+    return idx
+
+
+def _account_downloads_for(row, now=None, index=None):
     """Link ancora vivi per una riga dello storico. Il token arriva dalla
     riga (`download_token`) o, per i job adottati dai pagamenti, dalla
-    ricerca per job_id in _download_tokens. `expires_at` usa la retention
+    ricerca per job_id nell'indice (`index`, vedi _download_tokens_index;
+    se None viene costruito qui). `expires_at` usa la retention
     effettiva del token (protezione no-download compresa)."""
     now = now if now is not None else time.time()
     job_id = row.get("job_id") or ""
     token = row.get("download_token") or ""
     info = _download_tokens.get(token) if token else None
     if info is None:
-        candidates = [(tok, ti) for tok, ti in _download_tokens.items()
-                      if isinstance(ti, dict) and ti.get("job_id") == job_id]
+        if index is None:
+            index = _download_tokens_index()
+        candidates = index.get(job_id) or []
         if candidates:
             token, info = max(candidates, key=lambda kv: float(kv[1].get("created_at") or 0))
     if not isinstance(info, dict) or not token:
@@ -11194,10 +11288,11 @@ def _account_downloads_for(row, now=None):
 def _account_rows_for(acct, page):
     rows, total = accounts.list_jobs(acct["id"], page=page, per_page=_ACCT_PER_PAGE)
     now = time.time()
+    index = _download_tokens_index()
     out = []
     for r in rows:
         d = dict(r)
-        d["downloads"] = _account_downloads_for(d, now)
+        d["downloads"] = _account_downloads_for(d, now, index)
         out.append(d)
     return out, total
 
@@ -14463,7 +14558,39 @@ def api_register_email():
         except Exception as _e:
             print(f"[{job_id}] pending_jobs.register failed (non-fatal): {_e}", flush=True)
 
-    print(f"[{job_id}] Email notification registered: {email} (type: {download_type})")
+    # Storico account: chi registra l'email da loggato sta dichiarando che quel
+    # job e' suo, ma la riga di storico la scrive solo la partenza
+    # (_apply_account_to_job). Un job avviato da sloggato e poi "adottato" qui
+    # resterebbe invisibile nella pagina /account: lo registriamo adesso.
+    # La riga di un ALTRO account non viene mai riassegnata (record_job e' un
+    # upsert che sovrascriverebbe account_id): la guardia e' accounts.job_owner.
+    # Job mai partito (status=analyzed): nessuna riga, come per il descrittore
+    # pending — la scrivera' /api/generate|optimize|translate alla partenza,
+    # con i parametri reali invece di uno snapshot che puo' non avverarsi mai.
+    if _acct and job.get("status") != "analyzed":
+        try:
+            _owner = accounts.job_owner(job_id)
+            if _owner in (None, _acct["id"]):
+                _st = job.get("status") or ""
+                _hist_status = (_st if _st in ("done", "error") else
+                                "cancelled" if _st in ("cancelled", "canceled") else "running")
+                if download_type == "translated":
+                    _kind = "translate"
+                elif (job.get("status") in ("optimizing", "optimized")
+                      or (job.get("opt_auto_generate") and not job.get("ai_optimized"))):
+                    _kind = "optimize"
+                else:
+                    _kind = "generate"
+                accounts.record_job(
+                    _acct["id"], job_id, kind=_kind, book_title=_job_book_title(job),
+                    output_format=job.get("output_format") or "",
+                    voice=_voice_public_label(job.get("voice") or ""),
+                    lang=job.get("browser_lang") or "", paid_eur=_job_paid_eur(job),
+                    source="forced", status=_hist_status)
+        except Exception as _e:
+            print(f"WARNING [{job_id}] accounts.record_job (register_email): {_e}", flush=True)
+
+    print(f"[{job_id}] Email notification registered: {_mask_email(email)} (type: {download_type})")
     _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED",
                   job.get("client_id", ""), job.get("client_ip", ""),
                   job.get("voice", ""), job.get("browser_lang", ""))
@@ -19211,7 +19338,11 @@ CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 # passa da _is_job_dir, e il cold delete rifiuta i prefissi riservati.
 # "voices" e' il nome storico della stessa cartella: resta riservato perche'
 # una copia rimasta da prima del rename non deve finire nel tritacarne.
-_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices"})
+# "accounts" e' il prefisso cold dei backup di abm.db (_ACCT_R2_PREFIX): oggi
+# nessuno sweep lo raggiunge (i backup sono file, non cartelle), ma riservarlo
+# costa una parola e impedisce che un domani un delete_prefix("accounts/")
+# cancelli le copie del database degli account.
+_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices", "accounts"})
 
 
 def _is_job_dir(entry):

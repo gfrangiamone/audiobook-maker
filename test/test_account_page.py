@@ -1,6 +1,7 @@
 # test/test_account_page.py
 """Pagina /account, API storico e cancellazione self-service."""
 import json
+import re
 import time
 from pathlib import Path
 
@@ -179,6 +180,71 @@ def test_downloads_for_job_id_fallback_picks_newest_token(env, monkeypatch):
     assert abs(out[0]["expires_at"] - (now + 99)) < 2
 
 
+class _SpyTokens(dict):
+    """Registra ogni `items()` e se il lock era preso.
+
+    _download_tokens e' mutato dai thread di generazione e dal cleanup:
+    scorrerlo senza snapshot e' la `RuntimeError: dictionary changed size
+    during iteration` che aveva gia' ucciso il _cleanup_loop. Qui la
+    scansione deve avvenire una volta sola per richiesta e sotto _tokens_lock.
+    """
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.calls = []
+
+    def items(self):
+        self.calls.append(audiobook_app._tokens_lock.locked())
+        return super().items()
+
+
+class _NoScanTokens(dict):
+    def items(self):
+        raise AssertionError("_download_tokens scorso senza snapshot/indice")
+
+
+def test_downloads_index_built_once_per_request_under_lock(logged, monkeypatch):
+    c, acct = logged
+    spy = _SpyTokens()
+    monkeypatch.setattr(audiobook_app, "_download_tokens", spy)
+    monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 3600.0)
+    now = time.time()
+    for i in range(3):
+        accounts.record_job(acct["id"], f"jx{i}", kind="generate", status="done",
+                            created_at=T0 + i)
+        spy[f"tok-jx{i}"] = {"job_id": f"jx{i}", "created_at": now,
+                             "download_type": "audio", "output_m4b": ""}
+    r = c.get("/account")
+    assert r.status_code == 200
+    # una sola scansione per l'intera pagina (3 righe), sempre sotto lock
+    assert spy.calls == [True]
+    html = r.data.decode()
+    for i in range(3):
+        assert f"/dl/tok-jx{i}" in html
+    # stessa garanzia sull'API JSON
+    spy.calls.clear()
+    assert c.get("/api/account/jobs").status_code == 200
+    assert spy.calls == [True]
+
+
+def test_downloads_for_with_index_never_scans_tokens(env, monkeypatch):
+    """Con l'indice passato dal chiamante la funzione non tocca mai
+    _download_tokens.items(): niente iterazione non protetta per riga."""
+    toks = _NoScanTokens()
+    now = time.time()
+    toks["tok-jz"] = {"job_id": "jz", "created_at": now - 1, "download_type": "audio",
+                      "output_m4b": ""}
+    monkeypatch.setattr(audiobook_app, "_download_tokens", toks)
+    monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 100.0)
+    index = {"jz": [("tok-jz", toks["tok-jz"])]}
+    out = audiobook_app._account_downloads_for({"job_id": "jz", "download_token": ""}, now, index)
+    assert [d["kind"] for d in out] == ["page"]
+    assert out[0]["url"] == "https://abm.test/dl/tok-jz"
+    # riga senza token noto: nessuna scansione, semplicemente nessun link
+    assert audiobook_app._account_downloads_for({"job_id": "nope", "download_token": ""},
+                                                now, index) == []
+
+
 def test_delete_flow_by_code(logged, env):
     c, acct = logged
     accounts.record_job(acct["id"], "j1", kind="generate", status="done")
@@ -202,7 +268,11 @@ def test_delete_flow_by_magic_link(logged, env):
     r = c.get(path)
     assert r.status_code == 200 and b"<form" in r.data
     assert accounts.account_for_email("a@b.it") is not None
-    r = c.post(path)
+    # anche il ramo delete passa dal double-submit anti login-CSRF
+    csrf = re.search(r'name="csrf" value="([^"]+)"', r.data.decode()).group(1)
+    assert c.post(path).status_code == 403
+    assert accounts.account_for_email("a@b.it") is not None
+    r = c.post(path, data={"csrf": csrf})
     assert r.status_code == 200 and env["deleted"] == ["a@b.it"]
     assert accounts.account_for_email("a@b.it") is None
 

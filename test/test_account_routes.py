@@ -1,5 +1,7 @@
 # test/test_account_routes.py
 """Route di autenticazione account: request/verify/logout/me e /auth/<token>."""
+import re
+
 import pytest
 
 import accounts
@@ -37,6 +39,12 @@ def _cookie(resp, name="abm_session"):
         if h.startswith(name + "="):
             return h
     return None
+
+
+def _csrf(resp):
+    """Il nonce nascosto del form di conferma (double-submit col cookie)."""
+    m = re.search(r'name="csrf" value="([^"]+)"', resp.data.decode())
+    return m.group(1) if m else ""
 
 
 def test_request_sends_code_and_link(client, env):
@@ -125,13 +133,86 @@ def test_magic_link_get_does_not_consume_post_does(client, env):
     path = link[len("https://abm.test"):]
     r = client.get(path)
     assert r.status_code == 200 and b"<form" in r.data and b"method=\"post\"" in r.data
+    csrf = _csrf(r)
+    assert csrf
+    ck = _cookie(r, "abm_auth_csrf")
+    assert ck and "HttpOnly" in ck and "SameSite=Strict" in ck and "Path=/auth" in ck
+    assert csrf in ck
     assert accounts.account_for_email("a@b.it") is None
-    r = client.post(path)
+    r = client.post(path, data={"csrf": csrf})
     assert r.status_code == 302 and r.headers["Location"].endswith("/account")
     assert _cookie(r) is not None
+    # il cookie anti-CSRF e' bruciato con il token
+    assert "Max-Age=0" in (_cookie(r, "abm_auth_csrf") or "")
     assert accounts.account_for_email("a@b.it") is not None
-    r = client.post(path)
-    assert r.status_code == 410
+    r = client.post(path, data={"csrf": csrf})
+    assert r.status_code in (403, 410)
+
+
+def test_magic_link_post_without_csrf_is_rejected(client, env):
+    """Login-CSRF: un form auto-inviato da un sito terzo non porta il cookie
+    posato dal GET sul browser della vittima. Il 403 non deve consumare il
+    token: lo stesso link resta usabile dal browser legittimo."""
+    client.post("/api/auth/request", json={"email": "a@b.it"})
+    path = env[0][2]["link_url"][len("https://abm.test"):]
+    anon = audiobook_app.app.test_client()
+    r = anon.post(path)
+    assert r.status_code == 403 and b"<html" in r.data
+    assert _cookie(r) is None
+    assert accounts.account_for_email("a@b.it") is None
+    # campo presente ma cookie assente: comunque rifiutato
+    r = anon.post(path, data={"csrf": "made-up-value"})
+    assert r.status_code == 403
+    assert accounts.account_for_email("a@b.it") is None
+    # il token e' ancora buono per il GET+POST legittimo
+    g = client.get(path)
+    assert g.status_code == 200
+    r = client.post(path, data={"csrf": _csrf(g)})
+    assert r.status_code == 302
+    assert accounts.account_for_email("a@b.it") is not None
+
+
+def test_magic_link_post_cross_origin_is_rejected(client, env):
+    """Allow-list su Origin/Referer: anche con cookie e campo validi (es. un
+    sottodominio compromesso che riesce a farli combaciare) un POST che si
+    dichiara di un'altra origine non consuma il token."""
+    client.post("/api/auth/request", json={"email": "a@b.it"})
+    path = env[0][2]["link_url"][len("https://abm.test"):]
+    g = client.get(path)
+    csrf = _csrf(g)
+    r = client.post(path, data={"csrf": csrf},
+                    headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+    assert accounts.account_for_email("a@b.it") is None
+    r = client.post(path, data={"csrf": csrf},
+                    headers={"Referer": "https://evil.example/page"})
+    assert r.status_code == 403
+    assert accounts.account_for_email("a@b.it") is None
+    # stessa origine della richiesta (host_url del test client): passa
+    r = client.post(path, data={"csrf": csrf},
+                    headers={"Origin": "http://localhost"})
+    assert r.status_code == 302
+    assert accounts.account_for_email("a@b.it") is not None
+
+
+def test_magic_link_origin_allow_list_accepts_base_url(client, env, monkeypatch):
+    """L'allow-list ammette l'origine di BASE_URL anche quando non coincide
+    con l'host della richiesta (server dietro proxy), e nient'altro."""
+    with audiobook_app.app.test_request_context(
+            "/auth/x", method="POST", headers={"Origin": "https://abm.test"}):
+        assert audiobook_app._acct_origin_ok() is True
+    with audiobook_app.app.test_request_context(
+            "/auth/x", method="POST", headers={"Referer": "https://abm.test/auth/x"}):
+        assert audiobook_app._acct_origin_ok() is True
+    with audiobook_app.app.test_request_context(
+            "/auth/x", method="POST", headers={"Origin": "http://abm.test"}):
+        assert audiobook_app._acct_origin_ok() is False
+    with audiobook_app.app.test_request_context(
+            "/auth/x", method="POST", headers={"Origin": "null"}):
+        assert audiobook_app._acct_origin_ok() is False
+    # nessun header: navigazione diretta, consentita
+    with audiobook_app.app.test_request_context("/auth/x", method="POST"):
+        assert audiobook_app._acct_origin_ok() is True
 
 
 def test_magic_link_unknown_token_410_page(client, env):

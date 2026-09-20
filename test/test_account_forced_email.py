@@ -208,3 +208,151 @@ def test_voice_public_label_empty_and_unknown():
     # Provider ignoto a 3+ segmenti: ultimo segmento soltanto, mai un nome di
     # modello/provider davanti all'utente.
     assert f("weird:providerid:foo:bar") == "bar"
+
+
+# -- storico account scritto da /api/register_email (residuo 6) ---------
+# La riga di storico la scrive la partenza (_apply_account_to_job). Un job
+# avviato da sloggato e poi "adottato" registrando l'email da loggato non
+# comparirebbe mai in /account: /api/register_email deve scriverla.
+
+def test_register_email_logged_in_records_history_row(env):
+    c = audiobook_app.app.test_client()
+    acct = _login(c)
+    _job("jt-h1", status="generating", output_format="m4b",
+         voice="it-IT-IsabellaNeural", payment_amount_eur=2.0)
+
+    r = c.post("/api/register_email", json={"job_id": "jt-h1", "email": "a@b.it"}, headers=HDR)
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    rows, total = accounts.list_jobs(acct["id"])
+    assert total == 1
+    row = rows[0]
+    assert row["job_id"] == "jt-h1"
+    assert (row["kind"], row["status"], row["source"]) == ("generate", "running", "forced")
+    assert row["book_title"] == "Il Gattopardo" and row["output_format"] == "m4b"
+    # Etichetta presentabile, mai l'id grezzo del provider.
+    assert row["voice"] == "Isabella"
+    assert row["paid_eur"] == pytest.approx(2.0)
+
+    # Idempotente: una seconda registrazione non duplica la riga.
+    r2 = c.post("/api/register_email", json={"job_id": "jt-h1", "email": "a@b.it"}, headers=HDR)
+    assert r2.status_code == 200
+    _rows, total2 = accounts.list_jobs(acct["id"])
+    assert total2 == 1
+
+
+def test_register_email_kind_follows_phase(env):
+    c = audiobook_app.app.test_client()
+    acct = _login(c)
+    _job("jt-h2", status="optimizing")
+    _job("jt-h3", status="translating")
+    assert c.post("/api/register_email", json={"job_id": "jt-h2", "email": "a@b.it"},
+                  headers=HDR).status_code == 200
+    assert c.post("/api/register_email", json={"job_id": "jt-h3", "email": "a@b.it",
+                                               "download_type": "translated"},
+                  headers=HDR).status_code == 200
+    rows, _t = accounts.list_jobs(acct["id"])
+    kinds = {r["job_id"]: r["kind"] for r in rows}
+    assert kinds == {"jt-h2": "optimize", "jt-h3": "translate"}
+
+
+def test_register_email_never_steals_another_accounts_row(env):
+    """record_job e' un upsert su job_id che riassegna account_id: senza la
+    guardia job_owner, un secondo account che registra l'email sullo stesso
+    job si porterebbe via lo storico del primo."""
+    c = audiobook_app.app.test_client()
+    acct = _login(c)
+    _tok, _code = accounts.request_code("other@b.it")
+    _st, other = accounts.verify(token=_tok)
+    assert _st == "ok"
+    accounts.record_job(other["id"], "jt-h4", kind="generate", book_title="Suo")
+    _job("jt-h4", status="generating")
+
+    r = c.post("/api/register_email", json={"job_id": "jt-h4", "email": "a@b.it"}, headers=HDR)
+    assert r.status_code == 200
+    assert accounts.list_jobs(acct["id"])[1] == 0
+    rows, total = accounts.list_jobs(other["id"])
+    assert total == 1 and rows[0]["book_title"] == "Suo"
+
+
+def test_register_email_job_never_started_writes_no_row(env):
+    """Job in 'analyzed': lo snapshot di adesso puo' non avverarsi mai; la riga
+    la scrive la partenza, con i parametri reali."""
+    c = audiobook_app.app.test_client()
+    acct = _login(c)
+    _job("jt-h5")  # status 'analyzed'
+    assert c.post("/api/register_email", json={"job_id": "jt-h5", "email": "a@b.it"},
+                  headers=HDR).status_code == 200
+    assert accounts.list_jobs(acct["id"])[1] == 0
+
+
+def test_register_email_history_failure_does_not_break_registration(env, monkeypatch):
+    c = audiobook_app.app.test_client()
+    _login(c)
+    _job("jt-h6", status="generating")
+
+    def _boom(*a, **k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(accounts, "record_job", _boom)
+    r = c.post("/api/register_email", json={"job_id": "jt-h6", "email": "a@b.it"}, headers=HDR)
+    assert r.status_code == 200
+    assert audiobook_app.jobs["jt-h6"]["notify_email"] == "a@b.it"
+
+
+# -- end-to-end: /api/generate con sessione attiva (M10) ----------------
+# I test sopra chiamano gli helper direttamente; questo attraversa la rotta
+# vera, l'unica che dimostra che l'aggancio all'account avviene davvero nel
+# flusso di generazione (e non solo in un helper che nessuno chiama).
+
+class _SyncThread:
+    """threading.Thread sincrono: run_generation e' intercettato, ma senza
+    questo il target girerebbe in un thread reale in race con le asserzioni."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._t, self._a, self._k = target, args, kwargs or {}
+
+    def start(self):
+        self._t(*self._a, **self._k)
+
+
+def test_generate_with_session_forces_email_and_records_history(env, monkeypatch):
+    from epub_to_tts import BookInfo, Chapter
+
+    run_calls = []
+    monkeypatch.setattr(audiobook_app, "run_generation",
+                        lambda job_id, info, voice, rate, single_file, **kw:
+                        run_calls.append((job_id, voice)))
+    monkeypatch.setattr(audiobook_app, "_admin_notify_generation", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app.threading, "Thread", _SyncThread)
+
+    c = audiobook_app.app.test_client()
+    acct = _login(c)
+
+    ch = Chapter(index=0, title="Cap0", text="A" * 500)
+    info = BookInfo(title="Il Gattopardo", author="Tomasi", language="it", chapters=[ch],
+                    total_words=ch.word_count, total_chars=ch.char_count,
+                    estimated_duration_minutes=1.0)
+    _job("jt-e2e", info=info)
+
+    r = c.post("/api/generate", json={"job_id": "jt-e2e", "voice": "it-IT-IsabellaNeural",
+                                      "rate": "+0%", "output_format": "mp3", "lang": "it"},
+               headers=HDR)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["status"] == "started"
+    assert run_calls == [("jt-e2e", "it-IT-IsabellaNeural")]
+
+    # Consegna forzata sull'email dell'account: la rotta la restituisce
+    # mascherata (nessun indirizzo in chiaro fuori dal server).
+    assert body["auto_batch_email"] == audiobook_app._mask_email(acct["email"])
+    assert audiobook_app.jobs["jt-e2e"]["notify_email"] == "a@b.it"
+    assert audiobook_app.jobs["jt-e2e"]["email_registered"] is True
+
+    # ...e riga di storico per quel job.
+    rows, total = accounts.list_jobs(acct["id"])
+    assert total == 1
+    assert rows[0]["job_id"] == "jt-e2e"
+    assert (rows[0]["kind"], rows[0]["status"], rows[0]["source"]) == ("generate", "running", "forced")
+    assert rows[0]["output_format"] == "mp3" and rows[0]["voice"] == "Isabella"
