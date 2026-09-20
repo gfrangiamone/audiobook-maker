@@ -5,18 +5,20 @@ arrivano gia' scelti per lingua (dict `t`), l'escaping e' fatto qui.
 """
 import html
 
-_CSS = (
-    ":root{--acc:#c29a6c;--acc-d:#a67d50;--bd:#dcd6cd;--mut:#666}"
-    "body{font-family:system-ui,sans-serif;max-width:760px;margin:3em auto;padding:0 1em;"
-    "color:#222;background:#fff;line-height:1.5}"
-    "button,a.btn{font:inherit;padding:.5em 1.1em;border:1px solid var(--bd);border-radius:8px;"
-    "background:#f6f3ee;color:#222;cursor:pointer;text-decoration:none;display:inline-block}"
-    "button:hover,a.btn:hover{background:#ece7df}"
-    "button.primary{background:var(--acc);border-color:var(--acc);color:#fff}"
-    "button.primary:hover{background:var(--acc-d);border-color:var(--acc-d)}"
-    "button.danger{background:#fff;color:#b3261e;border-color:#e8bdb9}"
-    "button.danger:hover{background:#fdecea}"
-    ".meta{color:var(--mut);font-size:.9em}.actions{display:flex;gap:.6em;flex-wrap:wrap;margin-top:1.5em}"
+import page_brand
+
+_CSS = page_brand.BASE_CSS + (
+    "body{max-width:760px}"
+    ".topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1em;flex-wrap:wrap}"
+    ".topbar h1{margin:0 0 .3em;font-size:1.5em}"
+    "button.small{padding:.3em .8em;font-size:.85em;white-space:nowrap;margin-top:.3em}"
+    ".cnt{display:inline-block;min-width:1.4em;text-align:center;font-size:.85em;border-radius:1em;"
+    "padding:0 .4em;background:var(--acc);color:#fff;margin-left:.3em}"
+    ".tabs{display:flex;gap:.3em;border-bottom:1px solid var(--bd);margin:1.4em 0 0}"
+    ".tabs button{border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;"
+    "background:transparent;color:var(--mut);margin-bottom:-1px}"
+    ".tabs button[aria-selected=true]{background:#fbf9f6;border-color:var(--bd);color:#222;font-weight:600}"
+    ".panel{padding-top:.4em}"
     "table{width:100%;border-collapse:collapse;margin-top:1em;font-size:.95em}"
     "th,td{text-align:left;padding:.5em .4em;border-top:1px solid var(--bd);vertical-align:top}"
     "th{color:var(--mut);font-weight:600;border-top:none}"
@@ -24,8 +26,12 @@ _CSS = (
     ".badge.done{background:#e6f4ea;color:#1e6b34}.badge.error{background:#fdecea;color:#b3261e}"
     ".badge.running{background:#eef3ff;color:#2c4a8a}.badge.expired{background:#f3f0ea;color:#8a7a62}"
     ".dl a{margin-right:.6em;white-space:nowrap}"
-    ".brand{display:flex;align-items:center;gap:.6em;margin-bottom:1.8em;color:inherit;text-decoration:none}"
-    ".brand span{font-size:1.1em;font-weight:600}"
+    ".voices{list-style:none;padding:0}.voices li{display:flex;align-items:center;gap:.8em;flex-wrap:wrap;"
+    "border-top:1px solid var(--bd);padding:.8em 0}.voices li b{flex:1 1 10em}"
+    "dialog{border:1px solid var(--bd);border-radius:12px;padding:1.2em 1.4em;max-width:min(92vw,680px);"
+    "background:#fff;color:#222}dialog::backdrop{background:rgba(0,0,0,.35)}"
+    "dialog h2{margin:0 0 .4em;font-size:1.2em}dialog p{margin:.3em 0}"
+    "dialog table{margin-top:.6em}code{font-size:.85em;background:#f3f0ea;padding:.1em .3em;border-radius:4px}"
     "@media(max-width:600px){table,thead,tbody,tr,td,th{display:block}thead{display:none}"
     "td{border-top:none;padding:.15em 0}tr{border-top:1px solid var(--bd);padding:.6em 0}}"
 )
@@ -46,16 +52,19 @@ def mask_email(email):
     return f"{local[0]}***@{domain}"
 
 
-def page_html(t, lang, title, body_html):
-    """Scheletro HTML completo. `body_html` e' gia' escapato dal chiamante."""
+def page_html(t, lang, title, body_html, h1=True):
+    """Scheletro HTML completo. `body_html` e' gia' escapato dal chiamante.
+    Con `h1=False` il titolo resta solo nel <title>: il corpo lo mette dove
+    vuole (la storia lo affianca al bottone dei dispositivi)."""
     brand = _e(t.get("brand", "Audiobook Maker"))
+    heading = f"<h1>{_e(title)}</h1>" if h1 else ""
     return (
         f"<!doctype html><html lang=\"{_e(lang)}\"><head><meta charset=\"utf-8\">"
         f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<meta name=\"robots\" content=\"noindex,nofollow\">"
         f"<title>{brand} - {_e(title)}</title><style>{_CSS}</style></head>"
-        f"<body><a class=\"brand\" href=\"/\"><span>{brand}</span></a>"
-        f"<h1>{_e(title)}</h1>{body_html}</body></html>"
+        f"<body><a class=\"brand\" href=\"/\">{page_brand.LOGO_SVG}<span>{brand}</span></a>"
+        f"{heading}{body_html}</body></html>"
     )
 
 
@@ -109,16 +118,96 @@ def _expiry_label(t, expires_at, now):
     return t["dl_expires_in"].replace("{hours}", str(left // 3600))
 
 
-def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None, now=None):
+def _devices_dialog(t, sessions, current_sid):
+    rows = ""
+    for sd in sessions or []:
+        sid = str(sd.get("id") or "")
+        name = _e(sd.get("device_name") or t["dev_unnamed"])
+        if current_sid and sid == current_sid:
+            name += f" <span class=\"me\">{_e(t['dev_this'])}</span>"
+        rows += (f"<tr><td><code>{_e(sid[:8])}</code></td><td>{name}</td>"
+                 f"<td>{_e(_fmt_date(sd.get('created_at')))}</td>"
+                 f"<td>{_e(_fmt_date(sd.get('last_seen_at')))}</td>"
+                 f"<td><button type=\"button\" class=\"danger small\" data-sid=\"{_e(sid)}\">"
+                 f"{_e(t['dev_logout'])}</button></td></tr>")
+    return (
+        f"<dialog id=\"acctDevicesDlg\"><h2>{_e(t['devices_title'])}</h2>"
+        f"<p class=\"meta\">{_e(t['devices_intro'])}</p>"
+        f"<table><thead><tr><th>{_e(t['dev_col_id'])}</th><th>{_e(t['dev_col_name'])}</th>"
+        f"<th>{_e(t['dev_col_login'])}</th><th>{_e(t['dev_col_last'])}</th><th></th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+        f"<div class=\"actions\"><button type=\"button\" id=\"acctLogoutAll\">{_e(t['logout_all'])}</button>"
+        f"<button type=\"button\" data-close>{_e(t['close_btn'])}</button></div></dialog>"
+    )
+
+
+def _delete_dialog(t):
+    return (
+        f"<dialog id=\"acctDeleteDlg\"><h2>{_e(t['delete_popup_title'])}</h2>"
+        f"<p>{_e(t['delete_popup_p'])}</p><p>{_e(t['delete_popup_email'])}</p>"
+        f"<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"acctDeleteConfirm\">"
+        f"{_e(t['confirm_delete_btn'])}</button>"
+        f"<button type=\"button\" data-close>{_e(t['cancel_btn'])}</button></div></dialog>"
+    )
+
+
+_HISTORY_JS = (
+    "<script>(function(){"
+    "function post(u,b){return fetch(u,{method:'POST',credentials:'same-origin',"
+    "headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});}"
+    "function openDlg(d){if(!d)return;if(d.showModal){d.showModal();}else{d.setAttribute('open','');}}"
+    "function closeDlg(d){if(!d)return;if(d.close){d.close();}else{d.removeAttribute('open');}}"
+    "var tabs=document.querySelectorAll('.tabs [data-tab]');"
+    "function showTab(k){tabs.forEach(function(b){var on=b.getAttribute('data-tab')===k;"
+    "b.setAttribute('aria-selected',on?'true':'false');"
+    "var p=document.getElementById('tab-'+b.getAttribute('data-tab'));if(p)p.hidden=!on;});"
+    "try{history.replaceState(null,'',k==='books'?location.pathname:'?tab='+k);}catch(e){}}"
+    "tabs.forEach(function(b){b.addEventListener('click',function(){showTab(b.getAttribute('data-tab'));});});"
+    "document.querySelectorAll('[data-close]').forEach(function(b){"
+    "b.addEventListener('click',function(){closeDlg(b.closest('dialog'));});});"
+    "var dv=document.getElementById('acctDevices'),dd=document.getElementById('acctDevicesDlg');"
+    "if(dv)dv.onclick=function(){openDlg(dd);};"
+    "document.querySelectorAll('[data-sid]').forEach(function(b){b.addEventListener('click',function(){"
+    "b.disabled=true;post('/api/auth/logout_device',{id:b.getAttribute('data-sid')})"
+    ".then(function(r){return r.json();}).then(function(d){"
+    "if(d&&d.current){location.href='/';}else{location.reload();}})"
+    ".catch(function(){b.disabled=false;});});});"
+    "var la=document.getElementById('acctLogoutAll');"
+    "if(la)la.onclick=function(){la.disabled=true;post('/api/auth/logout_all').then(function(){location.href='/';});};"
+    "document.getElementById('acctLogout').onclick=function(){post('/api/auth/logout').then(function(){location.href='/';});};"
+    "var del=document.getElementById('acctDelete'),ddl=document.getElementById('acctDeleteDlg'),"
+    "dc=document.getElementById('acctDeleteConfirm');"
+    "if(del)del.onclick=function(){openDlg(ddl);};"
+    "if(dc)dc.onclick=function(){dc.disabled=true;post('/api/account/delete_request').then(function(){"
+    "closeDlg(ddl);del.disabled=true;document.getElementById('acctDeleteSent').hidden=false;});};"
+    "})();</script>"
+)
+
+
+def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None,
+                   now=None, sessions=None, current_sid="", tab="books"):
+    """Area personale: intestazione con il bottone «I tuoi dispositivi», tab
+    audiolibri / voci campionate, azioni in fondo e i due popup (dispositivi,
+    conferma cancellazione). `sessions` come da `accounts.list_sessions`,
+    `current_sid` e' l'id della sessione che sta guardando la pagina."""
     import time as _time
     now = now if now is not None else _time.time()
-    parts = [f"<p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong>"]
-    if voices_count:
-        parts.append(" &middot; " + _e(t["voices_linked"].replace("{n}", str(voices_count))))
-        if voices:
-            links = ", ".join(f"<a href=\"{_e(v['url'])}\">{_e(v['name'])}</a>" for v in voices)
-            parts.append(" " + links)
-    parts.append("</p>")
+    voices = voices or []
+    tab = "voices" if tab == "voices" else "books"
+    n_sess = len(sessions or [])
+    parts = [
+        "<div class=\"topbar\">"
+        f"<h1>{_e(t['history_title'])}</h1>"
+        f"<button type=\"button\" class=\"small\" id=\"acctDevices\">{_e(t['devices_btn'])}"
+        f"<span class=\"cnt\">{n_sess}</span></button></div>",
+        f"<p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong></p>",
+        "<nav class=\"tabs\" role=\"tablist\">"
+        f"<button type=\"button\" role=\"tab\" data-tab=\"books\" aria-selected=\"{'true' if tab == 'books' else 'false'}\">"
+        f"{_e(t['tab_books'])}</button>"
+        f"<button type=\"button\" role=\"tab\" data-tab=\"voices\" aria-selected=\"{'true' if tab == 'voices' else 'false'}\">"
+        f"{_e(t['tab_voices'])}{f' ({voices_count})' if voices_count else ''}</button></nav>",
+        f"<section class=\"panel\" id=\"tab-books\"{'' if tab == 'books' else ' hidden'}>",
+    ]
     if not rows:
         parts.append(f"<p>{_e(t['history_empty'])}</p>")
     else:
@@ -164,23 +253,25 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             if page < pages:
                 nav.append(f"<a class=\"btn\" href=\"/account?p={page + 1}\">{_e(t['page_next'])}</a>")
             parts.append("<p class=\"actions\">" + " ".join(nav) + "</p>")
+    parts.append("</section>")
+    parts.append(f"<section class=\"panel\" id=\"tab-voices\"{'' if tab == 'voices' else ' hidden'}>")
+    if not voices:
+        parts.append(f"<p>{_e(t['voices_empty'])}</p>")
+    else:
+        parts.append("<ul class=\"voices\">")
+        for v in voices:
+            state = "ready" if v.get("state") == "ready" else "pending"
+            parts.append(f"<li><b>{_e(v['name'])}</b><span class=\"badge {'done' if state == 'ready' else 'running'}\">"
+                         f"{_e(t['vstate_' + state])}</span>"
+                         f"<a class=\"btn\" href=\"{_e(v['url'])}\">{_e(t['voice_manage'])}</a></li>")
+        parts.append("</ul>")
+    parts.append("</section>")
     parts.append(
         "<div class=\"actions\">"
         f"<button type=\"button\" id=\"acctLogout\">{_e(t['logout'])}</button>"
-        f"<button type=\"button\" id=\"acctLogoutAll\">{_e(t['logout_all'])}</button>"
         f"<button type=\"button\" class=\"danger\" id=\"acctDelete\">{_e(t['delete_account'])}</button>"
         "</div>"
-        f"<p class=\"meta\" id=\"acctDeleteHint\">{_e(t['delete_account_p'])}</p>"
         f"<p class=\"meta\" id=\"acctDeleteSent\" hidden>{_e(t['delete_sent'])}</p>"
-        "<script>"
-        "(function(){"
-        "function post(u){return fetch(u,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});}"
-        "document.getElementById('acctLogout').onclick=function(){post('/api/auth/logout').then(function(){location.href='/';});};"
-        "document.getElementById('acctLogoutAll').onclick=function(){post('/api/auth/logout_all').then(function(){location.href='/';});};"
-        "document.getElementById('acctDelete').onclick=function(){"
-        "var b=this;b.disabled=true;post('/api/account/delete_request').then(function(){"
-        "document.getElementById('acctDeleteSent').hidden=false;});};"
-        "})();"
-        "</script>"
+        + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t) + _HISTORY_JS
     )
-    return page_html(t, lang, t["history_title"], "".join(parts))
+    return page_html(t, lang, t["history_title"], "".join(parts), h1=False)

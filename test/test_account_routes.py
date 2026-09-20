@@ -272,6 +272,48 @@ def test_logout_and_logout_all(client, env):
     assert client.post("/api/auth/logout_all").status_code == 401
 
 
+def test_logout_device(client, env):
+    client.post("/api/auth/request", json={"email": "a@b.it"})
+    code = env[0][2]["code"]
+    client.post("/api/auth/verify", json={"email": "a@b.it", "code": code})
+    acct = accounts.account_for_email("a@b.it")
+    other = accounts.open_session(acct["id"], device_name="Pixel")
+    other_id = accounts._sha(other)
+    # altro dispositivo: revocato, cookie intatto
+    r = client.post("/api/auth/logout_device", json={"id": other_id})
+    assert r.status_code == 200
+    assert r.get_json() == {"ok": True, "revoked": True, "current": False}
+    assert accounts.resolve_session(other) is None
+    assert client.get("/api/auth/me").get_json()["logged_in"] is True
+    # id sconosciuto o di un altro account: nessun effetto
+    tok2, _ = accounts.request_code("c@d.it", "login")
+    acct2 = accounts.verify(token=tok2)[1]
+    foreign = accounts.open_session(acct2["id"])
+    r = client.post("/api/auth/logout_device", json={"id": accounts._sha(foreign)})
+    assert r.get_json() == {"ok": True, "revoked": False, "current": False}
+    assert accounts.resolve_session(foreign) is not None
+    assert client.post("/api/auth/logout_device", json={}).status_code == 400
+    # sessione corrente: cookie tolto, current:true
+    me = accounts.list_sessions(acct["id"])
+    assert len(me) == 1
+    r = client.post("/api/auth/logout_device", json={"id": me[0]["id"]})
+    assert r.get_json() == {"ok": True, "revoked": True, "current": True}
+    assert "abm_session=;" in _cookie(r) or "Max-Age=0" in _cookie(r)
+    assert client.get("/api/auth/me").get_json()["logged_in"] is False
+    assert audiobook_app.app.test_client().post(
+        "/api/auth/logout_device", json={"id": "x"}).status_code == 401
+
+
+def test_login_stores_humanized_device_name(client, env):
+    client.post("/api/auth/request", json={"email": "a@b.it"})
+    code = env[0][2]["code"]
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"
+    client.post("/api/auth/verify", json={"email": "a@b.it", "code": code},
+                headers={"User-Agent": ua})
+    row = db.conn().execute("SELECT device_name FROM sessions ORDER BY rowid DESC LIMIT 1").fetchone()
+    assert row["device_name"] == "Chrome · Windows"
+
+
 def test_login_logs_activity_with_hashed_sid(client, env, monkeypatch):
     rows = []
     monkeypatch.setattr(audiobook_app, "_log_activity",

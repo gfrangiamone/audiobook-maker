@@ -196,6 +196,32 @@ def test_session_rolling_renewal_only_after_one_hour(acct_env):
     assert row["expires_at"] == T0 + 3601 + accounts.SESSION_DAYS * 86400
 
 
+def test_list_sessions_and_revoke_by_id(acct_env):
+    acct = _login("a@b.it")
+    other = _login("c@d.it")
+    t1 = accounts.open_session(acct["id"], device_name="Chrome · Windows", now=T0)
+    t2 = accounts.open_session(acct["id"], device_name="", now=T0 + 10)
+    t3 = accounts.open_session(other["id"], device_name="Safari · iPhone", now=T0)
+    accounts.resolve_session(t1, now=T0 + 7200)   # rinnovo: t1 diventa la piu' recente
+    rows = accounts.list_sessions(acct["id"], now=T0 + 7200)
+    assert [r["device_name"] for r in rows] == ["Chrome · Windows", ""]
+    assert rows[0]["created_at"] == T0 and rows[0]["last_seen_at"] == T0 + 7200
+    assert rows[0]["id"] == accounts.resolve_session(t1, now=T0 + 7200)["session_id"]
+    assert all(len(r["id"]) == 64 for r in rows)   # hash, mai il token
+    assert t1 not in str(rows) and t2 not in str(rows)
+    # id di un altro account: nessuna revoca
+    sid3 = accounts.resolve_session(t3, now=T0)["session_id"]
+    assert accounts.revoke_session_id(acct["id"], sid3) is False
+    assert accounts.resolve_session(t3, now=T0 + 1) is not None
+    assert accounts.revoke_session_id(acct["id"], rows[1]["id"]) is True
+    assert accounts.resolve_session(t2, now=T0 + 20) is None
+    assert accounts.revoke_session_id(acct["id"], rows[1]["id"]) is False
+    assert accounts.revoke_session_id(acct["id"], "") is False
+    assert len(accounts.list_sessions(acct["id"], now=T0 + 7200)) == 1
+    # scadute e revocate fuori dalla lista
+    assert accounts.list_sessions(acct["id"], now=T0 + accounts.SESSION_DAYS * 86400 * 2) == []
+
+
 def test_revoke_all(acct_env):
     acct = _login("a@b.it")
     t1 = accounts.open_session(acct["id"], now=T0)

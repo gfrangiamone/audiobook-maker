@@ -102,16 +102,65 @@ def test_account_page_lists_jobs_with_downloads(logged, monkeypatch):
     assert "no-store" in r.headers.get("Cache-Control", "")
 
 
-def test_account_page_voices_links(logged, monkeypatch):
+def test_account_page_voices_tab(logged, monkeypatch):
     c, acct = logged
     monkeypatch.setattr(audiobook_app, "_account_voices_for",
-                        lambda a: [{"name": "Nonna <b>", "url": "https://abm.test/vc/mt1/devices"}])
-    r = c.get("/account")
+                        lambda a: [{"name": "Nonna <b>", "url": "https://abm.test/vc/mt1/devices", "state": "ready"},
+                                   {"name": "Zio", "url": "https://abm.test/vc/mt2/devices", "state": "paid"}])
+    r = c.get("/account", headers={"Accept-Language": "it"})
     assert r.status_code == 200
     html = r.data.decode()
     assert 'href="https://abm.test/vc/mt1/devices"' in html
     assert "Nonna &lt;b&gt;" in html and "<b>" not in html.split("Nonna")[1][:10]
-    assert "1" in html
+    assert "Voci campionate (2)" in html
+    assert ">pronta<" in html and ">in preparazione<" in html
+    # tab libri selezionato di default, voci nascosto
+    assert 'data-tab="books" aria-selected="true"' in html
+    assert 'id="tab-voices" hidden' in html
+    r = c.get("/account?tab=voices", headers={"Accept-Language": "it"})
+    html = r.data.decode()
+    assert 'data-tab="voices" aria-selected="true"' in html
+    assert 'id="tab-books" hidden' in html and 'id="tab-voices">' in html
+
+
+def test_account_page_voices_empty(logged):
+    c, acct = logged
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    assert "Nessuna voce campionata" in html
+    assert "Voci campionate</button>" in html
+
+
+def test_account_page_title_brand_and_no_hint(logged):
+    c, acct = logged
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    assert "La tua area personale su Audiobook Maker" in html
+    assert '<a class="brand" href="/"><svg' in html
+    assert "codice di conferma" not in html
+    assert 'id="acctLogout"' in html and 'id="acctDelete"' in html
+
+
+def test_account_page_devices_dialog(logged):
+    c, acct = logged
+    other = accounts.open_session(acct["id"], device_name="Mozilla/5.0 (X11; Linux x86_64) Firefox/120.0")
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    assert 'id="acctDevices"' in html and '<span class="cnt">2</span>' in html
+    assert '<dialog id="acctDevicesDlg">' in html
+    assert "questo dispositivo" in html
+    assert "Firefox · Linux" in html
+    # id: hash intero nel data-sid, otto caratteri a video; mai il token
+    sids = re.findall(r'data-sid="([0-9a-f]{64})"', html)
+    assert len(sids) == 2 and other not in html
+    assert all(f"<code>{sid[:8]}</code>" in html for sid in sids)
+    assert 'id="acctLogoutAll"' in html.split("acctDevicesDlg")[1]
+
+
+def test_account_page_delete_dialog(logged):
+    c, acct = logged
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    assert '<dialog id="acctDeleteDlg">' in html
+    assert "Cancellare il tuo account?" in html
+    assert 'id="acctDeleteConfirm"' in html and "Annulla" in html
+    assert "/api/account/delete_request" in html
 
 
 def test_api_jobs_pagination_and_shape(logged, monkeypatch):

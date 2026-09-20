@@ -350,6 +350,36 @@ def sessions_count(account_id, now=None):
         ).fetchone()[0]
 
 
+def list_sessions(account_id, now=None):
+    """Sessioni vive dell'account per il pannello «I tuoi dispositivi»:
+    id (hash del token, mai il token), nome dispositivo, data di login e
+    ultimo utilizzo. Le piu' usate di recente per prime."""
+    now = _now(now)
+    with db.tx() as c:
+        rows = c.execute(
+            "SELECT id, device_name, created_at, last_seen_at FROM sessions "
+            "WHERE account_id=? AND revoked_at IS NULL AND expires_at>? "
+            "ORDER BY last_seen_at DESC, created_at DESC",
+            (account_id, now),
+        ).fetchall()
+    return [{"id": r["id"], "device_name": r["device_name"] or "",
+             "created_at": int(r["created_at"]), "last_seen_at": int(r["last_seen_at"])}
+            for r in rows]
+
+
+def revoke_session_id(account_id, session_id):
+    """Revoca per id (dal pannello dispositivi). Il vincolo sull'account e'
+    nella WHERE: un id di un altro account non revoca nulla."""
+    if not session_id:
+        return False
+    with db.tx() as c:
+        cur = c.execute(
+            "UPDATE sessions SET revoked_at=? WHERE id=? AND account_id=? AND revoked_at IS NULL",
+            (int(time.time()), str(session_id), account_id),
+        )
+        return cur.rowcount > 0
+
+
 # ---------------------------------------------------------------- accounts
 
 def get(account_id):

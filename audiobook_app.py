@@ -150,6 +150,7 @@ import pending_jobs
 import db
 import accounts
 import account_page
+import page_brand
 import tts_backend_state
 import user_stats
 
@@ -10239,17 +10240,7 @@ def api_vc_demo_file(clone_id, which):
 # Lo stesso marchio dell'intestazione del sito: chi arriva qui da un link
 # dell'email deve riconoscere subito di chi e' la pagina che gli chiede di
 # cancellare o autorizzare qualcosa.
-_VC_LOGO_SVG = (
-    '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
-    '<rect width="64" height="64" rx="14" fill="#c29a6c"/>'
-    '<path d="M16 44V20c0-2 1.5-3.5 3.5-3.5C23 16.5 28 17 32 19c4-2 9-2.5 12.5-2.5 2 0 3.5 1.5 3.5 3.5v24"'
-    ' fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
-    '<path d="M32 19v25" stroke="white" stroke-width="2" stroke-linecap="round"/>'
-    '<path d="M17 36c0-9 6.7-15 15-15s15 6 15 15" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/>'
-    '<rect x="13" y="34" width="7" height="10" rx="3" fill="white"/>'
-    '<rect x="44" y="34" width="7" height="10" rx="3" fill="white"/>'
-    '<path d="M22 37.5c1.2-1 1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/>'
-    '<path d="M42 37.5c-1.2-1-1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/></svg>')
+_VC_LOGO_SVG = page_brand.LOGO_SVG
 
 # Se il file i18n non si carica le pagine devono restare in piedi lo stesso:
 # sono l'unica via per revocare un dispositivo o cancellare una voce.
@@ -11068,10 +11059,21 @@ def _acct_do_delete(acct, lang):
         print(f"WARNING send_account_deleted: {e}", flush=True)
 
 
+def _acct_device_name(raw=None):
+    """Nome del dispositivo mostrato in «I tuoi dispositivi»: quello dichiarato
+    dal client (app) o quello dedotto dallo User-Agent («Chrome · Windows»);
+    se non si riconosce nulla resta lo User-Agent grezzo, troncato."""
+    raw = str(raw or "").strip()[:80]
+    if raw:
+        return raw
+    ua = request.headers.get("User-Agent") or ""
+    return voice_clone.device_name_from_ua(ua) or ua[:80]
+
+
 def _acct_login_response(acct, payload=None, device_name=None):
     """Apre la sessione, logga, imposta il cookie. `session_token` solo per
     l'app (header X-ABM-Cid), che non usa i cookie."""
-    device_name = device_name or (request.headers.get("User-Agent") or "")[:80]
+    device_name = _acct_device_name(device_name)
     token = accounts.open_session(acct["id"],
                                   device_name=device_name,
                                   ip_hash=_hash_ip(_client_ip()))
@@ -11170,8 +11172,7 @@ def auth_magic_link(token):
         _acct_clear_csrf_cookie(resp)
         return resp
     session_token = accounts.open_session(
-        acct["id"], device_name=(request.headers.get("User-Agent") or "")[:80],
-        ip_hash=_hash_ip(_client_ip()))
+        acct["id"], device_name=_acct_device_name(), ip_hash=_hash_ip(_client_ip()))
     _acct_log("ACCOUNT_LOGIN", acct["email"])
     resp = redirect("/account", code=302)
     _acct_set_cookie(resp, session_token)
@@ -11211,6 +11212,31 @@ def api_auth_logout_all():
     resp = jsonify({"ok": True, "revoked": n})
     _acct_clear_cookie(resp)
     return resp
+
+
+@app.route("/api/auth/logout_device", methods=["POST"])
+def api_auth_logout_device():
+    """Chiude una sola sessione dell'account (popup «I tuoi dispositivi»).
+    L'id e' l'hash della sessione, non il token: mostrarlo non apre nulla.
+    Se e' la sessione corrente il cookie viene tolto e il client torna alla
+    home (`current: true`)."""
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    data = request.get_json(silent=True) or {}
+    sid = str(data.get("id") or "").strip()
+    if not sid:
+        return _acct_err("bad_request", "id required", 400)
+    ok = accounts.revoke_session_id(acct["id"], sid)
+    _acct_log("ACCOUNT_LOGOUT_DEVICE", acct["email"], "ok" if ok else "none")
+    if sid == (acct.get("session_id") or ""):
+        resp = jsonify({"ok": True, "revoked": ok, "current": True})
+        _acct_clear_cookie(resp)
+        return resp
+    return jsonify({"ok": True, "revoked": ok, "current": False})
 
 
 @app.route("/api/auth/me", methods=["GET"])
@@ -11316,7 +11342,8 @@ def _account_voices_for(acct):
             rec = voice_clone.store().get(vid)
             if rec is None or rec.get("state") in voice_clone._TERMINAL or not rec.get("manage_token"):
                 continue
-            out.append({"name": rec.get("name") or vid, "url": _vc_urls(rec)["manage_url"]})
+            out.append({"name": rec.get("name") or vid, "url": _vc_urls(rec)["manage_url"],
+                        "state": rec.get("state") or ""})
         return out
     except Exception:  # noqa: BLE001
         return []
@@ -11335,11 +11362,21 @@ def account_page_view():
         page = 1
     rows, total = _account_rows_for(acct, page)
     voices = _account_voices_for(acct)
+    try:
+        sessions = accounts.list_sessions(acct["id"])
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING list_sessions: {e}", flush=True)
+        sessions = []
+    for sd in sessions:
+        # Sessioni aperte prima di questa versione hanno lo User-Agent grezzo.
+        sd["device_name"] = voice_clone.device_name_from_ua(sd.get("device_name")) or sd.get("device_name") or ""
+    tab = "voices" if request.args.get("tab") == "voices" else "books"
     lang = acct.get("lang") if acct.get("lang") in _ACCT_PAGES_I18N else _acct_page_lang()
     t = _acct_txt(lang)
     return _acct_html(account_page.render_history(
         t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
-        total=total, voices_count=len(voices), voices=voices))
+        total=total, voices_count=len(voices), voices=voices,
+        sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab))
 
 
 @app.route("/api/account/jobs", methods=["GET"])
