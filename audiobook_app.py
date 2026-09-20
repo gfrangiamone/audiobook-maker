@@ -11030,10 +11030,10 @@ def _account_downloads_for(row, now=None):
     token = row.get("download_token") or ""
     info = _download_tokens.get(token) if token else None
     if info is None:
-        for tok, ti in list(_download_tokens.items()):
-            if isinstance(ti, dict) and ti.get("job_id") == job_id:
-                token, info = tok, ti
-                break
+        candidates = [(tok, ti) for tok, ti in _download_tokens.items()
+                      if isinstance(ti, dict) and ti.get("job_id") == job_id]
+        if candidates:
+            token, info = max(candidates, key=lambda kv: float(kv[1].get("created_at") or 0))
     if not isinstance(info, dict) or not token:
         return []
     try:
@@ -11046,12 +11046,18 @@ def _account_downloads_for(row, now=None):
     exp = int(expires_at)
     out = [{"kind": "page", "url": f"{base}/dl/{token}", "expires_at": exp}]
     dl_type = info.get("download_type") or "audio"
+    # File assenti su entrambi i tier -> nessun pulsante per quel formato
+    # (ma la pagina /dl/<token> resta comunque linkata: puo' mostrare altri
+    # formati ancora presenti dello stesso token).
     if dl_type == "optimized_abm":
-        out.append({"kind": "abm", "url": f"{base}/dl/{token}/abm", "expires_at": exp})
+        if _file_available(info.get("optimized_abm_path") or ""):
+            out.append({"kind": "abm", "url": f"{base}/dl/{token}/abm", "expires_at": exp})
     elif dl_type == "translated":
-        out.append({"kind": "translated", "url": f"{base}/dl/{token}/translated", "expires_at": exp})
+        if _file_available(info.get("translated_path") or ""):
+            out.append({"kind": "translated", "url": f"{base}/dl/{token}/translated", "expires_at": exp})
     elif info.get("output_m4b"):
-        out.append({"kind": "m4b", "url": f"{base}/dl/{token}/m4b", "expires_at": exp})
+        if _file_available(info.get("output_m4b") or ""):
+            out.append({"kind": "m4b", "url": f"{base}/dl/{token}/m4b", "expires_at": exp})
     return out
 
 
@@ -11066,6 +11072,21 @@ def _account_rows_for(acct, page):
     return out, total
 
 
+def _account_voices_for(acct):
+    """Voci campionate collegate, non terminali, con link alla gestione
+    attuale (/vc/<manage_token>/devices). Best-effort: [] su qualunque errore."""
+    try:
+        out = []
+        for vid in voice_clone.ids_for_email(acct["email"]):
+            rec = voice_clone.store().get(vid)
+            if rec is None or rec.get("state") in voice_clone._TERMINAL or not rec.get("manage_token"):
+                continue
+            out.append({"name": rec.get("name") or vid, "url": _vc_urls(rec)["manage_url"]})
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
 @app.route("/account", methods=["GET"])
 def account_page_view():
     if not accounts.enabled() or not _smtp_available():
@@ -11078,15 +11099,12 @@ def account_page_view():
     except ValueError:
         page = 1
     rows, total = _account_rows_for(acct, page)
-    try:
-        voices_count = len(voice_clone.ids_for_email(acct["email"]))
-    except Exception:  # noqa: BLE001
-        voices_count = 0
+    voices = _account_voices_for(acct)
     lang = acct.get("lang") if acct.get("lang") in _ACCT_PAGES_I18N else _acct_page_lang()
     t = _acct_txt(lang)
     return _acct_html(account_page.render_history(
         t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
-        total=total, voices_count=voices_count))
+        total=total, voices_count=len(voices), voices=voices))
 
 
 @app.route("/api/account/jobs", methods=["GET"])

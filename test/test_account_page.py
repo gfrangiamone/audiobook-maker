@@ -28,6 +28,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
     monkeypatch.setattr(audiobook_app, "_download_tokens", {})
     monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app, "_file_available", lambda p: True)
     audiobook_app._ip_rl_buckets.pop("auth_request", None)
     box = {"codes": [], "deleted": []}
     monkeypatch.setattr(email_service, "send_account_code",
@@ -81,7 +82,7 @@ def test_account_page_disabled_404(env, monkeypatch):
 def test_account_page_lists_jobs_with_downloads(logged, monkeypatch):
     c, acct = logged
     accounts.record_job(acct["id"], "j1", kind="generate", book_title="Il Gattopardo <b>",
-                        output_format="m4b", status="done", created_at=T0)
+                        output_format="m4b", voice="Alice <i>", status="done", created_at=T0)
     accounts.record_job(acct["id"], "j2", kind="translate", book_title="Old", status="done",
                         created_at=T0 - 86400 * 400)
     _token("j1", "audio", output_m4b="/x/a.m4b")
@@ -92,10 +93,24 @@ def test_account_page_lists_jobs_with_downloads(logged, monkeypatch):
     assert r.status_code == 200
     html = r.data.decode()
     assert "Il Gattopardo &lt;b&gt;" in html and "<b>" not in html.split("Gattopardo")[1][:10]
+    assert "M4B" in html and "Alice &lt;i&gt;" in html
+    assert "<i>" not in html.split("Alice")[1][:20]
     assert "/dl/tok-j1" in html and "/dl/tok-j1/m4b" in html
     assert "/dl/tok-j2" not in html and "scaduto" in html
     assert "Connesso come" in html and "a@b.it" in html
     assert "no-store" in r.headers.get("Cache-Control", "")
+
+
+def test_account_page_voices_links(logged, monkeypatch):
+    c, acct = logged
+    monkeypatch.setattr(audiobook_app, "_account_voices_for",
+                        lambda a: [{"name": "Nonna <b>", "url": "https://abm.test/vc/mt1/devices"}])
+    r = c.get("/account")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert 'href="https://abm.test/vc/mt1/devices"' in html
+    assert "Nonna &lt;b&gt;" in html and "<b>" not in html.split("Nonna")[1][:10]
+    assert "1" in html
 
 
 def test_api_jobs_pagination_and_shape(logged, monkeypatch):
@@ -134,6 +149,34 @@ def test_downloads_for_handles_types_and_expiry(env, monkeypatch):
     assert f({"job_id": "nope", "download_token": ""}, now) == []
     d = f({"job_id": "ja", "download_token": ""}, now)[0]
     assert d["url"] == "https://abm.test/dl/tok-ja" and abs(d["expires_at"] - (now + 90)) < 2
+
+
+def test_downloads_for_skips_missing_files(env, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 100.0)
+    monkeypatch.setattr(audiobook_app, "_file_available", lambda p: False)
+    now = time.time()
+    _token("ja", "audio", created_at=now - 10, output_m4b="/x/a.m4b")
+    _token("jb", "optimized_abm", created_at=now - 10, optimized_abm_path="/x/b.abm")
+    _token("jc", "translated", created_at=now - 10, translated_path="/x/c.txt")
+    f = audiobook_app._account_downloads_for
+    assert [d["kind"] for d in f({"job_id": "ja", "download_token": ""}, now)] == ["page"]
+    assert [d["kind"] for d in f({"job_id": "jb", "download_token": "tok-jb"}, now)] == ["page"]
+    assert [d["kind"] for d in f({"job_id": "jc", "download_token": ""}, now)] == ["page"]
+
+
+def test_downloads_for_job_id_fallback_picks_newest_token(env, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 100.0)
+    now = time.time()
+    # Inserito per primo (vincerebbe con un semplice "primo match" in ordine
+    # di dict) ma ormai scaduto: la scelta corretta e' il token piu' recente.
+    audiobook_app._download_tokens["tok-old"] = {
+        "job_id": "je", "created_at": now - 5000, "download_type": "audio", "output_m4b": ""}
+    audiobook_app._download_tokens["tok-new"] = {
+        "job_id": "je", "created_at": now - 1, "download_type": "audio", "output_m4b": ""}
+    f = audiobook_app._account_downloads_for
+    out = f({"job_id": "je", "download_token": ""}, now)
+    assert out and out[0]["url"] == "https://abm.test/dl/tok-new"
+    assert abs(out[0]["expires_at"] - (now + 99)) < 2
 
 
 def test_delete_flow_by_code(logged, env):

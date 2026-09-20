@@ -103,12 +103,15 @@ def _expiry_label(t, expires_at, now):
     return t["dl_expires_in"].replace("{hours}", str(left // 3600))
 
 
-def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, now=None):
+def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None, now=None):
     import time as _time
     now = now if now is not None else _time.time()
     parts = [f"<p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong>"]
     if voices_count:
         parts.append(" &middot; " + _e(t["voices_linked"].replace("{n}", str(voices_count))))
+        if voices:
+            links = ", ".join(f"<a href=\"{_e(v['url'])}\">{_e(v['name'])}</a>" for v in voices)
+            parts.append(" " + links)
     parts.append("</p>")
     if not rows:
         parts.append(f"<p>{_e(t['history_empty'])}</p>")
@@ -133,6 +136,13 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             book = _e(r.get("book_title") or r.get("job_id") or "")
             if paid > 0:
                 book += f" <span class=\"meta\">&euro; {paid:.2f}</span>"
+            fmt = (r.get("output_format") or "").upper()
+            if fmt == "ZIP_RSS":
+                fmt = "ZIP+RSS"
+            voice = r.get("voice") or ""
+            bits = [_e(b) for b in (fmt, voice) if b]
+            if bits:
+                book += f" <span class=\"meta\">{' &middot; '.join(bits)}</span>"
             parts.append(
                 f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td>{book}</td>"
                 f"<td>{_e(t.get('kind_' + kind, kind))}</td>"
