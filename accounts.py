@@ -360,6 +360,8 @@ def record_job(account_id, job_id, *, kind, book_title="", output_format="", voi
     presenti; paid_eur tiene il massimo; status e source seguono l'ultima
     chiamata (chi registra l'avvio conosce la verita').
     """
+    if not enabled():
+        return False
     now = int(time.time())
     created = int(created_at if created_at is not None else now)
     with db.tx() as c:
@@ -445,6 +447,8 @@ def attach_if_known(job_id, email, **fields):
 
 
 def list_jobs(account_id, page=1, per_page=50):
+    if not enabled():
+        return [], 0
     page = max(1, int(page or 1))
     per_page = max(1, min(200, int(per_page or 50)))
     with db.tx() as c:
@@ -463,6 +467,8 @@ def adopt_history(account):
     """Adozione retroattiva: job pagati (_payments.json, email+job_id) e voci
     campionate con owner_email uguale. Idempotente: INSERT OR IGNORE sui job,
     link_voice ritorna False se gia' collegata."""
+    if not enabled():
+        return 0, 0
     email = _norm(account.get("email"))
     aid = account["id"]
     n_jobs = 0
@@ -499,6 +505,8 @@ def delete_account(account_id, now=None):
     """Cancellazione self-service: email sostituita da un segnaposto,
     sessioni revocate, storico e codici eliminati. `_payments.json` e le
     voci campionate restano (obblighi fiscali / flusso proprio)."""
+    if not enabled():
+        return False
     now = _now(now)
     with db.tx() as c:
         row = c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
@@ -521,6 +529,8 @@ def purge_expired(now=None):
     """Retention: storico oltre HISTORY_MONTHS per account free (o con piano
     scaduto da piu' di GRACE_DAYS), codici scaduti da >24h, sessioni
     scadute/revocate da >30 giorni. Ritorna i conteggi."""
+    if not enabled():
+        return {"jobs": 0, "codes": 0, "sessions": 0}
     now = _now(now)
     job_cut = now - HISTORY_MONTHS * MONTH_SEC
     grace_cut = now - GRACE_DAYS * 86400

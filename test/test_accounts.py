@@ -349,3 +349,15 @@ def test_purge_expired(acct_env):
     assert accounts.resolve_session(tok_live, now=T0) is not None
     assert db.conn().execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
     assert tok_old  # solo per chiarezza: la riga e' stata eliminata
+
+
+def test_history_functions_noop_when_disabled(acct_env, monkeypatch):
+    acct = _login("a@b.it")
+    monkeypatch.setattr(accounts, "ENABLE", False)
+    assert accounts.record_job(acct["id"], "j1", kind="generate", created_at=T0) is False
+    assert accounts.list_jobs(acct["id"]) == ([], 0)
+    assert accounts.adopt_history(acct) == (0, 0)
+    assert accounts.delete_account(acct["id"]) is False
+    assert accounts.purge_expired() == {"jobs": 0, "codes": 0, "sessions": 0}
+    monkeypatch.setattr(accounts, "ENABLE", True)
+    assert accounts.list_jobs(acct["id"]) == ([], 0)
