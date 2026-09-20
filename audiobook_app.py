@@ -20590,7 +20590,9 @@ generation_engine.configure(
     lookup_client_email_fn=_lookup_client_email,
     build_descriptor_fn=_build_job_descriptor,
     send_push_fn=_push_job_event,
-    client_gen_cap_fn=_client_gen_cap_reached
+    client_gen_cap_fn=_client_gen_cap_reached,
+    account_job_status_fn=accounts.update_status,
+    account_token_fn=accounts.set_download_token,
 )
 
 if _paypal_available():
