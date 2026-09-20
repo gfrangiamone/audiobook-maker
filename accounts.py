@@ -94,18 +94,21 @@ SCHEMA = [
 _payments_path = None
 _voice_ids_for_email = None
 _link_voice = None
+_unlink_voice = None
 _log = print
 
 
 def configure(*, payments_path=None, voice_clone_ids_for_email_fn=None,
-              link_voice_fn=None, log_fn=None):
-    global _payments_path, _voice_ids_for_email, _link_voice, _log
+              link_voice_fn=None, unlink_voice_fn=None, log_fn=None):
+    global _payments_path, _voice_ids_for_email, _link_voice, _unlink_voice, _log
     if payments_path is not None:
         _payments_path = str(payments_path)
     if voice_clone_ids_for_email_fn is not None:
         _voice_ids_for_email = voice_clone_ids_for_email_fn
     if link_voice_fn is not None:
         _link_voice = link_voice_fn
+    if unlink_voice_fn is not None:
+        _unlink_voice = unlink_voice_fn
     if log_fn is not None:
         _log = log_fn
 
@@ -440,6 +443,23 @@ def set_download_token(job_id, token):
         return cur.rowcount > 0
 
 
+def job_owner(job_id):
+    """account_id gia' proprietario della riga di storico di quel job, o None.
+
+    record_job e' un upsert che riassegna account_id: chi registra un job in
+    un punto qualunque del flusso deve prima chiedere qui se la riga e' di
+    qualcun altro, altrimenti un secondo account che tocca lo stesso job_id si
+    porterebbe via lo storico del primo.
+    """
+    if not enabled():
+        return None
+    with db.tx() as c:
+        row = c.execute(
+            "SELECT account_id FROM account_jobs WHERE job_id=?", (str(job_id),)
+        ).fetchone()
+    return row["account_id"] if row is not None else None
+
+
 def attach_if_known(job_id, email, **fields):
     """Aggancia un job a un account SOLO se l'email ha gia' un account.
 
@@ -527,10 +547,33 @@ def adopt_history(account):
     return n_jobs, n_voices
 
 
+def _unlink_voices(email):
+    """Scollega dall'account le voci campionate di quell'email (best-effort).
+
+    La voce resta viva (il suo flusso e il suo link di gestione sono
+    indipendenti dall'account), ma `account_id` deve sparire: e' un
+    riferimento a un account cancellato, cioe' un residuo di collegamento
+    fra l'indirizzo e i dati dopo una richiesta di cancellazione."""
+    if _voice_ids_for_email is None or _unlink_voice is None:
+        return 0
+    n = 0
+    try:
+        for cid in _voice_ids_for_email(email):
+            try:
+                if _unlink_voice(cid):
+                    n += 1
+            except Exception as e:  # noqa: BLE001
+                _log(f"WARNING accounts: scollegamento voce fallito: {e}")
+    except Exception as e:  # noqa: BLE001
+        _log(f"WARNING accounts: elenco voci non disponibile: {e}")
+    return n
+
+
 def delete_account(account_id, now=None):
     """Cancellazione self-service: email sostituita da un segnaposto,
-    sessioni revocate, storico e codici eliminati. `_payments.json` e le
-    voci campionate restano (obblighi fiscali / flusso proprio)."""
+    sessioni revocate, storico e codici eliminati, `account_id` rimosso
+    dalle voci campionate dell'indirizzo. Le voci in se' e `_payments.json`
+    restano (flusso proprio / obblighi fiscali)."""
     if not enabled():
         return False
     now = _now(now)
@@ -538,8 +581,9 @@ def delete_account(account_id, now=None):
         row = c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
         if row is None or row["deleted_at"] is not None:
             return False
+        email = row["email"]
         c.execute("DELETE FROM account_jobs WHERE account_id=?", (account_id,))
-        c.execute("DELETE FROM auth_codes WHERE email=?", (row["email"],))
+        c.execute("DELETE FROM auth_codes WHERE email=?", (email,))
         c.execute(
             "UPDATE sessions SET revoked_at=? WHERE account_id=? AND revoked_at IS NULL",
             (now, account_id),
@@ -548,7 +592,12 @@ def delete_account(account_id, now=None):
             "UPDATE accounts SET email=?, deleted_at=? WHERE id=?",
             (f"deleted:{row['email_hash'][:16]}:{account_id}", now, account_id),
         )
-        return True
+    # Fuori dalla transazione: il registro delle voci e' un file JSON e il
+    # lock del DB non va tenuto durante l'I/O (stesso criterio di
+    # adopt_history). Best-effort: una voce non scollegata non annulla una
+    # cancellazione gia' committata.
+    _unlink_voices(email)
+    return True
 
 
 def purge_expired(now=None):

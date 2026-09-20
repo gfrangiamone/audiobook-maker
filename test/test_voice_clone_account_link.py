@@ -37,3 +37,15 @@ def test_link_account_is_idempotent_and_persists():
     assert vc.store().get("vc_a")["account_id"] == "ac_1"
     assert vc.link_account("vc_a", "ac_1") is False
     assert vc.link_account("vc_missing", "ac_1") is False
+
+
+def test_unlink_account_removes_the_reference_and_is_idempotent():
+    """Cancellazione dell'account: la voce resta, il riferimento sparisce."""
+    _voice("vc_a", "a@b.it")
+    vc.link_account("vc_a", "ac_1")
+    assert vc.unlink_account("vc_a") is True
+    rec = vc.store().get("vc_a")
+    assert rec is not None and rec.get("account_id") is None
+    assert rec["state"] == "ready"
+    assert vc.unlink_account("vc_a") is False
+    assert vc.unlink_account("vc_missing") is False

@@ -16,6 +16,7 @@ def acct_env(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "_payments_path", None)
     monkeypatch.setattr(accounts, "_voice_ids_for_email", None)
     monkeypatch.setattr(accounts, "_link_voice", None)
+    monkeypatch.setattr(accounts, "_unlink_voice", None)
     yield tmp_path
     db.close()
 
@@ -346,6 +347,39 @@ def test_delete_account(acct_env):
     again = _login("a@b.it", now=T0 + 100)
     assert again["id"] != acct["id"]
     assert accounts.delete_account(again["id"], now=T0 + 200) is True
+
+
+def test_delete_account_unlinks_voice_clones(acct_env, monkeypatch):
+    """Spec: la cancellazione toglie `account_id` dalle voci campionate.
+
+    La voce sopravvive (ha un link di gestione suo), ma non deve restare
+    agganciata a un account che non esiste piu'."""
+    unlinked = []
+    accounts.configure(
+        voice_clone_ids_for_email_fn=lambda e: ["vc_1", "vc_2"] if e == "a@b.it" else [],
+        unlink_voice_fn=lambda cid: unlinked.append(cid) or True,
+    )
+    acct = _login("a@b.it")
+    other = _login("z@b.it")
+    assert accounts.delete_account(acct["id"], now=T0 + 2) is True
+    assert unlinked == ["vc_1", "vc_2"]
+    # nessuna voce dell'altro account viene toccata
+    unlinked.clear()
+    assert accounts.delete_account(other["id"], now=T0 + 3) is True
+    assert unlinked == []
+
+
+def test_delete_account_survives_voice_registry_errors(acct_env):
+    """Il registro delle voci e' un file JSON: un suo errore non deve
+    impedire la cancellazione dell'account (gia' committata)."""
+    def _boom(cid):
+        raise RuntimeError("registro non scrivibile")
+
+    accounts.configure(voice_clone_ids_for_email_fn=lambda e: ["vc_1"],
+                       unlink_voice_fn=_boom)
+    acct = _login("a@b.it")
+    assert accounts.delete_account(acct["id"], now=T0 + 2) is True
+    assert accounts.account_for_email("a@b.it") is None
 
 
 def test_purge_expired(acct_env):

@@ -1161,6 +1161,19 @@ def link_account(clone_id, account_id):
     return True
 
 
+def unlink_account(clone_id):
+    """Toglie l'account proprietario dal record della voce. True se cambiato.
+
+    Chiamata dalla cancellazione dell'account: la voce campionata sopravvive
+    (ha un flusso e un link di gestione suoi), ma non deve piu' portare il
+    riferimento a un account che non esiste piu'."""
+    rec = store().get(clone_id)
+    if rec is None or rec.get("account_id") in (None, ""):
+        return False
+    store().update(clone_id, {"account_id": None})
+    return True
+
+
 def _norm_email(email):
     return (email or "").strip().lower()
 
