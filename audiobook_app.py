@@ -1462,7 +1462,9 @@ def _apply_account_to_job(job, job_id, kind, *, output_format=None, podcast_base
     indirizzo prima di questa chiamata. `voice` e' l'id grezzo del provider
     (es. 'it-IT-IsabellaNeural'): viene convertito in etichetta presentabile
     via _voice_public_label prima di finire nello storico, mai passato cosi'
-    com'e'. Best-effort."""
+    com'e'. La riga di storico di un ALTRO account non viene mai riassegnata
+    (record_job e' un upsert su job_id): la notifica resta forzata all'account
+    della sessione, lo storico resta di chi ce l'ha. Best-effort."""
     try:
         if not accounts.enabled() or not _smtp_available():
             return None
@@ -1472,10 +1474,18 @@ def _apply_account_to_job(job, job_id, kind, *, output_format=None, podcast_base
         _arm_email_delivery(job, job_id, acct["email"], lang=acct.get("lang") or lang or "en",
                             output_format=output_format, podcast_base_url=podcast_base_url,
                             pending_kind="", engine="account", force=True)
-        accounts.record_job(acct["id"], job_id, kind=kind, book_title=_job_book_title(job),
-                            output_format=output_format or "", voice=_voice_public_label(voice),
-                            lang=lang or "", paid_eur=_job_paid_eur(job),
-                            source="forced", status="running")
+        # Stessa guardia di /api/register_email: senza, un secondo account che
+        # rigenera lo stesso job_id (browser condiviso, job ripreso da un'altra
+        # sessione) si porterebbe via lo storico del primo.
+        _owner = accounts.job_owner(job_id)
+        if _owner is not None and _owner != acct["id"]:
+            print(f"WARNING [{job_id}] storico: riga gia' dell'account {_owner}, "
+                  f"non riassegnata a {acct['id']}", flush=True)
+        else:
+            accounts.record_job(acct["id"], job_id, kind=kind, book_title=_job_book_title(job),
+                                output_format=output_format or "", voice=_voice_public_label(voice),
+                                lang=lang or "", paid_eur=_job_paid_eur(job),
+                                source="forced", status="running")
         return acct
     except Exception as _e:
         print(f"[{job_id}] _apply_account_to_job failed (non-fatal): {_e}", flush=True)

@@ -356,3 +356,35 @@ def test_generate_with_session_forces_email_and_records_history(env, monkeypatch
     assert rows[0]["job_id"] == "jt-e2e"
     assert (rows[0]["kind"], rows[0]["status"], rows[0]["source"]) == ("generate", "running", "forced")
     assert rows[0]["output_format"] == "mp3" and rows[0]["voice"] == "Isabella"
+
+
+def test_apply_account_never_steals_another_accounts_history_row(env):
+    """record_job e' un upsert su job_id: un secondo account che rigenera lo
+    stesso job (browser condiviso, job ripreso da un'altra sessione) non deve
+    portarsi via lo storico del primo. La notifica resta invece forzata
+    sull'account della sessione corrente."""
+    c = audiobook_app.app.test_client()
+    acct_b = _login(c)
+    _tok, _code = accounts.request_code("first@b.it")
+    _st, acct_a = accounts.verify(token=_tok)
+    assert _st == "ok"
+    accounts.record_job(acct_a["id"], "jt-h7", kind="generate", book_title="Di A",
+                        output_format="zip")
+    job = _job("jt-h7")
+
+    sess = accounts.open_session(acct_b["id"])
+    with audiobook_app.app.test_request_context(
+            "/", headers={**HDR, "Authorization": "Bearer " + sess}):
+        out = audiobook_app._apply_account_to_job(job, "jt-h7", "generate",
+                                                  output_format="m4b",
+                                                  voice="it-IT-IsabellaNeural", lang="it")
+
+    # Consegna forzata all'account della sessione: invariata.
+    assert out and out["id"] == acct_b["id"]
+    assert job["notify_email"] == "a@b.it" and job["email_registered"] is True
+    # Storico: nessuna riga per B, riga di A intatta.
+    assert accounts.list_jobs(acct_b["id"])[1] == 0
+    rows, total = accounts.list_jobs(acct_a["id"])
+    assert total == 1
+    assert rows[0]["book_title"] == "Di A" and rows[0]["output_format"] == "zip"
+    assert rows[0]["account_id"] == acct_a["id"]
