@@ -139,6 +139,33 @@ def test_magic_link_unknown_token_410_page(client, env):
     assert r.status_code == 410 and b"<html" in r.data
 
 
+def test_magic_link_get_shows_masked_email_and_code_lang(client, env):
+    client.post("/api/auth/request", json={"email": "a@b.it", "lang": "it"})
+    link = env[0][2]["link_url"]
+    path = link[len("https://abm.test"):]
+    r = client.get(path, headers={"Accept-Language": "de"})
+    assert r.status_code == 200
+    assert b"a***@b.it" in r.data
+    assert b"a@b.it" not in r.data
+    assert "Accedi".encode() in r.data
+    assert "Anmelden".encode() not in r.data
+
+
+def test_verify_stores_device_name(client, env):
+    client.post("/api/auth/request", json={"email": "a@b.it"})
+    code = env[0][2]["code"]
+    client.post("/api/auth/verify", json={"email": "a@b.it", "code": code, "device_name": "Pixel"})
+    row = db.conn().execute(
+        "SELECT device_name FROM sessions ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["device_name"] == "Pixel"
+
+
+def test_logout_routes_404_when_disabled(client, monkeypatch):
+    monkeypatch.setattr(accounts, "ENABLE", False)
+    assert client.post("/api/auth/logout").status_code == 404
+    assert client.post("/api/auth/logout_all").status_code == 404
+
+
 def test_verify_by_token_json(client, env):
     client.post("/api/auth/request", json={"email": "a@b.it"})
     token = env[0][2]["link_url"].rsplit("/", 1)[1]

@@ -10868,11 +10868,12 @@ def _acct_do_delete(acct, lang):
         print(f"WARNING send_account_deleted: {e}", flush=True)
 
 
-def _acct_login_response(acct, payload=None):
+def _acct_login_response(acct, payload=None, device_name=None):
     """Apre la sessione, logga, imposta il cookie. `session_token` solo per
     l'app (header X-ABM-Cid), che non usa i cookie."""
+    device_name = device_name or (request.headers.get("User-Agent") or "")[:80]
     token = accounts.open_session(acct["id"],
-                                  device_name=(request.headers.get("User-Agent") or "")[:80],
+                                  device_name=device_name,
                                   ip_hash=_hash_ip(_client_ip()))
     _acct_log("ACCOUNT_LOGIN", acct["email"])
     body = {"ok": True, "email": acct["email"], "lang": acct.get("lang") or "en",
@@ -10913,6 +10914,7 @@ def api_auth_verify():
     token = (data.get("token") or "").strip()
     email = (data.get("email") or "").strip().lower()
     code = (data.get("code") or "").strip()
+    device_name = (data.get("device_name") or "").strip()[:80]
     if token:
         status, acct = accounts.verify(token=token, purpose="login")
     elif email and code:
@@ -10921,7 +10923,7 @@ def api_auth_verify():
         return _acct_err("bad_request", "token or email+code required", 400)
     if status != "ok":
         return _acct_err(status, "Verification failed", 401)
-    return _acct_login_response(acct)
+    return _acct_login_response(acct, device_name=device_name or None)
 
 
 @app.route("/auth/<token>", methods=["GET", "POST"])
@@ -10934,13 +10936,23 @@ def auth_magic_link(token):
     if request.method == "GET":
         # Mai consumare al GET: i client di posta pre-aprono i link. Una
         # lettura innocua basta pero' a distinguere un link mai esistito
-        # (410) da uno ancora valido in attesa di conferma (200).
-        status = accounts.peek(token, purpose)
+        # (410) da uno ancora valido in attesa di conferma (200). La lingua
+        # segue quella scelta al momento della richiesta (auth_codes.lang,
+        # la stessa con cui e' partita l'email), non quella del browser.
+        status, info = accounts.peek(token, purpose)
+        code_lang = info.get("lang") if info else None
+        if code_lang in _ACCT_PAGES_I18N:
+            lang = code_lang
+            t = _acct_txt(lang)
         if status != "ok":
             return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
         return _acct_html(account_page.render_confirm(
-            t, lang=lang, purpose=purpose, action_url=request.full_path.rstrip("?")))
+            t, lang=lang, purpose=purpose, action_url=request.full_path.rstrip("?"),
+            masked_email=account_page.mask_email(info["email"])))
     status, acct = accounts.verify(token=token, purpose=purpose)
+    if acct and acct.get("lang") in _ACCT_PAGES_I18N:
+        lang = acct["lang"]
+        t = _acct_txt(lang)
     if status != "ok":
         return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
     if purpose == "delete":
@@ -10959,6 +10971,9 @@ def auth_magic_link(token):
 
 @app.route("/api/auth/logout", methods=["POST"])
 def api_auth_logout():
+    gate = _acct_gate()
+    if gate:
+        return gate
     token = _acct_session_token()
     acct = _current_account()
     if token:
@@ -10975,6 +10990,9 @@ def api_auth_logout():
 
 @app.route("/api/auth/logout_all", methods=["POST"])
 def api_auth_logout_all():
+    gate = _acct_gate()
+    if gate:
+        return gate
     acct = _current_account()
     if not acct:
         return _acct_err("unauthorized", "Sign in required", 401)

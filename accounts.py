@@ -248,20 +248,27 @@ def verify(token=None, email=None, code=None, purpose="login", now=None):
 def peek(token, purpose="login", now=None):
     """Stato di un magic link senza consumarlo, per il GET di /auth/<token>
     (i client di posta pre-aprono i link). Stessi esiti di verify() tranne
-    "wrong": ok | expired | locked | none. Nessuna scrittura."""
+    "wrong": ok | expired | locked | none. Nessuna scrittura.
+
+    Ritorna (state, info): info e' {"email": ..., "lang": ...} quando la riga
+    esiste e non e' consumata (ok/expired/locked), altrimenti None.
+    """
     if not enabled() or not token:
-        return "none"
-    now = int(now or time.time())
-    row = db.conn().execute(
-        "SELECT expires_at, consumed_at, attempts FROM auth_codes WHERE token_hash=? AND purpose=?",
-        (_sha(token), purpose)).fetchone()
+        return "none", None
+    now = _now(now)
+    with db.tx() as c:
+        row = c.execute(
+            "SELECT email, lang, expires_at, consumed_at, attempts "
+            "FROM auth_codes WHERE token_hash=? AND purpose=?",
+            (_sha(token), purpose)).fetchone()
     if row is None or row["consumed_at"] is not None:
-        return "none"
+        return "none", None
+    info = {"email": row["email"], "lang": row["lang"]}
     if row["expires_at"] <= now:
-        return "expired"
+        return "expired", info
     if row["attempts"] >= CODE_MAX_ATTEMPTS:
-        return "locked"
-    return "ok"
+        return "locked", info
+    return "ok", info
 
 
 # ---------------------------------------------------------------- sessions

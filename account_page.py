@@ -35,6 +35,17 @@ def _e(s):
     return html.escape(str(s if s is not None else ""))
 
 
+def mask_email(email):
+    """`a@b.it` -> `a***@b.it`. Input vuoto o senza `@` -> stringa vuota."""
+    email = str(email or "")
+    if "@" not in email:
+        return ""
+    local, _, domain = email.partition("@")
+    if not local:
+        return ""
+    return f"{local[0]}***@{domain}"
+
+
 def page_html(t, lang, title, body_html):
     """Scheletro HTML completo. `body_html` e' gia' escapato dal chiamante."""
     brand = _e(t.get("brand", "Audiobook Maker"))
@@ -48,12 +59,14 @@ def page_html(t, lang, title, body_html):
     )
 
 
-def render_confirm(t, *, lang, purpose, action_url):
+def render_confirm(t, *, lang, purpose, action_url, masked_email=""):
     """Pagina GET /auth/<token>: un form POST, cosi' il GET non consuma mai."""
     key = "confirm_delete" if purpose == "delete" else "confirm_login"
     cls = "danger" if purpose == "delete" else "primary"
+    who = f"<p class=\"who\"><strong>{_e(masked_email)}</strong></p>" if masked_email else ""
     body = (
         f"<p>{_e(t[key + '_p'])}</p>"
+        f"{who}"
         f"<form method=\"post\" action=\"{_e(action_url)}\" class=\"actions\">"
         f"<button type=\"submit\" class=\"{cls}\">{_e(t[key + '_btn'])}</button></form>"
     )

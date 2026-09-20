@@ -126,15 +126,24 @@ def test_verify_purpose_must_match_token(acct_env):
 
 def test_peek_reports_state_without_consuming(acct_env):
     token, code = accounts.request_code("a@b.it", "login", now=T0)
-    assert accounts.peek(token, now=T0 + 1) == "ok"
-    assert accounts.peek(token, now=T0 + 2) == "ok"  # ripetere il peek non consuma
-    assert accounts.peek(token, purpose="delete", now=T0 + 2) == "none"
-    assert accounts.peek("garbage", now=T0 + 2) == "none"
-    assert accounts.peek(token, now=T0 + accounts.CODE_TTL_MIN * 60 + 1) == "expired"
+    state, info = accounts.peek(token, now=T0 + 1)
+    assert state == "ok"
+    assert info["email"] == "a@b.it"
+    state, info = accounts.peek(token, now=T0 + 2)  # ripetere il peek non consuma
+    assert (state, info["email"]) == ("ok", "a@b.it")
+    assert accounts.peek(token, purpose="delete", now=T0 + 2) == ("none", None)
+    state, info = accounts.peek("garbage", now=T0 + 2)
+    assert state == "none"
+    assert info is None
+    state, info = accounts.peek(token, now=T0 + accounts.CODE_TTL_MIN * 60 + 1)
+    assert state == "expired"
+    assert info["email"] == "a@b.it"
     for _ in range(5):
         bad = "000000" if code != "000000" else "111111"
         accounts.verify(email="a@b.it", code=bad, now=T0 + 3)
-    assert accounts.peek(token, now=T0 + 4) == "locked"
+    state, info = accounts.peek(token, now=T0 + 4)
+    assert state == "locked"
+    assert info["email"] == "a@b.it"
 
 
 def _login(email, now=T0):
