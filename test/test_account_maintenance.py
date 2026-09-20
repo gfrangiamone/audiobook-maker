@@ -120,3 +120,21 @@ def test_supervisor_runs_once_then_sleeps(env, monkeypatch):
 def test_backup_script_covers_sqlite():
     src = open("scripts/backup_ABM.sh", encoding="utf-8").read()
     assert "abm.db" in src and ".backup" in src
+    # Non basta che i due token esistano da qualche parte nel file: la
+    # chiamata sqlite3 deve essere effettivamente guardata (lo script ha
+    # `set -e` in testa, riga 8), con un fallback a `cp` a freddo visibile
+    # in un messaggio di avviso, cosi' un fallimento del backup di abm.db
+    # non fa saltare il resto del backup giornaliero (log, chiavi, tar,
+    # rotazione).
+    backup_line = next(
+        line for line in src.splitlines()
+        if "sqlite3" in line and ".backup" in line
+    )
+    assert "||" in backup_line, (
+        "la chiamata `sqlite3 ... \".backup\"` non e' guardata da `||`: "
+        "sotto `set -e` un suo fallimento aborterebbe l'intero script"
+    )
+    assert "ATTENZIONE" in src, "manca il messaggio di avviso sul fallback a cp"
+    # il fallback a cp a freddo deve comparire almeno due volte: una per il
+    # ramo "sqlite3 assente" e una per il ramo "sqlite3 presente ma fallito"
+    assert src.count('cp "$DATA_DIR/abm.db"') >= 2

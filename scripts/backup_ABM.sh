@@ -66,13 +66,19 @@ for f in _download_tokens.json _payments.json _vouchers.json google_tts_usage.js
 done
 
 # Database SQLite degli account (abm.db): copia coerente via API di backup
-# (sicura anche con l'app in scrittura); fallback a cp se manca sqlite3.
+# (sicura anche con l'app in scrittura); fallback a cp se manca sqlite3 o se
+# il backup a caldo fallisce. Mai fatale: un intoppo su abm.db non deve far
+# saltare il resto del backup giornaliero (log, chiavi, systemd, tar, rotazione).
 if [ -f "$DATA_DIR/abm.db" ]; then
     if command -v sqlite3 >/dev/null 2>&1; then
-        sqlite3 "$DATA_DIR/abm.db" ".backup '$BACKUP_DIR/data/abm.db'"
+        sqlite3 "$DATA_DIR/abm.db" ".backup '$BACKUP_DIR/data/abm.db'" || {
+            echo "  ATTENZIONE: backup sqlite di abm.db fallito, uso cp a freddo"
+            cp "$DATA_DIR/abm.db" "$BACKUP_DIR/data/abm.db" 2>/dev/null || true
+            [ -f "$DATA_DIR/abm.db-wal" ] && cp "$DATA_DIR/abm.db-wal" "$BACKUP_DIR/data/" 2>/dev/null || true
+        }
     else
-        cp "$DATA_DIR/abm.db" "$BACKUP_DIR/data/abm.db"
-        [ -f "$DATA_DIR/abm.db-wal" ] && cp "$DATA_DIR/abm.db-wal" "$BACKUP_DIR/data/"
+        cp "$DATA_DIR/abm.db" "$BACKUP_DIR/data/abm.db" 2>/dev/null || true
+        [ -f "$DATA_DIR/abm.db-wal" ] && cp "$DATA_DIR/abm.db-wal" "$BACKUP_DIR/data/" 2>/dev/null || true
     fi
 fi
 
