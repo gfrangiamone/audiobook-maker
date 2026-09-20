@@ -903,7 +903,7 @@ def _acct_send(email, lang, subject_key, body_key, **values):
         return False
     safe = {k: (v if k.endswith("_url") else html.escape(str(v))) for k, v in values.items()}
     try:
-        subject = t[subject_key]
+        subject = t[subject_key].format(**safe)
         body = t[body_key].format(**safe) + t.get("footer", "")
         return bool(_send_email(email, subject, body))
     except Exception as e:      # noqa: BLE001

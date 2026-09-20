@@ -45,7 +45,7 @@ def test_send_account_code_delete_uses_delete_texts(sent):
                                     purpose="delete", minutes=10)
     _, subject, body = sent[0]
     data = json.loads((Path("i18n") / "account_emails.json").read_text(encoding="utf-8"))
-    assert subject == data["it"]["delete_subject"]
+    assert subject == data["it"]["delete_subject"].format(code="654321")
     assert "654321" in body
 
 
