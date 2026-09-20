@@ -372,6 +372,7 @@ __REVIEWS_LD__
           <span class="phase" id="trProgressPhase">—</span>
           <span class="pct" id="trProgressPct">0%</span>
         </div>
+        <div class="al al-ok" id="acctForcedNoticeTr" style="display:none;margin-top:10px"></div>
         <div class="email-late-area" id="emailLateAreaTr">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--txm)"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           <input type="email" id="notifyEmailLateTr" placeholder="" aria-label="Email per notifica">
@@ -1472,7 +1473,7 @@ __REVIEWS_LD__
         <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-outline" onclick="closeLoginModal()" data-t="btn_cancel"></button>
           <button class="btn btn-ok" id="acctSendBtn" onclick="_acctRequest()" data-t="acct_send_code"></button>
-          <button class="btn btn-ok" id="acctVerifyBtn" onclick="_acctVerify()" data-t="acct_verify" style="display:none"></button>
+          <button class="btn btn-ok" id="acctVerifyBtn" onclick="_acctVerify()" data-t="acct_verify" style="display:none" disabled></button>
         </div>
       </div>
     </div>

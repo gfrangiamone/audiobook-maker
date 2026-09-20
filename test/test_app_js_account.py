@@ -16,7 +16,7 @@ I18N = Path("templates/_fragments/i18n_data.js").read_text(encoding="utf-8")
 ACCT_KEYS = [
     "acct_login", "acct_logout", "acct_history", "acct_modal_title", "acct_modal_intro",
     "acct_email_ph", "acct_send_code", "acct_code_ph", "acct_code_intro", "acct_verify",
-    "acct_sent", "acct_err_wrong", "acct_err_expired", "acct_err_locked", "acct_err_none",
+    "acct_err_wrong", "acct_err_expired", "acct_err_locked", "acct_err_none",
     "acct_err_rate", "acct_err_generic", "acct_forced_notice", "acct_signed_in_as",
 ]
 
@@ -52,6 +52,10 @@ def test_boot_queries_me_and_handles_login_param():
     fn = _extract_fn("_acctBoot")
     assert "/api/auth/me" in fn
     assert "login=1" in fn
+    # non solo il commento: la logica che legge davvero il parametro deve
+    # esserci (altrimenti la riga sopra sopravvive alla cancellazione del
+    # codice che gestisce ?login=1, vedi review M-7).
+    assert "get('login')" in fn
     assert "_acctApplyForcedEmail()" in fn or "_acctRender()" in fn
 
 
@@ -105,11 +109,52 @@ def test_i18n_no_provider_names_in_account_strings():
     # Ogni blocco lingua e' una singola riga lunghissima con tutte le chiavi
     # della SPA: un controllo per riga intera darebbe falsi positivi su testi
     # preesistenti non collegati (es. FAQ). Isoliamo i soli valori acct_*.
+    n = 0
     for m in re.finditer(r'acct_\w+:"((?:[^"\\]|\\.)*)"', I18N):
+        n += 1
         assert not re.search(r"DeepSeek|Gemini|Speechify|VoxCPM", m.group(1))
+    # Senza questo conteggio un rename silenzioso della chiave svuoterebbe
+    # l'iterazione e il test passerebbe comunque (review M-7).
+    assert n == 7 * len(ACCT_KEYS)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
 def test_js_syntax():
     for f in ("static/js/app.js", "templates/_fragments/i18n_data.js"):
         subprocess.run(["node", "--check", f], check=True)
+
+
+# ─────────────────────── Fix round 1 (review findings) ───────────────────────
+
+def test_verify_registers_email_on_mid_job_login():
+    """C-1: un login a meta' lavorazione deve vincolare il job in corso
+    (altrimenti il banner promette una consegna che il server non ha armato
+    e il beacon di chiusura pagina uccide comunque il lavoro)."""
+    fn = _extract_fn("_acctVerify")
+    assert "/api/register_email" in fn
+    assert "_updateGenNoticeWarning" in fn
+    assert "generating" in fn and "emailRegistered" in fn
+
+
+def test_translation_flow_applies_forced_email_state():
+    """I-1: avviare una traduzione da loggati deve riflettere subito il
+    vincolo di consegna gia' armato lato server (_apply_account_to_job)."""
+    assert 'id="acctForcedNoticeTr"' in HEAD
+    fn = _extract_fn("_submitTranslation")
+    assert "_acctApplyForcedEmail()" in fn
+
+
+def test_apply_i18n_rerenders_account_ui():
+    """I-3: cambiare lingua non deve lasciare bottone/menu/banner account
+    nella lingua precedente."""
+    fn = _extract_fn("applyI18n")
+    assert "_acctRender()" in fn
+
+
+@pytest.mark.parametrize("fn_name", ["submitEmailLate", "submitEmailLateTr"])
+def test_forced_conflict_refreshes_account_cache(fn_name):
+    """I-4: un 409 logged_in_email_forced significa che la cache locale di
+    _acctMe e' stale (il client si credeva anonimo) e va allineata subito."""
+    fn = _extract_fn(fn_name)
+    conflict = fn[fn.index("logged_in_email_forced"):]
+    assert "/api/auth/me" in conflict
