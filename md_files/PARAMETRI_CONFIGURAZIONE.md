@@ -47,7 +47,9 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_LLM_COST_USD_PER_MTOK` | `0.18` (Costo provider LLM per l'ottimizzazione AI del testo — parametro **unico blended in USD** per 1M token TOTALI prompt+completion; assorbe mix input/output e token in cache; convertito in EUR con `ABM_GEMINI_USD_EUR_RATE`; base costo audit /admin/audit-premium) | `payment.py` | 68–69 |
 | `ABM_FREE_QUOTA_EUR_PER_MONTH` | `2.00` (quota gratuita cumulativa per client, € di listino non fatturato per mese solare, sulle voci PREMIUM; `0` disattiva la feature) | `free_quota.py` | 40 |
 | `ABM_PREMIUM_MIN_COST_EUR` | `0.50` (importo minimo addebitato a un job PREMIUM quando la quota gratuita mensile è esaurita) | `free_quota.py` | 168 |
-| `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` | `10000000` (quota mensile per client di caratteri sintetizzati con le voci STANDARD; oltre, ogni nuovo libro parte solo dopo il gate email; `0` disattiva la feature) | `free_tts_quota.py` | 43 |
+| `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` | `10000000` (quota mensile per client di caratteri sintetizzati con le voci STANDARD; oltre, ogni nuovo libro parte solo dopo il gate email; `0` disattiva la feature) | `free_tts_quota.py` | 52 |
+| `ABM_FREE_TTS_QUOTA_APP_PUSH_ACK` | `1` (l'app mobile supera il gate quota **senza email** se ha un device push registrato: la consegna la garantisce la notifica. `0`/`false`/`off` riporta l'app al gate email come il web) | `audiobook_app.py` | 2605 |
+| `ABM_QUOTA_DEVICE_MAX_AGE_DAYS` | `90` (età massima della registrazione del device push perché valga come ack del gate quota; `0` = nessun limite di età) | `audiobook_app.py` | 2579 |
 | `ABM_OUTPUT_REUSE` | `1` (riuso dell'output di una generazione identica — stesso client, testo, voce, rate, formato, opzioni parentesi — gia' consegnata e ancora su disco; `0`/`false`/`off` disattiva) | `output_reuse.py` | 54 |
 | `ABM_ADMIN_POWER_USER_JOBS_PER_DAY` | `5` (soglia di avvii a voce STANDARD nelle ultime 24h oltre cui un client compare nella sezione "Power user" del digest admin; `0` disattiva la sezione) | `audiobook_app.py` | 3952 |
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
@@ -1015,6 +1017,23 @@ Ciclo di vita del descrittore: **scritto** quando il job diventa batch (`/api/re
 
 ---
 
+### 14.1 Riporto del costo TTS fra un tentativo e l'altro (`cost_carry.py`)
+
+Il costo provider di un job premium si accumula in memoria (`job["gemini_actual"]`, `speechify_actual`, `voxcpm_actual`). Un riavvio azzera quei contatori ma **non** il lavoro fatto: i chunk gia' sintetizzati restano su disco e `chunk_reuse` li riconsegna al tentativo successivo. Senza riporto il job riparte con un libro quasi finito e una contabilita' a zero — console admin con pochi centesimi di costo TTS su un audiolibro da decine di euro, margine percentuale assurdo, e record d'audit nel JSONL con lo stesso buco.
+
+| Elemento | Valore |
+|----------|--------|
+| File | `<ABM_DATA_DIR>/<job_id>/.cost_carry.json` (write atomico tmp+rename, dentro la work_dir del job) |
+| Contenuto | Un totale corrente per motore: `{"gemini": {...}, "speechify": {...}, "voxcpm": {...}}` |
+| `ABM_COST_CARRY_EVERY` | Ogni quanti chunk si riscrive il file (default **25**, floor 1). L'ultimo chunk deposita sempre. Per VoxCPM la cadenza e' per capitolo, non per chunk. |
+| Ripresa | `cost_carry.resume(work_dir, motore, actual)` una sola volta per tentativo, subito dopo l'inizializzazione dei contatori (`merge` e' una somma, non un idempotente). |
+| Cancellazione | Subito dopo `gemini_cost_audit.append_record(rec)` nei tre `_write_*_audit`: da li' la spesa vive nel JSONL, e un ulteriore tentativo non deve sommarla due volte. |
+| Fusione | Numeri sommati; stringhe: vince quella del tentativo in corso; liste di numeri sommate posizione per posizione (istogrammi tipo `verifica_rientri`); liste di altro concatenate col riporto davanti (`runpod`, `code_tagliate_dettaglio`). |
+
+Tutto best-effort: un errore di I/O sul riporto non ferma la generazione.
+
+---
+
 ## 15. Push FCM (app mobile) (`push_service.py`)
 
 Modulo `push_service.py` — notifiche push Firebase Cloud Messaging (HTTP v1) per l'app mobile.
@@ -1113,9 +1132,10 @@ Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi cl
 ### 17.1 Quota mensile di caratteri (`free_tts_quota.py`)
 
 - **Cosa conta**: caratteri dei capitoli selezionati di ogni job avviato da `/api/generate` con voce STANDARD (non Gemini/Speechify). Le voci PREMIUM restano sotto `ABM_FREE_QUOTA_EUR_PER_MONTH`.
-- **Identita'**: cookie `abm_cid`; client senza cookie condividono un unico bucket anonimo.
+- **Identita'**: cookie `abm_cid` (web) o header `X-ABM-Cid` (app); client senza identificativo condividono un unico bucket anonimo. Per l'app l'identificativo e' legato all'**installazione**: `/api/device/register` chiama `free_tts_quota.link_device(sha256(fcm_token)[:16], cid)`, il primo cid che registra quel device resta canonico e i successivi diventano suoi alias (consumo del mese in corso fuso nel bucket canonico). Registro in `ABM_DATA_DIR/_free_tts_quota_ids.json` — `{"devices": {hash: {cid, ts}}, "aliases": {cid: {cid, ts}}}`, retention `_IDS_KEEP_DAYS` (120 giorni, `free_tts_quota.py:35`). Il token push non viene mai scritto: solo il suo digest. Conseguenza: ripulire i dati dell'app **non** azzera il contatore mensile, cosa che cancellare il cookie fa ancora.
 - **Chiave di addebito**: `job_id:gen_epoch+1` → la rigenerazione dello stesso job (altra voce/formato) conta come nuovo libro; il retry dello stesso avvio e' idempotente.
-- **Gate**: oltre quota `/api/generate` risponde `402 free_tts_quota_exhausted` (`quota_used_chars`, `quota_limit_chars`, `chars_selected`, `email_required`), ripristina lo stato del job e logga `QUOTA_BLOCK`. Il frontend apre `#ttsQuotaModal`: l'utente registra un'email (`/api/register_email`) e rimanda `quota_ack=true`; il job parte, la quota viene comunque addebitata (`gated`) e il log riporta `QUOTA_GATE`. **Nessuno sblocco mensile**: il gate si ripresenta a ogni libro oltre quota. Senza SMTP configurato il gate e' impraticabile e il job passa senza marcatura.
+- **Gate**: oltre quota `/api/generate` risponde `402 free_tts_quota_exhausted` (`quota_used_chars`, `quota_limit_chars`, `chars_selected`, `email_required`, `push_ack_possible`), ripristina lo stato del job e logga `QUOTA_BLOCK`. Il frontend apre `#ttsQuotaModal`: l'utente registra un'email (`/api/register_email`) e rimanda `quota_ack=true`; il job parte, la quota viene comunque addebitata (`gated`) e il log riporta `QUOTA_GATE`. **Nessuno sblocco mensile**: il gate si ripresenta a ogni libro oltre quota. Senza SMTP configurato il gate e' impraticabile e il job passa senza marcatura.
+- **Ack via push (app mobile)**: l'email del gate non e' un'identita' (non e' verificata da nessuno): il suo ruolo e' garantire la consegna di un job che l'utente non attende a schermo. Nell'app quel ruolo lo copre la notifica, quindi `_push_ack_possible` (`audiobook_app.py:2594`) accetta `quota_ack=true` **senza email** quando: richiesta dall'app (`X-ABM-Platform` + `X-ABM-Cid` validi), `push_service.is_available()`, device registrato da meno di `ABM_QUOTA_DEVICE_MAX_AGE_DAYS`, deroga non spenta da `ABM_FREE_TTS_QUOTA_APP_PUSH_ACK`. Il ramo forza il batch (`email_registered=True`, nessuna `notify_email`): senza quello l'heartbeat ucciderebbe il job a schermo spento e la notifica arriverebbe per un audiolibro mai prodotto. Addebito e log restano quelli del gate (`gated`, `QUOTA_GATE`, nota `quota_gate` ad `abuse_watch`). Il campo `push_ack_possible` del 402 dice all'app quale schermata mostrare al primo rifiuto (notifica o email) senza un secondo giro.
 - **Storno**: `generation_engine._set_job_status` storna l'addebito solo su stato `error` (guasto lato server); cancellazione utente e consegna lo lasciano.
 - **Riuso**: un avvio servito da `output_reuse` non consuma quota ne' passa dal gate.
 - **File**: `ABM_DATA_DIR/_free_tts_quota.json` — `{ "YYYY-MM": { cid: { "chars", "jobs": { key: chars }, "gated": n } } }`, write atomico via `community_store.atomic_write_json`, mesi vecchi potati alla scrittura. `month_table()` alimenta il digest.

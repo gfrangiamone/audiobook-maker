@@ -5693,28 +5693,41 @@ function updateAggregateEta() {{
     box.innerHTML = '<span class="eta-lbl">{t["eta_label"]}</span>' + prefix + fmtEta(maxRemaining);
 }}
 
+// Una sola richiesta per tick, qualunque sia il numero di card: una fetch
+// per card superava il limit_req di nginx (10 r/s, burst 20 per IP) e le
+// richieste successive dallo stesso IP (es. il pannello Stats) prendevano 503.
+let liveProgressInFlight = false;
 async function updateLiveProgress() {{
     const pcts = Array.from(document.querySelectorAll('.card-pct')).filter(el => el.dataset.sid);
-    if (pcts.length === 0) return;
-    await Promise.all(pcts.map(async (el) => {{
-        const sid = el.dataset.sid;
-        try {{
-            const r = await fetch('/api/job_status/' + sid);
-            if (!r.ok) return;
-            const d = await r.json();
+    if (pcts.length === 0 || liveProgressInFlight) return;
+    liveProgressInFlight = true;
+    try {{
+        const ids = pcts.map(el => el.dataset.sid).join(',');
+        const r = await fetch('/api/admin/jobs_progress?ids=' + encodeURIComponent(ids),
+                              {{headers: adminHeaders(), credentials: 'same-origin'}});
+        if (!r.ok) return;
+        const all = await r.json();
+        pcts.forEach(el => {{
+            const d = all[el.dataset.sid];
+            if (!d) return;
             el.textContent = '(' + d.pct + '%)';
             if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {{
                 el.removeAttribute('data-sid');
                 if (d.status === 'done') el.style.color = 'var(--green)';
             }}
-        }} catch(e) {{}}
-    }}));
+        }});
+    }} catch(e) {{
+    }} finally {{
+        liveProgressInFlight = false;
+    }}
 }}
 
 if (document.querySelectorAll('.live-timer').length > 0) {{
     setInterval(updateLiveTimers, 1000);
     setInterval(updateLiveProgress, 5000);
-    updateLiveProgress();
+    // Differita a fine script: adminHeaders() legge la const ADMIN_TOKEN,
+    // dichiarata piu' sotto (TDZ se chiamata subito).
+    setTimeout(updateLiveProgress, 0);
     updateAggregateEta();
 }}
 
@@ -13504,17 +13517,17 @@ def api_generate():
     return jsonify(_resp)
 
 
-@app.route("/api/job_status/<job_id>")
-def api_job_status(job_id):
-    job, err, sc = _check_job_owner(job_id)
-    if err is not None:
-        return ({"error": "Not found"} if sc == 404 else {"error": "Forbidden"}), sc
+def _job_progress(job):
+    """(status, current, total, pct) di un job in corso; zeri se non in corso.
 
+    Unica aritmetica del pct per /api/job_status (singolo) e
+    /api/admin/jobs_progress (bulk): due copie divergerebbero.
+    """
     st = job.get("status", "")
     cur, tot = 0, 0
     pct = 0
     if st == "optimizing":
-        total_chars = job.get("opt_total_chars", 1)
+        total_chars = job.get("opt_total_chars", 1) or 1
         done_chars = job.get("opt_processed_chars", 0)
         cur_ch_chars = job.get("opt_current_chapter_chars", 0)
         streamed = min(job.get("opt_streamed_chars", 0), cur_ch_chars)
@@ -13529,7 +13542,16 @@ def api_job_status(job_id):
         cur = job.get("tr_progress_current", 0)
         tot = job.get("tr_progress_total", 0)
         pct = int(cur / tot * 100) if tot > 0 else 0
+    return st, cur, tot, pct
 
+
+@app.route("/api/job_status/<job_id>")
+def api_job_status(job_id):
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return ({"error": "Not found"} if sc == 404 else {"error": "Forbidden"}), sc
+
+    st, cur, tot, pct = _job_progress(job)
     return {
         "status": st,
         "current": cur,
@@ -13537,6 +13559,36 @@ def api_job_status(job_id):
         "pct": pct,
         "message": job.get("progress_message", "") or job.get("opt_progress_message", "")
     }
+
+
+_JOBS_PROGRESS_MAX_IDS = 500
+
+
+@app.route("/api/admin/jobs_progress")
+def api_admin_jobs_progress():
+    """Avanzamento di N job in UNA richiesta, per il polling di /admin/log-activity.
+
+    Prima la pagina apriva una fetch per ogni card in corso ogni 5 s: con
+    decine di job vivi il burst superava il limit_req di nginx (10 r/s,
+    burst 20 per IP) e le richieste successive dallo stesso IP, fra cui
+    quella del pannello Stats, ricevevano 503. Qui il costo e' una
+    richiesta per tick, qualunque sia il numero di card.
+
+    Risposta: {job_id: {"status", "pct"}}; gli id sconosciuti sono omessi.
+    """
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "Unauthorized"}), 403
+    raw = request.args.get("ids", "") or ""
+    ids = [s.strip() for s in raw.split(",")]
+    ids = [s for s in ids if s][:_JOBS_PROGRESS_MAX_IDS]
+    out = {}
+    for jid in ids:
+        job = jobs.get(jid)
+        if not job:
+            continue
+        st, _cur, _tot, pct = _job_progress(job)
+        out[jid] = {"status": st, "pct": pct}
+    return jsonify(out)
 
 
 @app.route("/api/progress/<job_id>")
