@@ -131,14 +131,18 @@ def test_verify_registers_email_on_mid_job_login():
     (altrimenti il banner promette una consegna che il server non ha armato
     e il beacon di chiusura pagina uccide comunque il lavoro)."""
     fn = _extract_fn("_acctVerify")
-    assert "/api/register_email" in fn
-    assert "_updateGenNoticeWarning" in fn
     assert "generating" in fn and "emailRegistered" in fn
     # round 2: la traduzione partita anonima e vincolata a meta' lavoro deve
     # ricevere lo stesso trattamento della generazione audio (stesso
     # onBeforeUnload, stesso endpoint gia' usato da submitEmailLateTr).
     assert "'translated'" in fn
     assert "trEmailRegistered" in fn
+    # round 3: il vincolo vero e proprio vive nell'helper condiviso, usato
+    # anche dai due conflitti 409 (niente divergenza fra i tre chiamanti).
+    assert "_acctBindCurrentJob" in fn
+    helper = _extract_fn("_acctBindCurrentJob")
+    assert "/api/register_email" in helper
+    assert "_updateGenNoticeWarning" in helper
 
 
 def test_translation_flow_applies_forced_email_state():
@@ -163,3 +167,49 @@ def test_forced_conflict_refreshes_account_cache(fn_name):
     fn = _extract_fn(fn_name)
     conflict = fn[fn.index("logged_in_email_forced"):]
     assert "/api/auth/me" in conflict
+
+
+# ─────────────────────── Fix round 3 (re-review findings) ───────────────────────
+
+def test_translation_response_syncs_forced_email_flags():
+    """N-2 (regressione di I-1): round 2 calcolava canForceTr con
+    trEmailRegistered sempre falso all'avvio traduzione, ririnverdendo I-1.
+    /api/translate forza batch sull'email dell'account quando c'e' una
+    sessione: d.batch e' il segnale che la consegna e' gia' armata, e va
+    allineato PRIMA di _acctApplyForcedEmail() perche' il guard lo legga."""
+    fn = _extract_fn("_submitTranslation")
+    assert "d.batch" in fn
+    assert "trEmailRegistered=true" in fn
+    assert "emailRegistered=true" in fn
+    assert fn.index("trEmailRegistered=true") < fn.index("_acctApplyForcedEmail()")
+
+
+@pytest.mark.parametrize("fn_name", ["submitEmailLate", "submitEmailLateTr"])
+def test_forced_conflict_binds_current_job_before_confirming(fn_name):
+    """N-1: il conflitto 409 non deve promettere una consegna che nessuna
+    chiamata ha armato (e non deve distruggere il form se il tentativo di
+    binding fallisce) — usa lo stesso helper condiviso di _acctVerify."""
+    fn = _extract_fn(fn_name)
+    conflict = fn[fn.index("logged_in_email_forced"):]
+    assert "_acctBindCurrentJob(" in conflict
+    assert "bind.ok" in conflict
+    assert conflict.index("bind.ok") < conflict.index("_setEmailLateConfirm")
+
+
+def test_generate_success_paths_reapply_forced_email():
+    """N-3: canForceGen/canForceTr sono affidabili solo dopo che generating/
+    emailRegistered sono definitivi per il job; senza ricalcolo qui resta
+    quello (potenzialmente sbagliato) calcolato al boot."""
+    for fn_name in ("startCombinedGeneration", "startGen"):
+        fn = _extract_fn(fn_name)
+        auto_idx = fn.index("auto_batch_email")
+        apply_idx = fn.index("_acctApplyForcedEmail()", auto_idx)
+        assert apply_idx > auto_idx
+
+
+def test_restore_path_reapplies_forced_email():
+    """N-3: _restoreActiveJob() e _acctBoot() partono in parallelo — il
+    ricalcolo va fatto dopo che lo stato del job ripristinato e' definitivo,
+    non lasciato a quello (sbagliato) calcolato al boot."""
+    fn = _extract_fn("_restoreActiveJob")
+    assert "_acctApplyForcedEmail()" in fn

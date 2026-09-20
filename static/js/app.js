@@ -3288,6 +3288,10 @@ async function _submitTranslation(payToken,src,dst){
     goToStep(4);
     const area=document.getElementById('emailLateAreaTr');if(area)area.classList.add('visible');
     _trAutofillEmailLate();
+    // /api/translate forza batch sull'email dell'account quando c'e' una
+    // sessione: la consegna e' gia' armata, allinea i flag locali (il secondo
+    // e' quello letto da onBeforeUnload).
+    if(d.batch&&typeof _acctLoggedIn==='function'&&_acctLoggedIn()){trEmailRegistered=true;emailRegistered=true;}
     // Loggato: /api/translate ha gia' vincolato la consegna all'email
     // dell'account (_apply_account_to_job lato server) — riflettilo subito,
     // altrimenti il box manuale offre un indirizzo che il server rifiutera'.
@@ -3352,10 +3356,14 @@ async function submitEmailLateTr(){
     const d=await r.json();
     if(d.error_code==='logged_in_email_forced'){
       const area=document.getElementById('emailLateAreaTr');
-      _setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||''}));
       // Il 409 dice che il client si credeva anonimo mentre il server ha una
-      // sessione viva: la cache di _acctMe e' stale, allineala.
+      // sessione viva: la cache di _acctMe e' stale, allineala prima di
+      // provare ad armare davvero la consegna (altrimenti si promette un
+      // esito che nessuna chiamata ha ottenuto).
       try{const m=await fetch('/api/auth/me',{cache:'no-store'});if(m.ok){_acctMe=await m.json();if(typeof _acctRender==='function')_acctRender();}}catch(e){}
+      const bind=await _acctBindCurrentJob('translated');
+      if(bind.ok)_setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||_acctMe.email||''}));
+      else alert(bind.error||d.error);
       return;
     }
     if(d.error){alert(d.error);return}
@@ -3883,6 +3891,12 @@ async function startCombinedGeneration(combinedPaymentToken){
         showPErr(gd.error);unlockUI();return;
       }
       if(gd.auto_batch_email){emailRegistered=true;_showAutoBatchNotice(gd.auto_batch_email);_updateGenNoticeWarning();}
+      // Ricalcola lo stato forzato ora che generating/emailRegistered sono
+      // definitivi per questo job: al boot canForceGen era vero per default
+      // (generating era ancora false), una sessione scaduta fra il boot e
+      // Generate lascerebbe altrimenti il banner boot-time a promettere una
+      // consegna che il server non ha armato.
+      if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
       _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
       listenProgress();
     }catch(e){showPErr('Error: '+e.message);unlockUI()}
@@ -4342,6 +4356,10 @@ async function startGen(){
       _showAutoBatchNotice(d.auto_batch_email);
       _updateGenNoticeWarning();
     }
+    // Ricalcola lo stato forzato ora che generating/emailRegistered sono
+    // definitivi per questo job (vedi commento gemello sull'altro ramo di
+    // /api/generate).
+    if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
     _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
@@ -4986,6 +5004,11 @@ async function _restoreActiveJob(){
     _setCancelButtonMode(d.status==='optimizing'?'opt':'gen');
     if(d.status==='optimizing')_listenOptProgressWiz();else listenProgress();
   }
+  // _restoreActiveJob() e _acctBoot() partono in parallelo (vedi il chiamante
+  // comune): a questo punto generating/emailRegistered sono definitivi per il
+  // job ripristinato, ricalcola lo stato forzato invece di lasciare quello
+  // (sbagliato, perche' generating era ancora false) calcolato al boot.
+  if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
   _showRestoreNotice(d,cands.length-1);
 }
 
@@ -5902,10 +5925,14 @@ async function submitEmailLate(){
     const d=await r.json();
     if(d.error_code==='logged_in_email_forced'){
       const area=document.getElementById('emailLateArea');
-      _setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||''}));
       // Il 409 dice che il client si credeva anonimo mentre il server ha una
-      // sessione viva: la cache di _acctMe e' stale, allineala.
+      // sessione viva: la cache di _acctMe e' stale, allineala prima di
+      // provare ad armare davvero la consegna (altrimenti si promette un
+      // esito che nessuna chiamata ha ottenuto).
       try{const m=await fetch('/api/auth/me',{cache:'no-store'});if(m.ok){_acctMe=await m.json();if(typeof _acctRender==='function')_acctRender();}}catch(e){}
+      const bind=await _acctBindCurrentJob(dlType);
+      if(bind.ok)_setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||_acctMe.email||''}));
+      else alert(bind.error||d.error);
       return;
     }
     if(d.error){alert(d.error);return}
@@ -7039,6 +7066,28 @@ async function _acctRequest(){
   finally{_acctBusy=false}
 }
 
+async function _acctBindCurrentJob(dlType){
+  // Vincola il job in corso all'email dell'account: unico punto che parla con
+  // /api/register_email per "adottare" un job partito anonimo, cosi' i tre
+  // chiamanti (login a meta' lavoro in _acctVerify, i due conflitti 409 di
+  // submitEmailLate/submitEmailLateTr) non possono divergere sul come si
+  // arma la consegna ne' su quali flag locali aggiornare.
+  if(!(typeof _acctLoggedIn==='function'&&_acctLoggedIn()&&jobId))return{ok:false};
+  try{
+    const rr=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({job_id:jobId,email:_acctMe.email,download_type:dlType,lang:cl})});
+    const dd=await rr.json().catch(()=>({}));
+    if(rr.ok&&!dd.error){
+      // onBeforeUnload guarda emailRegistered per entrambi i flussi.
+      if(dlType==='translated')trEmailRegistered=true;
+      emailRegistered=true;
+      if(typeof _updateGenNoticeWarning==='function')_updateGenNoticeWarning();
+      return{ok:true};
+    }
+    return{ok:false,error:dd.error};
+  }catch(e){return{ok:false}}
+}
+
 async function _acctVerify(){
   if(_acctBusy)return;
   const code=((document.getElementById('acctCode')||{}).value||'').replace(/\D/g,'');
@@ -7069,18 +7118,8 @@ async function _acctVerify(){
     // banner promette una consegna che nessuno ha armato e il beacon di
     // chiusura pagina uccide comunque il lavoro.
     if(_acctLoggedIn()&&generating&&!jobDone&&jobId&&!(wizMode==='translate'?trEmailRegistered:emailRegistered)){
-      try{
-        const dlType=wizMode==='translate'?'translated':((outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters'));
-        const rr=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({job_id:jobId,email:_acctMe.email,download_type:dlType,lang:cl})});
-        const dd=await rr.json().catch(()=>({}));
-        if(rr.ok&&!dd.error){
-          // onBeforeUnload guarda emailRegistered per entrambi i flussi.
-          if(wizMode==='translate')trEmailRegistered=true;
-          emailRegistered=true;
-          if(typeof _updateGenNoticeWarning==='function')_updateGenNoticeWarning();
-        }
-      }catch(e){}
+      const dlType=wizMode==='translate'?'translated':((outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters'));
+      await _acctBindCurrentJob(dlType);
     }
     _acctRender();
   }catch(e){_acctShowErr(t('acct_err_generic'));if(vb)vb.disabled=false}
@@ -7101,7 +7140,7 @@ function _acctApplyForcedEmail(){
   // dopo un login a meta' lavorazione (vedi _acctVerify). Finche' non e'
   // stato registrato, mostrare qui la promessa di consegna sarebbe falsa e
   // contraddirebbe il banner ATTENZIONE "se chiudi la pagina viene annullato".
-  const canForceGen=on&&(!generating||jobDone||emailRegistered);
+  const canForceGen=on&&wizMode!=='translate'&&(!generating||jobDone||emailRegistered);
   const notice=document.getElementById('acctForcedNotice');
   if(notice){
     notice.style.display=canForceGen?'block':'none';
@@ -7112,7 +7151,7 @@ function _acctApplyForcedEmail(){
   // job e' avviato da loggati (_apply_account_to_job lato server); ma una
   // traduzione partita anonima e vincolata solo dopo un login a meta' lavoro
   // (vedi _acctVerify) ricade nello stesso caso della generazione audio.
-  const canForceTr=on&&(!generating||jobDone||trEmailRegistered);
+  const canForceTr=on&&wizMode==='translate'&&(!generating||jobDone||trEmailRegistered);
   const noticeTr=document.getElementById('acctForcedNoticeTr');
   if(noticeTr){
     noticeTr.style.display=canForceTr?'block':'none';
