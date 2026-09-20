@@ -64,6 +64,9 @@
     "dev_logout": "Sign out",
     "close_btn": "Close",
     "cancel_btn": "Cancel",
+    "close_btn_app": "Back to the app",
+    "close_popup_title": "Back to the app?",
+    "close_popup_p": "You stay signed in on this device: you can reopen this page any time from the account icon in the app. To sign out, use “Sign out”.",
     "delete_popup_title": "Delete your account?",
     "delete_popup_p": "Your account will be permanently deleted: the job history and the sessions on all devices will be removed. Files already delivered stay downloadable from the links you received by email until they expire.",
     "delete_popup_email": "For safety we will send you an email with a link and a code: the account is deleted only after your confirmation."
@@ -133,6 +136,9 @@
     "dev_logout": "Esci",
     "close_btn": "Chiudi",
     "cancel_btn": "Annulla",
+    "close_btn_app": "Torna all'app",
+    "close_popup_title": "Tornare all'app?",
+    "close_popup_p": "Resti connesso su questo dispositivo: puoi riaprire questa pagina in qualsiasi momento dall'icona account nell'app. Per disconnetterti usa “Esci”.",
     "delete_popup_title": "Cancellare il tuo account?",
     "delete_popup_p": "L'account verrà cancellato definitivamente: lo storico dei job e le sessioni su tutti i dispositivi saranno eliminati. I file già consegnati restano scaricabili dai link ricevuti via email fino alla loro scadenza.",
     "delete_popup_email": "Per sicurezza ti invieremo un'email con un link e un codice: l'account viene cancellato solo dopo la tua conferma."
@@ -202,6 +208,9 @@
     "dev_logout": "Se déconnecter",
     "close_btn": "Fermer",
     "cancel_btn": "Annuler",
+    "close_btn_app": "Retour à l'app",
+    "close_popup_title": "Revenir à l'app ?",
+    "close_popup_p": "Vous restez connecté sur cet appareil : vous pouvez rouvrir cette page à tout moment depuis l'icône du compte dans l'app. Pour vous déconnecter, utilisez « Se déconnecter ».",
     "delete_popup_title": "Supprimer votre compte ?",
     "delete_popup_p": "Votre compte sera supprimé définitivement : l'historique des travaux et les sessions sur tous les appareils seront effacés. Les fichiers déjà livrés restent téléchargeables depuis les liens reçus par e-mail jusqu'à leur expiration.",
     "delete_popup_email": "Par sécurité, nous vous enverrons un e-mail avec un lien et un code : le compte n'est supprimé qu'après votre confirmation."
@@ -271,6 +280,9 @@
     "dev_logout": "Cerrar sesión",
     "close_btn": "Cerrar",
     "cancel_btn": "Cancelar",
+    "close_btn_app": "Volver a la app",
+    "close_popup_title": "¿Volver a la app?",
+    "close_popup_p": "Sigues conectado en este dispositivo: puedes volver a abrir esta página cuando quieras desde el icono de cuenta en la app. Para desconectarte usa «Cerrar sesión».",
     "delete_popup_title": "¿Eliminar tu cuenta?",
     "delete_popup_p": "La cuenta se eliminará definitivamente: el historial de trabajos y las sesiones en todos los dispositivos serán borrados. Los archivos ya entregados siguen descargables desde los enlaces recibidos por correo hasta su vencimiento.",
     "delete_popup_email": "Por seguridad te enviaremos un correo con un enlace y un código: la cuenta se elimina solo tras tu confirmación."
@@ -340,6 +352,9 @@
     "dev_logout": "Abmelden",
     "close_btn": "Schließen",
     "cancel_btn": "Abbrechen",
+    "close_btn_app": "Zurück zur App",
+    "close_popup_title": "Zurück zur App?",
+    "close_popup_p": "Du bleibst auf diesem Gerät angemeldet: Diese Seite kannst du jederzeit über das Konto-Symbol in der App wieder öffnen. Zum Abmelden nutze „Abmelden“.",
     "delete_popup_title": "Dein Konto löschen?",
     "delete_popup_p": "Dein Konto wird endgültig gelöscht: der Auftragsverlauf und die Sitzungen auf allen Geräten werden entfernt. Bereits gelieferte Dateien bleiben über die per E-Mail erhaltenen Links bis zu deren Ablauf herunterladbar.",
     "delete_popup_email": "Zur Sicherheit senden wir dir eine E-Mail mit Link und Code: das Konto wird erst nach deiner Bestätigung gelöscht."
@@ -409,6 +424,9 @@
     "dev_logout": "退出",
     "close_btn": "关闭",
     "cancel_btn": "取消",
+    "close_btn_app": "返回应用",
+    "close_popup_title": "返回应用？",
+    "close_popup_p": "你在此设备上仍保持登录：随时可通过应用中的账户图标重新打开此页面。如需退出，请使用“退出登录”。",
     "delete_popup_title": "删除你的账户？",
     "delete_popup_p": "账户将被永久删除：任务历史和所有设备上的会话都会被清除。已交付的文件在过期前仍可通过邮件中的链接下载。",
     "delete_popup_email": "为安全起见，我们会向你发送一封包含链接和验证码的邮件：账户只有在你确认后才会被删除。"
@@ -478,6 +496,9 @@
     "dev_logout": "साइन आउट",
     "close_btn": "बंद करें",
     "cancel_btn": "रद्द करें",
+    "close_btn_app": "ऐप पर वापस जाएँ",
+    "close_popup_title": "ऐप पर वापस जाएँ?",
+    "close_popup_p": "आप इस डिवाइस पर साइन इन रहेंगे: ऐप में खाता आइकन से आप यह पेज कभी भी फिर खोल सकते हैं। साइन आउट करने के लिए “साइन आउट” का उपयोग करें।",
     "delete_popup_title": "अपना खाता हटाएँ?",
     "delete_popup_p": "आपका खाता स्थायी रूप से हटा दिया जाएगा: जॉब इतिहास और सभी डिवाइस के सत्र मिटा दिए जाएँगे। पहले से डिलीवर की गई फ़ाइलें ईमेल में मिले लिंक से उनकी समाप्ति तक डाउनलोड की जा सकती हैं।",
     "delete_popup_email": "सुरक्षा के लिए हम आपको एक लिंक और कोड वाला ईमेल भेजेंगे: खाता आपकी पुष्टि के बाद ही हटाया जाएगा।"

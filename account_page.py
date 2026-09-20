@@ -12,28 +12,33 @@ _CSS = page_brand.BASE_CSS + (
     ".topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1em;flex-wrap:wrap}"
     ".topbar h1{margin:0 0 .3em;font-size:1.5em}"
     "button.small{padding:.3em .8em;font-size:.85em;white-space:nowrap;margin-top:.3em}"
+    ".topbar .tools{display:flex;gap:.5em;flex-wrap:wrap;margin-top:.3em}"
     ".cnt{display:inline-block;min-width:1.4em;text-align:center;font-size:.85em;border-radius:1em;"
-    "padding:0 .4em;background:var(--acc);color:#fff;margin-left:.3em}"
-    ".tabs{display:flex;gap:.3em;border-bottom:1px solid var(--bd);margin:1.4em 0 0}"
+    "padding:0 .4em;background:var(--ac);color:#fff;margin-left:.3em}"
+    "button.primary .cnt{background:#fff;color:var(--ac)}"
+    ".tabs{display:flex;gap:.3em;border-bottom:1px solid var(--brd);margin:1.4em 0 0}"
     ".tabs button{border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;"
-    "background:transparent;color:var(--mut);margin-bottom:-1px}"
-    ".tabs button[aria-selected=true]{background:#fbf9f6;border-color:var(--bd);color:#222;font-weight:600}"
+    "background:transparent;color:var(--txd);margin-bottom:-1px;font-weight:500}"
+    ".tabs button:hover{background:var(--srf2);border-color:transparent}"
+    ".tabs button[aria-selected=true]{background:var(--srf);border-color:var(--brd);color:var(--tx);font-weight:600}"
     ".panel{padding-top:.4em}"
     "table{width:100%;border-collapse:collapse;margin-top:1em;font-size:.95em}"
-    "th,td{text-align:left;padding:.5em .4em;border-top:1px solid var(--bd);vertical-align:top}"
-    "th{color:var(--mut);font-weight:600;border-top:none}"
-    ".badge{font-size:.8em;border-radius:1em;padding:.1em .6em;background:#eee;color:#444;white-space:nowrap}"
-    ".badge.done{background:#e6f4ea;color:#1e6b34}.badge.error{background:#fdecea;color:#b3261e}"
-    ".badge.running{background:#eef3ff;color:#2c4a8a}.badge.expired{background:#f3f0ea;color:#8a7a62}"
-    ".dl a{margin-right:.6em;white-space:nowrap}"
+    "th,td{text-align:left;padding:.5em .4em;border-top:1px solid var(--brd);vertical-align:top}"
+    "th{color:var(--txd);font-weight:600;border-top:none}"
+    ".badge{font-size:.8em;border-radius:1em;padding:.1em .6em;background:var(--srf2);color:var(--txd);white-space:nowrap}"
+    ".badge.done{background:var(--oks);color:var(--ok)}.badge.error,.badge.cancelled{background:var(--errs);color:var(--err)}"
+    ".badge.running{background:var(--infos);color:var(--info)}.badge.expired{background:var(--srf2);color:var(--txm)}"
+    ".prog{display:block;height:4px;border-radius:2px;background:var(--srf2);margin-top:.4em;overflow:hidden;max-width:8em}"
+    ".prog i{display:block;height:100%;width:0;background:var(--ac);transition:width .6s}"
+    ".dl a{margin-right:.6em;white-space:nowrap;color:var(--ac)}"
     ".voices{list-style:none;padding:0}.voices li{display:flex;align-items:center;gap:.8em;flex-wrap:wrap;"
-    "border-top:1px solid var(--bd);padding:.8em 0}.voices li b{flex:1 1 10em}"
-    "dialog{border:1px solid var(--bd);border-radius:12px;padding:1.2em 1.4em;max-width:min(92vw,680px);"
-    "background:#fff;color:#222}dialog::backdrop{background:rgba(0,0,0,.35)}"
+    "border-top:1px solid var(--brd);padding:.8em 0}.voices li b{flex:1 1 10em}"
+    "dialog{border:1px solid var(--brd);border-radius:12px;padding:1.2em 1.4em;max-width:min(92vw,680px);"
+    "background:var(--srf);color:var(--tx)}dialog::backdrop{background:rgba(0,0,0,.45)}"
     "dialog h2{margin:0 0 .4em;font-size:1.2em}dialog p{margin:.3em 0}"
-    "dialog table{margin-top:.6em}code{font-size:.85em;background:#f3f0ea;padding:.1em .3em;border-radius:4px}"
+    "dialog table{margin-top:.6em}code{font-size:.85em;background:var(--srf2);padding:.1em .3em;border-radius:4px}"
     "@media(max-width:600px){table,thead,tbody,tr,td,th{display:block}thead{display:none}"
-    "td{border-top:none;padding:.15em 0}tr{border-top:1px solid var(--bd);padding:.6em 0}}"
+    "td{border-top:none;padding:.15em 0}tr{border-top:1px solid var(--brd);padding:.6em 0}}"
 )
 
 
@@ -62,7 +67,7 @@ def page_html(t, lang, title, body_html, h1=True):
         f"<!doctype html><html lang=\"{_e(lang)}\"><head><meta charset=\"utf-8\">"
         f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<meta name=\"robots\" content=\"noindex,nofollow\">"
-        f"<title>{brand} - {_e(title)}</title><style>{_CSS}</style></head>"
+        f"<title>{brand} - {_e(title)}</title>{page_brand.THEME_SCRIPT}<style>{_CSS}</style></head>"
         f"<body><a class=\"brand\" href=\"/\">{page_brand.LOGO_SVG}<span>{brand}</span></a>"
         f"{heading}{body_html}</body></html>"
     )
@@ -141,6 +146,19 @@ def _devices_dialog(t, sessions, current_sid):
     )
 
 
+def _close_dialog(t):
+    """Conferma del «Torna all'app»: spiega che la sessione resta aperta
+    (chiudere non e' uscire). Il bottone di conferma ha il fuoco iniziale:
+    Invio conferma, Esc annulla."""
+    return (
+        f"<dialog id=\"acctCloseDlg\"><h2>{_e(t['close_popup_title'])}</h2>"
+        f"<p>{_e(t['close_popup_p'])}</p>"
+        f"<div class=\"actions\"><button type=\"button\" class=\"primary\" id=\"acctCloseConfirm\" autofocus>"
+        f"{_e(t['close_btn_app'])}</button>"
+        f"<button type=\"button\" data-close>{_e(t['cancel_btn'])}</button></div></dialog>"
+    )
+
+
 def _delete_dialog(t):
     return (
         f"<dialog id=\"acctDeleteDlg\"><h2>{_e(t['delete_popup_title'])}</h2>"
@@ -172,6 +190,10 @@ _HISTORY_JS = (
     ".then(function(r){return r.json();}).then(function(d){"
     "if(d&&d.current){location.href='/';}else{location.reload();}})"
     ".catch(function(){b.disabled=false;});});});"
+    "var cl=document.getElementById('acctClose'),cd=document.getElementById('acctCloseDlg'),"
+    "cc=document.getElementById('acctCloseConfirm');"
+    "if(cl)cl.onclick=function(){openDlg(cd);if(cc)cc.focus();};"
+    "if(cc)cc.onclick=function(){location.href='/';};"
     "var la=document.getElementById('acctLogoutAll');"
     "if(la)la.onclick=function(){la.disabled=true;post('/api/auth/logout_all').then(function(){location.href='/';});};"
     "document.getElementById('acctLogout').onclick=function(){post('/api/auth/logout').then(function(){location.href='/';});};"
@@ -180,6 +202,21 @@ _HISTORY_JS = (
     "if(del)del.onclick=function(){openDlg(ddl);};"
     "if(dc)dc.onclick=function(){dc.disabled=true;post('/api/account/delete_request').then(function(){"
     "closeDlg(ddl);del.disabled=true;document.getElementById('acctDeleteSent').hidden=false;});};"
+    "var live=document.querySelectorAll('[data-job]');"
+    "var ids=[];live.forEach(function(el){ids.push(el.getAttribute('data-job'));});"
+    "var ENDED={done:1,partial:1,error:1,cancelled:1,interrupted:1};"
+    "function reloadOnce(id){var k='acct_rl_'+id;try{if(sessionStorage.getItem(k))return;"
+    "sessionStorage.setItem(k,'1');}catch(e){}location.reload();}"
+    "function tick(){if(!ids.length)return;"
+    "fetch('/api/account/progress?ids='+encodeURIComponent(ids.join(',')),{credentials:'same-origin'})"
+    ".then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d||!d.jobs)return;"
+    "var keep=[];ids.forEach(function(id){var j=d.jobs[id];if(!j)return;"
+    "if(ENDED[j.status]){reloadOnce(id);return;}keep.push(id);"
+    "var el=document.querySelector('[data-job=\"'+id+'\"]');if(!el)return;"
+    "var p=el.querySelector('.pct'),bar=el.querySelector('.prog i');"
+    "if(p)p.textContent=j.pct>0?' \u00b7 '+j.pct+'%':'';if(bar)bar.style.width=(j.pct||0)+'%';});"
+    "ids=keep;if(ids.length)setTimeout(tick,3000);}).catch(function(){setTimeout(tick,10000);});}"
+    "if(ids.length)tick();"
     "})();</script>"
 )
 
@@ -197,9 +234,10 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
     n_sess = len(sessions or [])
     parts = [
         "<div class=\"topbar\">"
-        f"<h1>{_e(t['history_title'])}</h1>"
+        f"<h1>{_e(t['history_title'])}</h1><div class=\"tools\">"
+        f"<button type=\"button\" class=\"small primary\" id=\"acctClose\" autofocus>{_e(t['close_btn_app'])}</button>"
         f"<button type=\"button\" class=\"small\" id=\"acctDevices\">{_e(t['devices_btn'])}"
-        f"<span class=\"cnt\">{n_sess}</span></button></div>",
+        f"<span class=\"cnt\">{n_sess}</span></button></div></div>",
         f"<p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong></p>",
         "<nav class=\"tabs\" role=\"tablist\">"
         f"<button type=\"button\" role=\"tab\" data-tab=\"books\" aria-selected=\"{'true' if tab == 'books' else 'false'}\">"
@@ -238,10 +276,17 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             bits = [_e(b) for b in (fmt, voice) if b]
             if bits:
                 book += f" <span class=\"meta\">{' &middot; '.join(bits)}</span>"
+            st_cell = f"<span class=\"badge {_e(status)}\">{_e(t.get('status_' + status, status))}"
+            if status == "running":
+                # Il JS della pagina interroga /api/account/progress e riempie
+                # .pct e la barra; se il job non e' piu' in memoria resta cosi'.
+                st_cell = (f"<td data-job=\"{_e(r.get('job_id') or '')}\">{st_cell}<span class=\"pct\"></span></span>"
+                           f"<span class=\"prog\"><i></i></span></td>")
+            else:
+                st_cell = f"<td>{st_cell}</span></td>"
             parts.append(
                 f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td>{book}</td>"
-                f"<td>{_e(t.get('kind_' + kind, kind))}</td>"
-                f"<td><span class=\"badge {_e(status)}\">{_e(t.get('status_' + status, status))}</span></td>"
+                f"<td>{_e(t.get('kind_' + kind, kind))}</td>{st_cell}"
                 f"<td class=\"dl\">{cell}</td></tr>")
         parts.append("</tbody></table>")
         pages = max(1, (int(total) + per_page - 1) // per_page)
@@ -272,6 +317,6 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         f"<button type=\"button\" class=\"danger\" id=\"acctDelete\">{_e(t['delete_account'])}</button>"
         "</div>"
         f"<p class=\"meta\" id=\"acctDeleteSent\" hidden>{_e(t['delete_sent'])}</p>"
-        + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t) + _HISTORY_JS
+        + _close_dialog(t) + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t) + _HISTORY_JS
     )
     return page_html(t, lang, t["history_title"], "".join(parts), h1=False)

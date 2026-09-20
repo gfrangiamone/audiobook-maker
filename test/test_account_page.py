@@ -163,6 +163,43 @@ def test_account_page_delete_dialog(logged):
     assert "/api/account/delete_request" in html
 
 
+def test_account_page_close_button_and_dialog(logged):
+    c, acct = logged
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    # bottone di chiusura nella topbar, azione default (autofocus), prima dei dispositivi
+    head = html.split("Connesso come")[0]
+    assert 'id="acctClose" autofocus>Torna all&#x27;app</button>' in head
+    assert head.index('id="acctClose"') < head.index('id="acctDevices"')
+    # popup di conferma: spiega che la sessione resta aperta; conferma col fuoco
+    assert '<dialog id="acctCloseDlg">' in html
+    assert "Tornare all&#x27;app?" in html and "Resti connesso su questo dispositivo" in html
+    assert 'id="acctCloseConfirm" autofocus>' in html
+    assert "cc.onclick=function(){location.href='/';}" in html
+
+
+def test_account_page_theme_and_app_style(logged):
+    c, acct = logged
+    html = c.get("/account").data.decode()
+    # script tema PRIMA del CSS: stessa chiave della SPA, niente lampo chiaro
+    assert html.index("localStorage.getItem('abm_th')") < html.index("<style>")
+    assert "[data-theme=dark]{" in html
+    # variabili con i nomi della SPA; bottoni bianchi col testo accento
+    assert "--ac:#c47a2a" in html and "--ac:#f0a050" in html
+    assert "background:var(--srf);color:var(--ac)" in html
+    assert "#f6f3ee" not in html and "color:#222" not in html
+
+
+def test_account_page_running_row_polls_progress(logged):
+    c, acct = logged
+    accounts.record_job(acct["id"], "jrun", kind="generate", book_title="R", status="running")
+    accounts.record_job(acct["id"], "jdone", kind="generate", book_title="D", status="done")
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    assert '<td data-job="jrun"><span class="badge running">In corso<span class="pct"></span></span>' in html
+    assert '<span class="prog"><i></i></span>' in html
+    assert 'data-job="jdone"' not in html
+    assert "/api/account/progress?ids=" in html
+
+
 def test_api_jobs_pagination_and_shape(logged, monkeypatch):
     c, acct = logged
     for i in range(3):

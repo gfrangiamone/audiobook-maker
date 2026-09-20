@@ -304,6 +304,37 @@ def test_logout_device(client, env):
         "/api/auth/logout_device", json={"id": "x"}).status_code == 401
 
 
+def test_account_progress(client, env, monkeypatch):
+    assert client.get("/api/account/progress?ids=j1").status_code == 401
+    client.post("/api/auth/request", json={"email": "a@b.it"})
+    code = env[0][2]["code"]
+    client.post("/api/auth/verify", json={"email": "a@b.it", "code": code})
+    acct = accounts.account_for_email("a@b.it")
+    tok2, _ = accounts.request_code("c@d.it", "login")
+    acct2 = accounts.verify(token=tok2)[1]
+    accounts.record_job(acct["id"], "j1", kind="generate", status="running")
+    accounts.record_job(acct["id"], "j2", kind="generate", status="running")
+    accounts.record_job(acct2["id"], "j3", kind="generate", status="running")
+    fake = {
+        "j1": {"status": "generating", "progress_current": 37, "progress_total": 100,
+               "progress_message": "cap 3", "client_id": "altro-dispositivo"},
+        "j3": {"status": "generating", "progress_current": 1, "progress_total": 2},
+        "j4": {"status": "done"},
+    }
+    monkeypatch.setattr(audiobook_app, "jobs", fake)
+    r = client.get("/api/account/progress?ids=j1,j2,j3,j4, ,")
+    assert r.status_code == 200
+    assert r.headers["Cache-Control"] == "no-store"
+    d = r.get_json()["jobs"]
+    # j1: dell'account, in memoria, anche se partito da un altro cid
+    assert d["j1"] == {"status": "generating", "current": 37, "total": 100, "pct": 37, "message": "cap 3"}
+    # j2: non in memoria; j3: di un altro account; j4: mai registrato
+    assert set(d) == {"j1"}
+    fake["j1"]["status"] = "done"
+    fake["j1"]["server_interrupted"] = True
+    assert client.get("/api/account/progress?ids=j1").get_json()["jobs"]["j1"]["status"] == "interrupted"
+
+
 def test_login_stores_humanized_device_name(client, env):
     client.post("/api/auth/request", json={"email": "a@b.it"})
     code = env[0][2]["code"]

@@ -14147,12 +14147,10 @@ def api_generate():
     return jsonify(_resp)
 
 
-@app.route("/api/job_status/<job_id>")
-def api_job_status(job_id):
-    job, err, sc = _check_job_owner(job_id)
-    if err is not None:
-        return ({"error": "Not found"} if sc == 404 else {"error": "Forbidden"}), sc
-
+def _job_progress_info(job):
+    """Stato e percentuale di un job in memoria, come li mostra la SPA.
+    Usato da /api/job_status (cookie cid) e da /api/account/progress (sessione
+    account): un solo calcolo, due autorizzazioni."""
     st = job.get("status", "")
     cur, tot = 0, 0
     pct = 0
@@ -14180,6 +14178,41 @@ def api_job_status(job_id):
         "pct": pct,
         "message": job.get("progress_message", "") or job.get("opt_progress_message", "")
     }
+
+
+@app.route("/api/job_status/<job_id>")
+def api_job_status(job_id):
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return ({"error": "Not found"} if sc == 404 else {"error": "Forbidden"}), sc
+    return _job_progress_info(job)
+
+
+@app.route("/api/account/progress", methods=["GET"])
+def api_account_progress():
+    """Avanzamento dei job dell'account per la pagina /account (`?ids=a,b`).
+    Autorizza la sessione account, non il cookie cid: il job puo' essere
+    partito da un altro dispositivo. Job non piu' in memoria: assenti dalla
+    risposta (la pagina lascia il badge com'e')."""
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    ids = [i.strip() for i in (request.args.get("ids") or "").split(",") if i.strip()][:50]
+    out = {}
+    for jid in ids:
+        job = jobs.get(jid)
+        if job is None or accounts.job_owner(jid) != acct["id"]:
+            continue
+        info = _job_progress_info(job)
+        if job.get("server_interrupted"):
+            info["status"] = "interrupted"
+        out[jid] = info
+    resp = jsonify({"jobs": out})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/api/progress/<job_id>")
