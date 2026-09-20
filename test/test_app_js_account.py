@@ -18,6 +18,7 @@ ACCT_KEYS = [
     "acct_email_ph", "acct_send_code", "acct_code_ph", "acct_code_intro", "acct_verify",
     "acct_err_wrong", "acct_err_expired", "acct_err_locked", "acct_err_none",
     "acct_err_rate", "acct_err_generic", "acct_forced_notice", "acct_signed_in_as",
+    "acct_logged_out",
 ]
 
 
@@ -98,6 +99,20 @@ def test_auto_batch_notice_uses_account_wording_when_logged_in():
     assert "_acctLoggedIn()" in fn and "acct_forced_notice" in fn
     lock = _extract_fn("_lockEmailLateBoxAutoBatch")
     assert "_acctLoggedIn()" in lock  # niente link "cambia indirizzo"
+
+
+def test_login_and_logout_give_feedback_toast():
+    # Icona piena + pallino (CSS) da soli si notano poco: al login e al
+    # logout parte anche un toast con l'email / "Disconnesso".
+    v = _extract_fn("_acctVerify")
+    assert "_acctToast(t('acct_signed_in_as'" in v
+    assert v.index("closeLoginModal()") < v.index("_acctToast(") < v.index("if(after){after();return}")
+    lo = _extract_fn("_acctLogout")
+    assert "_acctToast(t('acct_logged_out'))" in lo
+    toast = _extract_fn("_acctToast")
+    assert "textContent=text" in toast and "innerHTML" not in toast
+    css = Path("static/css/style.css").read_text(encoding="utf-8")
+    assert ".acct-btn.on{background:var(--ac" in css and ".acct-btn.on::after" in css
 
 
 @pytest.mark.parametrize("key", ACCT_KEYS)

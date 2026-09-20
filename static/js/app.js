@@ -7109,6 +7109,7 @@ async function _acctVerify(){
     const after=_acctAfterLogin;
     _acctAfterLogin=null;
     closeLoginModal();
+    _acctToast(t('acct_signed_in_as',{email:d.email||_acctPendingEmail||''}));
     if(after){after();return}
     // ricarica lo stato dal server (email, lingua, piano)
     try{const m=await fetch('/api/auth/me',{cache:'no-store'});_acctMe=m.ok?await m.json():_acctMe}catch(e){}
@@ -7130,6 +7131,24 @@ async function _acctLogout(){
   try{await fetch('/api/auth/logout',{method:'POST'})}catch(e){}
   _acctMe=_acctMe?{enabled:_acctMe.enabled,logged_in:false}:null;
   _acctRender();
+  _acctToast(t('acct_logged_out'));
+}
+
+// Conferma breve in cima alla pagina (stesso stile del toast download,
+// senza spinner): l'icona cambia stato, ma il cambio da solo si nota poco.
+let _acctToastEl=null,_acctToastTimer=null;
+function _acctToast(text){
+  if(!text)return;
+  if(!_acctToastEl){
+    _acctToastEl=document.createElement('div');
+    _acctToastEl.className='dl-toast acct-toast';
+    _acctToastEl.setAttribute('role','status');
+    document.body.appendChild(_acctToastEl);
+  }
+  _acctToastEl.textContent=text;
+  requestAnimationFrame(()=>_acctToastEl.classList.add('show'));
+  clearTimeout(_acctToastTimer);
+  _acctToastTimer=setTimeout(()=>{if(_acctToastEl)_acctToastEl.classList.remove('show')},4000);
 }
 
 function _acctApplyForcedEmail(){

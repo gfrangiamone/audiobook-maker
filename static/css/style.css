@@ -85,7 +85,11 @@ body{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','N
 .theme-btn{background:#fff;border:1px solid #E8D9C4;color:#8B7B6B;width:34px;height:28px;border-radius:6px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0}
 [data-theme="dark"] .theme-btn{background:#2a2520;border-color:#4a3f32;color:#a09080}
 .acct-wrap{position:relative;flex-shrink:0}
-.acct-btn.on{color:var(--ac,#b5651d);border-color:currentColor}
+.acct-btn.on{background:var(--ac,#b5651d);border-color:var(--ac,#b5651d);color:#fff}
+.acct-btn.on:hover{color:#fff;filter:brightness(1.08)}
+.acct-btn.on::after{content:'';position:absolute;right:-3px;top:-3px;width:9px;height:9px;border-radius:50%;background:#2ea043;border:2px solid var(--srf,#fff)}
+.acct-btn{position:relative}
+.acct-toast{background:#2ea043}
 .acct-menu{position:absolute;right:0;top:34px;min-width:200px;background:var(--srf);border:1px solid var(--brd);border-radius:var(--rs);box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px;z-index:900;display:flex;flex-direction:column;gap:2px}
 .acct-menu-email{font-size:.78rem;color:var(--txm);padding:6px 10px;border-bottom:1px solid var(--brd);margin-bottom:4px;word-break:break-all}
 .acct-menu-item{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:6px;font:inherit;font-size:.88rem;color:var(--tx);cursor:pointer;text-decoration:none}
