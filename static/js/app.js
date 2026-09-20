@@ -483,6 +483,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Il job vive sul server: se questa pagina e' un reload durante una
   // lavorazione, riagganciamola invece di ripartire dal form.
   if(typeof _restoreActiveJob==='function')_restoreActiveJob();
+  if(typeof _acctBoot==='function')_acctBoot();
 });
 
 let outputFormat='m4b';
@@ -3337,6 +3338,11 @@ async function submitEmailLateTr(){
   try{
     const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId,email:email,download_type:'translated',lang:cl})});
     const d=await r.json();
+    if(d.error_code==='logged_in_email_forced'){
+      const area=document.getElementById('emailLateAreaTr');
+      _setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||''}));
+      return;
+    }
     if(d.error){alert(d.error);return}
     trEmailRegistered=true;
     const area=document.getElementById('emailLateAreaTr');
@@ -4341,8 +4347,10 @@ function _showAutoBatchNotice(maskedEmail){
     if(host&&host.parentNode){host.parentNode.insertBefore(n,host);}
     else if(host){host.appendChild(n);}
   }
-  const tmpl=t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.";
-  n.textContent=tmpl.replace('{email}',maskedEmail);
+  // Utente con account: la notifica e' forzata sull'email dell'account, non
+  // e' un effetto del pagamento. Wording dedicato, email in chiaro.
+  const tmpl=_acctLoggedIn()?t('acct_forced_notice'):(t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.");
+  n.textContent=tmpl.replace('{email}',_acctLoggedIn()?_acctMe.email:maskedEmail);
   n.style.display='block';
   _lockEmailLateBoxAutoBatch(maskedEmail);
 }
@@ -4363,6 +4371,8 @@ function _lockEmailLateBoxAutoBatch(maskedEmail){
   }
   const btn=document.getElementById('btnSubmitEmailLate');
   if(btn)btn.disabled=true;
+  // Da loggati l'indirizzo non e' cambiabile (409 lato server): niente link.
+  if(_acctLoggedIn()){const a=document.getElementById('emailLateArea');if(a)a.classList.remove('visible');return}
   _addAutoBatchChangeEmailLink();
 }
 
@@ -5872,6 +5882,11 @@ async function submitEmailLate(){
     if(dlType==='podcast'){const urlInput=document.getElementById('podcastUrlInput');latePayload.base_url=urlInput?urlInput.value.trim():'';}
     const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(latePayload)});
     const d=await r.json();
+    if(d.error_code==='logged_in_email_forced'){
+      const area=document.getElementById('emailLateArea');
+      _setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||''}));
+      return;
+    }
     if(d.error){alert(d.error);return}
     emailRegistered=true;
     const noticeEl=document.getElementById('genActiveNoticeText');
@@ -6876,3 +6891,172 @@ function tryGoToAudioSettings(){
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
   else init();
 })();
+
+// ═══════════════════ ACCOUNT (magic link + codice) ═══════════════════
+// Il bottone e la modale esistono solo se /api/auth/me risponde enabled:true.
+// Da loggati la consegna e' sempre via email all'indirizzo dell'account
+// (Task 7 lato server): la SPA nasconde i campi email manuali e lo dice.
+let _acctMe=null;
+let _acctPendingEmail='';
+let _acctAfterLogin=null;
+
+function _acctLoggedIn(){return !!(_acctMe&&_acctMe.logged_in&&_acctMe.email)}
+
+async function _acctBoot(){
+  try{
+    const r=await fetch('/api/auth/me',{cache:'no-store'});
+    _acctMe=r.ok?await r.json():null;
+  }catch(e){_acctMe=null}
+  _acctRender();
+  // ?login=1 nell'URL (redirect di /account senza sessione) apre la modale.
+  let wantLogin=false;
+  try{wantLogin=new URLSearchParams(location.search).get('login')==='1'}catch(e){}
+  if(wantLogin&&_acctMe&&_acctMe.enabled){
+    try{history.replaceState(null,'',location.pathname)}catch(e){}
+    if(_acctLoggedIn()){location.href='/account';return}
+    _acctAfterLogin=function(){location.href='/account'};
+    openLoginModal();
+  }
+}
+
+function _acctRender(){
+  const btn=document.getElementById('acctBtn');
+  const menu=document.getElementById('acctMenu');
+  if(!btn)return;
+  const on=!!(_acctMe&&_acctMe.enabled);
+  btn.style.display=on?'':'none';
+  btn.classList.toggle('on',_acctLoggedIn());
+  btn.title=_acctLoggedIn()?t('acct_signed_in_as',{email:_acctMe.email}):t('acct_login');
+  btn.setAttribute('aria-label',btn.title);
+  if(menu){
+    menu.style.display='none';
+    btn.setAttribute('aria-expanded','false');
+    const em=document.getElementById('acctMenuEmail');
+    if(em)em.textContent=_acctLoggedIn()?_acctMe.email:'';
+  }
+  _acctApplyForcedEmail();
+}
+
+function _acctBtnClick(){
+  if(!_acctLoggedIn()){openLoginModal();return}
+  const menu=document.getElementById('acctMenu');
+  const btn=document.getElementById('acctBtn');
+  if(!menu)return;
+  const open=menu.style.display!=='none';
+  menu.style.display=open?'none':'';
+  if(btn)btn.setAttribute('aria-expanded',open?'false':'true');
+}
+document.addEventListener('click',function(ev){
+  const wrap=document.getElementById('acctWrap');
+  const menu=document.getElementById('acctMenu');
+  if(menu&&wrap&&!wrap.contains(ev.target)&&menu.style.display!=='none'){
+    menu.style.display='none';
+    const btn=document.getElementById('acctBtn');if(btn)btn.setAttribute('aria-expanded','false');
+  }
+});
+
+function _acctShowErr(msg){
+  const e=document.getElementById('acctErr');
+  if(!e)return;
+  if(!msg){e.style.display='none';e.textContent='';return}
+  e.textContent=msg;e.style.display='block';
+}
+
+function openLoginModal(){
+  const m=document.getElementById('loginModal');
+  if(!m)return;
+  _acctShowErr('');
+  const se=document.getElementById('acctStepEmail'), sc=document.getElementById('acctStepCode');
+  if(se)se.style.display='';
+  if(sc)sc.style.display='none';
+  const sb=document.getElementById('acctSendBtn'), vb=document.getElementById('acctVerifyBtn');
+  if(sb){sb.style.display='';sb.disabled=false}
+  if(vb)vb.style.display='none';
+  const inp=document.getElementById('acctEmail');
+  if(inp){
+    inp.placeholder=t('acct_email_ph');
+    if(!inp.value){try{inp.value=(localStorage.getItem('abm_v_email')||'').trim()}catch(e){}}
+  }
+  const code=document.getElementById('acctCode');
+  if(code){code.placeholder=t('acct_code_ph');code.value=''}
+  m.classList.add('open');
+  try{inp&&inp.focus()}catch(e){}
+}
+function closeLoginModal(){const m=document.getElementById('loginModal');if(m)m.classList.remove('open');_acctAfterLogin=null}
+
+async function _acctRequest(){
+  const inp=document.getElementById('acctEmail');
+  const email=((inp&&inp.value)||'').trim();
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){_acctShowErr(t('acct_err_generic'));return}
+  _acctShowErr('');
+  const sb=document.getElementById('acctSendBtn');if(sb)sb.disabled=true;
+  try{
+    const r=await fetch('/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,lang:cl})});
+    if(r.status===429){_acctShowErr(t('acct_err_rate'));if(sb)sb.disabled=false;return}
+    if(!r.ok){_acctShowErr(t('acct_err_generic'));if(sb)sb.disabled=false;return}
+    _acctPendingEmail=email;
+    try{localStorage.setItem('abm_v_email',email)}catch(e){}
+    const se=document.getElementById('acctStepEmail'), sc=document.getElementById('acctStepCode');
+    if(se)se.style.display='none';
+    if(sc)sc.style.display='';
+    const intro=document.getElementById('acctCodeIntro');
+    if(intro)intro.textContent=t('acct_code_intro',{email:email});
+    if(sb)sb.style.display='none';
+    const vb=document.getElementById('acctVerifyBtn');if(vb){vb.style.display='';vb.disabled=false}
+    const code=document.getElementById('acctCode');try{code&&code.focus()}catch(e){}
+  }catch(e){_acctShowErr(t('acct_err_generic'));if(sb)sb.disabled=false}
+}
+
+async function _acctVerify(){
+  const code=((document.getElementById('acctCode')||{}).value||'').replace(/\D/g,'');
+  if(code.length!==6){_acctShowErr(t('acct_err_wrong'));return}
+  _acctShowErr('');
+  const vb=document.getElementById('acctVerifyBtn');if(vb)vb.disabled=true;
+  try{
+    const r=await fetch('/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_acctPendingEmail,code:code})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok){
+      const k={wrong:'acct_err_wrong',expired:'acct_err_expired',locked:'acct_err_locked',none:'acct_err_none'}[d.error_code]||'acct_err_generic';
+      _acctShowErr(t(k));
+      if(vb)vb.disabled=false;
+      // codice scaduto/bloccato/inesistente: si torna al primo passo
+      if(d.error_code&&d.error_code!=='wrong'){const se=document.getElementById('acctStepEmail'),sc=document.getElementById('acctStepCode'),sb=document.getElementById('acctSendBtn');if(se)se.style.display='';if(sc)sc.style.display='none';if(sb){sb.style.display='';sb.disabled=false}if(vb)vb.style.display='none'}
+      return;
+    }
+    const after=_acctAfterLogin;
+    _acctAfterLogin=null;
+    closeLoginModal();
+    if(after){after();return}
+    // ricarica lo stato dal server (email, lingua, piano)
+    try{const m=await fetch('/api/auth/me',{cache:'no-store'});_acctMe=m.ok?await m.json():_acctMe}catch(e){}
+    if(!_acctLoggedIn()&&d.email)_acctMe={enabled:true,logged_in:true,email:d.email};
+    // Si resta sulla pagina: un login a meta' lavorazione non tocca il job in
+    // corso (il server vincola solo i job avviati da loggati).
+    _acctRender();
+  }catch(e){_acctShowErr(t('acct_err_generic'));if(vb)vb.disabled=false}
+}
+
+async function _acctLogout(){
+  try{await fetch('/api/auth/logout',{method:'POST'})}catch(e){}
+  _acctMe=_acctMe?{enabled:_acctMe.enabled,logged_in:false}:null;
+  _acctRender();
+}
+
+function _acctApplyForcedEmail(){
+  // Da loggati: niente campi email manuali (il server li rifiuterebbe con
+  // 409), un banner che dice dove arriva la notifica.
+  const on=_acctLoggedIn();
+  const notice=document.getElementById('acctForcedNotice');
+  if(notice){
+    notice.style.display=on?'block':'none';
+    if(on)notice.textContent=t('acct_forced_notice',{email:_acctMe.email});
+  }
+  ['emailLateArea','emailLateAreaTr'].forEach(function(id){
+    const a=document.getElementById(id);
+    if(!a)return;
+    if(on){a.classList.remove('visible');a.dataset.acctHidden='1'}
+    else if(a.dataset.acctHidden){delete a.dataset.acctHidden}
+  });
+  const pn=document.getElementById('payEmailNotice');
+  if(pn)pn.textContent=on?t('acct_forced_notice',{email:_acctMe.email}):t('pay_email_notice');
+}
