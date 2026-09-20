@@ -40,7 +40,7 @@ from copy import copy
 from pathlib import Path
 
 from flask import (
-    Flask, request, jsonify,
+    Flask, request, jsonify, g,
     send_file, Response, stream_with_context, redirect, after_this_request, abort
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -147,6 +147,9 @@ import community_store
 import community_translator
 import community_moderator
 import pending_jobs
+import db
+import accounts
+import account_page
 import tts_backend_state
 import user_stats
 
@@ -167,6 +170,13 @@ try:
         _VC_PAGES_I18N = json.load(_f)
 except Exception as _e:
     print(f"WARNING: Could not load i18n/voice_clone_pages.json: {_e}", file=sys.stderr)
+
+_ACCT_PAGES_I18N = {}
+try:
+    with open(SCRIPT_DIR / "i18n" / "account_pages.json", encoding="utf-8") as _f:
+        _ACCT_PAGES_I18N = json.load(_f)
+except Exception as _e:
+    print(f"WARNING: Could not load i18n/account_pages.json: {_e}", file=sys.stderr)
 
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
 # (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
@@ -391,6 +401,20 @@ pending_jobs.init()  # richiede community_store.init() già chiamato
 tts_backend_state.init(_DATA_DIR)
 voice_clone.init(_DATA_DIR)
 voice_clone_audio.init(_DATA_DIR)
+
+# Account opzionali (SQLite): il DB apre sempre, l'interruttore e' ABM_ACCOUNT_ENABLE.
+try:
+    db.init(_DATA_DIR)
+    accounts.init_schema()
+    accounts.configure(
+        payments_path=Path(_DATA_DIR) / "_payments.json",
+        voice_clone_ids_for_email_fn=voice_clone.ids_for_email,
+        link_voice_fn=voice_clone.link_account,
+        log_fn=lambda m: print(m, flush=True),
+    )
+    print(f"[startup] accounts: {'enabled' if accounts.enabled() else 'disabled'} ({db.DB_FILENAME})")
+except Exception as e:
+    print(f"[startup] accounts init failed (feature disabled): {e}", flush=True)
 
 if gemini_tts is not None:
     def _on_tts_backend_switch(model_key, reason, detail, job_id):
@@ -10734,6 +10758,270 @@ _PREVIEW_RL_PER_HOUR = int(os.environ.get("ABM_PREVIEW_RL_PER_HOUR", "200"))
 def _hash_ip(ip: str) -> str:
     h = hashlib.sha256((_IP_SALT + ":" + (ip or "")).encode("utf-8")).hexdigest()
     return h[:16]
+
+
+# ===========================================================================
+# Account: sessione, gate, pagine e route di autenticazione
+# ===========================================================================
+
+_ACCOUNT_SESSION_COOKIE = "abm_session"
+_ACCT_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def _acct_err(code, msg, status, **extra):
+    return jsonify({"error": msg, "error_code": code, **extra}), status
+
+
+def _acct_gate():
+    """None se la feature e' usabile, altrimenti la risposta 404 da ritornare."""
+    if not accounts.enabled() or not _smtp_available():
+        return _acct_err("account_disabled", "Accounts are not available", 404)
+    return None
+
+
+def _acct_session_token():
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.cookies.get(_ACCOUNT_SESSION_COOKIE, "")
+
+
+def _current_account():
+    """Account della richiesta corrente o None. Cache in flask.g."""
+    if hasattr(g, "_acct"):
+        return g._acct
+    acct = None
+    try:
+        if accounts.enabled():
+            acct = accounts.resolve_session(_acct_session_token())
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING _current_account: {e}", flush=True)
+    g._acct = acct
+    return acct
+
+
+def _acct_cookie_secure():
+    if (BASE_URL or "").startswith("https"):
+        return True
+    return (request.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+
+
+def _acct_set_cookie(resp, token):
+    resp.set_cookie(_ACCOUNT_SESSION_COOKIE, token, max_age=accounts.SESSION_DAYS * 86400,
+                    httponly=True, samesite="Lax", secure=_acct_cookie_secure(), path="/")
+
+
+def _acct_clear_cookie(resp):
+    resp.set_cookie(_ACCOUNT_SESSION_COOKIE, "", max_age=0, expires=0, httponly=True,
+                    samesite="Lax", secure=_acct_cookie_secure(), path="/")
+
+
+def _acct_log(op, email, extra=""):
+    """Business log senza email in chiaro: sid = acct-<hash8>."""
+    try:
+        sid = "acct-" + accounts.email_hash(email)[:8]
+        _log_activity(sid, extra, op, client_id=_get_client_id(), client_ip=_client_ip())
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING _acct_log: {e}", flush=True)
+
+
+def _acct_page_lang():
+    lang = _get_browser_lang()
+    return lang if lang in _ACCT_PAGES_I18N else "en"
+
+
+def _acct_txt(lang):
+    t = dict(_ACCT_PAGES_I18N.get("en") or {})
+    t.update(_ACCT_PAGES_I18N.get(lang) or {})
+    return t
+
+
+def _acct_html(html_doc, status=200):
+    resp = _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))
+    resp.headers["Vary"] = "Accept-Language, Cookie"
+    return resp
+
+
+def _acct_peek_token(token, purpose):
+    """Stato del token senza consumarlo (solo per il GET di /auth/<token>).
+
+    `accounts.verify()` consuma il codice non appena riconosce lo stato
+    "ok", quindi non e' riusabile per una lettura innocua: qui si rilegge
+    direttamente `auth_codes` (stesso hash di accounts._sha, sha256 nudo,
+    nessun segreto) tramite `db.tx()`, senza toccare accounts.py.
+    """
+    if not token:
+        return "none"
+    with db.tx() as c:
+        row = c.execute(
+            "SELECT expires_at, consumed_at, attempts FROM auth_codes "
+            "WHERE token_hash=? AND purpose=?",
+            (hashlib.sha256(token.encode("utf-8")).hexdigest(), purpose),
+        ).fetchone()
+    if row is None or row["consumed_at"] is not None:
+        return "none"
+    if row["expires_at"] <= int(time.time()):
+        return "expired"
+    if row["attempts"] >= accounts.CODE_MAX_ATTEMPTS:
+        return "locked"
+    return "ok"
+
+
+def _acct_send_code(email, purpose, lang):
+    """Genera e spedisce il codice. Sempre silenzioso: risposta neutra a monte."""
+    try:
+        out = accounts.request_code(email, purpose, lang, ip_hash=_hash_ip(_client_ip()),
+                                    ua=request.headers.get("User-Agent", ""))
+        if out is None:
+            return
+        token, code = out
+        link = f"{BASE_URL}/auth/{token}" + ("?p=delete" if purpose == "delete" else "")
+        email_service.send_account_code(
+            email, lang, code=code, link_url=link,
+            purpose=purpose, minutes=accounts.CODE_TTL_MIN)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING _acct_send_code: {type(e).__name__}: {e}", flush=True)
+
+
+def _acct_do_delete(acct, lang):
+    """Cancellazione confermata: DB, log, email di cortesia (best-effort)."""
+    accounts.delete_account(acct["id"])
+    _acct_log("ACCOUNT_DELETE", acct["email"])
+    try:
+        email_service.send_account_deleted(acct["email"], acct.get("lang") or lang)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING send_account_deleted: {e}", flush=True)
+
+
+def _acct_login_response(acct, payload=None):
+    """Apre la sessione, logga, imposta il cookie. `session_token` solo per
+    l'app (header X-ABM-Cid), che non usa i cookie."""
+    token = accounts.open_session(acct["id"],
+                                  device_name=(request.headers.get("User-Agent") or "")[:80],
+                                  ip_hash=_hash_ip(_client_ip()))
+    _acct_log("ACCOUNT_LOGIN", acct["email"])
+    body = {"ok": True, "email": acct["email"], "lang": acct.get("lang") or "en",
+            "plan": acct.get("plan") or "free"}
+    if payload is not None:
+        body.update(payload)
+    if (request.headers.get(_MOBILE_CID_HEADER) or "").strip():
+        body["session_token"] = token
+    resp = jsonify(body)
+    _acct_set_cookie(resp, token)
+    return resp
+
+
+@app.route("/api/auth/request", methods=["POST"])
+def api_auth_request():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    ip = _client_ip()
+    allowed, retry = _ip_rl_check("auth_request", ip, 5, 30)
+    if not allowed:
+        return _acct_err("rate_limited", "Too many requests", 429, retry_after=retry)
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not _ACCT_EMAIL_RE.match(email):
+        return _acct_err("invalid_email", "Invalid email address", 400)
+    lang = (data.get("lang") or _get_browser_lang() or "en")[:8]
+    _acct_send_code(email, "login", lang)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/verify", methods=["POST"])
+def api_auth_verify():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    token = (data.get("token") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    code = (data.get("code") or "").strip()
+    if token:
+        status, acct = accounts.verify(token=token, purpose="login")
+    elif email and code:
+        status, acct = accounts.verify(email=email, code=code, purpose="login")
+    else:
+        return _acct_err("bad_request", "token or email+code required", 400)
+    if status != "ok":
+        return _acct_err(status, "Verification failed", 401)
+    return _acct_login_response(acct)
+
+
+@app.route("/auth/<token>", methods=["GET", "POST"])
+def auth_magic_link(token):
+    lang = _acct_page_lang()
+    t = _acct_txt(lang)
+    if not accounts.enabled() or not _smtp_available():
+        return _acct_html(account_page.render_error(t, lang=lang, status_key="none"), 404)
+    purpose = "delete" if request.args.get("p") == "delete" else "login"
+    if request.method == "GET":
+        # Mai consumare al GET: i client di posta pre-aprono i link. Una
+        # lettura innocua basta pero' a distinguere un link mai esistito
+        # (410) da uno ancora valido in attesa di conferma (200).
+        status = _acct_peek_token(token, purpose)
+        if status != "ok":
+            return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
+        return _acct_html(account_page.render_confirm(
+            t, lang=lang, purpose=purpose, action_url=request.full_path.rstrip("?")))
+    status, acct = accounts.verify(token=token, purpose=purpose)
+    if status != "ok":
+        return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
+    if purpose == "delete":
+        _acct_do_delete(acct, lang)
+        resp = _acct_html(account_page.render_deleted(t, lang=lang))
+        _acct_clear_cookie(resp)
+        return resp
+    session_token = accounts.open_session(
+        acct["id"], device_name=(request.headers.get("User-Agent") or "")[:80],
+        ip_hash=_hash_ip(_client_ip()))
+    _acct_log("ACCOUNT_LOGIN", acct["email"])
+    resp = redirect("/account", code=302)
+    _acct_set_cookie(resp, session_token)
+    return resp
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    token = _acct_session_token()
+    acct = _current_account()
+    if token:
+        try:
+            accounts.revoke_session(token)
+        except Exception as e:  # noqa: BLE001
+            print(f"WARNING logout: {e}", flush=True)
+    if acct:
+        _acct_log("ACCOUNT_LOGOUT", acct["email"])
+    resp = jsonify({"ok": True})
+    _acct_clear_cookie(resp)
+    return resp
+
+
+@app.route("/api/auth/logout_all", methods=["POST"])
+def api_auth_logout_all():
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    n = accounts.revoke_all(acct["id"])
+    _acct_log("ACCOUNT_LOGOUT_ALL", acct["email"], str(n))
+    resp = jsonify({"ok": True, "revoked": n})
+    _acct_clear_cookie(resp)
+    return resp
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def api_auth_me():
+    if not accounts.enabled() or not _smtp_available():
+        return jsonify({"logged_in": False, "enabled": False})
+    acct = _current_account()
+    if not acct:
+        return jsonify({"logged_in": False, "enabled": True})
+    return jsonify({
+        "logged_in": True, "enabled": True, "email": acct["email"],
+        "lang": acct.get("lang") or "en", "plan": acct.get("plan") or "free",
+        "sessions_count": accounts.sessions_count(acct["id"]),
+    })
 
 
 def _feedback_check_rate(ip_hash: str) -> bool:
