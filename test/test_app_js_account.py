@@ -228,3 +228,19 @@ def test_restore_path_reapplies_forced_email():
     non lasciato a quello (sbagliato) calcolato al boot."""
     fn = _extract_fn("_restoreActiveJob")
     assert "_acctApplyForcedEmail()" in fn
+
+
+# ── Lingua dell'app condivisa con le pagine server-side (/account, /auth) ──
+
+def test_set_lang_posa_il_cookie_abm_lang_per_le_pagine_server():
+    """/account e /auth/<token> sono rese dal server: senza il cookie
+    seguirebbero Accept-Language e non la lingua scelta nell'app."""
+    fn = _extract_fn("_setLangCookie")
+    assert "abm_lang=" in fn and "path=/" in fn and "SameSite=Lax" in fn
+    assert "_setLangCookie(l)" in _extract_fn("setLang")
+
+
+def test_il_cookie_della_lingua_e_posato_anche_al_boot():
+    boot = APP[APP.index("cl=detectLang();"):]
+    boot = boot[:boot.index("\n")]
+    assert "_setLangCookie(cl)" in boot

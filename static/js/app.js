@@ -271,7 +271,10 @@ function applyI18n(){
   // #acctBtn non c'e' e ri-deriva tutte le stringhe nella lingua corrente.
   if(typeof _acctRender==='function')_acctRender();
 }
-function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);try{localStorage.setItem('abm_l',l)}catch(e){}
+// Cookie letto dalle pagine rese dal server (/account, /auth, /vc): l'area
+// personale deve seguire la lingua scelta nell'app, non quella del browser.
+function _setLangCookie(l){try{document.cookie='abm_lang='+l+';path=/;max-age=31536000;SameSite=Lax'+(location.protocol==='https:'?';Secure':'')}catch(e){}}
+function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);_setLangCookie(l);try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
   var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
   // Visible SEO block removed from template — language sync handled by UI only
@@ -318,7 +321,7 @@ function toggleTheme(){
 // ═══════════════════ INIT ═══════════════════
 document.addEventListener('DOMContentLoaded',()=>{
   applyTheme(detectTheme());
-  cl=detectLang();applyI18n();buildAbout();applySEO(cl);
+  cl=detectLang();applyI18n();buildAbout();applySEO(cl);_setLangCookie(cl);
   syncLangDropdown();
   setupKeyboardShortcuts();
   // Fix Chromium bug: nested <details> toggle scrolls page to top

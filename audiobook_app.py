@@ -1172,6 +1172,12 @@ def _get_client_ip():
     return request.remote_addr or ""
 
 
+# Cookie posato dalla SPA (setLang e boot) con la lingua scelta nell'app:
+# le pagine rese dal server (/account, /auth/<token>, /vc/...) lo leggono
+# per seguirla invece di Accept-Language.
+_LANG_COOKIE = "abm_lang"
+
+
 def _get_browser_lang():
     """Return primary browser language from Accept-Language header (e.g. 'it', 'en', 'fr')."""
     accept = request.headers.get("Accept-Language", "")
@@ -10300,11 +10306,16 @@ _VC_PAGES_FALLBACK = {
 
 
 def _vc_page_lang():
-    """Lingua della pagina: quella del browser, e inglese se non e' fra
+    """Lingua della pagina: quella scelta nell'app (cookie `abm_lang`, posato
+    dalla SPA: dal tab «Voci» dell'area personale si arriva qui e la lingua
+    non deve cambiare), poi quella del browser, e inglese se non e' fra
     quelle tradotte. Nessun `?lang=`: chi apre il link dell'email deve
-    ritrovare la lingua del proprio browser su tutte le pagine del giro."""
-    lang = _get_browser_lang()
-    return lang if lang in _VC_PAGES_I18N else "en"
+    ritrovare la stessa lingua su tutte le pagine del giro."""
+    for lang in ((request.cookies.get(_LANG_COOKIE) or "").strip().lower(),
+                 _get_browser_lang()):
+        if lang and lang in _VC_PAGES_I18N:
+            return lang
+    return "en"
 
 
 def _vc_txt(lang):
@@ -11019,9 +11030,18 @@ def _acct_log(op, email, extra=""):
         print(f"WARNING _acct_log: {e}", flush=True)
 
 
-def _acct_page_lang():
-    lang = _get_browser_lang()
-    return lang if lang in _ACCT_PAGES_I18N else "en"
+def _acct_page_lang(*preferred):
+    """Lingua delle pagine account: scelta nell'app (`?lang=`, poi cookie
+    `abm_lang`), poi quelle passate dal chiamante (lingua dell'account o
+    del codice), poi Accept-Language, poi inglese. I valori non tradotti
+    sono saltati, non degradano a inglese."""
+    q = (request.args.get("lang") or "").strip().lower()
+    cands = [q, (request.cookies.get(_LANG_COOKIE) or "").strip().lower(),
+             *preferred, _get_browser_lang()]
+    for cand in cands:
+        if cand and cand in _ACCT_PAGES_I18N:
+            return cand
+    return "en"
 
 
 def _acct_txt(lang):
@@ -11147,7 +11167,7 @@ def auth_magic_link(token):
         status, info = accounts.peek(token, purpose)
         code_lang = info.get("lang") if info else None
         if code_lang in _ACCT_PAGES_I18N:
-            lang = code_lang
+            lang = _acct_page_lang(code_lang)
             t = _acct_txt(lang)
         if status != "ok":
             return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
@@ -11164,7 +11184,7 @@ def auth_magic_link(token):
         return _acct_html(account_page.render_error(t, lang=lang, status_key="none"), 403)
     status, acct = accounts.verify(token=token, purpose=purpose)
     if acct and acct.get("lang") in _ACCT_PAGES_I18N:
-        lang = acct["lang"]
+        lang = _acct_page_lang(acct["lang"])
         t = _acct_txt(lang)
     if status != "ok":
         return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
@@ -11374,12 +11394,16 @@ def account_page_view():
         # Sessioni aperte prima di questa versione hanno lo User-Agent grezzo.
         sd["device_name"] = voice_clone.device_name_from_ua(sd.get("device_name")) or sd.get("device_name") or ""
     tab = "voices" if request.args.get("tab") == "voices" else "books"
-    lang = acct.get("lang") if acct.get("lang") in _ACCT_PAGES_I18N else _acct_page_lang()
+    lang = _acct_page_lang(acct.get("lang"))
     t = _acct_txt(lang)
+    # Un ?lang= esplicito viaggia anche sui link di paginazione; il cookie
+    # posato dalla SPA non ne ha bisogno.
+    link_lang = lang if (request.args.get("lang") or "").strip().lower() == lang else ""
     return _acct_html(account_page.render_history(
         t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
         total=total, voices_count=len(voices), voices=voices,
-        sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab))
+        sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab,
+        link_lang=link_lang))
 
 
 @app.route("/api/account/jobs", methods=["GET"])

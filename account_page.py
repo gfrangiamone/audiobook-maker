@@ -223,7 +223,7 @@ _HISTORY_JS = (
 
 
 def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None,
-                   now=None, sessions=None, current_sid="", tab="books"):
+                   now=None, sessions=None, current_sid="", tab="books", link_lang=""):
     """Area personale: intestazione con il bottone «I tuoi dispositivi», tab
     audiolibri / voci campionate, azioni in fondo e i due popup (dispositivi,
     conferma cancellazione). `sessions` come da `accounts.list_sessions`,
@@ -293,12 +293,14 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         parts.append("</tbody></table>")
         pages = max(1, (int(total) + per_page - 1) // per_page)
         if pages > 1:
+            # lingua chiesta esplicitamente (?lang=): la paginazione la conserva
+            qs = f"&amp;lang={_e(link_lang)}" if link_lang else ""
             nav = []
             if page > 1:
-                nav.append(f"<a class=\"btn\" href=\"/account?p={page - 1}\">{_e(t['page_prev'])}</a>")
+                nav.append(f"<a class=\"btn\" href=\"/account?p={page - 1}{qs}\">{_e(t['page_prev'])}</a>")
             nav.append(f"<span class=\"meta\">{page} / {pages}</span>")
             if page < pages:
-                nav.append(f"<a class=\"btn\" href=\"/account?p={page + 1}\">{_e(t['page_next'])}</a>")
+                nav.append(f"<a class=\"btn\" href=\"/account?p={page + 1}{qs}\">{_e(t['page_next'])}</a>")
             parts.append("<p class=\"actions\">" + " ".join(nav) + "</p>")
     parts.append("</section>")
     parts.append(f"<section class=\"panel\" id=\"tab-voices\"{'' if tab == 'voices' else ' hidden'}>")
