@@ -84,3 +84,87 @@ def render_deleted(t, *, lang):
     body = (f"<p>{_e(t['deleted_p'])}</p>"
             f"<p class=\"actions\"><a class=\"btn\" href=\"/\">{_e(t['home'])}</a></p>")
     return page_html(t, lang, t["deleted_title"], body)
+
+
+def _fmt_date(epoch):
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromtimestamp(int(epoch)).strftime("%Y-%m-%d %H:%M")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _expiry_label(t, expires_at, now):
+    left = int(expires_at - now)
+    if left <= 0:
+        return t["dl_expired"]
+    if left < 3600:
+        return t["dl_expires_soon"].replace("{minutes}", str(max(1, left // 60)))
+    return t["dl_expires_in"].replace("{hours}", str(left // 3600))
+
+
+def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, now=None):
+    import time as _time
+    now = now if now is not None else _time.time()
+    parts = [f"<p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong>"]
+    if voices_count:
+        parts.append(" &middot; " + _e(t["voices_linked"].replace("{n}", str(voices_count))))
+    parts.append("</p>")
+    if not rows:
+        parts.append(f"<p>{_e(t['history_empty'])}</p>")
+    else:
+        parts.append("<table><thead><tr>"
+                     f"<th>{_e(t['history_col_date'])}</th><th>{_e(t['history_col_book'])}</th>"
+                     f"<th>{_e(t['history_col_kind'])}</th><th>{_e(t['history_col_status'])}</th>"
+                     f"<th>{_e(t['history_col_downloads'])}</th></tr></thead><tbody>")
+        for r in rows:
+            status = r.get("status") or "running"
+            kind = r.get("kind") or "generate"
+            dls = r.get("downloads") or []
+            if dls:
+                cell = "".join(
+                    f"<a href=\"{_e(d['url'])}\">{_e(t.get('dl_' + d['kind'], d['kind']))}</a>" for d in dls)
+                cell += f" <span class=\"badge\">{_e(_expiry_label(t, min(d['expires_at'] for d in dls), now))}</span>"
+            elif status == "done":
+                cell = f"<span class=\"badge expired\">{_e(t['dl_expired'])}</span>"
+            else:
+                cell = ""
+            paid = float(r.get("paid_eur") or 0)
+            book = _e(r.get("book_title") or r.get("job_id") or "")
+            if paid > 0:
+                book += f" <span class=\"meta\">&euro; {paid:.2f}</span>"
+            parts.append(
+                f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td>{book}</td>"
+                f"<td>{_e(t.get('kind_' + kind, kind))}</td>"
+                f"<td><span class=\"badge {_e(status)}\">{_e(t.get('status_' + status, status))}</span></td>"
+                f"<td class=\"dl\">{cell}</td></tr>")
+        parts.append("</tbody></table>")
+        pages = max(1, (int(total) + per_page - 1) // per_page)
+        if pages > 1:
+            nav = []
+            if page > 1:
+                nav.append(f"<a class=\"btn\" href=\"/account?p={page - 1}\">{_e(t['page_prev'])}</a>")
+            nav.append(f"<span class=\"meta\">{page} / {pages}</span>")
+            if page < pages:
+                nav.append(f"<a class=\"btn\" href=\"/account?p={page + 1}\">{_e(t['page_next'])}</a>")
+            parts.append("<p class=\"actions\">" + " ".join(nav) + "</p>")
+    parts.append(
+        "<div class=\"actions\">"
+        f"<button type=\"button\" id=\"acctLogout\">{_e(t['logout'])}</button>"
+        f"<button type=\"button\" id=\"acctLogoutAll\">{_e(t['logout_all'])}</button>"
+        f"<button type=\"button\" class=\"danger\" id=\"acctDelete\">{_e(t['delete_account'])}</button>"
+        "</div>"
+        f"<p class=\"meta\" id=\"acctDeleteHint\">{_e(t['delete_account_p'])}</p>"
+        f"<p class=\"meta\" id=\"acctDeleteSent\" hidden>{_e(t['delete_sent'])}</p>"
+        "<script>"
+        "(function(){"
+        "function post(u){return fetch(u,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});}"
+        "document.getElementById('acctLogout').onclick=function(){post('/api/auth/logout').then(function(){location.href='/';});};"
+        "document.getElementById('acctLogoutAll').onclick=function(){post('/api/auth/logout_all').then(function(){location.href='/';});};"
+        "document.getElementById('acctDelete').onclick=function(){"
+        "var b=this;b.disabled=true;post('/api/account/delete_request').then(function(){"
+        "document.getElementById('acctDeleteSent').hidden=false;});};"
+        "})();"
+        "</script>"
+    )
+    return page_html(t, lang, t["history_title"], "".join(parts))

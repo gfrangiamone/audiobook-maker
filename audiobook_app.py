@@ -11017,6 +11017,142 @@ def api_auth_me():
     })
 
 
+_ACCT_PER_PAGE = 50
+
+
+def _account_downloads_for(row, now=None):
+    """Link ancora vivi per una riga dello storico. Il token arriva dalla
+    riga (`download_token`) o, per i job adottati dai pagamenti, dalla
+    ricerca per job_id in _download_tokens. `expires_at` usa la retention
+    effettiva del token (protezione no-download compresa)."""
+    now = now if now is not None else time.time()
+    job_id = row.get("job_id") or ""
+    token = row.get("download_token") or ""
+    info = _download_tokens.get(token) if token else None
+    if info is None:
+        for tok, ti in list(_download_tokens.items()):
+            if isinstance(ti, dict) and ti.get("job_id") == job_id:
+                token, info = tok, ti
+                break
+    if not isinstance(info, dict) or not token:
+        return []
+    try:
+        expires_at = float(info.get("created_at") or 0) + float(_effective_retention_for_token_info(info))
+    except Exception:  # noqa: BLE001
+        return []
+    if expires_at <= now:
+        return []
+    base = (BASE_URL or "").rstrip("/")
+    exp = int(expires_at)
+    out = [{"kind": "page", "url": f"{base}/dl/{token}", "expires_at": exp}]
+    dl_type = info.get("download_type") or "audio"
+    if dl_type == "optimized_abm":
+        out.append({"kind": "abm", "url": f"{base}/dl/{token}/abm", "expires_at": exp})
+    elif dl_type == "translated":
+        out.append({"kind": "translated", "url": f"{base}/dl/{token}/translated", "expires_at": exp})
+    elif info.get("output_m4b"):
+        out.append({"kind": "m4b", "url": f"{base}/dl/{token}/m4b", "expires_at": exp})
+    return out
+
+
+def _account_rows_for(acct, page):
+    rows, total = accounts.list_jobs(acct["id"], page=page, per_page=_ACCT_PER_PAGE)
+    now = time.time()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["downloads"] = _account_downloads_for(d, now)
+        out.append(d)
+    return out, total
+
+
+@app.route("/account", methods=["GET"])
+def account_page_view():
+    if not accounts.enabled() or not _smtp_available():
+        abort(404)
+    acct = _current_account()
+    if not acct:
+        return redirect("/?login=1", code=302)
+    try:
+        page = max(1, int(request.args.get("p") or 1))
+    except ValueError:
+        page = 1
+    rows, total = _account_rows_for(acct, page)
+    try:
+        voices_count = len(voice_clone.ids_for_email(acct["email"]))
+    except Exception:  # noqa: BLE001
+        voices_count = 0
+    lang = acct.get("lang") if acct.get("lang") in _ACCT_PAGES_I18N else _acct_page_lang()
+    t = _acct_txt(lang)
+    return _acct_html(account_page.render_history(
+        t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
+        total=total, voices_count=voices_count))
+
+
+@app.route("/api/account/jobs", methods=["GET"])
+def api_account_jobs():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    try:
+        page = max(1, int(request.args.get("p") or 1))
+    except ValueError:
+        page = 1
+    rows, total = _account_rows_for(acct, page)
+    jobs = [{
+        "job_id": r["job_id"], "created_at": r.get("created_at"), "kind": r.get("kind"),
+        "book_title": r.get("book_title") or "", "output_format": r.get("output_format") or "",
+        "status": r.get("status"), "paid_eur": float(r.get("paid_eur") or 0),
+        "downloads": r["downloads"],
+    } for r in rows]
+    return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE})
+
+
+@app.route("/api/account/delete_request", methods=["POST"])
+def api_account_delete_request():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    ip = _client_ip()
+    allowed, retry = _ip_rl_check("auth_request", ip, 5, 30)
+    if not allowed:
+        return _acct_err("rate_limited", "Too many requests", 429, retry_after=retry)
+    # L'email e' quella dell'account: il body viene ignorato (nessuna cancellazione per conto terzi).
+    _acct_send_code(acct["email"], "delete", acct.get("lang") or "en")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/delete_confirm", methods=["POST"])
+def api_account_delete_confirm():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    data = request.get_json(silent=True) or {}
+    token = (data.get("token") or "").strip()
+    code = (data.get("code") or "").strip()
+    if token:
+        status, target = accounts.verify(token=token, purpose="delete")
+    elif code:
+        status, target = accounts.verify(email=acct["email"], code=code, purpose="delete")
+    else:
+        return _acct_err("bad_request", "token or code required", 400)
+    if status != "ok" or not target or target["id"] != acct["id"]:
+        return _acct_err(status if status != "ok" else "wrong", "Verification failed", 401)
+    _acct_do_delete(acct, acct.get("lang") or "en")
+    resp = jsonify({"ok": True})
+    _acct_clear_cookie(resp)
+    return resp
+
+
 def _feedback_check_rate(ip_hash: str) -> bool:
     """True se il client può inviare ora; False se sopra il limite."""
     now = time.time()
