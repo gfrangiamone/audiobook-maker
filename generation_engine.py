@@ -227,6 +227,33 @@ _send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
 # auto-gen chiama run_generation senza passare da /api/generate.
 _client_gen_cap_reached = None
 
+# Storico account (accounts.py): esito terminale del job e token di download.
+_account_job_status = None  # callable(job_id, status) -> bool
+_account_token = None       # callable(job_id, token) -> bool
+
+
+def _account_notify_status(job, status):
+    """Riporta l'esito allo storico account. `partial` vale come consegna."""
+    if _account_job_status is None or not isinstance(job, dict):
+        return
+    try:
+        jid = job.get("job_id") or _job_id_for(job)
+        if not jid:
+            return
+        st = {"partial": "done", "canceled": "cancelled"}.get(status, status)
+        _account_job_status(jid, st)
+    except Exception as e:  # noqa: BLE001
+        print(f"[account] status hook failed (non-fatal): {e}", flush=True)
+
+
+def _account_notify_token(job_id, token):
+    if _account_token is None or not job_id or not token:
+        return
+    try:
+        _account_token(job_id, token)
+    except Exception as e:  # noqa: BLE001
+        print(f"[{job_id}] account token hook failed (non-fatal): {e}", flush=True)
+
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
@@ -481,12 +508,15 @@ def _set_job_status(job, status):
             except Exception:
                 pass
 
+    if status in _TERMINAL_STATUSES:
+        _account_notify_status(job, status)
+
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               invalidate_voices_cache_fn=None, jobs_lock=None,
               retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
               lookup_client_email_fn=None, build_descriptor_fn=None, send_push_fn=None,
-              client_gen_cap_fn=None):
+              client_gen_cap_fn=None, account_job_status_fn=None, account_token_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
@@ -494,6 +524,7 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     global _invalidate_voices_cache, _jobs_lock, _retention_sec
     global _gemini_retention_sec, _write_email_marker, _lookup_client_email
     global _build_descriptor, _send_push, _client_gen_cap_reached
+    global _account_job_status, _account_token
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -513,6 +544,10 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
         _send_push = send_push_fn
     if client_gen_cap_fn is not None:
         _client_gen_cap_reached = client_gen_cap_fn
+    if account_job_status_fn is not None:
+        _account_job_status = account_job_status_fn
+    if account_token_fn is not None:
+        _account_token = account_token_fn
 
     # Inizializza client LLM (se API key presente)
     _init_llm()
@@ -1937,6 +1972,7 @@ def _create_download_token(job_id):
         "client_id": job.get("client_id", ""),
     }
     _save_tokens()
+    _account_notify_token(job_id, token)
     return token
 
 
@@ -2314,6 +2350,7 @@ def _send_optimization_email(job_id):
         "client_id": job.get("client_id", ""),
     }
     _save_tokens()
+    _account_notify_token(job_id, token)
     job["email_token"] = token
     _sent_at = time.time()
     job["email_sent_at"] = _sent_at
@@ -3625,6 +3662,7 @@ def _send_translation_email(job_id):
         "client_id": job.get("client_id", ""),
     }
     _save_tokens()
+    _account_notify_token(job_id, token)
     job["email_token"] = token
     _sent_at = time.time()
     job["email_sent_at"] = _sent_at
@@ -7536,6 +7574,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                 "client_id": job.get("client_id", ""),
                             }
                             _save_tokens()
+                            _account_notify_token(job_id, token)
                             partial_download_url = (f"{BASE_URL}/dl/{token}/download"
                                                      if BASE_URL else f"/dl/{token}/download")
                             job["partial_download_url"] = partial_download_url

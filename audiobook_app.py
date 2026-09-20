@@ -40,7 +40,7 @@ from copy import copy
 from pathlib import Path
 
 from flask import (
-    Flask, request, jsonify,
+    Flask, request, jsonify, g,
     send_file, Response, stream_with_context, redirect, after_this_request, abort
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -147,6 +147,10 @@ import community_store
 import community_translator
 import community_moderator
 import pending_jobs
+import db
+import accounts
+import account_page
+import page_brand
 import tts_backend_state
 import user_stats
 
@@ -167,6 +171,13 @@ try:
         _VC_PAGES_I18N = json.load(_f)
 except Exception as _e:
     print(f"WARNING: Could not load i18n/voice_clone_pages.json: {_e}", file=sys.stderr)
+
+_ACCT_PAGES_I18N = {}
+try:
+    with open(SCRIPT_DIR / "i18n" / "account_pages.json", encoding="utf-8") as _f:
+        _ACCT_PAGES_I18N = json.load(_f)
+except Exception as _e:
+    print(f"WARNING: Could not load i18n/account_pages.json: {_e}", file=sys.stderr)
 
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
 # (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
@@ -391,6 +402,21 @@ pending_jobs.init()  # richiede community_store.init() già chiamato
 tts_backend_state.init(_DATA_DIR)
 voice_clone.init(_DATA_DIR)
 voice_clone_audio.init(_DATA_DIR)
+
+# Account opzionali (SQLite): il DB apre sempre, l'interruttore e' ABM_ACCOUNT_ENABLE.
+try:
+    db.init(_DATA_DIR)
+    accounts.init_schema()
+    accounts.configure(
+        payments_path=Path(_DATA_DIR) / "_payments.json",
+        voice_clone_ids_for_email_fn=voice_clone.ids_for_email,
+        link_voice_fn=voice_clone.link_account,
+        unlink_voice_fn=voice_clone.unlink_account,
+        log_fn=lambda m: print(m, flush=True),
+    )
+    print(f"[startup] accounts: {'enabled' if accounts.enabled() else 'disabled'} ({db.DB_FILENAME})")
+except Exception as e:
+    print(f"[startup] accounts init failed (feature disabled): {e}", flush=True)
 
 if gemini_tts is not None:
     def _on_tts_backend_switch(model_key, reason, detail, job_id):
@@ -1146,6 +1172,12 @@ def _get_client_ip():
     return request.remote_addr or ""
 
 
+# Cookie posato dalla SPA (setLang e boot) con la lingua scelta nell'app:
+# le pagine rese dal server (/account, /auth/<token>, /vc/...) lo leggono
+# per seguirla invece di Accept-Language.
+_LANG_COOKIE = "abm_lang"
+
+
 def _get_browser_lang():
     """Return primary browser language from Accept-Language header (e.g. 'it', 'en', 'fr')."""
     accept = request.headers.get("Accept-Language", "")
@@ -1359,6 +1391,114 @@ def _build_job_descriptor(job, phase):
     }
 
 
+def _job_paid_eur(job):
+    """Importo incassato per il job: pocket `payment.total_eur` (price lock D1)
+    o, in sua assenza, `payment_amount_eur`."""
+    try:
+        pocket = job.get("payment") or {}
+        v = pocket.get("total_eur")
+        if v is None:
+            v = job.get("payment_amount_eur")
+        return float(v or 0)
+    except Exception:
+        return 0.0
+
+
+def _job_book_title(job):
+    info = job.get("info")
+    return (getattr(info, "title", "") or job.get("original_filename", "") or "")[:200]
+
+
+def _arm_email_delivery(job, job_id, email, *, lang="en", output_format=None,
+                        podcast_base_url="", pending_kind="", engine="", force=False):
+    """Porta il job in modalita' email sull'indirizzo dato: notifica a fine
+    lavoro, esenzione dall'heartbeat (`email_registered`), marker pending e
+    descrittore di recupero. Idempotente per default: se un'email e' gia'
+    registrata non tocca nulla. `force=True` scavalca il guard e sovrascrive
+    un'email gia' armata (es. quella del pagamento) — usato SOLO da
+    _apply_account_to_job: l'account, quando c'e' una sessione, ha sempre
+    precedenza sull'email del pagamento (PayPal/voucher), qualunque cosa sia
+    gia' stata armata da _register_paid_job_batch o dai blocchi batch di
+    /api/optimize e /api/translate. Usata dal batch implicito dei job pagati e
+    dalla notifica forzata degli utenti con account."""
+    if job.get("email_registered") and not force:
+        return False
+    email = (email or "").strip()
+    if not email:
+        return False
+    job["notify_email"] = email
+    if output_format is not None:
+        job.setdefault("notify_download_type",
+                       "podcast" if output_format == "zip_rss" else "audio")
+        job.setdefault("notify_base_url", podcast_base_url or "")
+    job["notify_lang"] = lang or "en"
+    job["email_registered"] = True
+    job["_auto_batch_notify"] = True
+    _write_email_pending_marker(UPLOAD_DIR / job_id)
+    if pending_kind:
+        try:
+            pending_jobs.register(job_id, pending_kind,
+                                  _build_job_descriptor(job, pending_kind))
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.register ({engine or 'batch'}) "
+                  f"failed (non-fatal): {_e}", flush=True)
+    print(f"[{job_id}] {engine or 'batch'} -> email mode (notify {_mask_email(email)}, "
+          f"heartbeat disabilitato)", flush=True)
+    return True
+
+
+def _acct_forced_batch(batch, email):
+    """Notifica forzata: con sessione attiva il job e' sempre batch
+    sull'email dell'account, qualunque cosa dica il body."""
+    try:
+        if accounts.enabled() and _smtp_available():
+            acct = _current_account()
+            if acct:
+                return True, acct["email"]
+    except Exception as _e:
+        print(f"WARNING _acct_forced_batch: {_e}", flush=True)
+    return batch, email
+
+
+def _apply_account_to_job(job, job_id, kind, *, output_format=None, podcast_base_url="",
+                          voice="", lang=""):
+    """Se la richiesta ha una sessione: consegna via email all'account (senza
+    descrittore: lo scrive la partenza) e riga nello storico. `force=True`
+    sull'arming: l'account ha sempre la precedenza sull'email del pagamento,
+    anche se un pagamento (PayPal/voucher) l'ha gia' armata su un altro
+    indirizzo prima di questa chiamata. `voice` e' l'id grezzo del provider
+    (es. 'it-IT-IsabellaNeural'): viene convertito in etichetta presentabile
+    via _voice_public_label prima di finire nello storico, mai passato cosi'
+    com'e'. La riga di storico di un ALTRO account non viene mai riassegnata
+    (record_job e' un upsert su job_id): la notifica resta forzata all'account
+    della sessione, lo storico resta di chi ce l'ha. Best-effort."""
+    try:
+        if not accounts.enabled() or not _smtp_available():
+            return None
+        acct = _current_account()
+        if not acct:
+            return None
+        _arm_email_delivery(job, job_id, acct["email"], lang=acct.get("lang") or lang or "en",
+                            output_format=output_format, podcast_base_url=podcast_base_url,
+                            pending_kind="", engine="account", force=True)
+        # Stessa guardia di /api/register_email: senza, un secondo account che
+        # rigenera lo stesso job_id (browser condiviso, job ripreso da un'altra
+        # sessione) si porterebbe via lo storico del primo.
+        _owner = accounts.job_owner(job_id)
+        if _owner is not None and _owner != acct["id"]:
+            print(f"WARNING [{job_id}] storico: riga gia' dell'account {_owner}, "
+                  f"non riassegnata a {acct['id']}", flush=True)
+        else:
+            accounts.record_job(acct["id"], job_id, kind=kind, book_title=_job_book_title(job),
+                                output_format=output_format or "", voice=_voice_public_label(voice),
+                                lang=lang or "", paid_eur=_job_paid_eur(job),
+                                source="forced", status="running")
+        return acct
+    except Exception as _e:
+        print(f"[{job_id}] _apply_account_to_job failed (non-fatal): {_e}", flush=True)
+        return None
+
+
 def _register_paid_job_batch(job_id, job, payment_token, *, engine="",
                              lang="", email="", output_format=None,
                              podcast_base_url="", pending_kind="generate"):
@@ -1402,28 +1542,21 @@ def _register_paid_job_batch(job_id, job, payment_token, *, engine="",
             _pay_email = ""
     if not _pay_email:
         return False
-    job["notify_email"] = _pay_email
-    if output_format is not None:
-        job.setdefault("notify_download_type",
-                       "podcast" if output_format == "zip_rss" else "audio")
-        job.setdefault("notify_base_url", podcast_base_url or "")
-    job["notify_lang"] = lang or "en"
-    job["email_registered"] = True
-    # Flag per la UX: la notifica e' stata attivata automaticamente sull'email
-    # del pagamento (non registrata esplicitamente dall'utente). Il frontend
-    # lo mostra.
-    job["_auto_batch_notify"] = True
-    _write_email_pending_marker(UPLOAD_DIR / job_id)
-    if pending_kind:
-        try:
-            pending_jobs.register(job_id, pending_kind,
-                                  _build_job_descriptor(job, pending_kind))
-        except Exception as _e:
-            print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
-                  f"failed (non-fatal): {_e}", flush=True)
-    print(f"[{job_id}] Paid {engine or 'premium'} job -> batch mode "
-          f"(notify {_pay_email}, heartbeat disabilitato)", flush=True)
-    return True
+    armed = _arm_email_delivery(job, job_id, _pay_email, lang=lang,
+                                output_format=output_format,
+                                podcast_base_url=podcast_base_url,
+                                pending_kind=pending_kind, engine=engine)
+    # Storico account: un pagamento con email nota aggancia il job all'account
+    # (se esiste) anche senza sessione; e' l'adozione "in corso d'opera".
+    try:
+        if accounts.enabled() and accounts.attach_if_known(
+                job_id, _pay_email, kind=pending_kind or "generate",
+                book_title=_job_book_title(job), output_format=output_format or "",
+                lang=lang or "", paid_eur=_job_paid_eur(job)):
+            _acct_log("ACCOUNT_ADOPT", _pay_email, job_id)
+    except Exception as _e:
+        print(f"[{job_id}] accounts.attach_if_known failed (non-fatal): {_e}", flush=True)
+    return armed
 
 
 def _sniff_input_kind(path):
@@ -2970,6 +3103,45 @@ def _voice_for_log(voice):
     except Exception:
         pass
     return voice
+
+
+def _voice_public_label(voice):
+    """Nome voce presentabile all'utente (mai il nome del provider AI/TTS,
+    regola UI): 'it-IT-IsabellaNeural' -> 'Isabella', 'gemini:flash25:Zephyr'
+    -> 'Zephyr', 'voxcpm:v2:it-IT/Stefano' -> 'Stefano', 'speechify:...:harper_32'
+    -> 'harper_32'. Una voce campionata (voxcpm:mine:<token>) diventa la
+    generica 'your voice': il token e' un segreto, non un nome da mostrare.
+    Usata dallo storico account (accounts.record_job/_apply_account_to_job),
+    mai dal log (li' resta _voice_for_log). Non solleva mai."""
+    try:
+        v = (voice or "").strip()
+        if not v:
+            return ""
+        if v.startswith(voice_clone.VOICE_ID_PREFIX):
+            return "your voice"
+        if _is_gemini_voice(v):
+            try:
+                _, _, voice_name = gemini_tts.parse_voice_id(v)
+                return voice_name
+            except Exception:
+                return v.rsplit(":", 1)[-1]
+        if _is_voxcpm_voice(v):
+            return v.rsplit("/", 1)[-1] if "/" in v else v.rsplit(":", 1)[-1]
+        if _is_speechify_voice(v):
+            return v.rsplit(":", 1)[-1]
+        if ":" in v:
+            # Provider ignoto: ultimo segmento, mai il nome del modello/provider
+            # che puo' comparire in un id a 3+ segmenti (es. 'foo:model:voice').
+            return v.rsplit(":", 1)[-1]
+        # edge-tts: '<locale>-<Name>Neural[Multilingual]'
+        name = v.rsplit("-", 1)[-1]
+        if name.endswith("Neural"):
+            name = name[:-len("Neural")]
+        if name.endswith("Multilingual"):
+            name = name[:-len("Multilingual")]
+        return name
+    except Exception:
+        return ""
 
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
@@ -10142,17 +10314,7 @@ def api_vc_demo_file(clone_id, which):
 # Lo stesso marchio dell'intestazione del sito: chi arriva qui da un link
 # dell'email deve riconoscere subito di chi e' la pagina che gli chiede di
 # cancellare o autorizzare qualcosa.
-_VC_LOGO_SVG = (
-    '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
-    '<rect width="64" height="64" rx="14" fill="#c29a6c"/>'
-    '<path d="M16 44V20c0-2 1.5-3.5 3.5-3.5C23 16.5 28 17 32 19c4-2 9-2.5 12.5-2.5 2 0 3.5 1.5 3.5 3.5v24"'
-    ' fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
-    '<path d="M32 19v25" stroke="white" stroke-width="2" stroke-linecap="round"/>'
-    '<path d="M17 36c0-9 6.7-15 15-15s15 6 15 15" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/>'
-    '<rect x="13" y="34" width="7" height="10" rx="3" fill="white"/>'
-    '<rect x="44" y="34" width="7" height="10" rx="3" fill="white"/>'
-    '<path d="M22 37.5c1.2-1 1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/>'
-    '<path d="M42 37.5c-1.2-1-1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/></svg>')
+_VC_LOGO_SVG = page_brand.LOGO_SVG
 
 # Se il file i18n non si carica le pagine devono restare in piedi lo stesso:
 # sono l'unica via per revocare un dispositivo o cancellare una voce.
@@ -10212,11 +10374,16 @@ _VC_PAGES_FALLBACK = {
 
 
 def _vc_page_lang():
-    """Lingua della pagina: quella del browser, e inglese se non e' fra
+    """Lingua della pagina: quella scelta nell'app (cookie `abm_lang`, posato
+    dalla SPA: dal tab «Voci» dell'area personale si arriva qui e la lingua
+    non deve cambiare), poi quella del browser, e inglese se non e' fra
     quelle tradotte. Nessun `?lang=`: chi apre il link dell'email deve
-    ritrovare la lingua del proprio browser su tutte le pagine del giro."""
-    lang = _get_browser_lang()
-    return lang if lang in _VC_PAGES_I18N else "en"
+    ritrovare la stessa lingua su tutte le pagine del giro."""
+    for lang in ((request.cookies.get(_LANG_COOKIE) or "").strip().lower(),
+                 _get_browser_lang()):
+        if lang and lang in _VC_PAGES_I18N:
+            return lang
+    return "en"
 
 
 def _vc_txt(lang):
@@ -10249,50 +10416,38 @@ _VC_RENAME_JS = (
     "apri(e.target.closest('li'),false);});})();</script>")
 
 
-def _vc_page(title, body_html, status=200, lang="en"):
+def _vc_page(title, body_html, status=200, lang="en", tools_html=""):
+    """`tools_html`: strumenti a destra del marchio, allineati al logo (es.
+    il ritorno all'area personale); vuoto = solo il marchio."""
     t = _vc_txt(lang)
     marchio = html_mod.escape(t["brand"])
     html_doc = (f"<!doctype html><html lang=\"{html_mod.escape(lang)}\"><head><meta charset=\"utf-8\">"
                 f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                 f"<meta name=\"robots\" content=\"noindex,nofollow\">"
                 f"<title>{marchio} - {html_mod.escape(title)}</title>"
-                f"<style>:root{{--acc:#c29a6c;--acc-d:#a67d50;--bd:#dcd6cd;--mut:#666}}"
-                f"body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em;"
-                f"color:#222;background:#fff;line-height:1.5}}"
-                f"[hidden]{{display:none!important}}"
-                f"button{{font:inherit;padding:.5em 1.1em;border:1px solid var(--bd);border-radius:8px;"
-                f"background:#f6f3ee;color:#222;cursor:pointer}}button:hover{{background:#ece7df}}"
-                f"button.primary{{background:var(--acc);border-color:var(--acc);color:#fff}}"
-                f"button.primary:hover{{background:var(--acc-d);border-color:var(--acc-d)}}"
-                f"button.danger{{background:#fff;color:#b3261e;border-color:#e8bdb9}}"
-                f"button.danger:hover{{background:#fdecea}}"
+                # Tavolozza, bottoni e tema della SPA (page_brand): stessa
+                # resa dell'area personale; qui solo le regole della pagina.
+                f"{page_brand.THEME_SCRIPT}<style>{page_brand.BASE_CSS}"
+                f"body{{max-width:560px}}"
                 f"input,select{{padding:.5em .7em;font:inherit;max-width:100%;box-sizing:border-box;"
-                f"border:1px solid var(--bd);border-radius:8px;background:#fff;color:#222}}"
-                f"input:focus,select:focus{{outline:2px solid var(--acc);outline-offset:1px}}"
-                f".card{{border:1px solid var(--bd);border-radius:12px;padding:1em 1.2em;margin:1.2em 0 2em;"
-                f"background:#fbf9f6}}.card h2{{margin:0 0 .3em;font-size:1.2em}}"
-                f".card p{{margin:.2em 0 1em;color:var(--mut)}}"
+                f"border:1px solid var(--brd);border-radius:var(--rs);background:var(--srf);color:var(--tx)}}"
+                f"input:focus,select:focus{{outline:2px solid var(--ac);outline-offset:1px}}"
                 f".speed-row{{display:flex;align-items:center;gap:.6em;flex-wrap:wrap}}"
-                f".actions{{display:flex;gap:.6em;flex-wrap:wrap;margin-top:1.5em}}"
                 f".speed-row select{{min-width:7em;cursor:pointer}}"
-                f".speed-demo{{margin-top:1em;border-top:1px solid var(--bd);padding-top:.9em}}"
+                f".speed-demo{{margin-top:1em;border-top:1px solid var(--brd);padding-top:.9em}}"
                 f".speed-demo .meta{{margin:0 0 .4em}}.speed-demo audio{{width:100%;display:block}}"
-                f".ok{{font-size:.85em;background:#e6f4ea;color:#1e6b34;border-radius:1em;padding:.15em .7em}}"
-                f".devs{{list-style:none;padding:0}}.devs li{{border-top:1px solid #ddd;padding:.9em 0}}"
+                f".ok{{font-size:.85em;background:var(--oks);color:var(--ok);border-radius:1em;padding:.15em .7em}}"
+                f".devs{{list-style:none;padding:0}}.devs li{{border-top:1px solid var(--brd);padding:.9em 0}}"
                 f".devs form{{display:inline-flex;gap:.4em;margin:.5em .6em 0 0;flex-wrap:wrap}}"
                 f".dev-head{{display:flex;align-items:center;flex-wrap:wrap;gap:.2em}}"
+                f".dev-head form.dev-revoke{{margin:0 0 0 auto}}"
                 f".devs form.dev-rename{{display:flex;align-items:center;margin:0 0 .3em}}"
                 f".dev-rename input{{flex:1 1 12em}}"
-                f".icon-btn{{padding:.3em .4em;border:none;background:transparent;color:var(--mut);"
-                f"line-height:0;margin-left:.2em}}.icon-btn:hover{{background:#f0ebe3;color:#222}}"
+                f".icon-btn{{padding:.3em .4em;border:none;background:transparent;color:var(--txd);"
+                f"line-height:0;margin-left:.2em}}.icon-btn:hover{{background:var(--srf2);color:var(--tx);border-color:transparent}}"
                 f".icon-btn svg{{width:16px;height:16px}}"
-                f".meta{{color:#666;font-size:.9em;margin-top:.2em}}"
-                f".me{{font-size:.8em;background:#eef3ff;border-radius:1em;padding:.1em .6em;margin-left:.4em}}"
-                f".brand{{display:flex;align-items:center;gap:.6em;margin-bottom:1.8em;"
-                f"color:inherit;text-decoration:none}}"
-                f".brand svg{{width:42px;height:42px;flex:none}}"
-                f".brand span{{font-size:1.1em;font-weight:600}}</style>"
-                f"</head><body><a class=\"brand\" href=\"/\">{_VC_LOGO_SVG}<span>{marchio}</span></a>"
+                f".meta{{margin-top:.2em}}</style>"
+                f"</head><body>{page_brand.brand_bar(_VC_LOGO_SVG, marchio, tools_html=tools_html)}"
                 f"<h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
     # I5: pagine di gestione voce (link email) mai in cache: contengono stato
     # per-dispositivo che cambia dopo ogni azione (revoke, delete, resume).
@@ -10425,7 +10580,10 @@ def vc_devices(token):
         righe += (f"<li><div class=\"dev-head\" data-view><b>{html_mod.escape(nome or t['device_unnamed'])}</b>"
                   f"<button type=\"button\" class=\"icon-btn\" data-edit "
                   f"title=\"{html_mod.escape(t['edit_name_btn'])}\" "
-                  f"aria-label=\"{html_mod.escape(t['edit_name_btn'])}\">{_VC_PENCIL_SVG}</button>{questo}</div>"
+                  f"aria-label=\"{html_mod.escape(t['edit_name_btn'])}\">{_VC_PENCIL_SVG}</button>{questo}"
+                  f"<form class=\"dev-revoke\" method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
+                  f"<button class=\"danger\">{html_mod.escape(t['revoke_btn'])}</button></form></div>"
                   f"<form class=\"dev-rename\" method=\"post\" action=\"/vc/{tok}/devices/rename{coda}\" hidden>"
                   f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
                   f"<input name=\"name\" maxlength=\"{voice_clone.DEVICE_NAME_MAX}\" "
@@ -10433,16 +10591,25 @@ def vc_devices(token):
                   f"<button class=\"primary\">{html_mod.escape(t['speed_btn'])}</button>"
                   f"<button type=\"button\" data-cancel>{html_mod.escape(t['cancel_btn'])}</button></form>"
                   f"{presentazione}"
-                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div>"
-                  f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
-                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
-                  f"<button class=\"danger\">{html_mod.escape(t['revoke_btn'])}</button></form></li>")
+                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div></li>")
     body = (_vc_speed_section(rec, tok, coda, t) +
             f"<p>{html_mod.escape(t['devices_intro'])}</p>"
             f"<ul class=\"devs\">{righe}</ul>{_VC_RENAME_JS}"
-            f"<p><a href=\"/vc/{tok}/delete\">"
-            f"{html_mod.escape(t['delete_link'])}</a></p>")
-    return _vc_page(t["devices_title"], body, lang=lang)
+            f"<div class=\"actions\"><a class=\"btn danger end\" href=\"/vc/{tok}/delete\">"
+            f"{html_mod.escape(t['delete_link'])}</a></div>")
+    return _vc_page(t["devices_title"], body, lang=lang, tools_html=_vc_back_to_account(rec, t))
+
+
+def _vc_back_to_account(rec, t):
+    """«X» in testata che riporta all'area personale, solo se chi guarda e'
+    connesso con l'account proprietario della voce: chi arriva dal link
+    dell'email senza sessione non ha un'area a cui tornare."""
+    acct = _current_account()
+    if not acct or rec.get("owner_email_hash") != voice_clone.email_hash(acct.get("email") or ""):
+        return ""
+    lbl = html_mod.escape(t["back_account"])
+    return (f"<a class=\"btn icon-x\" href=\"/account?tab=voices\" title=\"{lbl}\" aria-label=\"{lbl}\">"
+            f"{page_brand.CLOSE_SVG}</a>")
 
 
 def _vc_speed_section(rec, tok, coda, t):
@@ -10802,6 +10969,570 @@ _PREVIEW_RL_PER_HOUR = int(os.environ.get("ABM_PREVIEW_RL_PER_HOUR", "200"))
 def _hash_ip(ip: str) -> str:
     h = hashlib.sha256((_IP_SALT + ":" + (ip or "")).encode("utf-8")).hexdigest()
     return h[:16]
+
+
+# ===========================================================================
+# Account: sessione, gate, pagine e route di autenticazione
+# ===========================================================================
+
+_ACCOUNT_SESSION_COOKIE = "abm_session"
+_ACCT_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def _acct_err(code, msg, status, **extra):
+    return jsonify({"error": msg, "error_code": code, **extra}), status
+
+
+def _acct_gate():
+    """None se la feature e' usabile, altrimenti la risposta 404 da ritornare."""
+    if not accounts.enabled() or not _smtp_available():
+        return _acct_err("account_disabled", "Accounts are not available", 404)
+    return None
+
+
+def _acct_session_token():
+    auth = (request.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.cookies.get(_ACCOUNT_SESSION_COOKIE, "")
+
+
+def _current_account():
+    """Account della richiesta corrente o None. Cache in flask.g."""
+    if hasattr(g, "_acct"):
+        return g._acct
+    acct = None
+    try:
+        if accounts.enabled():
+            acct = accounts.resolve_session(_acct_session_token())
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING _current_account: {e}", flush=True)
+    g._acct = acct
+    return acct
+
+
+def _acct_cookie_secure():
+    if (BASE_URL or "").startswith("https"):
+        return True
+    return (request.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+
+
+def _acct_set_cookie(resp, token):
+    resp.set_cookie(_ACCOUNT_SESSION_COOKIE, token, max_age=accounts.SESSION_DAYS * 86400,
+                    httponly=True, samesite="Lax", secure=_acct_cookie_secure(), path="/")
+
+
+def _acct_clear_cookie(resp):
+    resp.set_cookie(_ACCOUNT_SESSION_COOKIE, "", max_age=0, expires=0, httponly=True,
+                    samesite="Lax", secure=_acct_cookie_secure(), path="/")
+
+
+# --- anti login-CSRF sul magic link ------------------------------------
+# Il POST di /auth/<token> apre una sessione: senza guardia un sito terzo puo'
+# auto-inviare un form verso /auth/<token_dell_attaccante> e il browser della
+# vittima riceve Set-Cookie: abm_session (SameSite=Lax impedisce di INVIARE
+# cookie cross-site, non di IMPOSTARLI). La vittima si ritrova loggata
+# nell'account dell'attaccante e i suoi job successivi vengono notificati a
+# quell'indirizzo. La guardia e' un double-submit cookie legato al BROWSER che
+# ha aperto il link: un nonce derivato dal token non servirebbe, perche' il
+# token e' dell'attaccante e il nonce sarebbe leggibile dal suo stesso GET.
+_ACCT_CSRF_COOKIE = "abm_auth_csrf"
+
+
+def _acct_set_csrf_cookie(resp, value):
+    resp.set_cookie(_ACCT_CSRF_COOKIE, value, max_age=accounts.CODE_TTL_MIN * 60,
+                    httponly=True, samesite="Strict", secure=_acct_cookie_secure(),
+                    path="/auth")
+
+
+def _acct_clear_csrf_cookie(resp):
+    resp.set_cookie(_ACCT_CSRF_COOKIE, "", max_age=0, expires=0, httponly=True,
+                    samesite="Strict", secure=_acct_cookie_secure(), path="/auth")
+
+
+def _acct_origin_ok():
+    """False se la richiesta arriva dichiaratamente da un'altra origine.
+
+    Header assenti = consentito: su una navigazione diretta (click sul link
+    dell'email) alcuni browser non mandano ne' Origin ne' Referer.
+    Ammesse due origini: quella dichiarata in BASE_URL (se valorizzata) e
+    quella della richiesta stessa (`host_url`), perche' l'host arriva dal
+    browser e non e' scrivibile da una pagina terza — e' lo stesso criterio
+    del guard globale `_csrf_protect`. Serve a non chiudere fuori un
+    deployment raggiungibile anche su un hostname diverso da ABM_BASE_URL."""
+    origin = (request.headers.get("Origin") or "").strip()
+    if origin.lower() == "null":
+        return False
+    src = origin or (request.headers.get("Referer") or "").strip()
+    if not src:
+        return True
+    from urllib.parse import urlsplit
+    a = urlsplit(src)
+    allowed = {(urlsplit(request.host_url).scheme, urlsplit(request.host_url).netloc)}
+    base = (BASE_URL or "").strip()
+    if base:
+        b = urlsplit(base)
+        allowed.add((b.scheme, b.netloc))
+    return (a.scheme, a.netloc) in allowed
+
+
+def _acct_csrf_ok():
+    """Double-submit: il campo nascosto del form deve combaciare con il cookie
+    posato dal GET sullo stesso browser."""
+    sent = (request.form.get("csrf") or "").strip()
+    cookie = (request.cookies.get(_ACCT_CSRF_COOKIE) or "").strip()
+    if not sent or not cookie:
+        return False
+    return hmac.compare_digest(sent, cookie)
+
+
+def _acct_log(op, email, extra=""):
+    """Business log senza email in chiaro: sid = acct-<hash8>."""
+    try:
+        sid = "acct-" + accounts.email_hash(email)[:8]
+        _log_activity(sid, extra, op, client_id=_get_client_id(), client_ip=_client_ip())
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING _acct_log: {e}", flush=True)
+
+
+def _acct_page_lang(*preferred):
+    """Lingua delle pagine account: scelta nell'app (`?lang=`, poi cookie
+    `abm_lang`), poi quelle passate dal chiamante (lingua dell'account o
+    del codice), poi Accept-Language, poi inglese. I valori non tradotti
+    sono saltati, non degradano a inglese."""
+    q = (request.args.get("lang") or "").strip().lower()
+    cands = [q, (request.cookies.get(_LANG_COOKIE) or "").strip().lower(),
+             *preferred, _get_browser_lang()]
+    for cand in cands:
+        if cand and cand in _ACCT_PAGES_I18N:
+            return cand
+    return "en"
+
+
+def _acct_txt(lang):
+    t = dict(_ACCT_PAGES_I18N.get("en") or {})
+    t.update(_ACCT_PAGES_I18N.get(lang) or {})
+    return t
+
+
+def _acct_html(html_doc, status=200):
+    resp = _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))
+    resp.headers["Vary"] = "Accept-Language, Cookie"
+    return resp
+
+
+def _acct_send_code(email, purpose, lang):
+    """Genera e spedisce il codice. Sempre silenzioso: risposta neutra a monte."""
+    try:
+        out = accounts.request_code(email, purpose, lang, ip_hash=_hash_ip(_client_ip()),
+                                    ua=request.headers.get("User-Agent", ""))
+        if out is None:
+            return
+        token, code = out
+        link = f"{BASE_URL}/auth/{token}" + ("?p=delete" if purpose == "delete" else "")
+        email_service.send_account_code(
+            email, lang, code=code, link_url=link,
+            purpose=purpose, minutes=accounts.CODE_TTL_MIN)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING _acct_send_code: {type(e).__name__}: {e}", flush=True)
+
+
+def _acct_do_delete(acct, lang):
+    """Cancellazione confermata: DB, log, email di cortesia (best-effort)."""
+    accounts.delete_account(acct["id"])
+    _acct_log("ACCOUNT_DELETE", acct["email"])
+    try:
+        email_service.send_account_deleted(acct["email"], acct.get("lang") or lang)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING send_account_deleted: {e}", flush=True)
+
+
+def _acct_device_name(raw=None):
+    """Nome del dispositivo mostrato in «I tuoi dispositivi»: quello dichiarato
+    dal client (app) o quello dedotto dallo User-Agent («Chrome · Windows»);
+    se non si riconosce nulla resta lo User-Agent grezzo, troncato."""
+    raw = str(raw or "").strip()[:80]
+    if raw:
+        return raw
+    ua = request.headers.get("User-Agent") or ""
+    return voice_clone.device_name_from_ua(ua) or ua[:80]
+
+
+def _acct_login_response(acct, payload=None, device_name=None):
+    """Apre la sessione, logga, imposta il cookie. `session_token` solo per
+    l'app (header X-ABM-Cid), che non usa i cookie."""
+    device_name = _acct_device_name(device_name)
+    token = accounts.open_session(acct["id"],
+                                  device_name=device_name,
+                                  ip_hash=_hash_ip(_client_ip()))
+    _acct_log("ACCOUNT_LOGIN", acct["email"])
+    body = {"ok": True, "email": acct["email"], "lang": acct.get("lang") or "en",
+            "plan": acct.get("plan") or "free"}
+    if payload is not None:
+        body.update(payload)
+    if (request.headers.get(_MOBILE_CID_HEADER) or "").strip():
+        body["session_token"] = token
+    resp = jsonify(body)
+    _acct_set_cookie(resp, token)
+    return resp
+
+
+@app.route("/api/auth/request", methods=["POST"])
+def api_auth_request():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    ip = _client_ip()
+    allowed, retry = _ip_rl_check("auth_request", ip, 5, 30)
+    if not allowed:
+        return _acct_err("rate_limited", "Too many requests", 429, retry_after=retry)
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not _ACCT_EMAIL_RE.match(email):
+        return _acct_err("invalid_email", "Invalid email address", 400)
+    lang = (data.get("lang") or _get_browser_lang() or "en")[:8]
+    _acct_send_code(email, "login", lang)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/verify", methods=["POST"])
+def api_auth_verify():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    token = (data.get("token") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    code = (data.get("code") or "").strip()
+    device_name = (data.get("device_name") or "").strip()[:80]
+    if token:
+        status, acct = accounts.verify(token=token, purpose="login")
+    elif email and code:
+        status, acct = accounts.verify(email=email, code=code, purpose="login")
+    else:
+        return _acct_err("bad_request", "token or email+code required", 400)
+    if status != "ok":
+        return _acct_err(status, "Verification failed", 401)
+    return _acct_login_response(acct, device_name=device_name or None)
+
+
+@app.route("/auth/<token>", methods=["GET", "POST"])
+def auth_magic_link(token):
+    lang = _acct_page_lang()
+    t = _acct_txt(lang)
+    if not accounts.enabled() or not _smtp_available():
+        return _acct_html(account_page.render_error(t, lang=lang, status_key="none"), 404)
+    purpose = "delete" if request.args.get("p") == "delete" else "login"
+    if request.method == "GET":
+        # Mai consumare al GET: i client di posta pre-aprono i link. Una
+        # lettura innocua basta pero' a distinguere un link mai esistito
+        # (410) da uno ancora valido in attesa di conferma (200). La lingua
+        # segue quella scelta al momento della richiesta (auth_codes.lang,
+        # la stessa con cui e' partita l'email), non quella del browser.
+        status, info = accounts.peek(token, purpose)
+        code_lang = info.get("lang") if info else None
+        if code_lang in _ACCT_PAGES_I18N:
+            lang = _acct_page_lang(code_lang)
+            t = _acct_txt(lang)
+        if status != "ok":
+            return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
+        csrf = secrets.token_urlsafe(16)
+        resp = _acct_html(account_page.render_confirm(
+            t, lang=lang, purpose=purpose, action_url=request.full_path.rstrip("?"),
+            masked_email=account_page.mask_email(info["email"]), csrf=csrf))
+        _acct_set_csrf_cookie(resp, csrf)
+        return resp
+    # Il token NON viene consumato se la conferma non proviene dal browser che
+    # ha aperto il link: pagina d'errore generica (nessun indizio all'esterno
+    # su validita' o stato del token) e nessun effetto collaterale.
+    if not _acct_origin_ok() or not _acct_csrf_ok():
+        return _acct_html(account_page.render_error(t, lang=lang, status_key="none"), 403)
+    status, acct = accounts.verify(token=token, purpose=purpose)
+    if acct and acct.get("lang") in _ACCT_PAGES_I18N:
+        lang = _acct_page_lang(acct["lang"])
+        t = _acct_txt(lang)
+    if status != "ok":
+        return _acct_html(account_page.render_error(t, lang=lang, status_key=status), 410)
+    if purpose == "delete":
+        _acct_do_delete(acct, lang)
+        resp = _acct_html(account_page.render_deleted(t, lang=lang))
+        _acct_clear_cookie(resp)
+        _acct_clear_csrf_cookie(resp)
+        return resp
+    session_token = accounts.open_session(
+        acct["id"], device_name=_acct_device_name(), ip_hash=_hash_ip(_client_ip()))
+    _acct_log("ACCOUNT_LOGIN", acct["email"])
+    resp = redirect("/account", code=302)
+    _acct_set_cookie(resp, session_token)
+    _acct_clear_csrf_cookie(resp)
+    return resp
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    token = _acct_session_token()
+    acct = _current_account()
+    if token:
+        try:
+            accounts.revoke_session(token)
+        except Exception as e:  # noqa: BLE001
+            print(f"WARNING logout: {e}", flush=True)
+    if acct:
+        _acct_log("ACCOUNT_LOGOUT", acct["email"])
+    resp = jsonify({"ok": True})
+    _acct_clear_cookie(resp)
+    return resp
+
+
+@app.route("/api/auth/logout_all", methods=["POST"])
+def api_auth_logout_all():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    n = accounts.revoke_all(acct["id"])
+    _acct_log("ACCOUNT_LOGOUT_ALL", acct["email"], str(n))
+    resp = jsonify({"ok": True, "revoked": n})
+    _acct_clear_cookie(resp)
+    return resp
+
+
+@app.route("/api/auth/logout_device", methods=["POST"])
+def api_auth_logout_device():
+    """Chiude una sola sessione dell'account (popup «I tuoi dispositivi»).
+    L'id e' l'hash della sessione, non il token: mostrarlo non apre nulla.
+    Se e' la sessione corrente il cookie viene tolto e il client torna alla
+    home (`current: true`)."""
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    data = request.get_json(silent=True) or {}
+    sid = str(data.get("id") or "").strip()
+    if not sid:
+        return _acct_err("bad_request", "id required", 400)
+    ok = accounts.revoke_session_id(acct["id"], sid)
+    _acct_log("ACCOUNT_LOGOUT_DEVICE", acct["email"], "ok" if ok else "none")
+    if sid == (acct.get("session_id") or ""):
+        resp = jsonify({"ok": True, "revoked": ok, "current": True})
+        _acct_clear_cookie(resp)
+        return resp
+    return jsonify({"ok": True, "revoked": ok, "current": False})
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def api_auth_me():
+    if not accounts.enabled() or not _smtp_available():
+        return jsonify({"logged_in": False, "enabled": False})
+    acct = _current_account()
+    if not acct:
+        return jsonify({"logged_in": False, "enabled": True})
+    return jsonify({
+        "logged_in": True, "enabled": True, "email": acct["email"],
+        "lang": acct.get("lang") or "en", "plan": acct.get("plan") or "free",
+        "sessions_count": accounts.sessions_count(acct["id"]),
+    })
+
+
+_ACCT_PER_PAGE = 50
+
+
+def _download_tokens_index():
+    """Indice `job_id -> [(token, info)]` costruito UNA volta per richiesta da
+    uno snapshot di _download_tokens preso sotto _tokens_lock.
+
+    Due motivi, non uno: (a) _download_tokens e' mutato dai thread di
+    generazione (creazione token a fine job) e dal cleanup, quindi scorrerlo
+    senza snapshot e' una `RuntimeError: dictionary changed size during
+    iteration` in attesa del momento giusto — lo stesso schema che uccise il
+    _cleanup_loop; (b) lo storico chiama _account_downloads_for per ogni riga
+    mostrata, e una scansione lineare per riga costa O(righe x token)."""
+    with _tokens_lock:
+        items = list(_download_tokens.items())
+    idx = {}
+    for tok, ti in items:
+        if not isinstance(ti, dict):
+            continue
+        jid = ti.get("job_id")
+        if jid:
+            idx.setdefault(jid, []).append((tok, ti))
+    return idx
+
+
+def _account_downloads_for(row, now=None, index=None):
+    """Link ancora vivi per una riga dello storico. Il token arriva dalla
+    riga (`download_token`) o, per i job adottati dai pagamenti, dalla
+    ricerca per job_id nell'indice (`index`, vedi _download_tokens_index;
+    se None viene costruito qui). `expires_at` usa la retention
+    effettiva del token (protezione no-download compresa)."""
+    now = now if now is not None else time.time()
+    job_id = row.get("job_id") or ""
+    token = row.get("download_token") or ""
+    info = _download_tokens.get(token) if token else None
+    if info is None:
+        if index is None:
+            index = _download_tokens_index()
+        candidates = index.get(job_id) or []
+        if candidates:
+            token, info = max(candidates, key=lambda kv: float(kv[1].get("created_at") or 0))
+    if not isinstance(info, dict) or not token:
+        return []
+    try:
+        expires_at = float(info.get("created_at") or 0) + float(_effective_retention_for_token_info(info))
+    except Exception:  # noqa: BLE001
+        return []
+    if expires_at <= now:
+        return []
+    base = (BASE_URL or "").rstrip("/")
+    exp = int(expires_at)
+    out = [{"kind": "page", "url": f"{base}/dl/{token}", "expires_at": exp}]
+    dl_type = info.get("download_type") or "audio"
+    # File assenti su entrambi i tier -> nessun pulsante per quel formato
+    # (ma la pagina /dl/<token> resta comunque linkata: puo' mostrare altri
+    # formati ancora presenti dello stesso token).
+    if dl_type == "optimized_abm":
+        if _file_available(info.get("optimized_abm_path") or ""):
+            out.append({"kind": "abm", "url": f"{base}/dl/{token}/abm", "expires_at": exp})
+    elif dl_type == "translated":
+        if _file_available(info.get("translated_path") or ""):
+            out.append({"kind": "translated", "url": f"{base}/dl/{token}/translated", "expires_at": exp})
+    elif info.get("output_m4b"):
+        if _file_available(info.get("output_m4b") or ""):
+            out.append({"kind": "m4b", "url": f"{base}/dl/{token}/m4b", "expires_at": exp})
+    return out
+
+
+def _account_rows_for(acct, page):
+    rows, total = accounts.list_jobs(acct["id"], page=page, per_page=_ACCT_PER_PAGE)
+    now = time.time()
+    index = _download_tokens_index()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["downloads"] = _account_downloads_for(d, now, index)
+        out.append(d)
+    return out, total
+
+
+def _account_voices_for(acct):
+    """Voci campionate collegate, non terminali, con link alla gestione
+    attuale (/vc/<manage_token>/devices). Best-effort: [] su qualunque errore."""
+    try:
+        out = []
+        for vid in voice_clone.ids_for_email(acct["email"]):
+            rec = voice_clone.store().get(vid)
+            if rec is None or rec.get("state") in voice_clone._TERMINAL or not rec.get("manage_token"):
+                continue
+            out.append({"name": rec.get("name") or vid, "url": _vc_urls(rec)["manage_url"],
+                        "state": rec.get("state") or ""})
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+@app.route("/account", methods=["GET"])
+def account_page_view():
+    if not accounts.enabled() or not _smtp_available():
+        abort(404)
+    acct = _current_account()
+    if not acct:
+        return redirect("/?login=1", code=302)
+    try:
+        page = max(1, int(request.args.get("p") or 1))
+    except ValueError:
+        page = 1
+    rows, total = _account_rows_for(acct, page)
+    voices = _account_voices_for(acct)
+    try:
+        sessions = accounts.list_sessions(acct["id"])
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING list_sessions: {e}", flush=True)
+        sessions = []
+    for sd in sessions:
+        # Sessioni aperte prima di questa versione hanno lo User-Agent grezzo.
+        sd["device_name"] = voice_clone.device_name_from_ua(sd.get("device_name")) or sd.get("device_name") or ""
+    tab = "voices" if request.args.get("tab") == "voices" else "books"
+    lang = _acct_page_lang(acct.get("lang"))
+    t = _acct_txt(lang)
+    # Un ?lang= esplicito viaggia anche sui link di paginazione; il cookie
+    # posato dalla SPA non ne ha bisogno.
+    link_lang = lang if (request.args.get("lang") or "").strip().lower() == lang else ""
+    return _acct_html(account_page.render_history(
+        t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
+        total=total, voices_count=len(voices), voices=voices,
+        sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab,
+        link_lang=link_lang))
+
+
+@app.route("/api/account/jobs", methods=["GET"])
+def api_account_jobs():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    try:
+        page = max(1, int(request.args.get("p") or 1))
+    except ValueError:
+        page = 1
+    rows, total = _account_rows_for(acct, page)
+    jobs = [{
+        "job_id": r["job_id"], "created_at": r.get("created_at"), "kind": r.get("kind"),
+        "book_title": r.get("book_title") or "", "output_format": r.get("output_format") or "",
+        "status": r.get("status"), "paid_eur": float(r.get("paid_eur") or 0),
+        "downloads": r["downloads"],
+    } for r in rows]
+    return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE})
+
+
+@app.route("/api/account/delete_request", methods=["POST"])
+def api_account_delete_request():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    ip = _client_ip()
+    allowed, retry = _ip_rl_check("auth_request", ip, 5, 30)
+    if not allowed:
+        return _acct_err("rate_limited", "Too many requests", 429, retry_after=retry)
+    # L'email e' quella dell'account: il body viene ignorato (nessuna cancellazione per conto terzi).
+    _acct_send_code(acct["email"], "delete", acct.get("lang") or "en")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/delete_confirm", methods=["POST"])
+def api_account_delete_confirm():
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    data = request.get_json(silent=True) or {}
+    token = (data.get("token") or "").strip()
+    code = (data.get("code") or "").strip()
+    if token:
+        status, target = accounts.verify(token=token, purpose="delete")
+    elif code:
+        status, target = accounts.verify(email=acct["email"], code=code, purpose="delete")
+    else:
+        return _acct_err("bad_request", "token or code required", 400)
+    if status != "ok" or not target or target["id"] != acct["id"]:
+        return _acct_err(status if status != "ok" else "wrong", "Verification failed", 401)
+    _acct_do_delete(acct, acct.get("lang") or "en")
+    resp = jsonify({"ok": True})
+    _acct_clear_cookie(resp)
+    return resp
 
 
 def _feedback_check_rate(ip_hash: str) -> bool:
@@ -13475,6 +14206,12 @@ def api_generate():
             voice_clone.touch_used(_vc_rec2["id"])
             _vc_log(_vc_rec2, "VOICE_CLONE_USED", job_id)
 
+    # Account: consegna forzata all'email dell'account + riga nello storico.
+    # Prima del descrittore di partenza, cosi' lo cattura gia' in modalita' email.
+    _apply_account_to_job(job, job_id, "generate", output_format=output_format,
+                          podcast_base_url=podcast_base_url, voice=voice,
+                          lang=(data.get("lang") or job.get("browser_lang") or "en"))
+
     # Descrittore di recovery (ri)scritto ALLA PARTENZA con i parametri di
     # questa generazione. Quello scritto da register_email puo' non esistere
     # (job allora in analyzed) o essere vecchio: voce/selezione/pagamento di un
@@ -13551,14 +14288,7 @@ def api_job_status(job_id):
     if err is not None:
         return ({"error": "Not found"} if sc == 404 else {"error": "Forbidden"}), sc
 
-    st, cur, tot, pct = _job_progress(job)
-    return {
-        "status": st,
-        "current": cur,
-        "total": tot,
-        "pct": pct,
-        "message": job.get("progress_message", "") or job.get("opt_progress_message", "")
-    }
+    return _job_progress_info(job)
 
 
 _JOBS_PROGRESS_MAX_IDS = 500
@@ -13589,6 +14319,48 @@ def api_admin_jobs_progress():
         st, _cur, _tot, pct = _job_progress(job)
         out[jid] = {"status": st, "pct": pct}
     return jsonify(out)
+
+
+def _job_progress_info(job):
+    """Dict di avanzamento come lo mostra la SPA (stessa aritmetica di
+    `_job_progress`). Usato da /api/job_status (cookie cid) e da
+    /api/account/progress (sessione account): un solo calcolo, due
+    autorizzazioni."""
+    st, cur, tot, pct = _job_progress(job)
+    return {
+        "status": st,
+        "current": cur,
+        "total": tot,
+        "pct": pct,
+        "message": job.get("progress_message", "") or job.get("opt_progress_message", "")
+    }
+
+
+@app.route("/api/account/progress", methods=["GET"])
+def api_account_progress():
+    """Avanzamento dei job dell'account per la pagina /account (`?ids=a,b`).
+    Autorizza la sessione account, non il cookie cid: il job puo' essere
+    partito da un altro dispositivo. Job non piu' in memoria: assenti dalla
+    risposta (la pagina lascia il badge com'e')."""
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    ids = [i.strip() for i in (request.args.get("ids") or "").split(",") if i.strip()][:50]
+    out = {}
+    for jid in ids:
+        job = jobs.get(jid)
+        if job is None or accounts.job_owner(jid) != acct["id"]:
+            continue
+        info = _job_progress_info(job)
+        if job.get("server_interrupted"):
+            info["status"] = "interrupted"
+        out[jid] = info
+    resp = jsonify({"jobs": out})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/api/progress/<job_id>")
@@ -13957,6 +14729,16 @@ def api_register_email():
     if not email or not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
         return jsonify({"error": "Invalid email address"}), 400
 
+    # Con sessione attiva la notifica e' vincolata all'email dell'account.
+    try:
+        _acct = _current_account() if accounts.enabled() else None
+    except Exception:
+        _acct = None
+    if _acct and _acct["email"] != email:
+        return jsonify({"error": "Notifications go to your account email",
+                        "error_code": "logged_in_email_forced",
+                        "email": _acct["email"]}), 409
+
     if not _smtp_available():
         return jsonify({"error": "Email service not configured on this server"}), 503
 
@@ -14004,7 +14786,39 @@ def api_register_email():
         except Exception as _e:
             print(f"[{job_id}] pending_jobs.register failed (non-fatal): {_e}", flush=True)
 
-    print(f"[{job_id}] Email notification registered: {email} (type: {download_type})")
+    # Storico account: chi registra l'email da loggato sta dichiarando che quel
+    # job e' suo, ma la riga di storico la scrive solo la partenza
+    # (_apply_account_to_job). Un job avviato da sloggato e poi "adottato" qui
+    # resterebbe invisibile nella pagina /account: lo registriamo adesso.
+    # La riga di un ALTRO account non viene mai riassegnata (record_job e' un
+    # upsert che sovrascriverebbe account_id): la guardia e' accounts.job_owner.
+    # Job mai partito (status=analyzed): nessuna riga, come per il descrittore
+    # pending — la scrivera' /api/generate|optimize|translate alla partenza,
+    # con i parametri reali invece di uno snapshot che puo' non avverarsi mai.
+    if _acct and job.get("status") != "analyzed":
+        try:
+            _owner = accounts.job_owner(job_id)
+            if _owner in (None, _acct["id"]):
+                _st = job.get("status") or ""
+                _hist_status = (_st if _st in ("done", "error") else
+                                "cancelled" if _st in ("cancelled", "canceled") else "running")
+                if download_type == "translated":
+                    _kind = "translate"
+                elif (job.get("status") in ("optimizing", "optimized")
+                      or (job.get("opt_auto_generate") and not job.get("ai_optimized"))):
+                    _kind = "optimize"
+                else:
+                    _kind = "generate"
+                accounts.record_job(
+                    _acct["id"], job_id, kind=_kind, book_title=_job_book_title(job),
+                    output_format=job.get("output_format") or "",
+                    voice=_voice_public_label(job.get("voice") or ""),
+                    lang=job.get("browser_lang") or "", paid_eur=_job_paid_eur(job),
+                    source="forced", status=_hist_status)
+        except Exception as _e:
+            print(f"WARNING [{job_id}] accounts.record_job (register_email): {_e}", flush=True)
+
+    print(f"[{job_id}] Email notification registered: {_mask_email(email)} (type: {download_type})")
     _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED",
                   job.get("client_id", ""), job.get("client_ip", ""),
                   job.get("voice", ""), job.get("browser_lang", ""))
@@ -15679,6 +16493,9 @@ def api_optimize():
                 "chars_selected": selected_chars_total,
                 "chars_limit": max_text_chars,
             }), 413
+    # Notifica forzata: con sessione attiva il job e' sempre batch sull'email
+    # dell'account, qualunque cosa dica il body.
+    batch, email = _acct_forced_batch(batch, email)
     # Batch mode validation (email + SMTP) — eseguita PRIMA di qualsiasi
     # consumo di pagamento (sia branch LLM standalone che combined-gemini):
     # un'email invalida o SMTP assente non deve mai lasciare un pagamento
@@ -16285,12 +17102,20 @@ def api_optimize():
                 pending_kind="")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
-    # eseguita sopra, prima del consumo del pagamento).
+    # eseguita sopra, prima del consumo del pagamento). force=True: come il
+    # vecchio blocco (assegnazione incondizionata quando batch e' attivo),
+    # anche se un pagamento ha gia' armato il job su un'altra email; il ramo
+    # opt_* piu' sotto resta il proprietario di notify_download_type
+    # (output_format=None qui).
     if batch:
-        job["notify_email"] = email
-        job["notify_lang"] = data.get("lang", "en")
-        job["email_registered"] = True
-        _write_email_pending_marker(UPLOAD_DIR / job_id)
+        _arm_email_delivery(job, job_id, email, lang=data.get("lang", "en"),
+                            output_format=None, pending_kind="", engine="", force=True)
+
+    _apply_account_to_job(job, job_id, "optimize",
+                          output_format=(data.get("output_format", "m4b") if auto_generate else None),
+                          podcast_base_url=(data.get("podcast_base_url") or "").strip(),
+                          voice=(data.get("voice", "") if auto_generate else ""),
+                          lang=(lang or "en"))
 
     # Store auto-generate params for batch mode
     if auto_generate:
@@ -16536,6 +17361,7 @@ def api_translate():
     # o SMTP assente non deve mai lasciare un pagamento consumato (stranded).
     batch = bool(data.get("batch"))
     email = (data.get("email") or "").strip()
+    batch, email = _acct_forced_batch(batch, email)
     if batch:
         if not email or not re.match(
                 r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
@@ -16618,12 +17444,17 @@ def api_translate():
                 print(f"[{job_id}] translate settle capture non-fatal: {_e}")
 
     # Batch mode: assegnazione campi notify (validazione gia' eseguita sopra,
-    # prima del pagamento).
+    # prima del pagamento). force=True: come il vecchio blocco (assegnazione
+    # incondizionata quando batch e' attivo). notify_download_type resta
+    # impostato qui esplicitamente (mai derivato da output_format: un job di
+    # traduzione non e' "audio"/"podcast").
     if batch:
-        job["notify_email"] = email
-        job["notify_lang"] = data.get("lang", "en")
-        job["email_registered"] = True
+        _arm_email_delivery(job, job_id, email, lang=data.get("lang", "en"),
+                            output_format=None, pending_kind="", engine="", force=True)
         job["notify_download_type"] = "translated"
+
+    _apply_account_to_job(job, job_id, "translate", output_format=out_format,
+                          lang=(data.get("lang") or "en"))
 
     job["tr_cancelled"] = False
     job["tr_params"] = {
@@ -18745,7 +19576,11 @@ CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 # passa da _is_job_dir, e il cold delete rifiuta i prefissi riservati.
 # "voices" e' il nome storico della stessa cartella: resta riservato perche'
 # una copia rimasta da prima del rename non deve finire nel tritacarne.
-_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices"})
+# "accounts" e' il prefisso cold dei backup di abm.db (_ACCT_R2_PREFIX): oggi
+# nessuno sweep lo raggiunge (i backup sono file, non cartelle), ma riservarlo
+# costa una parola e impedisce che un domani un delete_prefix("accounts/")
+# cancelli le copie del database degli account.
+_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices", "accounts"})
 
 
 def _is_job_dir(entry):
@@ -19777,6 +20612,71 @@ def _voice_clone_sweep_supervisor():
             time.sleep(60)
 
 
+_ACCT_MAINT_FIRST_SEC = 300          # prima manutenzione 5 min dopo il boot
+_ACCT_MAINT_INTERVAL_SEC = 6 * 3600  # poi ogni 6 ore
+_ACCT_R2_PREFIX = "accounts/"
+_ACCT_R2_KEEP = 14                   # copie giornaliere conservate su R2
+
+
+def _account_maintenance_once(now=None):
+    """Un giro di manutenzione dello stato account: purge di codici/sessioni
+    scaduti e storico oltre retention, backup locale coerente di abm.db
+    (API online di SQLite) e copia del giorno su R2 con rotazione.
+    Ogni passo e' indipendente e best-effort."""
+    out = {"purged": {}, "backup": None, "r2_key": None, "r2_pruned": 0}
+    if not db.is_ready():
+        return out
+    try:
+        out["purged"] = accounts.purge_expired(now=now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[account] purge_expired failed: {e}", flush=True)
+    bak = Path(_DATA_DIR) / (db.DB_FILENAME + ".bak")
+    try:
+        db.backup_to(bak)
+        out["backup"] = str(bak)
+    except Exception as e:  # noqa: BLE001
+        print(f"[account] db backup failed: {e}", flush=True)
+        return out
+    try:
+        if not storage_backend.is_enabled():
+            return out
+        day = time.strftime("%Y-%m-%d", time.gmtime(now if now is not None else time.time()))
+        key = f"{_ACCT_R2_PREFIX}abm-{day}.db"
+        storage_backend.upload_file(str(bak), key)
+        out["r2_key"] = key
+        keys = sorted(k for k in storage_backend.list_prefix(_ACCT_R2_PREFIX)
+                      if k.endswith(".db"))
+        for old in keys[:-_ACCT_R2_KEEP]:
+            try:
+                storage_backend.delete_object(old)
+                out["r2_pruned"] += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"[account] R2 prune {old} failed: {e}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[account] R2 backup failed (non-fatal): {e}", flush=True)
+    return out
+
+
+def _account_maintenance_supervisor():
+    """Manutenzione periodica dello stato account, riavviata su crash come
+    _cleanup_supervisor (incidente 2026-06-15)."""
+    import traceback
+    delay = _ACCT_MAINT_FIRST_SEC
+    while True:
+        try:
+            time.sleep(delay)
+            delay = _ACCT_MAINT_INTERVAL_SEC
+            out = _account_maintenance_once()
+            if any(out["purged"].values()) or out["r2_pruned"]:
+                print(f"[account] maintenance: {out}", flush=True)
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            print(f"[account] maintenance crashed, restarting: {type(e).__name__}: {e}", flush=True)
+            delay = 60
+
+
 def _cleanup_loop():
     """Background thread: periodically clean up finished/abandoned jobs."""
     while True:
@@ -20124,7 +21024,9 @@ generation_engine.configure(
     lookup_client_email_fn=_lookup_client_email,
     build_descriptor_fn=_build_job_descriptor,
     send_push_fn=_push_job_event,
-    client_gen_cap_fn=_client_gen_cap_reached
+    client_gen_cap_fn=_client_gen_cap_reached,
+    account_job_status_fn=accounts.update_status,
+    account_token_fn=accounts.set_download_token,
 )
 
 if _paypal_available():
@@ -20186,6 +21088,8 @@ def _ensure_background_threads():
         threading.Thread(target=_load_metrics_supervisor, daemon=True).start()
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
+    if db.is_ready():
+        threading.Thread(target=_account_maintenance_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
     # Rientro automatico su Cloudflare: il sorvegliante delle sonde. Parte

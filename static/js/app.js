@@ -155,6 +155,7 @@ function setupKeyboardShortcuts(){
       const aboutModal=document.getElementById('aboutModal');
       if(aboutModal)aboutModal.classList.remove('open');
       if(typeof closeSupportModal==='function')closeSupportModal();
+      if(typeof closeLoginModal==='function')closeLoginModal();
       closeLangDropdown();
       restoreFocus();
     }
@@ -265,8 +266,15 @@ function applyI18n(){
   // Le opzioni del dropdown accento sono costruite dinamicamente (non data-t):
   // ri-popolale al cambio lingua UI cosi' le etichette si traducono.
   if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
+  // Idem per l'account: bottone/menu/banner forzato sono scritti a mano (non
+  // data-t) perche' portano l'email dell'utente. _acctRender() e' no-op se
+  // #acctBtn non c'e' e ri-deriva tutte le stringhe nella lingua corrente.
+  if(typeof _acctRender==='function')_acctRender();
 }
-function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);try{localStorage.setItem('abm_l',l)}catch(e){}
+// Cookie letto dalle pagine rese dal server (/account, /auth, /vc): l'area
+// personale deve seguire la lingua scelta nell'app, non quella del browser.
+function _setLangCookie(l){try{document.cookie='abm_lang='+l+';path=/;max-age=31536000;SameSite=Lax'+(location.protocol==='https:'?';Secure':'')}catch(e){}}
+function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);_setLangCookie(l);try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
   var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
   // Visible SEO block removed from template — language sync handled by UI only
@@ -313,7 +321,7 @@ function toggleTheme(){
 // ═══════════════════ INIT ═══════════════════
 document.addEventListener('DOMContentLoaded',()=>{
   applyTheme(detectTheme());
-  cl=detectLang();applyI18n();buildAbout();applySEO(cl);
+  cl=detectLang();applyI18n();buildAbout();applySEO(cl);_setLangCookie(cl);
   syncLangDropdown();
   setupKeyboardShortcuts();
   // Fix Chromium bug: nested <details> toggle scrolls page to top
@@ -483,6 +491,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Il job vive sul server: se questa pagina e' un reload durante una
   // lavorazione, riagganciamola invece di ripartire dal form.
   if(typeof _restoreActiveJob==='function')_restoreActiveJob();
+  if(typeof _acctBoot==='function')_acctBoot();
 });
 
 let outputFormat='m4b';
@@ -2263,9 +2272,12 @@ function _openPayModalCtx(ctx) {
   }
   const noticeEl = document.getElementById('payEmailNotice');
   if (noticeEl) {
-    const nk = ctx.noticeKey || 'pay_email_notice';
+    // Loggato: la consegna e' gia' vincolata all'email dell'account, la
+    // formula generica per-flusso (ctx.noticeKey) sarebbe fuorviante.
+    const loggedIn = (typeof _acctLoggedIn === 'function') && _acctLoggedIn();
+    const nk = loggedIn ? 'acct_forced_notice' : (ctx.noticeKey || 'pay_email_notice');
     noticeEl.setAttribute('data-t', nk);
-    noticeEl.textContent = (typeof t === 'function') ? t(nk) : nk;
+    noticeEl.textContent = loggedIn ? t(nk, { email: _acctMe.email }) : ((typeof t === 'function') ? t(nk) : nk);
   }
   // Mappa fissa ctx.lines[i] -> (etichetta, importo) nel markup.
   const rowMap = [
@@ -3279,6 +3291,14 @@ async function _submitTranslation(payToken,src,dst){
     goToStep(4);
     const area=document.getElementById('emailLateAreaTr');if(area)area.classList.add('visible');
     _trAutofillEmailLate();
+    // /api/translate forza batch sull'email dell'account quando c'e' una
+    // sessione: la consegna e' gia' armata, allinea i flag locali (il secondo
+    // e' quello letto da onBeforeUnload).
+    if(d.batch&&typeof _acctLoggedIn==='function'&&_acctLoggedIn()){trEmailRegistered=true;emailRegistered=true;}
+    // Loggato: /api/translate ha gia' vincolato la consegna all'email
+    // dell'account (_apply_account_to_job lato server) — riflettilo subito,
+    // altrimenti il box manuale offre un indirizzo che il server rifiutera'.
+    if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
     _listenTranslateProgress();
   }catch(e){showErr('trErr','Error: '+e.message)}
 }
@@ -3337,6 +3357,18 @@ async function submitEmailLateTr(){
   try{
     const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId,email:email,download_type:'translated',lang:cl})});
     const d=await r.json();
+    if(d.error_code==='logged_in_email_forced'){
+      const area=document.getElementById('emailLateAreaTr');
+      // Il 409 dice che il client si credeva anonimo mentre il server ha una
+      // sessione viva: la cache di _acctMe e' stale, allineala prima di
+      // provare ad armare davvero la consegna (altrimenti si promette un
+      // esito che nessuna chiamata ha ottenuto).
+      try{const m=await fetch('/api/auth/me',{cache:'no-store'});if(m.ok){_acctMe=await m.json();if(typeof _acctRender==='function')_acctRender();}}catch(e){}
+      const bind=await _acctBindCurrentJob('translated');
+      if(bind.ok)_setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||_acctMe.email||''}));
+      else alert(bind.error||d.error);
+      return;
+    }
     if(d.error){alert(d.error);return}
     trEmailRegistered=true;
     const area=document.getElementById('emailLateAreaTr');
@@ -3862,6 +3894,12 @@ async function startCombinedGeneration(combinedPaymentToken){
         showPErr(gd.error);unlockUI();return;
       }
       if(gd.auto_batch_email){emailRegistered=true;_showAutoBatchNotice(gd.auto_batch_email);_updateGenNoticeWarning();}
+      // Ricalcola lo stato forzato ora che generating/emailRegistered sono
+      // definitivi per questo job: al boot canForceGen era vero per default
+      // (generating era ancora false), una sessione scaduta fra il boot e
+      // Generate lascerebbe altrimenti il banner boot-time a promettere una
+      // consegna che il server non ha armato.
+      if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
       _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
       listenProgress();
     }catch(e){showPErr('Error: '+e.message);unlockUI()}
@@ -4321,6 +4359,10 @@ async function startGen(){
       _showAutoBatchNotice(d.auto_batch_email);
       _updateGenNoticeWarning();
     }
+    // Ricalcola lo stato forzato ora che generating/emailRegistered sono
+    // definitivi per questo job (vedi commento gemello sull'altro ramo di
+    // /api/generate).
+    if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
     _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
@@ -4341,8 +4383,10 @@ function _showAutoBatchNotice(maskedEmail){
     if(host&&host.parentNode){host.parentNode.insertBefore(n,host);}
     else if(host){host.appendChild(n);}
   }
-  const tmpl=t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.";
-  n.textContent=tmpl.replace('{email}',maskedEmail);
+  // Utente con account: la notifica e' forzata sull'email dell'account, non
+  // e' un effetto del pagamento. Wording dedicato, email in chiaro.
+  const tmpl=_acctLoggedIn()?t('acct_forced_notice'):(t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.");
+  n.textContent=tmpl.replace('{email}',_acctLoggedIn()?_acctMe.email:maskedEmail);
   n.style.display='block';
   _lockEmailLateBoxAutoBatch(maskedEmail);
 }
@@ -4363,6 +4407,8 @@ function _lockEmailLateBoxAutoBatch(maskedEmail){
   }
   const btn=document.getElementById('btnSubmitEmailLate');
   if(btn)btn.disabled=true;
+  // Da loggati l'indirizzo non e' cambiabile (409 lato server): niente link.
+  if(_acctLoggedIn()){const a=document.getElementById('emailLateArea');if(a)a.classList.remove('visible');return}
   _addAutoBatchChangeEmailLink();
 }
 
@@ -4961,6 +5007,11 @@ async function _restoreActiveJob(){
     _setCancelButtonMode(d.status==='optimizing'?'opt':'gen');
     if(d.status==='optimizing')_listenOptProgressWiz();else listenProgress();
   }
+  // _restoreActiveJob() e _acctBoot() partono in parallelo (vedi il chiamante
+  // comune): a questo punto generating/emailRegistered sono definitivi per il
+  // job ripristinato, ricalcola lo stato forzato invece di lasciare quello
+  // (sbagliato, perche' generating era ancora false) calcolato al boot.
+  if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
   _showRestoreNotice(d,cands.length-1);
 }
 
@@ -5774,7 +5825,10 @@ function _ensureEmailAreaVisible(){
   const genProgress=document.getElementById('generationProgress');
   if(genProgress&&genProgress.style.display==='none')genProgress.style.display='';
   const emailArea=document.getElementById('emailLateArea');
-  if(emailArea&&!emailArea.classList.contains('visible'))emailArea.classList.add('visible');
+  // Non riesumare un box che _acctApplyForcedEmail ha nascosto di proposito
+  // (email gia' vincolata all'account): altrimenti ogni tick di progress lo
+  // rimette in vista accanto al banner "riceverai via email".
+  if(emailArea&&!emailArea.classList.contains('visible')&&!emailArea.dataset.acctHidden)emailArea.classList.add('visible');
 }
 
 function _updateGenNoticeWarning(){
@@ -5872,6 +5926,18 @@ async function submitEmailLate(){
     if(dlType==='podcast'){const urlInput=document.getElementById('podcastUrlInput');latePayload.base_url=urlInput?urlInput.value.trim():'';}
     const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(latePayload)});
     const d=await r.json();
+    if(d.error_code==='logged_in_email_forced'){
+      const area=document.getElementById('emailLateArea');
+      // Il 409 dice che il client si credeva anonimo mentre il server ha una
+      // sessione viva: la cache di _acctMe e' stale, allineala prima di
+      // provare ad armare davvero la consegna (altrimenti si promette un
+      // esito che nessuna chiamata ha ottenuto).
+      try{const m=await fetch('/api/auth/me',{cache:'no-store'});if(m.ok){_acctMe=await m.json();if(typeof _acctRender==='function')_acctRender();}}catch(e){}
+      const bind=await _acctBindCurrentJob(dlType);
+      if(bind.ok)_setEmailLateConfirm(area,t('acct_forced_notice',{email:d.email||_acctMe.email||''}));
+      else alert(bind.error||d.error);
+      return;
+    }
     if(d.error){alert(d.error);return}
     emailRegistered=true;
     const noticeEl=document.getElementById('genActiveNoticeText');
@@ -6876,3 +6942,254 @@ function tryGoToAudioSettings(){
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
   else init();
 })();
+
+// ═══════════════════ ACCOUNT (magic link + codice) ═══════════════════
+// Il bottone e la modale esistono solo se /api/auth/me risponde enabled:true.
+// Da loggati la consegna e' sempre via email all'indirizzo dell'account
+// (Task 7 lato server): la SPA nasconde i campi email manuali e lo dice.
+let _acctMe=null;
+let _acctPendingEmail='';
+let _acctAfterLogin=null;
+
+function _acctLoggedIn(){return !!(_acctMe&&_acctMe.logged_in&&_acctMe.email)}
+
+async function _acctBoot(){
+  try{
+    const r=await fetch('/api/auth/me',{cache:'no-store'});
+    _acctMe=r.ok?await r.json():null;
+  }catch(e){_acctMe=null}
+  _acctRender();
+  // ?login=1 nell'URL (redirect di /account senza sessione) apre la modale.
+  let wantLogin=false,_acctQS=null;
+  try{_acctQS=new URLSearchParams(location.search);wantLogin=_acctQS.get('login')==='1'}catch(e){}
+  if(wantLogin&&_acctMe&&_acctMe.enabled){
+    // Rimuove solo 'login' dalla query string: gli altri parametri (es. utm_*)
+    // sopravvivono al replaceState invece di sparire tutti insieme.
+    try{
+      if(_acctQS){_acctQS.delete('login');const qs=_acctQS.toString();history.replaceState(null,'',location.pathname+(qs?'?'+qs:'')+location.hash)}
+      else history.replaceState(null,'',location.pathname);
+    }catch(e){}
+    if(_acctLoggedIn()){location.href='/account';return}
+    _acctAfterLogin=function(){location.href='/account'};
+    openLoginModal();
+  }
+}
+
+function _acctRender(){
+  const btn=document.getElementById('acctBtn');
+  const menu=document.getElementById('acctMenu');
+  if(!btn)return;
+  const on=!!(_acctMe&&_acctMe.enabled);
+  btn.style.display=on?'':'none';
+  btn.classList.toggle('on',_acctLoggedIn());
+  btn.title=_acctLoggedIn()?t('acct_signed_in_as',{email:_acctMe.email}):t('acct_login');
+  btn.setAttribute('aria-label',btn.title);
+  if(menu){
+    menu.style.display='none';
+    btn.setAttribute('aria-expanded','false');
+    const em=document.getElementById('acctMenuEmail');
+    if(em)em.textContent=_acctLoggedIn()?_acctMe.email:'';
+  }
+  _acctApplyForcedEmail();
+}
+
+function _acctBtnClick(){
+  if(!_acctLoggedIn()){openLoginModal();return}
+  const menu=document.getElementById('acctMenu');
+  const btn=document.getElementById('acctBtn');
+  if(!menu)return;
+  const open=menu.style.display!=='none';
+  menu.style.display=open?'none':'';
+  if(btn)btn.setAttribute('aria-expanded',open?'false':'true');
+}
+document.addEventListener('click',function(ev){
+  const wrap=document.getElementById('acctWrap');
+  const menu=document.getElementById('acctMenu');
+  if(menu&&wrap&&!wrap.contains(ev.target)&&menu.style.display!=='none'){
+    menu.style.display='none';
+    const btn=document.getElementById('acctBtn');if(btn)btn.setAttribute('aria-expanded','false');
+  }
+});
+
+function _acctShowErr(msg){
+  const e=document.getElementById('acctErr');
+  if(!e)return;
+  if(!msg){e.style.display='none';e.textContent='';return}
+  e.textContent=msg;e.style.display='block';
+}
+
+function openLoginModal(){
+  const m=document.getElementById('loginModal');
+  if(!m)return;
+  _acctShowErr('');
+  const se=document.getElementById('acctStepEmail'), sc=document.getElementById('acctStepCode');
+  if(se)se.style.display='';
+  if(sc)sc.style.display='none';
+  const sb=document.getElementById('acctSendBtn'), vb=document.getElementById('acctVerifyBtn');
+  if(sb){sb.style.display='';sb.disabled=false}
+  if(vb)vb.style.display='none';
+  const inp=document.getElementById('acctEmail');
+  if(inp){
+    inp.placeholder=t('acct_email_ph');
+    if(!inp.value){try{inp.value=(localStorage.getItem('abm_v_email')||'').trim()}catch(e){}}
+  }
+  const code=document.getElementById('acctCode');
+  if(code){code.placeholder=t('acct_code_ph');code.value=''}
+  m.classList.add('open');
+  try{inp&&inp.focus()}catch(e){}
+}
+function closeLoginModal(){const m=document.getElementById('loginModal');if(m)m.classList.remove('open');_acctAfterLogin=null}
+
+// Guardia anti doppio-invio: gli onkeydown="Enter" degli input della modale
+// chiamano queste funzioni direttamente, scavalcando il bottone disabled.
+let _acctBusy=false;
+async function _acctRequest(){
+  if(_acctBusy)return;
+  const inp=document.getElementById('acctEmail');
+  const email=((inp&&inp.value)||'').trim();
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){_acctShowErr(t('acct_err_generic'));return}
+  _acctShowErr('');
+  _acctBusy=true;
+  const sb=document.getElementById('acctSendBtn');if(sb)sb.disabled=true;
+  try{
+    const r=await fetch('/api/auth/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,lang:cl})});
+    if(r.status===429){_acctShowErr(t('acct_err_rate'));if(sb)sb.disabled=false;return}
+    if(!r.ok){_acctShowErr(t('acct_err_generic'));if(sb)sb.disabled=false;return}
+    _acctPendingEmail=email;
+    try{localStorage.setItem('abm_v_email',email)}catch(e){}
+    const se=document.getElementById('acctStepEmail'), sc=document.getElementById('acctStepCode');
+    if(se)se.style.display='none';
+    if(sc)sc.style.display='';
+    const intro=document.getElementById('acctCodeIntro');
+    if(intro)intro.textContent=t('acct_code_intro',{email:email});
+    if(sb)sb.style.display='none';
+    const vb=document.getElementById('acctVerifyBtn');if(vb){vb.style.display='';vb.disabled=false}
+    const code=document.getElementById('acctCode');try{code&&code.focus()}catch(e){}
+  }catch(e){_acctShowErr(t('acct_err_generic'));if(sb)sb.disabled=false}
+  finally{_acctBusy=false}
+}
+
+async function _acctBindCurrentJob(dlType){
+  // Vincola il job in corso all'email dell'account: unico punto che parla con
+  // /api/register_email per "adottare" un job partito anonimo, cosi' i tre
+  // chiamanti (login a meta' lavoro in _acctVerify, i due conflitti 409 di
+  // submitEmailLate/submitEmailLateTr) non possono divergere sul come si
+  // arma la consegna ne' su quali flag locali aggiornare.
+  if(!(typeof _acctLoggedIn==='function'&&_acctLoggedIn()&&jobId))return{ok:false};
+  try{
+    const rr=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({job_id:jobId,email:_acctMe.email,download_type:dlType,lang:cl})});
+    const dd=await rr.json().catch(()=>({}));
+    if(rr.ok&&!dd.error){
+      // onBeforeUnload guarda emailRegistered per entrambi i flussi.
+      if(dlType==='translated')trEmailRegistered=true;
+      emailRegistered=true;
+      if(typeof _updateGenNoticeWarning==='function')_updateGenNoticeWarning();
+      return{ok:true};
+    }
+    return{ok:false,error:dd.error};
+  }catch(e){return{ok:false}}
+}
+
+async function _acctVerify(){
+  if(_acctBusy)return;
+  const code=((document.getElementById('acctCode')||{}).value||'').replace(/\D/g,'');
+  if(code.length!==6){_acctShowErr(t('acct_err_wrong'));return}
+  _acctShowErr('');
+  _acctBusy=true;
+  const vb=document.getElementById('acctVerifyBtn');if(vb)vb.disabled=true;
+  try{
+    const r=await fetch('/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_acctPendingEmail,code:code})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok){
+      const k={wrong:'acct_err_wrong',expired:'acct_err_expired',locked:'acct_err_locked',none:'acct_err_none'}[d.error_code]||'acct_err_generic';
+      _acctShowErr(t(k));
+      if(vb)vb.disabled=false;
+      // codice scaduto/bloccato/inesistente: si torna al primo passo
+      if(d.error_code&&d.error_code!=='wrong'){const se=document.getElementById('acctStepEmail'),sc=document.getElementById('acctStepCode'),sb=document.getElementById('acctSendBtn');if(se)se.style.display='';if(sc)sc.style.display='none';if(sb){sb.style.display='';sb.disabled=false}if(vb)vb.style.display='none'}
+      return;
+    }
+    const after=_acctAfterLogin;
+    _acctAfterLogin=null;
+    closeLoginModal();
+    _acctToast(t('acct_signed_in_as',{email:d.email||_acctPendingEmail||''}));
+    if(after){after();return}
+    // ricarica lo stato dal server (email, lingua, piano)
+    try{const m=await fetch('/api/auth/me',{cache:'no-store'});_acctMe=m.ok?await m.json():_acctMe}catch(e){}
+    if(!_acctLoggedIn()&&d.email)_acctMe={enabled:true,logged_in:true,email:d.email};
+    // Login a meta' lavorazione: il server non ha vincolato questo job (e'
+    // partito anonimo). Registriamo l'email dell'account ora, altrimenti il
+    // banner promette una consegna che nessuno ha armato e il beacon di
+    // chiusura pagina uccide comunque il lavoro.
+    if(_acctLoggedIn()&&generating&&!jobDone&&jobId&&!(wizMode==='translate'?trEmailRegistered:emailRegistered)){
+      const dlType=wizMode==='translate'?'translated':((outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters'));
+      await _acctBindCurrentJob(dlType);
+    }
+    _acctRender();
+  }catch(e){_acctShowErr(t('acct_err_generic'));if(vb)vb.disabled=false}
+  finally{_acctBusy=false}
+}
+
+async function _acctLogout(){
+  try{await fetch('/api/auth/logout',{method:'POST'})}catch(e){}
+  _acctMe=_acctMe?{enabled:_acctMe.enabled,logged_in:false}:null;
+  _acctRender();
+  _acctToast(t('acct_logged_out'));
+}
+
+// Conferma breve in cima alla pagina (stesso stile del toast download,
+// senza spinner): l'icona cambia stato, ma il cambio da solo si nota poco.
+let _acctToastEl=null,_acctToastTimer=null;
+function _acctToast(text){
+  if(!text)return;
+  if(!_acctToastEl){
+    _acctToastEl=document.createElement('div');
+    _acctToastEl.className='dl-toast acct-toast';
+    _acctToastEl.setAttribute('role','status');
+    document.body.appendChild(_acctToastEl);
+  }
+  _acctToastEl.textContent=text;
+  requestAnimationFrame(()=>_acctToastEl.classList.add('show'));
+  clearTimeout(_acctToastTimer);
+  _acctToastTimer=setTimeout(()=>{if(_acctToastEl)_acctToastEl.classList.remove('show')},4000);
+}
+
+function _acctApplyForcedEmail(){
+  // Da loggati: niente campi email manuali (il server li rifiuterebbe con
+  // 409), un banner che dice dove arriva la notifica.
+  const on=_acctLoggedIn();
+  // Generazione audio: un job puo' essere partito anonimo e vincolato solo
+  // dopo un login a meta' lavorazione (vedi _acctVerify). Finche' non e'
+  // stato registrato, mostrare qui la promessa di consegna sarebbe falsa e
+  // contraddirebbe il banner ATTENZIONE "se chiudi la pagina viene annullato".
+  const canForceGen=on&&wizMode!=='translate'&&(!generating||jobDone||emailRegistered);
+  const notice=document.getElementById('acctForcedNotice');
+  if(notice){
+    notice.style.display=canForceGen?'block':'none';
+    if(canForceGen){notice.setAttribute('data-t','acct_forced_notice');notice.textContent=t('acct_forced_notice',{email:_acctMe.email});}
+    else{notice.removeAttribute('data-t');notice.textContent='';}
+  }
+  // Traduzione: /api/translate vincola gia' la consegna all'account quando il
+  // job e' avviato da loggati (_apply_account_to_job lato server); ma una
+  // traduzione partita anonima e vincolata solo dopo un login a meta' lavoro
+  // (vedi _acctVerify) ricade nello stesso caso della generazione audio.
+  const canForceTr=on&&wizMode==='translate'&&(!generating||jobDone||trEmailRegistered);
+  const noticeTr=document.getElementById('acctForcedNoticeTr');
+  if(noticeTr){
+    noticeTr.style.display=canForceTr?'block':'none';
+    if(canForceTr){noticeTr.setAttribute('data-t','acct_forced_notice');noticeTr.textContent=t('acct_forced_notice',{email:_acctMe.email});}
+    else{noticeTr.removeAttribute('data-t');noticeTr.textContent='';}
+  }
+  const areaForce={emailLateArea:canForceGen,emailLateAreaTr:canForceTr};
+  Object.keys(areaForce).forEach(function(id){
+    const a=document.getElementById(id);
+    if(!a)return;
+    if(areaForce[id]){a.classList.remove('visible');a.dataset.acctHidden='1'}
+    else if(a.dataset.acctHidden){a.classList.add('visible');delete a.dataset.acctHidden}
+  });
+  const pn=document.getElementById('payEmailNotice');
+  if(pn){
+    pn.setAttribute('data-t',on?'acct_forced_notice':'pay_email_notice');
+    pn.textContent=on?t('acct_forced_notice',{email:_acctMe.email}):t('pay_email_notice');
+  }
+}

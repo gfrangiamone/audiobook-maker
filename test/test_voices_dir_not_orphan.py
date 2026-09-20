@@ -86,3 +86,20 @@ def test_la_cartella_delle_voci_ha_un_nome_suo():
     inequivocabile, non il generico 'voices' che sembrava un job id."""
     import voice_clone
     assert voice_clone.VOICES_DIRNAME == "user_voices"
+
+
+def test_il_prefisso_cold_degli_account_e_riservato(monkeypatch, tmp_path):
+    """I backup di abm.db vivono su cold sotto `accounts/`: oggi nessuno sweep
+    ci arriva (sono file, non cartelle nel data dir), ma il prefisso va
+    riservato lo stesso — un `delete_prefix("accounts/")` cancellerebbe le
+    copie del database degli account."""
+    import storage_backend
+    app = _app(monkeypatch, tmp_path)
+    assert "accounts" in _RISERVATE()
+    (tmp_path / "accounts").mkdir(exist_ok=True)
+    assert app._is_job_dir(tmp_path / "accounts") is False
+    cancellati = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
+    app._delete_cold_for_job("accounts")
+    assert cancellati == []

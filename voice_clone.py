@@ -1144,6 +1144,36 @@ def email_has_active_voice(email, exclude_id=None):
     return active_voice_for_email(email, exclude_id=exclude_id) is not None
 
 
+def ids_for_email(email):
+    """Id di tutte le voci (anche terminali) con quell'owner_email: serve
+    all'adozione retroattiva dell'account."""
+    h = email_hash(email)
+    return [rec["id"] for rec in _all()
+            if rec.get("id") and rec.get("owner_email_hash") == h]
+
+
+def link_account(clone_id, account_id):
+    """Annota l'account proprietario sul record della voce. True se cambiato."""
+    rec = store().get(clone_id)
+    if rec is None or rec.get("account_id") == account_id:
+        return False
+    store().update(clone_id, {"account_id": account_id})
+    return True
+
+
+def unlink_account(clone_id):
+    """Toglie l'account proprietario dal record della voce. True se cambiato.
+
+    Chiamata dalla cancellazione dell'account: la voce campionata sopravvive
+    (ha un flusso e un link di gestione suoi), ma non deve piu' portare il
+    riferimento a un account che non esiste piu'."""
+    rec = store().get(clone_id)
+    if rec is None or rec.get("account_id") in (None, ""):
+        return False
+    store().update(clone_id, {"account_id": None})
+    return True
+
+
 def _norm_email(email):
     return (email or "").strip().lower()
 

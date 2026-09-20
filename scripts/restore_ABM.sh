@@ -122,6 +122,7 @@ echo "[7/10] Ripristino dati applicazione..."
 mkdir -p /opt/audiobook-maker/data
 if [ -d "$BACKUP_DIR/data" ]; then
     cp "$BACKUP_DIR/data/"*.json /opt/audiobook-maker/data/ 2>/dev/null || true
+    cp "$BACKUP_DIR/data/abm.db" /opt/audiobook-maker/data/ 2>/dev/null || true
     echo "  File dati ripristinati:"
     ls -lh /opt/audiobook-maker/data/*.json 2>/dev/null || true
 fi

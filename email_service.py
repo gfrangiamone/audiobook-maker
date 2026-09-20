@@ -880,6 +880,52 @@ def send_voice_clone_expiring(email, lang, *, days, manage_url):
                     manage_url=manage_url)
 
 
+# ---------------------------------------------------------------------------
+# Account: codice di accesso / cancellazione (i18n/account_emails.json)
+# ---------------------------------------------------------------------------
+
+_ACCT_I18N = {}
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n",
+                           "account_emails.json"), encoding="utf-8") as _f:
+        _ACCT_I18N = json.load(_f)
+except Exception as _e:      # noqa: BLE001
+    print(f"WARNING: i18n/account_emails.json non caricato: {_e}", flush=True)
+
+
+def _acct_t(lang):
+    return _ACCT_I18N.get((lang or "").split("-")[0].lower()) or _ACCT_I18N.get("en") or {}
+
+
+def _acct_send(email, lang, subject_key, body_key, **values):
+    t = _acct_t(lang)
+    if not t or not email:
+        return False
+    safe = {k: (v if k.endswith("_url") else html.escape(str(v))) for k, v in values.items()}
+    try:
+        subject = t[subject_key].format(**safe)
+        body = t[body_key].format(**safe) + t.get("footer", "")
+        return bool(_send_email(email, subject, body))
+    except Exception as e:      # noqa: BLE001
+        print(f"[email] account {subject_key} non inviata: {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+def send_account_code(email, lang, *, code, link_url, purpose, minutes):
+    """Codice a 6 cifre + magic link. `purpose`: login | delete."""
+    if purpose not in ("login", "delete"):
+        return False
+    minutes_n = _vc_num(minutes, kind="int")
+    if minutes_n is None:
+        return False
+    return _acct_send(email, lang, f"{purpose}_subject", f"{purpose}_body",
+                      code=code, link_url=link_url, minutes=minutes_n)
+
+
+def send_account_deleted(email, lang):
+    return _acct_send(email, lang, "deleted_subject", "deleted_body")
+
+
 def send_voice_clone_reminder(email, lang, *, resume_url, stage):
     stage_n = _vc_num(stage, kind="int")
     if stage_n is None:

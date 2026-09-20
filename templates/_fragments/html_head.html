@@ -143,6 +143,16 @@ __REVIEWS_LD__
           <div class="lang-option" role="option" aria-selected="false" data-lang="hi" onclick="selectLang('hi')" onkeydown="handleLangOptionKey(event,'hi')" tabindex="-1"><span class="flag">🇮🇳</span>हिन्दी</div>
         </div>
       </div>
+      <div class="acct-wrap" id="acctWrap">
+        <button class="theme-btn acct-btn" id="acctBtn" style="display:none" title="Account" aria-label="Account" aria-haspopup="true" aria-expanded="false" onclick="_acctBtnClick()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
+        <div class="acct-menu" id="acctMenu" role="menu" style="display:none">
+          <div class="acct-menu-email" id="acctMenuEmail"></div>
+          <a class="acct-menu-item" href="/account" role="menuitem" data-t="acct_history"></a>
+          <button class="acct-menu-item" type="button" role="menuitem" onclick="_acctLogout()" data-t="acct_logout"></button>
+        </div>
+      </div>
       <div class="theme-sep"></div>
       <button class="theme-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle dark/light theme">&#x2600;&#xFE0F;</button>
     </div>
@@ -362,6 +372,7 @@ __REVIEWS_LD__
           <span class="phase" id="trProgressPhase">—</span>
           <span class="pct" id="trProgressPct">0%</span>
         </div>
+        <div class="al al-ok" id="acctForcedNoticeTr" style="display:none;margin-top:10px"></div>
         <div class="email-late-area" id="emailLateAreaTr">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--txm)"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           <input type="email" id="notifyEmailLateTr" placeholder="" aria-label="Email per notifica">
@@ -753,6 +764,7 @@ __REVIEWS_LD__
           <div id="m4bMsg" style="font-size:0.75em; color:#999; font-style:italic;"></div>
         </div>
         <div class="email-transfer-row">
+        <div class="al al-ok" id="acctForcedNotice" style="display:none;margin-top:10px"></div>
         <div class="email-late-area" id="emailLateArea">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--txm)"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           <input type="email" id="notifyEmailLate" placeholder="" aria-label="Email per notifica">
@@ -1437,6 +1449,31 @@ __REVIEWS_LD__
         <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-outline" onclick="closeTtsQuotaModal()" data-t="btn_cancel"></button>
           <button class="btn btn-ok" id="ttsQuotaGo" onclick="_submitTtsQuotaGate()" data-t="tts_quota_continue"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="loginModal" role="dialog" aria-modal="true" aria-labelledby="acctModalTitle" onclick="if(event.target===this)closeLoginModal()">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-head">
+        <span data-t="acct_modal_title" id="acctModalTitle"></span>
+        <button class="modal-close" onclick="closeLoginModal()" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="acctStepEmail">
+          <p data-t="acct_modal_intro" style="margin:0 0 12px;line-height:1.6;font-size:.92rem"></p>
+          <input type="email" id="acctEmail" placeholder="" autocomplete="email" aria-label="Email" style="width:100%;box-sizing:border-box;margin-bottom:10px" onkeydown="if(event.key==='Enter'){event.preventDefault();_acctRequest()}">
+        </div>
+        <div id="acctStepCode" style="display:none">
+          <p id="acctCodeIntro" style="margin:0 0 12px;line-height:1.6;font-size:.92rem"></p>
+          <input type="text" id="acctCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="" aria-label="Code" style="width:100%;box-sizing:border-box;margin-bottom:10px;letter-spacing:.3em;font-size:1.2rem;text-align:center" onkeydown="if(event.key==='Enter'){event.preventDefault();_acctVerify()}">
+        </div>
+        <div id="acctErr" style="color:var(--err,#c0392b);font-size:.85rem;margin:0 0 10px;display:none"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-outline" onclick="closeLoginModal()" data-t="btn_cancel"></button>
+          <button class="btn btn-ok" id="acctSendBtn" onclick="_acctRequest()" data-t="acct_send_code"></button>
+          <button class="btn btn-ok" id="acctVerifyBtn" onclick="_acctVerify()" data-t="acct_verify" style="display:none" disabled></button>
         </div>
       </div>
     </div>

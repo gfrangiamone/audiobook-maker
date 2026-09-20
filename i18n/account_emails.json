@@ -1,0 +1,72 @@
+{
+  "it": {
+    "brand": "Audiobook Maker",
+    "login_subject": "Il tuo codice di accesso: {code}",
+    "login_body": "<p>Per accedere al tuo account Audiobook Maker inserisci questo codice:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>oppure apri il link: <a href=\"{link_url}\">{link_url}</a></p><p>Il codice vale {minutes} minuti e si usa una volta sola. Se non hai chiesto tu l'accesso, ignora questa email.</p>",
+    "delete_subject": "Conferma la cancellazione del tuo account: {code}",
+    "delete_body": "<p>Hai chiesto di cancellare il tuo account Audiobook Maker. Per confermare inserisci questo codice:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>oppure apri il link: <a href=\"{link_url}\">{link_url}</a></p><p>Il codice vale {minutes} minuti. Lo storico dei job e le sessioni verranno eliminati; i file gia' consegnati restano scaricabili dai link ricevuti via email fino alla loro scadenza.</p><p>Se non sei stato tu, ignora questa email: non succede nulla.</p>",
+    "deleted_subject": "Account cancellato",
+    "deleted_body": "<p>Il tuo account Audiobook Maker e' stato cancellato. Puoi continuare a usare il servizio senza account, o crearne uno nuovo in qualunque momento con la stessa email.</p>",
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+  },
+  "en": {
+    "brand": "Audiobook Maker",
+    "login_subject": "Your sign-in code: {code}",
+    "login_body": "<p>To sign in to your Audiobook Maker account enter this code:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>or open the link: <a href=\"{link_url}\">{link_url}</a></p><p>The code is valid for {minutes} minutes and works once. If you did not request it, ignore this email.</p>",
+    "delete_subject": "Confirm your account deletion: {code}",
+    "delete_body": "<p>You asked to delete your Audiobook Maker account. To confirm, enter this code:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>or open the link: <a href=\"{link_url}\">{link_url}</a></p><p>The code is valid for {minutes} minutes. Your job history and sessions will be removed; files already delivered stay downloadable from the links you received by email until they expire.</p><p>If this was not you, ignore this email: nothing happens.</p>",
+    "deleted_subject": "Account deleted",
+    "deleted_body": "<p>Your Audiobook Maker account has been deleted. You can keep using the service without an account, or create a new one at any time with the same email.</p>",
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+  },
+  "fr": {
+    "brand": "Audiobook Maker",
+    "login_subject": "Votre code de connexion : {code}",
+    "login_body": "<p>Pour vous connecter à votre compte Audiobook Maker, saisissez ce code :</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>ou ouvrez le lien : <a href=\"{link_url}\">{link_url}</a></p><p>Le code est valable {minutes} minutes et ne sert qu'une fois. Si vous n'avez rien demandé, ignorez cet e-mail.</p>",
+    "delete_subject": "Confirmez la suppression de votre compte : {code}",
+    "delete_body": "<p>Vous avez demandé la suppression de votre compte Audiobook Maker. Pour confirmer, saisissez ce code :</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>ou ouvrez le lien : <a href=\"{link_url}\">{link_url}</a></p><p>Le code est valable {minutes} minutes. L'historique des travaux et les sessions seront supprimés ; les fichiers déjà livrés restent téléchargeables depuis les liens reçus par e-mail jusqu'à leur expiration.</p><p>Si ce n'était pas vous, ignorez cet e-mail : rien ne se passe.</p>",
+    "deleted_subject": "Compte supprimé",
+    "deleted_body": "<p>Votre compte Audiobook Maker a été supprimé. Vous pouvez continuer à utiliser le service sans compte, ou en créer un nouveau à tout moment avec la même adresse.</p>",
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+  },
+  "es": {
+    "brand": "Audiobook Maker",
+    "login_subject": "Tu código de acceso: {code}",
+    "login_body": "<p>Para acceder a tu cuenta de Audiobook Maker introduce este código:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>o abre el enlace: <a href=\"{link_url}\">{link_url}</a></p><p>El código vale {minutes} minutos y se usa una sola vez. Si no lo has pedido tú, ignora este correo.</p>",
+    "delete_subject": "Confirma la eliminación de tu cuenta: {code}",
+    "delete_body": "<p>Has pedido eliminar tu cuenta de Audiobook Maker. Para confirmar, introduce este código:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>o abre el enlace: <a href=\"{link_url}\">{link_url}</a></p><p>El código vale {minutes} minutos. El historial de trabajos y las sesiones se eliminarán; los archivos ya entregados siguen descargables desde los enlaces recibidos por correo hasta su caducidad.</p><p>Si no has sido tú, ignora este correo: no pasa nada.</p>",
+    "deleted_subject": "Cuenta eliminada",
+    "deleted_body": "<p>Tu cuenta de Audiobook Maker ha sido eliminada. Puedes seguir usando el servicio sin cuenta o crear una nueva en cualquier momento con el mismo correo.</p>",
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+  },
+  "de": {
+    "brand": "Audiobook Maker",
+    "login_subject": "Dein Anmeldecode: {code}",
+    "login_body": "<p>Gib diesen Code ein, um dich bei deinem Audiobook-Maker-Konto anzumelden:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>oder öffne den Link: <a href=\"{link_url}\">{link_url}</a></p><p>Der Code gilt {minutes} Minuten und nur einmal. Falls du ihn nicht angefordert hast, ignoriere diese E-Mail.</p>",
+    "delete_subject": "Bestätige die Löschung deines Kontos: {code}",
+    "delete_body": "<p>Du hast die Löschung deines Audiobook-Maker-Kontos angefordert. Gib zur Bestätigung diesen Code ein:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>oder öffne den Link: <a href=\"{link_url}\">{link_url}</a></p><p>Der Code gilt {minutes} Minuten. Auftragsverlauf und Sitzungen werden gelöscht; bereits gelieferte Dateien bleiben über die per E-Mail erhaltenen Links bis zu deren Ablauf herunterladbar.</p><p>Falls das nicht du warst, ignoriere diese E-Mail: es passiert nichts.</p>",
+    "deleted_subject": "Konto gelöscht",
+    "deleted_body": "<p>Dein Audiobook-Maker-Konto wurde gelöscht. Du kannst den Dienst ohne Konto weiter nutzen oder jederzeit mit derselben E-Mail ein neues anlegen.</p>",
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+  },
+  "zh": {
+    "brand": "Audiobook Maker",
+    "login_subject": "您的登录验证码：{code}",
+    "login_body": "<p>请输入以下验证码登录您的 Audiobook Maker 账户：</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>或打开链接：<a href=\"{link_url}\">{link_url}</a></p><p>验证码 {minutes} 分钟内有效，仅可使用一次。如果不是您本人操作，请忽略此邮件。</p>",
+    "delete_subject": "确认删除您的账户：{code}",
+    "delete_body": "<p>您申请删除 Audiobook Maker 账户。请输入以下验证码确认：</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>或打开链接：<a href=\"{link_url}\">{link_url}</a></p><p>验证码 {minutes} 分钟内有效。任务历史和会话将被删除；已交付的文件在过期前仍可通过邮件中的链接下载。</p><p>如果不是您本人操作，请忽略此邮件，不会有任何变化。</p>",
+    "deleted_subject": "账户已删除",
+    "deleted_body": "<p>您的 Audiobook Maker 账户已删除。您可以继续无账户使用服务，也可以随时用同一邮箱重新创建账户。</p>",
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+  },
+  "hi": {
+    "brand": "Audiobook Maker",
+    "login_subject": "आपका साइन-इन कोड: {code}",
+    "login_body": "<p>अपने Audiobook Maker खाते में साइन इन करने के लिए यह कोड दर्ज करें:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>या यह लिंक खोलें: <a href=\"{link_url}\">{link_url}</a></p><p>कोड {minutes} मिनट तक मान्य है और केवल एक बार काम करता है। यदि आपने इसका अनुरोध नहीं किया, तो इस ईमेल को अनदेखा करें।</p>",
+    "delete_subject": "अपने खाते को हटाने की पुष्टि करें: {code}",
+    "delete_body": "<p>आपने अपना Audiobook Maker खाता हटाने का अनुरोध किया है। पुष्टि के लिए यह कोड दर्ज करें:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>या यह लिंक खोलें: <a href=\"{link_url}\">{link_url}</a></p><p>कोड {minutes} मिनट तक मान्य है। कार्य इतिहास और सत्र हटा दिए जाएँगे; पहले से डिलीवर की गई फ़ाइलें ईमेल में मिले लिंक से उनकी समाप्ति तक डाउनलोड की जा सकती हैं।</p><p>यदि यह आप नहीं थे, तो इस ईमेल को अनदेखा करें: कुछ नहीं होगा।</p>",
+    "deleted_subject": "खाता हटा दिया गया",
+    "deleted_body": "<p>आपका Audiobook Maker खाता हटा दिया गया है। आप बिना खाते के सेवा का उपयोग जारी रख सकते हैं, या उसी ईमेल से कभी भी नया खाता बना सकते हैं।</p>",
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+  }
+}
