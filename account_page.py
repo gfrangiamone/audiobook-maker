@@ -9,10 +9,10 @@ import page_brand
 
 _CSS = page_brand.BASE_CSS + (
     "body{max-width:760px}"
-    ".topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1em;flex-wrap:wrap}"
-    ".topbar h1{margin:0 0 .3em;font-size:1.5em}"
-    "button.small{padding:.3em .8em;font-size:.85em;white-space:nowrap;margin-top:.3em}"
-    ".topbar .tools{display:flex;gap:.5em;flex-wrap:wrap;margin-top:.3em}"
+    ".topbar h1{font-size:1.5em}"
+    "button.small{padding:.3em .8em;font-size:.85em;white-space:nowrap}"
+    ".signed{display:flex;align-items:center;justify-content:space-between;gap:1em;flex-wrap:wrap}"
+    ".signed p{margin:0}"
     ".cnt{display:inline-block;min-width:1.4em;text-align:center;font-size:.85em;border-radius:1em;"
     "padding:0 .4em;background:var(--ac);color:#fff;margin-left:.3em}"
     "button.primary .cnt{background:#fff;color:var(--ac)}"
@@ -146,16 +146,16 @@ def _devices_dialog(t, sessions, current_sid):
     )
 
 
-def _close_dialog(t):
-    """Conferma del «Torna all'app»: spiega che la sessione resta aperta
-    (chiudere non e' uscire). Il bottone di conferma ha il fuoco iniziale:
-    Invio conferma, Esc annulla."""
+def _logout_dialog(t):
+    """Conferma dell'«Esci»: e' l'azione che cambia qualcosa (tornare
+    all'app no: la sessione resta). «Annulla» ha il fuoco iniziale, cosi'
+    Invio non disconnette per sbaglio."""
     return (
-        f"<dialog id=\"acctCloseDlg\"><h2>{_e(t['close_popup_title'])}</h2>"
-        f"<p>{_e(t['close_popup_p'])}</p>"
-        f"<div class=\"actions\"><button type=\"button\" class=\"primary\" id=\"acctCloseConfirm\" autofocus>"
-        f"{_e(t['close_btn_app'])}</button>"
-        f"<button type=\"button\" data-close>{_e(t['cancel_btn'])}</button></div></dialog>"
+        f"<dialog id=\"acctLogoutDlg\"><h2>{_e(t['logout_popup_title'])}</h2>"
+        f"<p>{_e(t['logout_popup_p'])}</p>"
+        f"<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"acctLogoutConfirm\">"
+        f"{_e(t['logout'])}</button>"
+        f"<button type=\"button\" class=\"primary\" data-close autofocus>{_e(t['cancel_btn'])}</button></div></dialog>"
     )
 
 
@@ -190,13 +190,14 @@ _HISTORY_JS = (
     ".then(function(r){return r.json();}).then(function(d){"
     "if(d&&d.current){location.href='/';}else{location.reload();}})"
     ".catch(function(){b.disabled=false;});});});"
-    "var cl=document.getElementById('acctClose'),cd=document.getElementById('acctCloseDlg'),"
-    "cc=document.getElementById('acctCloseConfirm');"
-    "if(cl)cl.onclick=function(){openDlg(cd);if(cc)cc.focus();};"
-    "if(cc)cc.onclick=function(){location.href='/';};"
+    "['acctClose','acctCloseX'].forEach(function(id){var b=document.getElementById(id);"
+    "if(b)b.onclick=function(){location.href='/';};});"
     "var la=document.getElementById('acctLogoutAll');"
     "if(la)la.onclick=function(){la.disabled=true;post('/api/auth/logout_all').then(function(){location.href='/';});};"
-    "document.getElementById('acctLogout').onclick=function(){post('/api/auth/logout').then(function(){location.href='/';});};"
+    "var lo=document.getElementById('acctLogout'),ld=document.getElementById('acctLogoutDlg'),"
+    "lc=document.getElementById('acctLogoutConfirm');"
+    "if(lo)lo.onclick=function(){openDlg(ld);};"
+    "if(lc)lc.onclick=function(){lc.disabled=true;post('/api/auth/logout').then(function(){location.href='/';});};"
     "var del=document.getElementById('acctDelete'),ddl=document.getElementById('acctDeleteDlg'),"
     "dc=document.getElementById('acctDeleteConfirm');"
     "if(del)del.onclick=function(){openDlg(ddl);};"
@@ -235,10 +236,11 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
     parts = [
         "<div class=\"topbar\">"
         f"<h1>{_e(t['history_title'])}</h1><div class=\"tools\">"
-        f"<button type=\"button\" class=\"small primary\" id=\"acctClose\" autofocus>{_e(t['close_btn_app'])}</button>"
+        f"<button type=\"button\" class=\"icon-x\" id=\"acctCloseX\" title=\"{_e(t['close_btn_app'])}\" "
+        f"aria-label=\"{_e(t['close_btn_app'])}\">{page_brand.CLOSE_SVG}</button></div></div>",
+        f"<div class=\"signed\"><p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong></p>"
         f"<button type=\"button\" class=\"small\" id=\"acctDevices\">{_e(t['devices_btn'])}"
-        f"<span class=\"cnt\">{n_sess}</span></button></div></div>",
-        f"<p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong></p>",
+        f"<span class=\"cnt\">{n_sess}</span></button></div>",
         "<nav class=\"tabs\" role=\"tablist\">"
         f"<button type=\"button\" role=\"tab\" data-tab=\"books\" aria-selected=\"{'true' if tab == 'books' else 'false'}\">"
         f"{_e(t['tab_books'])}</button>"
@@ -315,8 +317,9 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         "<div class=\"actions\">"
         f"<button type=\"button\" id=\"acctLogout\">{_e(t['logout'])}</button>"
         f"<button type=\"button\" class=\"danger\" id=\"acctDelete\">{_e(t['delete_account'])}</button>"
+        f"<button type=\"button\" class=\"primary end\" id=\"acctClose\" autofocus>{_e(t['close_btn_app'])}</button>"
         "</div>"
         f"<p class=\"meta\" id=\"acctDeleteSent\" hidden>{_e(t['delete_sent'])}</p>"
-        + _close_dialog(t) + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t) + _HISTORY_JS
+        + _logout_dialog(t) + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t) + _HISTORY_JS
     )
     return page_html(t, lang, t["history_title"], "".join(parts), h1=False)

@@ -10337,8 +10337,13 @@ _VC_RENAME_JS = (
     "apri(e.target.closest('li'),false);});})();</script>")
 
 
-def _vc_page(title, body_html, status=200, lang="en"):
+def _vc_page(title, body_html, status=200, lang="en", tools_html=""):
+    """`tools_html`: strumenti a destra del titolo (es. il ritorno all'area
+    personale); vuoto = titolo semplice."""
     t = _vc_txt(lang)
+    titolo = html_mod.escape(title)
+    testata = (f"<div class=\"topbar\"><h1>{titolo}</h1><div class=\"tools\">{tools_html}</div></div>"
+               if tools_html else f"<h1>{titolo}</h1>")
     marchio = html_mod.escape(t["brand"])
     html_doc = (f"<!doctype html><html lang=\"{html_mod.escape(lang)}\"><head><meta charset=\"utf-8\">"
                 f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -10359,6 +10364,7 @@ def _vc_page(title, body_html, status=200, lang="en"):
                 f".devs{{list-style:none;padding:0}}.devs li{{border-top:1px solid var(--brd);padding:.9em 0}}"
                 f".devs form{{display:inline-flex;gap:.4em;margin:.5em .6em 0 0;flex-wrap:wrap}}"
                 f".dev-head{{display:flex;align-items:center;flex-wrap:wrap;gap:.2em}}"
+                f".dev-head form.dev-revoke{{margin:0 0 0 auto}}"
                 f".devs form.dev-rename{{display:flex;align-items:center;margin:0 0 .3em}}"
                 f".dev-rename input{{flex:1 1 12em}}"
                 f".icon-btn{{padding:.3em .4em;border:none;background:transparent;color:var(--txd);"
@@ -10366,7 +10372,7 @@ def _vc_page(title, body_html, status=200, lang="en"):
                 f".icon-btn svg{{width:16px;height:16px}}"
                 f".meta{{margin-top:.2em}}</style>"
                 f"</head><body><a class=\"brand\" href=\"/\">{_VC_LOGO_SVG}<span>{marchio}</span></a>"
-                f"<h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
+                f"{testata}{body_html}</body></html>")
     # I5: pagine di gestione voce (link email) mai in cache: contengono stato
     # per-dispositivo che cambia dopo ogni azione (revoke, delete, resume).
     resp = _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))
@@ -10498,7 +10504,10 @@ def vc_devices(token):
         righe += (f"<li><div class=\"dev-head\" data-view><b>{html_mod.escape(nome or t['device_unnamed'])}</b>"
                   f"<button type=\"button\" class=\"icon-btn\" data-edit "
                   f"title=\"{html_mod.escape(t['edit_name_btn'])}\" "
-                  f"aria-label=\"{html_mod.escape(t['edit_name_btn'])}\">{_VC_PENCIL_SVG}</button>{questo}</div>"
+                  f"aria-label=\"{html_mod.escape(t['edit_name_btn'])}\">{_VC_PENCIL_SVG}</button>{questo}"
+                  f"<form class=\"dev-revoke\" method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
+                  f"<button class=\"danger\">{html_mod.escape(t['revoke_btn'])}</button></form></div>"
                   f"<form class=\"dev-rename\" method=\"post\" action=\"/vc/{tok}/devices/rename{coda}\" hidden>"
                   f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
                   f"<input name=\"name\" maxlength=\"{voice_clone.DEVICE_NAME_MAX}\" "
@@ -10506,16 +10515,25 @@ def vc_devices(token):
                   f"<button class=\"primary\">{html_mod.escape(t['speed_btn'])}</button>"
                   f"<button type=\"button\" data-cancel>{html_mod.escape(t['cancel_btn'])}</button></form>"
                   f"{presentazione}"
-                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div>"
-                  f"<form method=\"post\" action=\"/vc/{tok}/devices/revoke{coda}\">"
-                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
-                  f"<button class=\"danger\">{html_mod.escape(t['revoke_btn'])}</button></form></li>")
+                  f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div></li>")
     body = (_vc_speed_section(rec, tok, coda, t) +
             f"<p>{html_mod.escape(t['devices_intro'])}</p>"
             f"<ul class=\"devs\">{righe}</ul>{_VC_RENAME_JS}"
-            f"<p><a href=\"/vc/{tok}/delete\">"
-            f"{html_mod.escape(t['delete_link'])}</a></p>")
-    return _vc_page(t["devices_title"], body, lang=lang)
+            f"<div class=\"actions\"><a class=\"btn danger end\" href=\"/vc/{tok}/delete\">"
+            f"{html_mod.escape(t['delete_link'])}</a></div>")
+    return _vc_page(t["devices_title"], body, lang=lang, tools_html=_vc_back_to_account(rec, t))
+
+
+def _vc_back_to_account(rec, t):
+    """«X» in testata che riporta all'area personale, solo se chi guarda e'
+    connesso con l'account proprietario della voce: chi arriva dal link
+    dell'email senza sessione non ha un'area a cui tornare."""
+    acct = _current_account()
+    if not acct or rec.get("owner_email_hash") != voice_clone.email_hash(acct.get("email") or ""):
+        return ""
+    lbl = html_mod.escape(t["back_account"])
+    return (f"<a class=\"btn icon-x\" href=\"/account?tab=voices\" title=\"{lbl}\" aria-label=\"{lbl}\">"
+            f"{page_brand.CLOSE_SVG}</a>")
 
 
 def _vc_speed_section(rec, tok, coda, t):

@@ -166,15 +166,26 @@ def test_account_page_delete_dialog(logged):
 def test_account_page_close_button_and_dialog(logged):
     c, acct = logged
     html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
-    # bottone di chiusura nella topbar, azione default (autofocus), prima dei dispositivi
+    # «X» in alto a destra (dopo i dispositivi) e «Torna all'app» in basso a
+    # destra come azione default: entrambi tornano all'app senza popup
     head = html.split("Connesso come")[0]
-    assert 'id="acctClose" autofocus>Torna all&#x27;app</button>' in head
-    assert head.index('id="acctClose"') < head.index('id="acctDevices"')
-    # popup di conferma: spiega che la sessione resta aperta; conferma col fuoco
-    assert '<dialog id="acctCloseDlg">' in html
-    assert "Tornare all&#x27;app?" in html and "Resti connesso su questo dispositivo" in html
-    assert 'id="acctCloseConfirm" autofocus>' in html
-    assert "cc.onclick=function(){location.href='/';}" in html
+    assert 'id="acctCloseX" title="Torna all&#x27;app" aria-label="Torna all&#x27;app">' in head
+    assert 'id="acctDevices"' not in head
+    # dispositivi: sulla riga «Connesso come», a destra
+    riga = html.split('<div class="signed">')[1].split("</div>")[0]
+    assert riga.startswith('<p class="meta">Connesso come') and 'class="small" id="acctDevices">' in riga
+    foot = html.split("</section>")[-1]
+    assert 'class="primary end" id="acctClose" autofocus>Torna all&#x27;app</button>' in foot
+    assert foot.index('id="acctDelete"') < foot.index('id="acctClose"')
+    assert "['acctClose','acctCloseX'].forEach" in html and "location.href='/'" in html
+    assert "acctCloseDlg" not in html
+    # il popup di conferma sta sull'uscita: Annulla ha il fuoco, Esci e' danger
+    assert '<dialog id="acctLogoutDlg">' in html
+    assert "Uscire dall&#x27;account?" in html and "Verrai disconnesso su questo dispositivo" in html
+    assert 'class="danger" id="acctLogoutConfirm">Esci</button>' in html
+    assert 'class="primary" data-close autofocus>Annulla</button>' in html.split("acctLogoutDlg")[1]
+    assert "if(lo)lo.onclick=function(){openDlg(ld);}" in html
+    assert "lc.onclick=function(){lc.disabled=true;post('/api/auth/logout')" in html
 
 
 def test_account_page_theme_and_app_style(logged):

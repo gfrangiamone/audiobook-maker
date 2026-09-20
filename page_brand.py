@@ -20,6 +20,12 @@ LOGO_SVG = (
 # Tavolozza e controlli della SPA (static/css/style.css): chi apre queste
 # pagine dall'app deve ritrovare gli stessi bottoni e lo stesso tema.
 # Le variabili portano gli stessi nomi del foglio della SPA.
+# «X» di chiusura/ritorno per la testata delle pagine (aria-label lo dice il chiamante).
+CLOSE_SVG = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+    'stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+)
+
 BASE_CSS = (
     ":root{--bg:#f5f3ef;--srf:#fff;--srf2:#f0ede8;--brd:#d5d0c8;--brdh:#bfb8ae;"
     "--tx:#2c2a26;--txd:#6b6760;--txm:#767676;--ac:#c47a2a;--acs:rgba(196,122,42,.10);--ach:#d4903e;"
@@ -39,13 +45,20 @@ BASE_CSS = (
     "button:focus-visible,a.btn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}"
     "button.primary{background:var(--ac);border-color:var(--ac);color:#fff}"
     "button.primary:hover{background:var(--ach);border-color:var(--ach)}"
-    "button.danger{color:var(--err)}button.danger:hover{background:var(--errs);border-color:var(--err)}"
+    "button.danger,a.btn.danger{color:var(--err)}"
+    "button.danger:hover,a.btn.danger:hover{background:var(--errs);border-color:var(--err)}"
     "button:disabled{opacity:.55;cursor:default}"
     ".card{border:1px solid var(--brd);border-radius:12px;padding:1em 1.2em;margin:1.2em 0 2em;"
     "background:var(--srf)}.card h2{margin:0 0 .3em;font-size:1.2em}"
     ".card p{margin:.2em 0 1em;color:var(--txd)}"
     ".meta{color:var(--txd);font-size:.9em}"
-    ".actions{display:flex;gap:.6em;flex-wrap:wrap;margin-top:1.5em}"
+    ".actions{display:flex;gap:.6em;flex-wrap:wrap;align-items:center;margin-top:1.5em}"
+    ".actions .end{margin-left:auto}"
+    ".topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1em;flex-wrap:wrap}"
+    ".topbar h1{margin:0 0 .3em}"
+    ".topbar .tools{display:flex;align-items:center;gap:.5em;flex-wrap:wrap;margin-top:.3em}"
+    ".icon-x{padding:.35em;line-height:0;color:var(--txd)}.icon-x:hover{color:var(--tx)}"
+    ".icon-x svg{width:18px;height:18px;display:block}"
     ".me{font-size:.8em;background:var(--infos);color:var(--info);border-radius:1em;padding:.1em .6em;"
     "margin-left:.4em;white-space:nowrap}"
     ".brand{display:flex;align-items:center;gap:.6em;margin-bottom:1.8em;color:inherit;text-decoration:none}"
