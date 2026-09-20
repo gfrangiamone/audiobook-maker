@@ -10349,12 +10349,9 @@ _VC_RENAME_JS = (
 
 
 def _vc_page(title, body_html, status=200, lang="en", tools_html=""):
-    """`tools_html`: strumenti a destra del titolo (es. il ritorno all'area
-    personale); vuoto = titolo semplice."""
+    """`tools_html`: strumenti a destra del marchio, allineati al logo (es.
+    il ritorno all'area personale); vuoto = solo il marchio."""
     t = _vc_txt(lang)
-    titolo = html_mod.escape(title)
-    testata = (f"<div class=\"topbar\"><h1>{titolo}</h1><div class=\"tools\">{tools_html}</div></div>"
-               if tools_html else f"<h1>{titolo}</h1>")
     marchio = html_mod.escape(t["brand"])
     html_doc = (f"<!doctype html><html lang=\"{html_mod.escape(lang)}\"><head><meta charset=\"utf-8\">"
                 f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -10382,8 +10379,8 @@ def _vc_page(title, body_html, status=200, lang="en", tools_html=""):
                 f"line-height:0;margin-left:.2em}}.icon-btn:hover{{background:var(--srf2);color:var(--tx);border-color:transparent}}"
                 f".icon-btn svg{{width:16px;height:16px}}"
                 f".meta{{margin-top:.2em}}</style>"
-                f"</head><body><a class=\"brand\" href=\"/\">{_VC_LOGO_SVG}<span>{marchio}</span></a>"
-                f"{testata}{body_html}</body></html>")
+                f"</head><body>{page_brand.brand_bar(_VC_LOGO_SVG, marchio, tools_html=tools_html)}"
+                f"<h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
     # I5: pagine di gestione voce (link email) mai in cache: contengono stato
     # per-dispositivo che cambia dopo ogni azione (revoke, delete, resume).
     resp = _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))

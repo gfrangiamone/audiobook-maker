@@ -26,6 +26,16 @@ CLOSE_SVG = (
     'stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
 )
 
+
+def brand_bar(logo_svg, brand_text, href="/", tools_html=""):
+    """Riga del marchio: logo+nome a sinistra e, se ci sono, gli strumenti
+    (X di chiusura, ritorno) a destra, allineati al logo. `brand_text` e
+    `tools_html` gia' escapati dal chiamante."""
+    brand = f'<a class="brand" href="{href}">{logo_svg}<span>{brand_text}</span></a>'
+    if not tools_html:
+        return brand
+    return f'<div class="brandbar">{brand}<div class="tools">{tools_html}</div></div>'
+
 BASE_CSS = (
     ":root{--bg:#f5f3ef;--srf:#fff;--srf2:#f0ede8;--brd:#d5d0c8;--brdh:#bfb8ae;"
     "--tx:#2c2a26;--txd:#6b6760;--txm:#767676;--ac:#c47a2a;--acs:rgba(196,122,42,.10);--ach:#d4903e;"
@@ -54,9 +64,9 @@ BASE_CSS = (
     ".meta{color:var(--txd);font-size:.9em}"
     ".actions{display:flex;gap:.6em;flex-wrap:wrap;align-items:center;margin-top:1.5em}"
     ".actions .end{margin-left:auto}"
-    ".topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:1em;flex-wrap:wrap}"
-    ".topbar h1{margin:0 0 .3em}"
-    ".topbar .tools{display:flex;align-items:center;gap:.5em;flex-wrap:wrap;margin-top:.3em}"
+    ".brandbar{display:flex;align-items:center;justify-content:space-between;gap:1em;margin-bottom:1.8em}"
+    ".brandbar .brand{margin-bottom:0}"
+    ".brandbar .tools{display:flex;align-items:center;gap:.5em}"
     ".icon-x{padding:.35em;line-height:0;color:var(--txd)}.icon-x:hover{color:var(--tx)}"
     ".icon-x svg{width:18px;height:18px;display:block}"
     ".me{font-size:.8em;background:var(--infos);color:var(--info);border-radius:1em;padding:.1em .6em;"

@@ -170,6 +170,9 @@ def test_account_page_close_button_and_dialog(logged):
     # destra come azione default: entrambi tornano all'app senza popup
     head = html.split("Connesso come")[0]
     assert 'id="acctCloseX" title="Torna all&#x27;app" aria-label="Torna all&#x27;app">' in head
+    # sulla riga del marchio, a destra del logo, prima del titolo
+    assert '<div class="brandbar"><a class="brand" href="/">' in head
+    assert head.index('id="acctCloseX"') < head.index("<h1>")
     assert 'id="acctDevices"' not in head
     # dispositivi: sulla riga «Connesso come», a destra
     riga = html.split('<div class="signed">')[1].split("</div>")[0]

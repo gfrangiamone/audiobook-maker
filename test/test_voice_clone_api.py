@@ -556,7 +556,7 @@ def test_le_pagine_dei_link_email_seguono_la_lingua_del_browser(client, tmp_path
     assert f'<div class="actions"><a class="btn danger end" href="/vc/{tok}/delete">Cancella questa voce</a></div>' in corpo
     riga = corpo.split('<div class="dev-head"')[1].split("</li>")[0]
     assert 'class="dev-revoke"' in riga.split("</div>")[0] and ">Revoca</button></form></div>" in riga
-    assert "/account?tab=voices" not in corpo and '<div class="topbar">' not in corpo
+    assert "/account?tab=voices" not in corpo and '<div class="brandbar">' not in corpo
     # «Annulla cancellazione» e' la scelta predefinita e torna alla gestione
     corpo = client.get(f"/vc/{tok}/delete", headers={"Accept-Language": "it"}).data.decode("utf-8")
     assert "Annulla cancellazione" in corpo and "autofocus" in corpo
@@ -870,7 +870,8 @@ def test_pagina_voce_torna_all_area_personale_solo_al_proprietario(client, tmp_p
     # account con l'email della voce: «X» in testata verso l'area personale
     monkeypatch.setattr(audiobook_app, "_current_account", lambda: {"id": 1, "email": "U@example.com "})
     corpo = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"}).data.decode("utf-8")
-    assert '<div class="topbar"><h1>' in corpo
+    # sulla riga del marchio, allineata al logo
+    assert '<div class="brandbar"><a class="brand" href="/">' in corpo
     x = corpo.split('<div class="tools">')[1].split("</div>")[0]
     assert 'class="btn icon-x" href="/account?tab=voices"' in x and 'aria-label="Torna all&#x27;area personale"' in x
     # account di un altro: niente

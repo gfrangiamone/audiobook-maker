@@ -9,7 +9,7 @@ import page_brand
 
 _CSS = page_brand.BASE_CSS + (
     "body{max-width:760px}"
-    ".topbar h1{font-size:1.5em}"
+    "h1{font-size:1.5em;margin:0 0 .3em}"
     "button.small{padding:.3em .8em;font-size:.85em;white-space:nowrap}"
     ".signed{display:flex;align-items:center;justify-content:space-between;gap:1em;flex-wrap:wrap}"
     ".signed p{margin:0}"
@@ -57,10 +57,10 @@ def mask_email(email):
     return f"{local[0]}***@{domain}"
 
 
-def page_html(t, lang, title, body_html, h1=True):
+def page_html(t, lang, title, body_html, h1=True, tools_html=""):
     """Scheletro HTML completo. `body_html` e' gia' escapato dal chiamante.
     Con `h1=False` il titolo resta solo nel <title>: il corpo lo mette dove
-    vuole (la storia lo affianca al bottone dei dispositivi)."""
+    vuole. `tools_html` va a destra del marchio, allineato al logo."""
     brand = _e(t.get("brand", "Audiobook Maker"))
     heading = f"<h1>{_e(title)}</h1>" if h1 else ""
     return (
@@ -68,7 +68,7 @@ def page_html(t, lang, title, body_html, h1=True):
         f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<meta name=\"robots\" content=\"noindex,nofollow\">"
         f"<title>{brand} - {_e(title)}</title>{page_brand.THEME_SCRIPT}<style>{_CSS}</style></head>"
-        f"<body><a class=\"brand\" href=\"/\">{page_brand.LOGO_SVG}<span>{brand}</span></a>"
+        f"<body>{page_brand.brand_bar(page_brand.LOGO_SVG, brand, tools_html=tools_html)}"
         f"{heading}{body_html}</body></html>"
     )
 
@@ -234,10 +234,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
     tab = "voices" if tab == "voices" else "books"
     n_sess = len(sessions or [])
     parts = [
-        "<div class=\"topbar\">"
-        f"<h1>{_e(t['history_title'])}</h1><div class=\"tools\">"
-        f"<button type=\"button\" class=\"icon-x\" id=\"acctCloseX\" title=\"{_e(t['close_btn_app'])}\" "
-        f"aria-label=\"{_e(t['close_btn_app'])}\">{page_brand.CLOSE_SVG}</button></div></div>",
+        f"<h1>{_e(t['history_title'])}</h1>",
         f"<div class=\"signed\"><p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong></p>"
         f"<button type=\"button\" class=\"small\" id=\"acctDevices\">{_e(t['devices_btn'])}"
         f"<span class=\"cnt\">{n_sess}</span></button></div>",
@@ -324,4 +321,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         f"<p class=\"meta\" id=\"acctDeleteSent\" hidden>{_e(t['delete_sent'])}</p>"
         + _logout_dialog(t) + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t) + _HISTORY_JS
     )
-    return page_html(t, lang, t["history_title"], "".join(parts), h1=False)
+    # «X» a destra del marchio: torna all'app (la sessione resta).
+    chiudi = (f"<button type=\"button\" class=\"icon-x\" id=\"acctCloseX\" title=\"{_e(t['close_btn_app'])}\" "
+              f"aria-label=\"{_e(t['close_btn_app'])}\">{page_brand.CLOSE_SVG}</button>")
+    return page_html(t, lang, t["history_title"], "".join(parts), h1=False, tools_html=chiudi)
