@@ -64,6 +64,12 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_RECOVER_ENABLED` | `1` (abilita il recupero al boot dei job **batch** interrotti da un riavvio/deploy; `0\|false\|no\|off` per disabilitare). Letto in `_recover_orphan_jobs()`. | `audiobook_app.py` | — |
 | `ABM_RECOVER_MAX_ATTEMPTS` | `2` (tentativi di recupero per job prima del fallback = rimborso secondo policy + mail "interrotto" + `state=failed`). Il contatore è persistito su disco **prima** di rilanciare (crash-safe) e azzerato al primo capitolo completato di un job recuperato. | `audiobook_app.py` | — |
 | Descrittore recover — campi lingua | `_build_job_descriptor()` persiste `lang`, `opt_lang`, `gen_lang`, `browser_lang`, `platform`, `gemini_accent`; `_reenqueue_orphan()` li ripristina nel job ricostruito. Senza, il recovery post-restart perdeva la lingua e `run_optimization` cadeva sul default hardcoded `"it"` (prompt LLM italiano su libro di altra lingua) e `_audit_language` degradava accento/rate-sample Gemini. Fix v3.35.0 (incidente `kd8XQj6WWdrZJt1_z0VMPQ`: prompt `it` su libro `es` dopo restart alle 12:15). | `audiobook_app.py` | — |
+| `ABM_ACCOUNT_ENABLE` | `"1"` (account opzionale con magic link; `0` = bottone, route `/auth/*`, `/account` e API rispondono 404) | `accounts.py` | 25 |
+| `ABM_ACCOUNT_SESSION_DAYS` | `90` (durata sessione, rolling: rinnovata a ogni richiesta se l'ultimo tocco risale a più di 1 h) | `accounts.py` | 26 |
+| `ABM_ACCOUNT_CODE_TTL_MIN` | `10` (validità del link/codice di login e di cancellazione) | `accounts.py` | 27 |
+| `ABM_ACCOUNT_CODE_MAX_ATTEMPTS` | `5` (tentativi sul codice a 6 cifre prima del blocco: serve un nuovo codice) | `accounts.py` | 28 |
+| `ABM_ACCOUNT_HISTORY_MONTHS` | `24` (retention dello storico per account free e per account a pagamento dopo la grace) | `accounts.py` | 29 |
+| `ABM_ACCOUNT_GRACE_DAYS` | `90` (grace dopo la disdetta di un piano a pagamento prima che scatti la retention free) | `accounts.py` | 30 |
 
 ---
 
@@ -1248,6 +1254,24 @@ il giudice vedeva solo volume e conteggio cid.
 
 ---
 
+## 19. Account opzionale e storico (`db.py`, `accounts.py`, `account_page.py`)
+
+Login senza password: magic link `/auth/<token>` + codice a 6 cifre nella stessa email (`i18n/account_emails.json`). Sessione in cookie `abm_session` (HttpOnly, Secure se `ABM_BASE_URL` è https, SameSite=Lax, 90 giorni rolling) o `Authorization: Bearer` (app mobile, con `X-ABM-Cid`). Stato in **SQLite** `ABM_DATA_DIR/abm.db` (WAL, connessione singola, migrazioni per nome): tabelle `accounts`, `auth_codes`, `sessions`, `account_jobs`.
+
+| Costante | Valore | File |
+|----------|--------|------|
+| Rate limit richiesta codice per IP | 5/min, 30/h (`_ip_rl_check("auth_request")`) → 429 | `audiobook_app.py` |
+| Rate limit richiesta codice per email | 3 ogni 10 min (risposta neutra `{ok:true}`) | `accounts.py` |
+| Hash di token e codice in DB | sha256; token 32 byte urlsafe | `accounts.py` |
+| Rinnovo sessione | se `now - last_seen_at > 3600` | `accounts.py` |
+| Storico per pagina | `_ACCT_PER_PAGE = 50` | `audiobook_app.py` |
+| Manutenzione | prima a 300 s dal boot, poi ogni 6 h: purge + `abm.db.bak` + copia su R2 `accounts/abm-YYYY-MM-DD.db` (14 conservate) | `audiobook_app.py` |
+| Adozione retroattiva | solo `_payments.json` (email+job_id) e `_voice_clones.json` (`owner_email`), alla creazione dell'account | `accounts.py` |
+| Notifica forzata | con sessione attiva ogni job (generate/optimize/translate) è in modalità email sull'indirizzo dell'account, esente da heartbeat; `/api/register_email` con altra email → 409 `logged_in_email_forced` | `audiobook_app.py` |
+| Log activity | `ACCOUNT_LOGIN`, `ACCOUNT_LOGOUT`, `ACCOUNT_LOGOUT_ALL`, `ACCOUNT_DELETE`, `ACCOUNT_ADOPT` con sid `acct-<hash8>`, mai l'email in chiaro | `audiobook_app.py` |
+
+---
+
 ## Riepilogo
 
 | Categoria | Numero parametri |
@@ -1266,4 +1290,5 @@ il giudice vedeva solo volume e conteggio cid.
 | Telemetria di carico (`load_metrics.py`) | 4 |
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
-| **Totale** | **132** |
+| Account e storico (`accounts.py`) | 6 |
+| **Totale** | **138** |
