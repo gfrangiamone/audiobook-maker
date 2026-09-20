@@ -335,8 +335,207 @@ def account_for_email(email):
         ).fetchone())
 
 
-# ---------------------------------------------------------------- history (Task 3)
+# ---------------------------------------------------------------- history
+
+MONTH_SEC = 2629800  # 30.44 giorni
+
+
+def _load_payments_file():
+    if not _payments_path or not os.path.exists(_payments_path):
+        return {}
+    try:
+        with open(_payments_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:  # noqa: BLE001
+        _log(f"WARNING accounts: _payments.json non leggibile: {e}")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def record_job(account_id, job_id, *, kind, book_title="", output_format="", voice="",
+               lang="", paid_eur=0.0, source="forced", status="running", created_at=None):
+    """Registra (o aggiorna) un job nello storico dell'account.
+
+    Upsert su job_id: i campi testuali vuoti non sovrascrivono valori gia'
+    presenti; paid_eur tiene il massimo; status e source seguono l'ultima
+    chiamata (chi registra l'avvio conosce la verita').
+    """
+    now = int(time.time())
+    created = int(created_at if created_at is not None else now)
+    with db.tx() as c:
+        c.execute(
+            "INSERT INTO account_jobs(job_id, account_id, created_at, kind, book_title, "
+            "output_format, voice, lang, paid_eur, status, source, download_token, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,'',?) "
+            "ON CONFLICT(job_id) DO UPDATE SET "
+            "account_id=excluded.account_id, kind=excluded.kind, "
+            "book_title=CASE WHEN excluded.book_title<>'' THEN excluded.book_title ELSE account_jobs.book_title END, "
+            "output_format=CASE WHEN excluded.output_format<>'' THEN excluded.output_format ELSE account_jobs.output_format END, "
+            "voice=CASE WHEN excluded.voice<>'' THEN excluded.voice ELSE account_jobs.voice END, "
+            "lang=CASE WHEN excluded.lang<>'' THEN excluded.lang ELSE account_jobs.lang END, "
+            "paid_eur=MAX(account_jobs.paid_eur, excluded.paid_eur), "
+            "status=excluded.status, source=excluded.source, updated_at=excluded.updated_at",
+            (str(job_id), account_id, created, kind or "generate", (book_title or "")[:200],
+             output_format or "", voice or "", (lang or "")[:8], float(paid_eur or 0),
+             status or "running", source or "forced", now),
+        )
+
+
+def update_status(job_id, status, download_token=""):
+    if not enabled():
+        return False
+    status = "cancelled" if status == "canceled" else status
+    if status not in JOB_STATUSES:
+        return False
+    with db.tx() as c:
+        if download_token:
+            cur = c.execute(
+                "UPDATE account_jobs SET status=?, download_token=?, updated_at=? WHERE job_id=?",
+                (status, download_token, int(time.time()), str(job_id)),
+            )
+        else:
+            cur = c.execute(
+                "UPDATE account_jobs SET status=?, updated_at=? WHERE job_id=?",
+                (status, int(time.time()), str(job_id)),
+            )
+        return cur.rowcount > 0
+
+
+def set_download_token(job_id, token):
+    if not enabled() or not token:
+        return False
+    with db.tx() as c:
+        cur = c.execute(
+            "UPDATE account_jobs SET download_token=?, updated_at=? WHERE job_id=?",
+            (token, int(time.time()), str(job_id)),
+        )
+        return cur.rowcount > 0
+
+
+def attach_if_known(job_id, email, **fields):
+    """Aggancia un job a un account SOLO se l'email ha gia' un account.
+
+    Usato dai pagamenti: un job pagato da un utente non loggato finisce nel
+    suo storico se l'account esiste. Se il job e' gia' registrato (forced),
+    aggiorna solo importo e campi vuoti, senza toccare status/source.
+    """
+    if not enabled():
+        return False
+    acct = account_for_email(email)
+    if acct is None:
+        return False
+    with db.tx() as c:
+        row = c.execute("SELECT job_id FROM account_jobs WHERE job_id=?", (str(job_id),)).fetchone()
+        if row is None:
+            fields.setdefault("source", "payments")
+            fields.setdefault("kind", "generate")
+            record_job(acct["id"], job_id, **fields)
+            return True
+        c.execute(
+            "UPDATE account_jobs SET paid_eur=MAX(paid_eur, ?), "
+            "book_title=CASE WHEN book_title='' THEN ? ELSE book_title END, "
+            "output_format=CASE WHEN output_format='' THEN ? ELSE output_format END, "
+            "voice=CASE WHEN voice='' THEN ? ELSE voice END, "
+            "lang=CASE WHEN lang='' THEN ? ELSE lang END, updated_at=? WHERE job_id=?",
+            (float(fields.get("paid_eur") or 0), (fields.get("book_title") or "")[:200],
+             fields.get("output_format") or "", fields.get("voice") or "",
+             (fields.get("lang") or "")[:8], int(time.time()), str(job_id)),
+        )
+        return True
+
+
+def list_jobs(account_id, page=1, per_page=50):
+    page = max(1, int(page or 1))
+    per_page = max(1, min(200, int(per_page or 50)))
+    with db.tx() as c:
+        total = c.execute(
+            "SELECT COUNT(*) FROM account_jobs WHERE account_id=?", (account_id,)
+        ).fetchone()[0]
+        rows = c.execute(
+            "SELECT * FROM account_jobs WHERE account_id=? ORDER BY created_at DESC, job_id DESC "
+            "LIMIT ? OFFSET ?",
+            (account_id, per_page, (page - 1) * per_page),
+        ).fetchall()
+    return [dict(r) for r in rows], total
+
 
 def adopt_history(account):
-    """Adozione retroattiva: completata nel Task 3. Qui non fa nulla."""
-    return 0, 0
+    """Adozione retroattiva: job pagati (_payments.json, email+job_id) e voci
+    campionate con owner_email uguale. Idempotente: INSERT OR IGNORE sui job,
+    link_voice ritorna False se gia' collegata."""
+    email = _norm(account.get("email"))
+    aid = account["id"]
+    n_jobs = 0
+    pays = _load_payments_file()
+    now = int(time.time())
+    with db.tx() as c:
+        for p in pays.values():
+            if not isinstance(p, dict) or _norm(p.get("email")) != email:
+                continue
+            jid = str(p.get("job_id") or "").strip()
+            cap = p.get("captured_at") or 0
+            if not jid or not cap:
+                continue
+            cur = c.execute(
+                "INSERT OR IGNORE INTO account_jobs(job_id, account_id, created_at, kind, "
+                "book_title, output_format, voice, lang, paid_eur, status, source, "
+                "download_token, updated_at) VALUES (?,?,?,'generate','','','','',?,'done',"
+                "'payments','',?)",
+                (jid, aid, int(float(cap)), float(p.get("amount_eur") or 0), now),
+            )
+            n_jobs += cur.rowcount
+    n_voices = 0
+    if _voice_ids_for_email is not None and _link_voice is not None:
+        try:
+            for cid in _voice_ids_for_email(email):
+                if _link_voice(cid, aid):
+                    n_voices += 1
+        except Exception as e:  # noqa: BLE001
+            _log(f"WARNING accounts: collegamento voci fallito: {e}")
+    return n_jobs, n_voices
+
+
+def delete_account(account_id, now=None):
+    """Cancellazione self-service: email sostituita da un segnaposto,
+    sessioni revocate, storico e codici eliminati. `_payments.json` e le
+    voci campionate restano (obblighi fiscali / flusso proprio)."""
+    now = _now(now)
+    with db.tx() as c:
+        row = c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+        if row is None or row["deleted_at"] is not None:
+            return False
+        c.execute("DELETE FROM account_jobs WHERE account_id=?", (account_id,))
+        c.execute("DELETE FROM auth_codes WHERE email=?", (row["email"],))
+        c.execute(
+            "UPDATE sessions SET revoked_at=? WHERE account_id=? AND revoked_at IS NULL",
+            (now, account_id),
+        )
+        c.execute(
+            "UPDATE accounts SET email=?, deleted_at=? WHERE id=?",
+            (f"deleted:{row['email_hash'][:16]}:{account_id}", now, account_id),
+        )
+        return True
+
+
+def purge_expired(now=None):
+    """Retention: storico oltre HISTORY_MONTHS per account free (o con piano
+    scaduto da piu' di GRACE_DAYS), codici scaduti da >24h, sessioni
+    scadute/revocate da >30 giorni. Ritorna i conteggi."""
+    now = _now(now)
+    job_cut = now - HISTORY_MONTHS * MONTH_SEC
+    grace_cut = now - GRACE_DAYS * 86400
+    with db.tx() as c:
+        jobs = c.execute(
+            "DELETE FROM account_jobs WHERE created_at<? AND account_id IN ("
+            "SELECT id FROM accounts WHERE plan='free' "
+            "OR (plan_until IS NOT NULL AND plan_until<?))",
+            (job_cut, grace_cut),
+        ).rowcount
+        codes = c.execute(
+            "DELETE FROM auth_codes WHERE expires_at<?", (now - 86400,)
+        ).rowcount
+        sessions = c.execute(
+            "DELETE FROM sessions WHERE expires_at<? OR (revoked_at IS NOT NULL AND revoked_at<?)",
+            (now - 30 * 86400, now - 30 * 86400),
+        ).rowcount
+    return {"jobs": jobs, "codes": codes, "sessions": sessions}
