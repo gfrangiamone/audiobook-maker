@@ -65,6 +65,17 @@ for f in _download_tokens.json _payments.json _vouchers.json google_tts_usage.js
     fi
 done
 
+# Database SQLite degli account (abm.db): copia coerente via API di backup
+# (sicura anche con l'app in scrittura); fallback a cp se manca sqlite3.
+if [ -f "$DATA_DIR/abm.db" ]; then
+    if command -v sqlite3 >/dev/null 2>&1; then
+        sqlite3 "$DATA_DIR/abm.db" ".backup '$BACKUP_DIR/data/abm.db'"
+    else
+        cp "$DATA_DIR/abm.db" "$BACKUP_DIR/data/abm.db"
+        [ -f "$DATA_DIR/abm.db-wal" ] && cp "$DATA_DIR/abm.db-wal" "$BACKUP_DIR/data/"
+    fi
+fi
+
 # ── 6. Log attivita' ──
 echo "[6/9] Backup log attivita'..."
 mkdir -p "$BACKUP_DIR/logs"

@@ -20243,6 +20243,71 @@ def _voice_clone_sweep_supervisor():
             time.sleep(60)
 
 
+_ACCT_MAINT_FIRST_SEC = 300          # prima manutenzione 5 min dopo il boot
+_ACCT_MAINT_INTERVAL_SEC = 6 * 3600  # poi ogni 6 ore
+_ACCT_R2_PREFIX = "accounts/"
+_ACCT_R2_KEEP = 14                   # copie giornaliere conservate su R2
+
+
+def _account_maintenance_once(now=None):
+    """Un giro di manutenzione dello stato account: purge di codici/sessioni
+    scaduti e storico oltre retention, backup locale coerente di abm.db
+    (API online di SQLite) e copia del giorno su R2 con rotazione.
+    Ogni passo e' indipendente e best-effort."""
+    out = {"purged": {}, "backup": None, "r2_key": None, "r2_pruned": 0}
+    if not db.is_ready():
+        return out
+    try:
+        out["purged"] = accounts.purge_expired(now=now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[account] purge_expired failed: {e}", flush=True)
+    bak = Path(_DATA_DIR) / (db.DB_FILENAME + ".bak")
+    try:
+        db.backup_to(bak)
+        out["backup"] = str(bak)
+    except Exception as e:  # noqa: BLE001
+        print(f"[account] db backup failed: {e}", flush=True)
+        return out
+    try:
+        if not storage_backend.is_enabled():
+            return out
+        day = time.strftime("%Y-%m-%d", time.gmtime(now if now is not None else time.time()))
+        key = f"{_ACCT_R2_PREFIX}abm-{day}.db"
+        storage_backend.upload_file(str(bak), key)
+        out["r2_key"] = key
+        keys = sorted(k for k in storage_backend.list_prefix(_ACCT_R2_PREFIX)
+                      if k.endswith(".db"))
+        for old in keys[:-_ACCT_R2_KEEP]:
+            try:
+                storage_backend.delete_object(old)
+                out["r2_pruned"] += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"[account] R2 prune {old} failed: {e}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[account] R2 backup failed (non-fatal): {e}", flush=True)
+    return out
+
+
+def _account_maintenance_supervisor():
+    """Manutenzione periodica dello stato account, riavviata su crash come
+    _cleanup_supervisor (incidente 2026-06-15)."""
+    import traceback
+    delay = _ACCT_MAINT_FIRST_SEC
+    while True:
+        try:
+            time.sleep(delay)
+            delay = _ACCT_MAINT_INTERVAL_SEC
+            out = _account_maintenance_once()
+            if any(out["purged"].values()) or out["r2_pruned"]:
+                print(f"[account] maintenance: {out}", flush=True)
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            print(f"[account] maintenance crashed, restarting: {type(e).__name__}: {e}", flush=True)
+            delay = 60
+
+
 def _cleanup_loop():
     """Background thread: periodically clean up finished/abandoned jobs."""
     while True:
@@ -20654,6 +20719,8 @@ def _ensure_background_threads():
         threading.Thread(target=_load_metrics_supervisor, daemon=True).start()
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
+    if db.is_ready():
+        threading.Thread(target=_account_maintenance_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
     # Rientro automatico su Cloudflare: il sorvegliante delle sonde. Parte
