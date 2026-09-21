@@ -441,3 +441,105 @@ def test_gemini_selection_too_large_after_claim_does_not_consume_quota(client, e
     assert env["run_calls"] == []
     assert free_quota.used_eur(CID) == pytest.approx(0.0)
     assert audiobook_app.jobs["fq-gem-toolarge"]["status"] != "generating"
+
+
+def _mk_job_2ch(job_id, n_chars, client_id=CID, language="en"):
+    chs = [Chapter(index=0, title="Cap0", text="A" * n_chars),
+           Chapter(index=1, title="Cap1", text="B" * n_chars)]
+    info = BookInfo(
+        title="T", author="A", language=language, chapters=chs,
+        total_words=sum(c.word_count for c in chs),
+        total_chars=sum(c.char_count for c in chs),
+        estimated_duration_minutes=1.0,
+    )
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[job_id] = {
+            "info": info, "status": "analyzed", "client_id": client_id,
+        }
+    return audiobook_app.jobs[job_id]
+
+
+def test_speechify_capitolo_diverso_stesso_job_consuma_di_nuovo(client, env, monkeypatch):
+    """Incidente 21/09/2026 (job Zur1gsLrTEaQjtdTPa7LLg, voce VoxCPM): il
+    libro intero (5,13 EUR) e' stato letto GRATIS un capitolo per volta sullo
+    stesso job — 53 generazioni via reset_to_chapters + selected_chapters —
+    perche' l'idempotenza I1 di decision()/consume() era per job_id nudo:
+    dal secondo capitolo in poi la quota non si muoveva piu'.
+
+    L'idempotenza deve valere per GENERAZIONE (stesso job, stessa voce, stessi
+    capitoli): un capitolo diverso e' una sintesi nuova e va contata.
+    """
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    job = _mk_job_2ch("fq-chapters", 5000)
+    est1 = speechify_tts.estimate_book_cost(job["info"].chapters[:1], language="en")
+    list_one = round(est1["list_price_eur"], 2)
+    assert 0 < list_one < 1.00
+
+    r1 = _post_generate(client, "fq-chapters", SPEECHIFY_VOICE, selected_chapters=[0])
+    assert r1.status_code == 200, r1.get_data(as_text=True)
+    used_after_first = free_quota.used_eur(CID)
+    assert used_after_first == pytest.approx(list_one)
+
+    # Stesso job, capitolo diverso: come dopo POST /api/reset_to_chapters.
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-chapters"]["status"] = "analyzed"
+    r2 = _post_generate(client, "fq-chapters", SPEECHIFY_VOICE, selected_chapters=[1])
+    assert r2.status_code == 200, r2.get_data(as_text=True)
+    assert free_quota.used_eur(CID) == pytest.approx(round(2 * list_one, 2)), (
+        "il secondo capitolo e' una sintesi nuova: la quota deve salire"
+    )
+
+    # Retry della SECONDA generazione (stessi capitoli): resta idempotente.
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-chapters"]["status"] = "analyzed"
+    r3 = _post_generate(client, "fq-chapters", SPEECHIFY_VOICE, selected_chapters=[1])
+    assert r3.status_code == 200, r3.get_data(as_text=True)
+    assert free_quota.used_eur(CID) == pytest.approx(round(2 * list_one, 2))
+
+
+def test_speechify_voce_diversa_stesso_job_consuma_di_nuovo(client, env, monkeypatch):
+    """Stessa evasione sull'asse voce: rileggere il libro intero con un'altra
+    voce e' una sintesi nuova che il fornitore fattura di nuovo."""
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    job = _mk_job("fq-voice", 5000)
+    est = speechify_tts.estimate_book_cost(job["info"].chapters, language="en")
+    list_price = round(est["list_price_eur"], 2)
+
+    r1 = _post_generate(client, "fq-voice", SPEECHIFY_VOICE)
+    assert r1.status_code == 200, r1.get_data(as_text=True)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-voice"]["status"] = "analyzed"
+    r2 = _post_generate(client, "fq-voice", "speechify:simba-3.2:george_32")
+    assert r2.status_code == 200, r2.get_data(as_text=True)
+    assert free_quota.used_eur(CID) == pytest.approx(round(2 * list_price, 2))
+
+
+def test_voxcpm_libro_oltre_cap_gratuito_richiede_pagamento(client, env, monkeypatch):
+    """Cap ABM_VOXCPM_FREE_MAX_CHARS (100k) sul libro INTERO: un capitolo
+    piccolo di un libro grande non parte gratis con voce VoxCPM, quota o no."""
+    import voxcpm_tts
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.50")
+    monkeypatch.setenv("ABM_VOXCPM_MIN_COST_EUR", "0.50")
+    monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "100000")
+    monkeypatch.setenv("ABM_VOXCPM_RATE_EUR_PER_MCHAR", "12")
+    monkeypatch.setenv("ABM_VOXCPM_ENDPOINT_ID", "ep-test")
+    monkeypatch.setenv("ABM_VOXCPM_API_KEY", "k-test")
+    monkeypatch.setattr(audiobook_app, "voxcpm_tts", voxcpm_tts, raising=False)
+    chs = [Chapter(index=0, title="Cap0", text="A" * 5000),
+           Chapter(index=1, title="Cap1", text="B" * 120000)]
+    info = BookInfo(title="T", author="A", language="it", chapters=chs,
+                    total_words=10, total_chars=125000, estimated_duration_minutes=1.0)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-voxcap"] = {"info": info, "status": "analyzed", "client_id": CID}
+    voice = "voxcpm:v2:it-IT/Stefano"
+    dec = free_quota.decision(CID, voice, 0.06, "fq-voxcap", book_chars=125000)
+    assert dec["free_cap_exceeded"] is True
+    r = _post_generate(client, "fq-voxcap", voice, selected_chapters=[0], lang="it")
+    assert r.status_code == 402, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["error_code"] == "payment_required"
+    assert body["total_eur"] == 0.50
+    assert free_quota.used_eur(CID) == 0.0

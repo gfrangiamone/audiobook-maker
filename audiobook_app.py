@@ -883,11 +883,49 @@ def _free_quota_log(job_id, decision, charged=False):
     """Traccia la decisione di quota su stdout (best-effort)."""
     try:
         verdict = ("charge(%.2f)" % decision["due_eur"]) if not decision["is_free"] else "free"
+        if decision.get("free_cap_exceeded"):
+            verdict += (f" [libro {int(decision.get('book_chars') or 0):,} chars > cap "
+                        f"gratuito {int(decision.get('free_cap_chars') or 0):,}]")
         print(f"[{job_id}] free quota: used={decision['quota_used_eur']:.2f}/"
               f"{decision['quota_limit_eur']:.2f}€ list={decision['list_total_eur']:.2f}€ "
               f"-> {verdict}{' consumed' if charged else ''}", flush=True)
     except Exception:
         pass
+
+
+def _free_quota_key(job_id, voice, chs_sel, all_chs):
+    """Chiave di addebito della quota gratuita per QUESTA generazione.
+
+    Incidente 21/09/2026 (Zur1gsLrTEaQjtdTPa7LLg): con la chiave = job_id un
+    libro da 5 EUR e' stato letto gratis un capitolo per volta sullo stesso
+    job. La chiave porta voce e capitoli (free_quota.charge_key); una selezione
+    esplicita di tutti i capitoli e' normalizzata a "libro intero", cosi'
+    `selected_chapters=[]` e `[0..n-1]` non valgono come due generazioni.
+    """
+    try:
+        idx = [getattr(ch, "index", None) for ch in (chs_sel or [])]
+        idx = [i for i in idx if i is not None]
+        all_idx = [getattr(ch, "index", None) for ch in (all_chs or [])]
+        all_idx = [i for i in all_idx if i is not None]
+        if not idx or set(idx) == set(all_idx):
+            idx = None
+        return free_quota.charge_key(job_id, voice, idx)
+    except Exception:
+        return job_id
+
+
+def _free_quota_book_chars(info, all_chs=None):
+    """Caratteri del libro INTERO per il cap gratuito (free_quota.decision).
+    `info.total_chars` sopravvive allo spill dei testi su disco; il fallback
+    somma i char_count dei capitoli."""
+    try:
+        tc = int(getattr(info, "total_chars", 0) or 0)
+        if tc > 0:
+            return tc
+        chs = all_chs if all_chs is not None else list(getattr(info, "chapters", []) or [])
+        return int(sum(int(getattr(ch, "char_count", 0) or 0) for ch in chs))
+    except Exception:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1356,6 +1394,12 @@ def _build_job_descriptor(job, phase):
                              or job.get("opt_podcast_base_url", "")),
         "gemini_style_instruction": job.get("gemini_style_instruction"),
         "selected_chapters": job.get("opt_selected_chapters") or job.get("selected_chapters"),
+        # Chiave di addebito della quota gratuita gia' consumata da questo job
+        # (free_quota.charge_key): il recovery la riusa, cosi' la stessa
+        # generazione non viene contata due volte. Assente nei descrittori
+        # scritti prima del 21/09/2026 -> il recovery ripiega sul job_id nudo,
+        # che e' la chiave con cui quei job hanno addebitato.
+        "free_quota_key": job.get("free_quota_key"),
         "opt_auto_generate": bool(job.get("opt_auto_generate")),
         # Lettura opzionale testo tra parentesi: preserva la scelta utente attraverso
         # un restart (altrimenti il recovery batch rigenererebbe col default rimozione).
@@ -1701,14 +1745,17 @@ def _recovery_generate_gate(job_id, rec, info):
               f"({float(payment.get('total_eur') or 0):.2f}EUR), listino ricalcolato "
               f"{list_total:.2f}EUR su {total_chars:,} caratteri", flush=True)
         return out
+    _fq_key = (rec.get("free_quota_key") or "").strip() or job_id
     dec = _premium_quota_decision((rec.get("client_id") or "").strip(),
-                                  voice, list_total, job_id)
+                                  voice, list_total, _fq_key,
+                                  book_chars=_free_quota_book_chars(info, all_chs))
     _free_quota_log(job_id, dec)
     if not dec["is_free"]:
         raise _RecoveryRejected(
             f"voce premium SENZA pagamento: listino {list_total:.2f}EUR non coperto "
             f"dalla quota gratuita (dovuto {float(dec['due_eur']):.2f}EUR)")
     out["quota_charge"] = list_total
+    out["quota_key"] = _fq_key
     return out
 
 
@@ -1817,7 +1864,9 @@ def _reenqueue_orphan(job_id, rec):
     if _gate and _gate.get("quota_charge") is not None and free_quota.limit_eur() > 0:
         try:
             _fq_total = free_quota.consume(job.get("client_id", ""),
-                                           _gate["quota_charge"], job_id)
+                                           _gate["quota_charge"],
+                                           _gate.get("quota_key") or job_id)
+            job["free_quota_key"] = _gate.get("quota_key") or job_id
             print(f"[recover] {job_id}: free quota consumed: "
                   f"+{_gate['quota_charge']:.2f}€ -> {_fq_total:.2f}€/"
                   f"{free_quota.limit_eur():.2f}€", flush=True)
@@ -11464,11 +11513,15 @@ def account_page_view():
     # Un ?lang= esplicito viaggia anche sui link di paginazione; il cookie
     # posato dalla SPA non ne ha bisogno.
     link_lang = lang if (request.args.get("lang") or "").strip().lower() == lang else ""
+    # Il campionamento si offre solo se la funzione e' viva: con la feature
+    # spenta o il motore premium assente il bottone porterebbe a un wizard
+    # che non si apre.
+    new_voice_url = "/?vc=new" if _vc_gate() is None else ""
     return _acct_html(account_page.render_history(
         t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
         total=total, voices_count=len(voices), voices=voices,
         sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab,
-        link_lang=link_lang))
+        link_lang=link_lang, new_voice_url=new_voice_url))
 
 
 @app.route("/api/account/jobs", methods=["GET"])
@@ -13670,8 +13723,10 @@ def api_generate():
         _list_total_pre = round(
             float(est_pre.get("list_price_eur", 0.0) or 0.0) + llm_eur_pre, 2
         )
+        _fq_key_pre = _free_quota_key(job_id, voice, chs_pre, all_chs_pre)
         _quota_dec = _premium_quota_decision(
-            _quota_client_id(job), voice, _list_total_pre, job_id
+            _quota_client_id(job), voice, _list_total_pre, _fq_key_pre,
+            book_chars=_free_quota_book_chars(info_pre, all_chs_pre),
         )
         total_eur_pre = _quota_dec["due_eur"]
         threshold_pre = _quota_dec["threshold_eur"]
@@ -13713,7 +13768,8 @@ def api_generate():
         if _quota_dec["is_free"]:
             # Consumo differito al claim atomico dello stato (vedi sotto): un
             # job respinto dal limite di concorrenza non deve bruciare quota.
-            job["_free_quota_charge"] = _list_total_pre
+            # (importo, chiave di addebito per generazione)
+            job["_free_quota_charge"] = (_list_total_pre, _fq_key_pre)
         else:
             if not payment_token:
                 try: gemini_tts.release_reservation(job_id)
@@ -13866,14 +13922,16 @@ def api_generate():
         _list_total_pre = round(
             float(est_pre.get("list_price_eur", 0.0) or 0.0) + llm_eur_pre, 2
         )
+        _fq_key_pre = _free_quota_key(job_id, voice, chs_pre, all_chs_pre)
         _quota_dec = _premium_quota_decision(
-            _quota_client_id(job), voice, _list_total_pre, job_id
+            _quota_client_id(job), voice, _list_total_pre, _fq_key_pre,
+            book_chars=_free_quota_book_chars(info_pre, all_chs_pre),
         )
         total_eur_pre = _quota_dec["due_eur"]
         threshold_pre = _quota_dec["threshold_eur"]
         _free_quota_log(job_id, _quota_dec)
         if _quota_dec["is_free"]:
-            job["_free_quota_charge"] = _list_total_pre
+            job["_free_quota_charge"] = (_list_total_pre, _fq_key_pre)
         else:
             if not payment_token:
                 if _quota_dec["quota_exhausted"]:
@@ -14159,17 +14217,23 @@ def api_generate():
     # e nessuna prevede un rimborso quota equivalente (scelta di progetto:
     # si consuma tardi, non si restituisce mai). Da qui in poi non resta
     # alcun `return` prima di thread.start(): il job e' ormai certo di
-    # partire. Idempotente per job_id.
+    # partire. Idempotente per generazione (free_quota.charge_key).
     # Con quota disattivata (ABM_FREE_QUOTA_EUR_PER_MONTH=0) NON si consuma:
     # riempire il contatore in silenzio significa che, alzando il limite a mese
     # in corso, molti client risulterebbero gia' esauriti e verrebbero addebitati
     # subito. Il client_id e' lo stesso usato dal gate (`_quota_client_id`).
     _fq_charge = job.pop("_free_quota_charge", None)
+    if isinstance(_fq_charge, (tuple, list)) and len(_fq_charge) == 2:
+        _fq_charge, _fq_key = _fq_charge
+    else:
+        _fq_key = job_id
     if _fq_charge is not None and free_quota.limit_eur() > 0:
         try:
-            _fq_total = free_quota.consume(_quota_client_id(job), _fq_charge, job_id)
+            _fq_total = free_quota.consume(_quota_client_id(job), _fq_charge, _fq_key)
+            job["free_quota_key"] = _fq_key
             print(f"[{job_id}] free quota consumed: +{_fq_charge:.2f}€ -> "
-                  f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€", flush=True)
+                  f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€ "
+                  f"(chiave {_fq_key})", flush=True)
         except Exception as _fq_err:
             print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}", flush=True)
 
@@ -16052,7 +16116,9 @@ def api_combined_estimate():
     _quota_cid = _quota_client_id(job)
     if _has_premium:
         _quota_dec = _premium_quota_decision(
-            _quota_cid, voice_id, round(_premium_list_eur + llm_eur, 2), job_id
+            _quota_cid, voice_id, round(_premium_list_eur + llm_eur, 2),
+            _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None)),
+            book_chars=_free_quota_book_chars(info),
         )
         total = _quota_dec["due_eur"]
         # Quote lock (D2): l'importo che l'utente sta per vedere nel modale e'
@@ -16269,7 +16335,9 @@ def api_paypal_create_order_gemini():
     if _has_premium:
         server_total = _premium_quota_decision(
             _quota_client_id(job), voice_id,
-            round(_premium_list_eur + llm_eur, 2), job_id,
+            round(_premium_list_eur + llm_eur, 2),
+            _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None)),
+            book_chars=_free_quota_book_chars(info),
         )["due_eur"]
 
     # Quote lock (D2): se il client chiede esattamente l'importo che gli e'
@@ -16655,9 +16723,11 @@ def api_optimize():
                             "error_code": "estimate_failed"}), 500
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _quota_cid = _quota_client_id(job)
+        _fq_key_gem = _free_quota_key(job_id, _voice_for_est, _chs_for_est, _all_chs)
         _quota_dec = _premium_quota_decision(
             _quota_cid, _voice_for_est,
-            round(_gemini_list_quota + estimated_cost, 2), job_id,
+            round(_gemini_list_quota + estimated_cost, 2), _fq_key_gem,
+            book_chars=_free_quota_book_chars(info, _all_chs),
         )
         _expected_total = _quota_dec["due_eur"]
         _threshold_combined = _quota_dec["threshold_eur"]
@@ -16688,7 +16758,8 @@ def api_optimize():
         _fq_consumed = False
         if _quota_dec["is_free"] and free_quota.limit_eur() > 0:
             try:
-                free_quota.consume(_quota_cid, _quota_dec["list_total_eur"], job_id)
+                free_quota.consume(_quota_cid, _quota_dec["list_total_eur"], _fq_key_gem)
+                job["free_quota_key"] = _fq_key_gem
                 _fq_consumed = True
             except Exception as _fq_err:
                 print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}")
@@ -16840,9 +16911,11 @@ def api_optimize():
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_spx = data.get("voice", "")
         _quota_cid_spx = _quota_client_id(job)
+        _fq_key_spx = _free_quota_key(job_id, _voice_spx, _chs_for_est_spx, _all_chs_spx)
         _quota_dec_spx = _premium_quota_decision(
             _quota_cid_spx, _voice_spx,
-            round(_speechify_list_quota + estimated_cost, 2), job_id,
+            round(_speechify_list_quota + estimated_cost, 2), _fq_key_spx,
+            book_chars=_free_quota_book_chars(info, _all_chs_spx),
         )
         _expected_total_spx = _quota_dec_spx["due_eur"]
         _threshold_spx = _quota_dec_spx["threshold_eur"]
@@ -16851,7 +16924,8 @@ def api_optimize():
         if _quota_dec_spx["is_free"] and free_quota.limit_eur() > 0:
             try:
                 free_quota.consume(_quota_cid_spx,
-                                   _quota_dec_spx["list_total_eur"], job_id)
+                                   _quota_dec_spx["list_total_eur"], _fq_key_spx)
+                job["free_quota_key"] = _fq_key_spx
                 _fq_consumed_spx = True
             except Exception as _fq_err_spx:
                 print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err_spx}")
@@ -16989,9 +17063,11 @@ def api_optimize():
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_vox = data.get("voice", "")
         _quota_cid_vox = _quota_client_id(job)
+        _fq_key_vox = _free_quota_key(job_id, _voice_vox, _chs_for_est_vox, _all_chs_vox)
         _quota_dec_vox = _premium_quota_decision(
             _quota_cid_vox, _voice_vox,
-            round(_voxcpm_list_quota + estimated_cost, 2), job_id,
+            round(_voxcpm_list_quota + estimated_cost, 2), _fq_key_vox,
+            book_chars=_free_quota_book_chars(info, _all_chs_vox),
         )
         _expected_total_vox = _quota_dec_vox["due_eur"]
         _threshold_vox = _quota_dec_vox["threshold_eur"]
@@ -17000,7 +17076,8 @@ def api_optimize():
         if _quota_dec_vox["is_free"] and free_quota.limit_eur() > 0:
             try:
                 free_quota.consume(_quota_cid_vox,
-                                   _quota_dec_vox["list_total_eur"], job_id)
+                                   _quota_dec_vox["list_total_eur"], _fq_key_vox)
+                job["free_quota_key"] = _fq_key_vox
                 _fq_consumed_vox = True
             except Exception as _fq_err_vox:
                 print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err_vox}")

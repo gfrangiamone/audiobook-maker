@@ -192,7 +192,7 @@ def test_recovery_gate_stima_voxcpm(tmp_path, monkeypatch):
         chapters = [Ch()]
     monkeypatch.setattr(audiobook_app, "_assert_priced_on_real_text", lambda *a: True)
     monkeypatch.setattr(audiobook_app, "_premium_quota_decision",
-                        lambda cid, voice, price, jid: {"is_free": True, "charge_eur": 0.0})
+                        lambda cid, voice, price, jid, book_chars=None: {"is_free": True, "charge_eur": 0.0})
     monkeypatch.setattr(audiobook_app, "_free_quota_log", lambda *a: None, raising=False)
     out = audiobook_app._recovery_generate_gate("J1", {"voice": vc.voice_id_of(rec), "client_id": "cid-uno",
                                                        "lang": "it"}, Info())

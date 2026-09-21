@@ -128,7 +128,7 @@ def test_premium_unpaid_over_quota_is_rejected_without_generation(tmp_path, monk
     _fake_gemini(monkeypatch, list_price=8.99)
     _no_fallback(monkeypatch)
     monkeypatch.setattr(audiobook_app, "_premium_quota_decision",
-                        lambda cid, voice, lst, job_id=None: {
+                        lambda cid, voice, lst, job_id=None, book_chars=None: {
                             "due_eur": lst, "is_free": False, "quota_exhausted": False,
                             "threshold_eur": 0.20, "list_total_eur": lst})
     rec = _rec(tmp_path, PREMIUM, selected_chapters=[0, 1])
@@ -142,7 +142,7 @@ def test_premium_unpaid_within_quota_starts_consumes_and_persists_estimate(tmp_p
     _fake_gemini(monkeypatch, list_price=0.15)
     _no_fallback(monkeypatch)
     monkeypatch.setattr(audiobook_app, "_premium_quota_decision",
-                        lambda cid, voice, lst, job_id=None: {
+                        lambda cid, voice, lst, job_id=None, book_chars=None: {
                             "due_eur": 0.0, "is_free": True, "quota_exhausted": False,
                             "threshold_eur": 0.20, "list_total_eur": lst})
     consumed = []

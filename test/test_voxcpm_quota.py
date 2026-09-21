@@ -75,3 +75,56 @@ def test_retry_dello_stesso_job_resta_gratis(quota_pulita):
     d2 = free_quota.decision(quota_pulita, VOCE, 0.40, job_id="job-A")
     assert d2["due_eur"] == 0.0
     assert d2["is_free"] is True
+
+
+# ---------------------------------------------------------------------------
+# Cap di caratteri del libro per la gratuita' VoxCPM (21/09/2026)
+# ---------------------------------------------------------------------------
+
+def test_cap_libro_voxcpm_default_100k(quota_pulita, monkeypatch):
+    monkeypatch.delenv("ABM_VOXCPM_FREE_MAX_CHARS", raising=False)
+    assert free_quota._premium_free_max_chars(VOCE) == 100000
+    # Gli altri motori non hanno cap: 0.
+    assert free_quota._premium_free_max_chars("gemini:flash25:Zephyr") == 0
+    assert free_quota._premium_free_max_chars("speechify:simba-3.2:harper_32") == 0
+
+
+def test_libro_grande_non_e_mai_gratis_anche_con_selezione_piccola(quota_pulita):
+    """Un capitolo da 0,10 EUR di un libro da 400k chars: sotto soglia e con
+    quota capiente, ma il libro supera il cap -> si paga il floor."""
+    d = free_quota.decision(quota_pulita, VOCE, 0.10, "job-grande:abc", book_chars=400_000)
+    assert d["is_free"] is False
+    assert d["free_cap_exceeded"] is True
+    assert d["due_eur"] == 0.50
+    assert d["quota_exhausted"] is False
+
+
+def test_libro_sotto_cap_resta_gratis(quota_pulita):
+    d = free_quota.decision(quota_pulita, VOCE, 0.10, "job-piccolo", book_chars=90_000)
+    assert d["is_free"] is True
+    assert "free_cap_exceeded" not in d
+
+
+def test_cap_non_tocca_gemini(quota_pulita):
+    d = free_quota.decision(quota_pulita, "gemini:flash25:Zephyr", 0.10, "j", book_chars=900_000)
+    assert d["is_free"] is True
+
+
+def test_cap_disattivabile(quota_pulita, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "0")
+    d = free_quota.decision(quota_pulita, VOCE, 0.10, "j", book_chars=900_000)
+    assert d["is_free"] is True
+
+
+def test_chiave_per_generazione():
+    """charge_key: stesso job + stessa voce + stessi capitoli = stessa chiave;
+    capitolo o voce diversi = chiave diversa; senza voce ne' capitoli = job_id
+    nudo (record scritti prima del 21/09/2026)."""
+    k1 = free_quota.charge_key("job", VOCE, [2, 0, 1])
+    assert k1 == free_quota.charge_key("job", VOCE, [0, 1, 2])
+    assert k1.startswith("job:")
+    assert k1 != free_quota.charge_key("job", VOCE, [3])
+    assert k1 != free_quota.charge_key("job", "voxcpm:v2:it-IT/Anna", [0, 1, 2])
+    assert free_quota.charge_key("job", VOCE, None) == free_quota.charge_key("job", VOCE, [])
+    assert free_quota.charge_key("job", VOCE, None) != k1
+    assert free_quota.charge_key("job", "", None) == "job"

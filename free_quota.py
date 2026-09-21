@@ -1,9 +1,15 @@
 """free_quota.py — Quota gratuita cumulativa per client sui TTS premium.
 
-Struttura del file: {"YYYY-MM": {"<client_id>": {"eur": 1.37, "jobs": {"<job_id>": 0.29}}}}
+Struttura del file: {"YYYY-MM": {"<client_id>": {"eur": 1.37, "jobs": {"<chiave>": 0.29}}}}
+La chiave di addebito e' `charge_key()`: job_id + impronta di voce e capitoli,
+cioe' UNA generazione. Prima del 21/09/2026 era il solo job_id, e un libro da
+5 EUR e' stato letto gratis un capitolo per volta sullo stesso job (53
+generazioni via reset_to_chapters): dal secondo capitolo l'idempotenza per
+job vedeva il job "gia' addebitato" e la quota non si muoveva piu'.
 Nessun dato personale oltre al client_id (cookie anonimo abm_cid).
 Best-effort, thread-safe, scrittura atomica: nessuna eccezione propagata.
 """
+import hashlib
 import json
 import os
 import threading
@@ -117,8 +123,29 @@ def consume(client_id, eur, job_id):
         return current
 
 
+def charge_key(job_id, voice_id, chapter_indexes=None):
+    """Chiave di addebito di UNA generazione: job + voce + capitoli.
+
+    L'idempotenza di `decision()`/`consume()` (I1) serve al retry della stessa
+    generazione, non a rileggere lo stesso job con altri capitoli o un'altra
+    voce: quelle sono sintesi nuove che il fornitore fattura di nuovo.
+    `chapter_indexes` vuoto/None = libro intero (il chiamante normalizza una
+    selezione esplicita di tutti i capitoli a None, cosi' "tutti" ha una sola
+    grafia). Senza voce ne' capitoli la chiave resta il job_id nudo, com'era
+    nei record scritti prima del 21/09/2026.
+    """
+    jid = (job_id or "").strip()
+    voice = (voice_id or "").strip()
+    idx = sorted({int(i) for i in (chapter_indexes or []) if i is not None})
+    if not voice and not idx:
+        return jid
+    sig = f"{voice}|{','.join(str(i) for i in idx) or 'all'}"
+    return f"{jid}:{hashlib.sha1(sig.encode('utf-8')).hexdigest()[:12]}"
+
+
 def job_charged(client_id, job_id):
-    """True se `job_id` ha gia' consumato quota per questo client nel mese.
+    """True se `job_id` (chiave di `charge_key()`) ha gia' consumato quota per
+    questo client nel mese.
 
     Serve all'idempotenza per job di `decision()`: al retry della stessa
     generazione il contributo del job e' gia' dentro `used_eur`, quindi
@@ -174,16 +201,38 @@ def _premium_floor_eur(voice_id):
     return _env_float("ABM_PREMIUM_MIN_COST_EUR", "0.50")
 
 
-def decision(client_id, voice_id, list_total_eur, job_id=None):
+def _premium_free_max_chars(voice_id):
+    """Cap di caratteri del LIBRO (non della selezione) oltre il quale la voce
+    non e' mai gratuita, per motore. 0 = nessun cap.
+
+    Solo VoxCPM: il worker GPU costa per accensione e un libro grande letto a
+    pezzi (un capitolo per generazione, ognuno sotto soglia) resta un libro
+    grande. Il cap guarda il testo intero del job, cosi' la selezione dei
+    capitoli non lo aggira.
+    """
+    if is_voxcpm_voice(voice_id):
+        try:
+            return max(0, int(float(os.environ.get("ABM_VOXCPM_FREE_MAX_CHARS", "100000"))))
+        except (TypeError, ValueError):
+            return 100000
+    return 0
+
+
+def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None):
     """Prezzo dovuto per un job premium, applicando la quota gratuita.
 
     `list_total_eur` e' il prezzo di LISTINO (TTS premium + eventuale quota LLM
     combinata), cioe' prima dell'azzeramento sotto soglia. Non consuma nulla:
     il consumo e' esplicito via `consume()` dove il job parte davvero.
 
-    `job_id` (opzionale, in coda per retrocompatibilita' della firma) rende la
-    decisione idempotente per job: se quel job ha gia' addebitato quota in
-    questo mese, il retry della stessa generazione resta gratuito.
+    `job_id` (opzionale, in coda per retrocompatibilita' della firma) e' la
+    chiave di `charge_key()` e rende la decisione idempotente per generazione:
+    se quella generazione ha gia' addebitato quota in questo mese, il suo
+    retry resta gratuito.
+
+    `book_chars` (opzionale) e' il numero di caratteri del libro INTERO: sopra
+    `_premium_free_max_chars(voice_id)` la voce non e' gratuita neanche sotto
+    soglia (`free_cap_exceeded`), e si paga il floor.
     """
     try:
         list_total = round(float(list_total_eur or 0.0), 2)
@@ -204,13 +253,30 @@ def decision(client_id, voice_id, list_total_eur, job_id=None):
     if list_total > threshold:
         # Job gia' a pagamento: la quota non c'entra, percorso invariato.
         return out
+    cap = _premium_free_max_chars(voice_id)
+    try:
+        book = int(book_chars or 0)
+    except (TypeError, ValueError):
+        book = 0
+    if cap > 0 and book > cap:
+        # Libro troppo grande per la gratuita' di questo motore: non importa
+        # quanto sia piccola la selezione di oggi. Viene prima dell'idempotenza
+        # per generazione: una generazione a pagamento non ha mai addebitato
+        # quota, quindi non c'e' nulla da riconoscere.
+        out["free_cap_exceeded"] = True
+        out["free_cap_chars"] = cap
+        out["book_chars"] = book
+        out["due_eur"] = round(max(list_total, _premium_floor_eur(voice_id)), 2)
+        return out
     if job_id and limit > 0 and job_charged(client_id, job_id):
         # Retry della stessa generazione (btnRetryWiz, reload di pagina, app
-        # mobile): il credito di questo job e' gia' stato speso e `used_eur`
-        # lo contiene gia'. Senza questa uscita il confronto `used + list`
-        # conterebbe due volte lo stesso job e produrrebbe un 402 che chiede
+        # mobile): il credito di questa generazione e' gia' stato speso e
+        # `used_eur` lo contiene gia'. Senza questa uscita il confronto
+        # `used + list` lo conterebbe due volte e produrrebbe un 402 che chiede
         # il floor per un lavoro gia' pagato in quota. `consume()` e' a sua
-        # volta idempotente per job_id, quindi non si addebita nulla.
+        # volta idempotente per chiave, quindi non si addebita nulla. La chiave
+        # e' per generazione (voce + capitoli, vedi charge_key): un capitolo
+        # diverso o un'altra voce NON passano di qui.
         out["due_eur"] = 0.0
         out["is_free"] = True
         return out
