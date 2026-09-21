@@ -1533,10 +1533,12 @@ def _apply_account_to_job(job, job_id, kind, *, output_format=None, podcast_base
             print(f"WARNING [{job_id}] storico: riga gia' dell'account {_owner}, "
                   f"non riassegnata a {acct['id']}", flush=True)
         else:
+            _engine, _model = _voice_plan_info(voice)
             accounts.record_job(acct["id"], job_id, kind=kind, book_title=_job_book_title(job),
                                 output_format=output_format or "", voice=_voice_public_label(voice),
                                 lang=lang or "", paid_eur=_job_paid_eur(job),
-                                source="forced", status="running")
+                                source="forced", status="running",
+                                engine=_engine, model=_model)
         return acct
     except Exception as _e:
         print(f"[{job_id}] _apply_account_to_job failed (non-fatal): {_e}", flush=True)
@@ -1593,9 +1595,12 @@ def _register_paid_job_batch(job_id, job, payment_token, *, engine="",
     # Storico account: un pagamento con email nota aggancia il job all'account
     # (se esiste) anche senza sessione; e' l'adozione "in corso d'opera".
     try:
+        _engine, _model = _voice_plan_info(job.get("voice") or "")
         if accounts.enabled() and accounts.attach_if_known(
                 job_id, _pay_email, kind=pending_kind or "generate",
                 book_title=_job_book_title(job), output_format=output_format or "",
+                voice=_voice_public_label(job.get("voice") or ""),
+                engine=_engine, model=_model,
                 lang=lang or "", paid_eur=_job_paid_eur(job)):
             _acct_log("ACCOUNT_ADOPT", _pay_email, job_id)
     except Exception as _e:
@@ -3191,6 +3196,33 @@ def _voice_public_label(voice):
         return name
     except Exception:
         return ""
+
+
+def _voice_plan_info(voice):
+    """(engine, model_key) per lo storico account: `engine` e' il piano
+    ('standard' = voci gratuite, 'premium' = voci a pagamento), `model_key` e'
+    la chiave del modello premium ('flash25', 'flash31', 'simba-3.2',
+    'voxcpm'), vuota per le voci standard. E' un identificatore interno: la
+    pagina account lo traduce nella stessa etichetta che il selettore voci
+    mostra all'utente. Non solleva: su voce ignota torna ('', '')."""
+    try:
+        v = (voice or "").strip()
+        if not v:
+            return "", ""
+        if _is_gemini_voice(v):
+            parts = v.split(":")
+            model = parts[1] if len(parts) >= 3 else ""
+            return "premium", model
+        if _is_speechify_voice(v):
+            parts = v.split(":")
+            return "premium", (parts[1] if len(parts) >= 3 else "")
+        if _is_voxcpm_voice(v):
+            # Catalogo e voce campionata girano sullo stesso modello: una sola
+            # etichetta, il token della voce clonata non entra mai qui.
+            return "premium", "voxcpm"
+        return "standard", ""
+    except Exception:  # noqa: BLE001
+        return "", ""
 
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
@@ -11543,6 +11575,7 @@ def api_account_jobs():
         "job_id": r["job_id"], "created_at": r.get("created_at"), "kind": r.get("kind"),
         "book_title": r.get("book_title") or "", "output_format": r.get("output_format") or "",
         "status": r.get("status"), "paid_eur": float(r.get("paid_eur") or 0),
+        "engine": r.get("engine") or "", "model": r.get("model") or "",
         "downloads": r["downloads"],
     } for r in rows]
     return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE})
@@ -14875,12 +14908,14 @@ def api_register_email():
                     _kind = "optimize"
                 else:
                     _kind = "generate"
+                _engine, _model = _voice_plan_info(job.get("voice") or "")
                 accounts.record_job(
                     _acct["id"], job_id, kind=_kind, book_title=_job_book_title(job),
                     output_format=job.get("output_format") or "",
                     voice=_voice_public_label(job.get("voice") or ""),
                     lang=job.get("browser_lang") or "", paid_eur=_job_paid_eur(job),
-                    source="forced", status=_hist_status)
+                    source="forced", status=_hist_status,
+                    engine=_engine, model=_model)
         except Exception as _e:
             print(f"WARNING [{job_id}] accounts.record_job (register_email): {_e}", flush=True)
 

@@ -117,8 +117,19 @@ def enabled():
     return bool(ENABLE) and db.is_ready()
 
 
+# Storico: piano (standard/premium) e modello del job. Colonne aggiunte dopo
+# `accounts_v1`, quindi in una migrazione a parte: i DB gia' creati non
+# ricevono due volta la CREATE TABLE. Le righe preesistenti restano con i
+# campi vuoti (il dato non e' ricostruibile: il job non c'e' piu').
+JOBS_PLAN_MIGRATION = [
+    "ALTER TABLE account_jobs ADD COLUMN engine TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE account_jobs ADD COLUMN model TEXT NOT NULL DEFAULT ''",
+]
+
+
 def init_schema():
     db.migrate("accounts_v1", SCHEMA)
+    db.migrate("account_jobs_plan_v1", JOBS_PLAN_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -412,7 +423,8 @@ def _load_payments_file():
 
 
 def record_job(account_id, job_id, *, kind, book_title="", output_format="", voice="",
-               lang="", paid_eur=0.0, source="forced", status="running", created_at=None):
+               lang="", paid_eur=0.0, source="forced", status="running", created_at=None,
+               engine="", model=""):
     """Registra (o aggiorna) un job nello storico dell'account.
 
     Upsert su job_id: i campi testuali vuoti non sovrascrivono valori gia'
@@ -426,8 +438,9 @@ def record_job(account_id, job_id, *, kind, book_title="", output_format="", voi
     with db.tx() as c:
         c.execute(
             "INSERT INTO account_jobs(job_id, account_id, created_at, kind, book_title, "
-            "output_format, voice, lang, paid_eur, status, source, download_token, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,'',?) "
+            "output_format, voice, lang, paid_eur, status, source, download_token, updated_at, "
+            "engine, model) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,'',?,?,?) "
             "ON CONFLICT(job_id) DO UPDATE SET "
             "account_id=excluded.account_id, kind=excluded.kind, "
             "book_title=CASE WHEN excluded.book_title<>'' THEN excluded.book_title ELSE account_jobs.book_title END, "
@@ -435,10 +448,13 @@ def record_job(account_id, job_id, *, kind, book_title="", output_format="", voi
             "voice=CASE WHEN excluded.voice<>'' THEN excluded.voice ELSE account_jobs.voice END, "
             "lang=CASE WHEN excluded.lang<>'' THEN excluded.lang ELSE account_jobs.lang END, "
             "paid_eur=MAX(account_jobs.paid_eur, excluded.paid_eur), "
+            "engine=CASE WHEN excluded.engine<>'' THEN excluded.engine ELSE account_jobs.engine END, "
+            "model=CASE WHEN excluded.model<>'' THEN excluded.model ELSE account_jobs.model END, "
             "status=excluded.status, source=excluded.source, updated_at=excluded.updated_at",
             (str(job_id), account_id, created, kind or "generate", (book_title or "")[:200],
              output_format or "", voice or "", (lang or "")[:8], float(paid_eur or 0),
-             status or "running", source or "forced", now),
+             status or "running", source or "forced", now, (engine or "")[:16],
+             (model or "")[:32]),
         )
 
 
@@ -514,9 +530,12 @@ def attach_if_known(job_id, email, **fields):
             "book_title=CASE WHEN book_title='' THEN ? ELSE book_title END, "
             "output_format=CASE WHEN output_format='' THEN ? ELSE output_format END, "
             "voice=CASE WHEN voice='' THEN ? ELSE voice END, "
+            "engine=CASE WHEN engine='' THEN ? ELSE engine END, "
+            "model=CASE WHEN model='' THEN ? ELSE model END, "
             "lang=CASE WHEN lang='' THEN ? ELSE lang END, updated_at=? WHERE job_id=?",
             (float(fields.get("paid_eur") or 0), (fields.get("book_title") or "")[:200],
              fields.get("output_format") or "", fields.get("voice") or "",
+             (fields.get("engine") or "")[:16], (fields.get("model") or "")[:32],
              (fields.get("lang") or "")[:8], int(time.time()), str(job_id)),
         )
         return True

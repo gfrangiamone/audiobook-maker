@@ -23,7 +23,7 @@
     "history_empty": "No jobs yet. Everything you generate while signed in will appear here.",
     "history_col_date": "Date",
     "history_col_book": "Book",
-    "history_col_kind": "Type",
+    "history_col_plan": "Plan",
     "history_col_status": "Status",
     "history_col_downloads": "Downloads",
     "kind_generate": "Audiobook",
@@ -72,7 +72,13 @@
     "logout_popup_p": "You will be signed out on this device. To get back in you will need a new code by email. Your audiobooks and voices stay in your account.",
     "delete_popup_title": "Delete your account?",
     "delete_popup_p": "Your account will be permanently deleted: the job history and the sessions on all devices will be removed. Files already delivered stay downloadable from the links you received by email until they expire.",
-    "delete_popup_email": "For safety we will send you an email with a link and a code: the account is deleted only after your confirmation."
+    "delete_popup_email": "For safety we will send you an email with a link and a code: the account is deleted only after your confirmation.",
+    "plan_free": "Free",
+    "plan_premium": "PREMIUM",
+    "model_flash25": "Gemini 2.5 TTS",
+    "model_flash31": "Gemini 3.1 TTS",
+    "model_simba": "Simba 3.2",
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -98,7 +104,7 @@
     "history_empty": "Nessun job ancora. Tutto ciò che generi da connesso comparirà qui.",
     "history_col_date": "Data",
     "history_col_book": "Libro",
-    "history_col_kind": "Tipo",
+    "history_col_plan": "Piano",
     "history_col_status": "Stato",
     "history_col_downloads": "Download",
     "kind_generate": "Audiolibro",
@@ -147,7 +153,13 @@
     "logout_popup_p": "Verrai disconnesso su questo dispositivo. Per rientrare servirà un nuovo codice via email. Audiolibri e voci restano nel tuo account.",
     "delete_popup_title": "Cancellare il tuo account?",
     "delete_popup_p": "L'account verrà cancellato definitivamente: lo storico dei job e le sessioni su tutti i dispositivi saranno eliminati. I file già consegnati restano scaricabili dai link ricevuti via email fino alla loro scadenza.",
-    "delete_popup_email": "Per sicurezza ti invieremo un'email con un link e un codice: l'account viene cancellato solo dopo la tua conferma."
+    "delete_popup_email": "Per sicurezza ti invieremo un'email con un link e un codice: l'account viene cancellato solo dopo la tua conferma.",
+    "plan_free": "Gratis",
+    "plan_premium": "PREMIUM",
+    "model_flash25": "Gemini 2.5 TTS",
+    "model_flash31": "Gemini 3.1 TTS",
+    "model_simba": "Simba 3.2",
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -173,7 +185,7 @@
     "history_empty": "Aucun travail pour l'instant. Tout ce que vous générez en étant connecté apparaîtra ici.",
     "history_col_date": "Date",
     "history_col_book": "Livre",
-    "history_col_kind": "Type",
+    "history_col_plan": "Formule",
     "history_col_status": "État",
     "history_col_downloads": "Téléchargements",
     "kind_generate": "Livre audio",
@@ -222,7 +234,13 @@
     "logout_popup_p": "Vous serez déconnecté sur cet appareil. Pour revenir, il faudra un nouveau code par e-mail. Vos livres audio et vos voix restent dans votre compte.",
     "delete_popup_title": "Supprimer votre compte ?",
     "delete_popup_p": "Votre compte sera supprimé définitivement : l'historique des travaux et les sessions sur tous les appareils seront effacés. Les fichiers déjà livrés restent téléchargeables depuis les liens reçus par e-mail jusqu'à leur expiration.",
-    "delete_popup_email": "Par sécurité, nous vous enverrons un e-mail avec un lien et un code : le compte n'est supprimé qu'après votre confirmation."
+    "delete_popup_email": "Par sécurité, nous vous enverrons un e-mail avec un lien et un code : le compte n'est supprimé qu'après votre confirmation.",
+    "plan_free": "Gratuit",
+    "plan_premium": "PREMIUM",
+    "model_flash25": "Gemini 2.5 TTS",
+    "model_flash31": "Gemini 3.1 TTS",
+    "model_simba": "Simba 3.2",
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -248,7 +266,7 @@
     "history_empty": "Todavía no hay trabajos. Todo lo que generes con la sesión iniciada aparecerá aquí.",
     "history_col_date": "Fecha",
     "history_col_book": "Libro",
-    "history_col_kind": "Tipo",
+    "history_col_plan": "Plan",
     "history_col_status": "Estado",
     "history_col_downloads": "Descargas",
     "kind_generate": "Audiolibro",
@@ -297,7 +315,13 @@
     "logout_popup_p": "Se cerrará la sesión en este dispositivo. Para volver a entrar necesitarás un nuevo código por correo. Tus audiolibros y voces permanecen en tu cuenta.",
     "delete_popup_title": "¿Eliminar tu cuenta?",
     "delete_popup_p": "La cuenta se eliminará definitivamente: el historial de trabajos y las sesiones en todos los dispositivos serán borrados. Los archivos ya entregados siguen descargables desde los enlaces recibidos por correo hasta su vencimiento.",
-    "delete_popup_email": "Por seguridad te enviaremos un correo con un enlace y un código: la cuenta se elimina solo tras tu confirmación."
+    "delete_popup_email": "Por seguridad te enviaremos un correo con un enlace y un código: la cuenta se elimina solo tras tu confirmación.",
+    "plan_free": "Gratis",
+    "plan_premium": "PREMIUM",
+    "model_flash25": "Gemini 2.5 TTS",
+    "model_flash31": "Gemini 3.1 TTS",
+    "model_simba": "Simba 3.2",
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -323,7 +347,7 @@
     "history_empty": "Noch keine Aufträge. Alles, was Sie angemeldet erzeugen, erscheint hier.",
     "history_col_date": "Datum",
     "history_col_book": "Buch",
-    "history_col_kind": "Art",
+    "history_col_plan": "Tarif",
     "history_col_status": "Status",
     "history_col_downloads": "Downloads",
     "kind_generate": "Hörbuch",
@@ -372,7 +396,13 @@
     "logout_popup_p": "Du wirst auf diesem Gerät abgemeldet. Zum erneuten Anmelden brauchst du einen neuen Code per E-Mail. Deine Hörbücher und Stimmen bleiben in deinem Konto.",
     "delete_popup_title": "Dein Konto löschen?",
     "delete_popup_p": "Dein Konto wird endgültig gelöscht: der Auftragsverlauf und die Sitzungen auf allen Geräten werden entfernt. Bereits gelieferte Dateien bleiben über die per E-Mail erhaltenen Links bis zu deren Ablauf herunterladbar.",
-    "delete_popup_email": "Zur Sicherheit senden wir dir eine E-Mail mit Link und Code: das Konto wird erst nach deiner Bestätigung gelöscht."
+    "delete_popup_email": "Zur Sicherheit senden wir dir eine E-Mail mit Link und Code: das Konto wird erst nach deiner Bestätigung gelöscht.",
+    "plan_free": "Kostenlos",
+    "plan_premium": "PREMIUM",
+    "model_flash25": "Gemini 2.5 TTS",
+    "model_flash31": "Gemini 3.1 TTS",
+    "model_simba": "Simba 3.2",
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -398,7 +428,7 @@
     "history_empty": "暂无任务。登录状态下生成的所有内容都会显示在这里。",
     "history_col_date": "日期",
     "history_col_book": "书籍",
-    "history_col_kind": "类型",
+    "history_col_plan": "方案",
     "history_col_status": "状态",
     "history_col_downloads": "下载",
     "kind_generate": "有声书",
@@ -447,7 +477,13 @@
     "logout_popup_p": "你将在此设备上退出登录。再次登录需要通过邮件获取新的验证码。你的有声书和声音仍保留在账户中。",
     "delete_popup_title": "删除你的账户？",
     "delete_popup_p": "账户将被永久删除：任务历史和所有设备上的会话都会被清除。已交付的文件在过期前仍可通过邮件中的链接下载。",
-    "delete_popup_email": "为安全起见，我们会向你发送一封包含链接和验证码的邮件：账户只有在你确认后才会被删除。"
+    "delete_popup_email": "为安全起见，我们会向你发送一封包含链接和验证码的邮件：账户只有在你确认后才会被删除。",
+    "plan_free": "免费",
+    "plan_premium": "PREMIUM",
+    "model_flash25": "Gemini 2.5 TTS",
+    "model_flash31": "Gemini 3.1 TTS",
+    "model_simba": "Simba 3.2",
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -473,7 +509,7 @@
     "history_empty": "अभी कोई कार्य नहीं। साइन इन रहते हुए आप जो भी बनाएँगे वह यहाँ दिखेगा।",
     "history_col_date": "तारीख़",
     "history_col_book": "पुस्तक",
-    "history_col_kind": "प्रकार",
+    "history_col_plan": "योजना",
     "history_col_status": "स्थिति",
     "history_col_downloads": "डाउनलोड",
     "kind_generate": "ऑडियोबुक",
@@ -522,6 +558,12 @@
     "logout_popup_p": "आप इस डिवाइस पर साइन आउट हो जाएँगे। दोबारा आने के लिए ईमेल से नया कोड चाहिए होगा। आपकी ऑडियोबुक्स और आवाज़ें खाते में बनी रहेंगी।",
     "delete_popup_title": "अपना खाता हटाएँ?",
     "delete_popup_p": "आपका खाता स्थायी रूप से हटा दिया जाएगा: जॉब इतिहास और सभी डिवाइस के सत्र मिटा दिए जाएँगे। पहले से डिलीवर की गई फ़ाइलें ईमेल में मिले लिंक से उनकी समाप्ति तक डाउनलोड की जा सकती हैं।",
-    "delete_popup_email": "सुरक्षा के लिए हम आपको एक लिंक और कोड वाला ईमेल भेजेंगे: खाता आपकी पुष्टि के बाद ही हटाया जाएगा।"
+    "delete_popup_email": "सुरक्षा के लिए हम आपको एक लिंक और कोड वाला ईमेल भेजेंगे: खाता आपकी पुष्टि के बाद ही हटाया जाएगा।",
+    "plan_free": "मुफ़्त",
+    "plan_premium": "PREMIUM",
+    "model_flash25": "Gemini 2.5 TTS",
+    "model_flash31": "Gemini 3.1 TTS",
+    "model_simba": "Simba 3.2",
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   }
 }

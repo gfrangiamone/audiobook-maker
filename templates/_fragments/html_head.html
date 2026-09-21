@@ -1177,11 +1177,19 @@ __REVIEWS_LD__
                <span id="payLineGemini">&mdash;</span></div>
           <div class="pay-line"><span id="payLineLlmLabel" data-t="pay_text_ai_optimization">Ottimizzazione testo AI</span>
                <span id="payLineLlm">&mdash;</span></div>
+          <!-- Scarto fra il costo reale e l'importo minimo fatturabile: senza
+               questa riga il totale non torna con gli addendi e il popup sembra
+               sbagliato (es. "Voci PREMIUM 0,09" e "Totale 0,50"). -->
+          <div class="pay-line" id="payLineMinAdjRow" style="display:none">
+               <span id="payLineMinAdjLabel" data-t="pay_min_adjust">Adeguamento all'importo minimo</span>
+               <span id="payLineMinAdj">&mdash;</span></div>
           <div class="pay-line pay-total">
             <span data-t="pay_total">Totale</span>
             <strong id="payModalTotal">&mdash;</strong>
           </div>
         </div>
+        <p class="pay-min-note" id="payMinNote" hidden
+           style="font-size:.82em;color:var(--txd);margin:8px 0 0;line-height:1.4"></p>
         <p class="pay-oneoff-notice" id="payOneoffNotice" data-t="pay_oneoff_notice"
            style="font-size:.82em;color:var(--txd);margin:8px 0 0;line-height:1.4">Pagamento una tantum per questo audiolibro: nessun abbonamento, nessun addebito ricorrente.</p>
         <div class="pay-tabs" role="tablist">

@@ -198,3 +198,15 @@ def test_paypal_tab_comes_first_and_is_default():
     assert 'hidden' not in paypal_panel[:paypal_panel.index('>')]
     voucher_panel = HTML[HTML.index('id="payPanelVoucher"'):]
     assert 'hidden' in voucher_panel[:voucher_panel.index('>')]
+
+
+def test_modal_has_min_adjust_row_and_note():
+    """Scarto verso l'importo minimo fatturabile: riga dedicata (nascosta di
+    default) e nota che ne spiega il motivo, cosi' il totale torna sempre con
+    la somma delle righe."""
+    assert 'id="payLineMinAdjRow"' in HTML
+    assert 'id="payLineMinAdj"' in HTML
+    assert 'data-t="pay_min_adjust"' in HTML
+    assert 'id="payMinNote"' in HTML
+    row = HTML.split('id="payLineMinAdjRow"')[1][:120]
+    assert "display:none" in row

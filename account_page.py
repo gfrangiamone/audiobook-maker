@@ -25,7 +25,11 @@ _CSS = page_brand.BASE_CSS + (
     "table{width:100%;border-collapse:collapse;margin-top:1em;font-size:.95em}"
     "th,td{text-align:left;padding:.5em .4em;border-top:1px solid var(--brd);vertical-align:top}"
     "th{color:var(--txd);font-weight:600;border-top:none}"
+    ".bk b{display:block;font-weight:600}"
+    ".bk .meta{display:block;font-size:.8em;color:var(--txm);word-break:break-all}"
+    ".plan .meta{display:block;font-size:.8em;color:var(--txm);margin-top:.2em}"
     ".badge{font-size:.8em;border-radius:1em;padding:.1em .6em;background:var(--srf2);color:var(--txd);white-space:nowrap}"
+    ".badge.premium{background:var(--acs,var(--srf2));color:var(--ac)}"
     ".badge.done{background:var(--oks);color:var(--ok)}.badge.error,.badge.cancelled{background:var(--errs);color:var(--err)}"
     ".badge.running{background:var(--infos);color:var(--info)}.badge.expired{background:var(--srf2);color:var(--txm)}"
     ".prog{display:block;height:4px;border-radius:2px;background:var(--srf2);margin-top:.4em;overflow:hidden;max-width:8em}"
@@ -112,6 +116,42 @@ def _fmt_date(epoch):
         return _dt.datetime.fromtimestamp(int(epoch)).strftime("%Y-%m-%d %H:%M")
     except Exception:  # noqa: BLE001
         return ""
+
+
+# Chiave modello -> chiave i18n dell'etichetta mostrata. Le chiavi grezze
+# ('flash25', 'voxcpm', ...) non si mostrano mai: sono identificatori interni.
+# Le etichette sono le stesse del selettore voci della SPA (`_modelLabel`):
+# chi rilegge lo storico deve ritrovare il nome che ha scelto.
+_MODEL_LABEL_KEYS = {
+    "flash25": "model_flash25",
+    "flash31": "model_flash31",
+    "simba-3.2": "model_simba",
+    "voxcpm": "model_voxcpm",
+}
+
+
+def _plan_cell(t, r, kind):
+    """Contenuto della colonna Piano: badge Gratis/PREMIUM (con il modello
+    sotto, quando lo conosciamo) per gli audiolibri, etichetta del tipo per
+    ottimizzazione e traduzione, che di voci non ne usano.
+
+    Storico piu' vecchio delle colonne engine/model (righe adottate da
+    `_payments.json`): il piano non e' ricostruibile, ma un job pagato era per
+    forza PREMIUM — quello si puo' dire; il resto resta un trattino."""
+    if kind != "generate":
+        return _e(t.get("kind_" + kind, kind))
+    engine = (r.get("engine") or "").strip()
+    if not engine and float(r.get("paid_eur") or 0) > 0:
+        engine = "premium"
+    if engine == "standard":
+        return f"<span class=\"badge\">{_e(t['plan_free'])}</span>"
+    if engine != "premium":
+        return "<span class=\"meta\">&mdash;</span>"
+    out = f"<span class=\"badge premium\">{_e(t['plan_premium'])}</span>"
+    key = _MODEL_LABEL_KEYS.get((r.get("model") or "").strip())
+    if key and t.get(key):
+        out += f"<span class=\"meta\">{_e(t[key])}</span>"
+    return out
 
 
 def _expiry_label(t, expires_at, now):
@@ -253,7 +293,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
     else:
         parts.append("<table><thead><tr>"
                      f"<th>{_e(t['history_col_date'])}</th><th>{_e(t['history_col_book'])}</th>"
-                     f"<th>{_e(t['history_col_kind'])}</th><th>{_e(t['history_col_status'])}</th>"
+                     f"<th>{_e(t['history_col_plan'])}</th><th>{_e(t['history_col_status'])}</th>"
                      f"<th>{_e(t['history_col_downloads'])}</th></tr></thead><tbody>")
         for r in rows:
             status = r.get("status") or "running"
@@ -268,16 +308,25 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             else:
                 cell = ""
             paid = float(r.get("paid_eur") or 0)
-            book = _e(r.get("book_title") or r.get("job_id") or "")
-            if paid > 0:
-                book += f" <span class=\"meta\">&euro; {paid:.2f}</span>"
+            job_id = r.get("job_id") or ""
+            # Il titolo e' cio' che l'utente riconosce; il job_id resta sotto,
+            # piccolo, perche' e' quello che si cita nelle richieste di
+            # assistenza. Storico adottato dai pagamenti (adopt_history): il
+            # titolo non c'e', e il job_id prende il suo posto.
+            title = r.get("book_title") or job_id
+            book = f"<b>{_e(title)}</b>"
             fmt = (r.get("output_format") or "").upper()
             if fmt == "ZIP_RSS":
                 fmt = "ZIP+RSS"
             voice = r.get("voice") or ""
-            bits = [_e(b) for b in (fmt, voice) if b]
+            bits = []
+            if r.get("book_title"):
+                bits.append(_e(job_id))
+            if paid > 0:
+                bits.append(f"&euro; {paid:.2f}")
+            bits += [_e(b) for b in (fmt, voice) if b]
             if bits:
-                book += f" <span class=\"meta\">{' &middot; '.join(bits)}</span>"
+                book += f"<span class=\"meta\">{' &middot; '.join(bits)}</span>"
             st_cell = f"<span class=\"badge {_e(status)}\">{_e(t.get('status_' + status, status))}"
             if status == "running":
                 # Il JS della pagina interroga /api/account/progress e riempie
@@ -287,8 +336,8 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             else:
                 st_cell = f"<td>{st_cell}</span></td>"
             parts.append(
-                f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td>{book}</td>"
-                f"<td>{_e(t.get('kind_' + kind, kind))}</td>{st_cell}"
+                f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td class=\"bk\">{book}</td>"
+                f"<td class=\"plan\">{_plan_cell(t, r, kind)}</td>{st_cell}"
                 f"<td class=\"dl\">{cell}</td></tr>")
         parts.append("</tbody></table>")
         pages = max(1, (int(total) + per_page - 1) // per_page)

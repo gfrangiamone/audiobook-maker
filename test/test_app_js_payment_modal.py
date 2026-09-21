@@ -201,3 +201,30 @@ def test_switch_pay_tab_syncs_aria_selected():
     body = APP[APP.index("function switchPayTab"):]
     body = body[:body.index(chr(10) + "function ", 1)]
     assert "aria-selected" in body
+
+
+def test_min_adjust_row_wired_from_context():
+    """Il modale deve mostrare lo scarto verso l'importo minimo e la sua nota:
+    senza, gli addendi non sommano al totale (0,09 di listino, 0,50 dovuti)."""
+    start = APP.find("function _openPayModalCtx")
+    assert start >= 0
+    snippet = APP[start:APP.find("function openPaymentModal")]
+    assert "payLineMinAdjRow" in snippet and "payLineMinAdj" in snippet
+    assert "ctx.minAdjust" in snippet and "payMinNote" in snippet
+
+
+def test_open_payment_modal_computes_min_adjust():
+    """openPaymentModal calcola lo scarto come totale - (premium + AI) e passa
+    la nota costruita da _payMinNoteText."""
+    start = APP.find("function openPaymentModal")
+    assert start >= 0
+    snippet = APP[start:start + 2000]
+    assert "minAdjust: _adjust" in snippet and "minNote: _payMinNoteText" in snippet
+
+
+def test_min_note_mentions_quota_when_exhausted():
+    start = APP.find("function _payMinNoteText")
+    assert start >= 0
+    snippet = APP[start:APP.find("function openPaymentModal")]
+    assert "quota_exhausted" in snippet and "free_quota_exhausted" in snippet
+    assert "pay_min_note" in snippet

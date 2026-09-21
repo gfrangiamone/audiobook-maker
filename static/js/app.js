@@ -2300,6 +2300,20 @@ function _openPayModalCtx(ctx) {
       if (rowEl) rowEl.style.display = 'none';
     }
   });
+  // Scarto verso l'importo minimo fatturabile (ctx.minAdjust) e sua
+  // spiegazione (ctx.minNote): compaiono solo quando il floor ha davvero
+  // alzato il totale. Senza, il popup mostrava addendi che non sommavano al
+  // totale e nessun motivo (incidente "0,09 -> 0,50").
+  const adjRow = document.getElementById('payLineMinAdjRow');
+  const adjAmt = document.getElementById('payLineMinAdj');
+  const adj = Number(ctx.minAdjust) || 0;
+  if (adjRow) adjRow.style.display = (adj > 0) ? '' : 'none';
+  if (adjAmt && adj > 0) adjAmt.textContent = `€${adj.toFixed(2)}`;
+  const noteEl = document.getElementById('payMinNote');
+  if (noteEl) {
+    noteEl.textContent = ctx.minNote || '';
+    noteEl.hidden = !ctx.minNote;
+  }
   const tot = document.getElementById('payModalTotal');
   if (tot) tot.textContent = `€${ctx.total.toFixed(2)}`;
   const vErr = document.getElementById('payVoucherError');
@@ -2321,7 +2335,31 @@ function _openPayModalCtx(ctx) {
 }
 
 // Chiamante Gemini: costruisce il contesto e apre il popup.
+// Testo che spiega un totale piu' alto della somma delle righe: importo
+// minimo fatturabile e, quando e' quello il motivo, credito mensile esaurito.
+function _payMinNoteText(estimate, adjust){
+  if (!(adjust > 0)) return '';
+  const segs = [];
+  if (estimate.quota_exhausted) {
+    segs.push((window.t && t('free_quota_exhausted'))
+      || "You have used up this month's free PREMIUM voice credit.");
+    const _fq = estimate.free_quota || {};
+    const _st = _freeQuotaStatusLine(
+      (_fq.used_eur != null) ? _fq.used_eur : estimate.quota_used_eur,
+      (_fq.limit_eur != null) ? _fq.limit_eur : estimate.quota_limit_eur);
+    if (_st) segs.push(_st);
+  }
+  const min = Number(estimate.total_eur) || 0;
+  const note = (window.t && t('pay_min_note', { min: min.toFixed(2) })) || '';
+  segs.push((note && note !== 'pay_min_note') ? note
+    : `Minimum billable amount €${min.toFixed(2)}: below it the payment fees would exceed the cost of the service.`);
+  return segs.join(' ');
+}
+
 function openPaymentModal(estimate) {
+  const _premium = (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0)+(Number(estimate.voxcpm_eur)||0);
+  const _adjust = Math.max(0, Math.round(((Number(estimate.total_eur)||0)
+    - _premium - (Number(estimate.llm_eur)||0)) * 100) / 100);
   _openPayModalCtx({
     // Importo premium = engine attivo (Gemini, Speechify o VoxCPM, mutuamente
     // esclusivi: una sola voce premium selezionata). Usare solo gemini_eur
@@ -2329,11 +2367,13 @@ function openPaymentModal(estimate) {
     // un totale a pagamento (Review finale, Important F2): /api/combined_estimate
     // somma anche voxcpm_eur nel totale addebitato.
     lines: [
-      { labelKey: 'pay_premium_voices', amount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0)+(Number(estimate.voxcpm_eur)||0) },
+      { labelKey: 'pay_premium_voices', amount: _premium },
       { labelKey: 'pay_text_ai_optimization', amount: estimate.llm_eur },
     ],
     total: estimate.total_eur,
-    geminiAmount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0)+(Number(estimate.voxcpm_eur)||0),
+    minAdjust: _adjust,
+    minNote: _payMinNoteText(estimate, _adjust),
+    geminiAmount: _premium,
     voucherPurpose: 'gemini',
     paypal: {
       endpoint: '/api/paypal_create_order_gemini',

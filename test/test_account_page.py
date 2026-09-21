@@ -102,6 +102,47 @@ def test_account_page_lists_jobs_with_downloads(logged, monkeypatch):
     assert "no-store" in r.headers.get("Cache-Control", "")
 
 
+def test_account_page_plan_column(logged):
+    """Colonna Piano: badge Gratis/PREMIUM col modello, e il titolo con il
+    job_id sotto (mai il job_id al posto del titolo quando c'e')."""
+    c, acct = logged
+    accounts.record_job(acct["id"], "jp", kind="generate", book_title="Il Gattopardo",
+                        voice="Zephyr", engine="premium", model="flash25",
+                        status="done", created_at=T0)
+    accounts.record_job(acct["id"], "jf", kind="generate", book_title="Pinocchio",
+                        voice="Isabella", engine="standard", status="done", created_at=T0 - 60)
+    accounts.record_job(acct["id"], "jo", kind="translate", book_title="Odissea",
+                        status="done", created_at=T0 - 120)
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    assert "<b>Il Gattopardo</b>" in html and "jp" in html
+    assert "PREMIUM" in html and "Gemini 2.5 TTS" in html
+    assert "Gratis" in html
+    # Traduzione: niente piano, resta l'etichetta del tipo.
+    assert "Traduzione" in html
+    assert "Piano" in html and ">Tipo<" not in html
+
+
+def test_account_page_plan_legacy_row_paid_is_premium(logged):
+    """Riga adottata da _payments.json (engine vuoto): pagata = PREMIUM,
+    gratuita = trattino, titolo assente = job_id come titolo."""
+    c, acct = logged
+    accounts.record_job(acct["id"], "jold", kind="generate", paid_eur=0.28,
+                        status="done", created_at=T0)
+    accounts.record_job(acct["id"], "jold2", kind="generate", status="done",
+                        created_at=T0 - 60)
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    assert "<b>jold</b>" in html and "PREMIUM" in html
+    assert "&mdash;" in html
+
+
+def test_account_jobs_api_exposes_plan(logged):
+    c, acct = logged
+    accounts.record_job(acct["id"], "jp", kind="generate", book_title="T",
+                        engine="premium", model="voxcpm", status="done", created_at=T0)
+    j = c.get("/api/account/jobs").get_json()["jobs"][0]
+    assert j["engine"] == "premium" and j["model"] == "voxcpm"
+
+
 def test_account_page_voices_tab(logged, monkeypatch):
     c, acct = logged
     monkeypatch.setattr(audiobook_app, "_account_voices_for",
