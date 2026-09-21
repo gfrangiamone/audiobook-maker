@@ -130,6 +130,30 @@ def test_account_page_voices_empty(logged):
     assert "Voci campionate</button>" in html
 
 
+def test_account_page_voices_avvio_campionamento(logged, monkeypatch):
+    """Dal pannello voci si parte a campionare: il link riapre l'app sul
+    wizard, e la nota dice subito che la voce serve solo col modello PREMIUM
+    (altrove non compare e la si crede sparita)."""
+    c, acct = logged
+    monkeypatch.setattr(audiobook_app, "_vc_gate", lambda: None)
+    html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
+    assert 'href="/?vc=new"' in html
+    assert "Campiona la tua voce" in html
+    assert "VOXCPM2" in html and "PREMIUM" in html
+
+
+def test_account_page_voices_senza_feature_niente_bottone(logged, monkeypatch):
+    """Feature spenta o motore premium assente: il bottone porterebbe a un
+    wizard che non si apre. La nota sul modello resta, la voce campionata
+    gia' presente si gestisce lo stesso."""
+    c, acct = logged
+    monkeypatch.setattr(audiobook_app, "_vc_gate", lambda: ("off", 404))
+    html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
+    assert "?vc=new" not in html
+    assert "Campiona la tua voce" not in html
+    assert "VOXCPM2" in html
+
+
 def test_account_page_title_brand_and_no_hint(logged):
     c, acct = logged
     html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()

@@ -867,6 +867,20 @@ def test_ripresa_e_gestione():
     assert "history.replaceState" in VC
 
 
+def test_avvio_campionamento_da_area_personale():
+    """`?vc=new` e' il ritorno dall'area personale, dove il campionamento non
+    puo' avvenire: apre il wizard dal primo pannello, ma una procedura in
+    sospeso viene ripresa invece di aprirne una seconda. Con la funzione
+    spenta non apre nulla."""
+    corpo = _estrai_funzione(VC, "vcInit")
+    assert "S.resumeId === 'new' && S.cfg && S.cfg.enabled" in corpo
+    ramo = corpo[corpo.index("S.resumeId === 'new'"):]
+    ramo = ramo[:ramo.index("} else if")]
+    assert "vcPending(S.mine)" in ramo and "vcResume(p.id)" in ramo
+    assert "vcShow(1)" in ramo
+    assert "S.resumeId && S.resumeId !== 'new'" in corpo, "l'avvio non va cercato fra gli id"
+
+
 def test_il_codice_voce_non_finisce_in_console():
     assert "console.log" not in VC
 

@@ -1353,7 +1353,9 @@
        fetch di config: cosi' l'id resta su S.resumeId anche se la fetch
        fallisce (rete instabile al primo carico), invece di andare perso
        insieme al ramo .then() di successo che in quel caso non arriva mai
-       ad eseguire. */
+       ad eseguire. `?vc=new` non e' un id: e' l'avvio chiesto dall'area
+       personale, dove il campionamento non puo' avvenire (microfono,
+       pagamento e prove vivono qui). */
     var q = new URLSearchParams(location.search);
     var vc = q.get('vc');
     if (vc) {
@@ -1377,7 +1379,16 @@
          event loop. Se l'id non compare piu' in `mine` (campione scaduto o
          eliminato nel frattempo) si apre comunque il pannello «Le tue voci»
          con un messaggio dedicato invece di restare sul pannello 1 muto. */
-      if (S.resumeId) {
+      if (S.resumeId === 'new' && S.cfg && S.cfg.enabled) {
+        /* Una procedura gia' aperta vince sull'avvio di una nuova: ripartire
+           da zero lascerebbe in sospeso quella pagata a meta'. */
+        setTimeout(function () {
+          var p = vcPending(S.mine);
+          if (p) return vcResume(p.id);
+          vcClearName();
+          vcShow(1);
+        }, 0);
+      } else if (S.resumeId && S.resumeId !== 'new') {
         setTimeout(function () {
           var id = S.resumeId;
           var found = false;

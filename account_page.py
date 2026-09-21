@@ -223,11 +223,14 @@ _HISTORY_JS = (
 
 
 def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None,
-                   now=None, sessions=None, current_sid="", tab="books", link_lang=""):
+                   now=None, sessions=None, current_sid="", tab="books", link_lang="",
+                   new_voice_url=""):
     """Area personale: intestazione con il bottone «I tuoi dispositivi», tab
     audiolibri / voci campionate, azioni in fondo e i due popup (dispositivi,
     conferma cancellazione). `sessions` come da `accounts.list_sessions`,
-    `current_sid` e' l'id della sessione che sta guardando la pagina."""
+    `current_sid` e' l'id della sessione che sta guardando la pagina.
+    `new_voice_url` e' il link che riapre l'app sul campionamento: vuoto
+    quando la funzione non e' attiva, cosi' il bottone non compare."""
     import time as _time
     now = now if now is not None else _time.time()
     voices = voices or []
@@ -301,6 +304,10 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             parts.append("<p class=\"actions\">" + " ".join(nav) + "</p>")
     parts.append("</section>")
     parts.append(f"<section class=\"panel\" id=\"tab-voices\"{'' if tab == 'voices' else ' hidden'}>")
+    # Il vincolo del modello si dice prima della lista: una voce campionata
+    # non compare fra le voci degli altri modelli, e chi la cerca li' la crede
+    # sparita.
+    parts.append(f"<p class=\"meta\">{_e(t['voices_premium_note'])}</p>")
     if not voices:
         parts.append(f"<p>{_e(t['voices_empty'])}</p>")
     else:
@@ -311,6 +318,12 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
                          f"{_e(t['vstate_' + state])}</span>"
                          f"<a class=\"btn\" href=\"{_e(v['url'])}\">{_e(t['voice_manage'])}</a></li>")
         parts.append("</ul>")
+    if new_voice_url:
+        # Il campionamento vive nell'app (microfono, pagamento, prove): da qui
+        # si offre l'avvio, non una seconda procedura.
+        parts.append(f"<p class=\"actions\"><a class=\"btn\" href=\"{_e(new_voice_url)}\">"
+                     f"{_e(t['voice_new'])}</a>"
+                     f"<span class=\"meta\">{_e(t['voice_new_hint'])}</span></p>")
     parts.append("</section>")
     parts.append(
         "<div class=\"actions\">"
