@@ -28,7 +28,7 @@ def test_apple_app_site_association(client):
     details = data["applinks"]["details"]
     assert len(details) == 1
     assert details[0]["appID"] == audiobook_app._IOS_APP_ID
-    assert details[0]["paths"] == ["/t/*", "/s/*"]
+    assert details[0]["paths"] == ["/t/*", "/s/*", "/auth/*"]
 
 
 def test_apple_app_site_association_no_redirect(client):

@@ -3909,8 +3909,10 @@ def assetlinks_json():
 @app.route("/.well-known/apple-app-site-association")
 def apple_app_site_association():
     # Apple App Site Association: verifica il dominio per gli Universal Links iOS,
-    # così i link https://<dominio>/t/<token> (QR trasferimento) e /s/<token>
-    # (condivisione file) aprono direttamente l'app invece del browser.
+    # così i link https://<dominio>/t/<token> (QR trasferimento), /s/<token>
+    # (condivisione file) e /auth/<token> (magic link di accesso: l'app lo
+    # verifica via POST /api/auth/verify, la GET HTML non consuma il token)
+    # aprono direttamente l'app invece del browser.
     # Requisiti Apple: nessuna estensione nel path, Content-Type application/json,
     # nessun redirect (il file deve rispondere 200 direttamente).
     data = {
@@ -3918,7 +3920,7 @@ def apple_app_site_association():
             "apps": [],
             "details": [{
                 "appID": _IOS_APP_ID,
-                "paths": ["/t/*", "/s/*"],
+                "paths": ["/t/*", "/s/*", "/auth/*"],
             }],
         }
     }
