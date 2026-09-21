@@ -16,7 +16,7 @@ Note:
 - ABM è generato solo durante l'ottimizzazione AI del testo, **non** durante la generazione TTS.
 - M4B è prodotto solo quando `output_format == 'm4b'` (skipped per `mp3`, `zip`, `zip_rss`).
 
-## 2. Derivazione frontend (`templates/_fragments/app.js:373`)
+## 2. Derivazione frontend (`static/js/app.js`, assegnazione di `singleFile`)
 
 ```js
 singleFile = (outputFormat === 'm4b' || outputFormat === 'mp3')
@@ -34,12 +34,12 @@ Il campo URL podcast è visibile **solo** quando `outputFormat === 'zip_rss'`.
 | `zip_rss`       | false | 1 MP3 per capitolo | ✅ capitoli + RSS + cover | — | ✅ XML pre-generato e incluso nello ZIP | true |
 
 Punti chiave nel codice:
-- M4B saltato per `output_format in ('mp3', 'zip', 'zip_rss')` (~`generation_engine.py:1500`).
-- RSS generato ed embedded **solo** per `zip_rss` (~`generation_engine.py:1475–1492`); il flag `podcast_rss_included` viene impostato a true al successo.
+- M4B saltato per `output_format in ('mp3', 'zip', 'zip_rss')` (`generation_engine.run_generation`, cercare quella condizione).
+- RSS generato ed embedded **solo** per `zip_rss` (`run_generation`, subito prima della creazione dello ZIP); il flag `podcast_rss_included` viene impostato a true al successo.
 - Cover normalizzata a 1400×1400 in `audio_utils.py` prima dell'embedding M4B.
-- **Storage cleanup post-ZIP**: per `output_format in ('zip', 'zip_rss')`, subito dopo la creazione dello ZIP (~`generation_engine.py:2647–2675`) si verifica l'integrità con `zipfile.is_zipfile()` e si rimuovono i singoli MP3 da `output_dir` (sono pure duplicazioni del contenuto ZIP). Per `zip_rss` la purge avviene solo se `podcast_rss_included` è True (altrimenti il fallback in `/api/download_podcast` ricostruisce lo ZIP dai singoli MP3). `job["podcast_mp3s"]` mantiene comunque la lista dei path originali per logging/audit, ma i file fisici sono assenti — non è un problema perché il download serve lo ZIP direttamente.
+- **Storage cleanup post-ZIP**: per `output_format in ('zip', 'zip_rss')`, subito dopo la creazione dello ZIP si verifica l'integrità con `zipfile.is_zipfile()` e si rimuovono i singoli MP3 da `output_dir` (sono pure duplicazioni del contenuto ZIP). Per `zip_rss` la purge avviene solo se `podcast_rss_included` è True (altrimenti il fallback in `/api/download_podcast` ricostruisce lo ZIP dai singoli MP3). `job["podcast_mp3s"]` mantiene comunque la lista dei path originali per logging/audit, ma i file fisici sono assenti — non è un problema perché il download serve lo ZIP direttamente.
 
-## 4. Pulsanti di download post-generazione (`templates/_fragments/app.js:1620–1650`)
+## 4. Pulsanti di download post-generazione (`static/js/app.js`, pannello di completamento)
 
 Tutti i pulsanti sono nascosti per default; vengono mostrati condizionalmente in base a `output_format` e alla presenza di `.abm`.
 
@@ -54,7 +54,7 @@ Tutti i pulsanti sono nascosti per default; vengono mostrati condizionalmente in
 
 - **`btnM`** ("Scarica M4B") è stato **rimosso** dal markup: in modalità M4B duplicava `btnD`, negli altri casi era sempre nascosto.
 - **`btnA`** ("Scarica .ABM") appare **solo** quando `has_abm` è true, condizione valutata server-side come:
-  `job["ai_optimized"]` **OR** presenza fisica di `.abm` su disco (`audiobook_app.py:3169`). È supplementare al pulsante primario.
+  `job["ai_optimized"]` **OR** presenza di `optimized_abm_path` su disco o su cold storage (`has_abm` in `audiobook_app.py`, nel payload di stato del job e nella pagina `/dl/<token>`). È supplementare al pulsante primario.
 - **`btnP`** usa l'endpoint dedicato `/api/download_podcast/{job_id}`:
   - Se `podcast_rss_included` è true → serve direttamente lo ZIP pre-costruito.
   - Altrimenti richiede `base_url` per rigenerare RSS on-the-fly.
@@ -85,18 +85,17 @@ Il principio operativo è "fail-soft sui formati derivati": l'output audio base 
 
 ## 7. Riferimenti puntuali al codice
 
-- Frontend: `templates/_fragments/app.js`
-  - `singleFile` derivation: `~:373`
-  - Completion panel buttons: `~:1620–1650`
+- Frontend: `static/js/app.js`
+  - `singleFile` derivation: assegnazioni `singleFile=(outputFormat==='m4b'||outputFormat==='mp3')`
+  - Completion panel buttons: `btnD` / `btnP` / `btnA` nel pannello di completamento
 - Backend: `generation_engine.py`
   - `run_generation()` dispatch
-  - RSS embedding: `~:1475–1492`
-  - M4B gating: `~:1500`
+  - RSS embedding e M4B gating: dentro `run_generation()`, ramo `output_format`
 - Endpoint download:
   - `/api/download/{job_id}` (generico, m4b/mp3/zip)
   - `/api/download_podcast/{job_id}` (zip_rss dedicato)
   - `/dl/{token}` + `/dl/{token}/m4b` + `/dl/{token}/abm` (modalità batch email)
-- ABM presence check: `audiobook_app.py:~3169`
+- ABM presence check: `has_abm` in `audiobook_app.py`
 
 ## 8. Quando consultare questo documento
 
