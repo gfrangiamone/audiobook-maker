@@ -2457,7 +2457,7 @@ def _http_timeout_ms(model_key=None):
 def _cf_timeout_ms():
     """Timeout HTTP (ms) per le call al backend Cloudflare Workers AI.
 
-    45s. Il valore nasce da due episodi opposti, e sta in mezzo apposta.
+    65s. Il valore nasce da tre episodi, due opposti e uno decisivo.
 
     Da un lato 60s erano troppi: il 14/09/2026 tre timeout consecutivi hanno
     tenuto fermo un job PAGATO per 2 minuti e 7 secondi prima che il breaker
@@ -2471,16 +2471,41 @@ def _cf_timeout_ms():
     sulle richieste malate. Risultato: 31 timeout in un giorno, un breaker
     scattato su un backend sano e i job premium dirottati su Vertex.
 
-    A 45s il margine sopra il peggiore caso sano osservato e' doppio, e il
-    failover resta rapido perche' a proteggere il tempo dell'utente non e'
-    piu' il timeout da solo ma `ABM_CF_TRIP_FAILURES` (2 in produzione):
-    due tentativi da 45s scattano in ~92s, meno dei 127s dell'episodio che
-    aveva motivato l'abbassamento.
+    Il 21/09/2026 anche 45s sono diventati troppo pochi, per la stessa
+    ragione per cui lo erano 25s: la coda delle risposte SANE si e' spostata
+    di nuovo. Il log dell'AI Gateway di quel giorno mostra risposte riuscite
+    fra 11.7s e 44.6s (contro 11.9-22.5s del 19/09), e il breaker e' scattato
+    su flash31 alle 13:07:58 dopo tre timeout consecutivi su un backend che
+    stava rispondendo. La prova che non fosse un guasto e' la sonda di
+    rientro delle 13:39:27: poche parole di sintesi, nessun utente collegato,
+    fallita "dopo 45.1s, timeout 45s". Una latenza che non dipende dalla
+    lunghezza del testo non e' un backend rotto, e' coda a monte: il timeout
+    la stava tagliando, non misurando.
+
+    65s e' il valore in produzione (unit systemd, 21/09/2026) e qui e' il
+    default perche' codice e unit non debbano dire due numeri diversi. Il
+    margine sopra il peggiore caso sano osservato (44.6s) e' ~1.5x.
+
+    Il budget di failover e' il prodotto di questo valore per
+    `ABM_CF_TRIP_FAILURES` (default 3): 3 x 65s = ~195s di attesa prima che
+    il breaker scatti, contro i 127s dell'episodio del 14/09/2026 che aveva
+    motivato l'abbassamento da 60s. Chi tocca uno dei due numeri deve
+    guardare quel prodotto, mai questo da solo.
+
+    RULING (21/09/2026): quell'allungamento e' VOLUTO. Nell'economia di
+    questo backend il tempo di attesa dell'utente e' secondario rispetto al
+    costo: Cloudflare e' l'opzione economica e Vertex azzera il margine, per
+    cui la politica e' restare su Cloudflare finche' e' possibile. Il
+    timeout va quindi tarato perche' non tagli MAI una risposta sana, non
+    perche' faccia scattare presto il failover, e la soglia di trip serve a
+    distinguere il guasto dalla lentezza, non ad accorciare l'attesa. Un
+    abbassamento "per far scattare prima il breaker" e' il difetto che ha
+    prodotto gli episodi del 19 e del 21/09/2026, non la loro cura.
     """
     try:
-        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "45000") or 45000))
+        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "65000") or 65000))
     except (TypeError, ValueError):
-        return 45000
+        return 65000
 
 
 def _make_genai_client(**kwargs):

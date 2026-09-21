@@ -7605,6 +7605,31 @@ def admin_audit_premium_page():
     d.textContent = (s == null ? "" : String(s));
     return d.innerHTML;
   }
+  // I timestamp ISO che arrivano dal server sono SEMPRE in UTC
+  // (`tts_backend_state._now()`, `gemini_cost_audit`): stamparli grezzi
+  // togliendo la "Z" li faceva leggere all'admin come ora locale, cioe' due
+  // ore indietro in CEST. Il 21/09/2026 il pannello Backend TTS ha mostrato
+  // «Dal 11:07:58» per un failover scattato alle 13:07:58, facendolo
+  // sembrare vecchio di due ore mentre era appena avvenuto, e contraddiceva
+  // i log dell'AI Gateway (richieste riuscite fino alle 13:05).
+  //
+  // Un ISO SENZA designatore di fuso viene interpretato da JS come ora
+  // LOCALE: prima di parsare si aggiunge "Z", altrimenti un record vecchio
+  // scritto naive verrebbe spostato al contrario. Il formato di uscita resta
+  // «YYYY-MM-DD HH:MM:SS» (costruito a mano, non da toLocaleString, che con
+  // 'it-IT' darebbe «21/09/2026, 13:07:58»): cambia il valore, non la forma
+  // delle colonne. L'ordinamento delle tabelle usa `r.ts` grezzo, non questa
+  // stringa, e non e' toccato.
+  function fmtIso(s){
+    const raw = (s == null ? "" : String(s));
+    if (!raw) return "";
+    const norm = /(Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw : raw + "Z";
+    const d = new Date(norm);
+    if (isNaN(d.getTime())) return raw.slice(0, 19).replace("T", " ");
+    const p = n => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+           " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
   function fillSelect(sel, values, labeler){
     if (!sel) return;
     const prev = sel.value;
@@ -7713,7 +7738,7 @@ def admin_audit_premium_page():
       return (b.ts||"").localeCompare(a.ts||"");
     });
     tbody.innerHTML = recs.map(r => {
-      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
+      const ts = esc(fmtIso(r.ts));
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
       const gCost = Number(r.google_cost_eur_actual || 0);
@@ -7802,7 +7827,7 @@ def admin_audit_premium_page():
       btn.textContent = "Riattiva voci PREMIUM";
       btn.style.background = "var(--ok)";
       if (s.reason) {
-        reasonRow.textContent = "Motivo: " + s.reason + (s.updated_at ? " (" + s.updated_at.slice(0,19).replace("T"," ") + ")" : "");
+        reasonRow.textContent = "Motivo: " + s.reason + (s.updated_at ? " (" + fmtIso(s.updated_at) + ")" : "");
         reasonRow.style.display = "block";
       } else {
         reasonRow.style.display = "none";
@@ -7924,7 +7949,7 @@ def admin_audit_premium_page():
       // esc() prima di finire in innerHTML, mai concatenati crudi.
       status.innerHTML = '<span style="color:var(--err);font-weight:600">SU VERTEX</span> · margine quasi azzerato';
       detail.innerHTML = "Causa: " + esc(s.trip_reason || "?") + " · " + esc(s.trip_detail || "") +
-                         "<br>Dal " + esc((s.tripped_at || "").slice(0,19).replace("T"," ")) +
+                         "<br>Dal " + esc(fmtIso(s.tripped_at)) +
                          " · job " + esc(s.trip_job_id || "?") +
                          "<br>" + tbCreditLine(s) +
                          tbProbeLine(s);
@@ -8058,7 +8083,7 @@ def admin_audit_premium_page():
       return (b.ts||"").localeCompare(a.ts||"");
     });
     tbody.innerHTML = recs.map(r => {
-      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
+      const ts = esc(fmtIso(r.ts));
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
       const cost = Number(r.google_cost_eur_actual || 0);
@@ -8155,7 +8180,7 @@ def admin_audit_premium_page():
       return (b.ts||"").localeCompare(a.ts||"");
     });
     tb.innerHTML = recs.map(r=>{
-      const ts = esc((r.ts||"").slice(0,19).replace("T"," "));
+      const ts = esc(fmtIso(r.ts));
       const revenue = (r._eff_revenue_eur!=null)?Number(r._eff_revenue_eur):Number(r.user_price_eur_charged||0);
       const cost = Number(r.google_cost_eur_actual||0);
       const marg = revenue - cost;
