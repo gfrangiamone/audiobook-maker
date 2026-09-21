@@ -665,7 +665,8 @@ def probe_info(model_key):
     }
 
 
-def record_probe_failure(model_key, detail, *, factor=2.0, max_delay_sec=None):
+def record_probe_failure(model_key, detail, *, factor=2.0, max_delay_sec=None,
+                         keep_schedule=False):
     """Registra una sonda fallita e sposta l'appuntamento raddoppiandolo.
 
     Il raddoppio parte dall'intervallo che ha prodotto l'appuntamento appena
@@ -677,7 +678,15 @@ def record_probe_failure(model_key, detail, *, factor=2.0, max_delay_sec=None):
     un backend giu' da giorni va comunque ricontrollato ogni tanto, ma a un
     ritmo che costa una manciata di richieste rifiutate al giorno.
 
-    Ritorna il nuovo epoch di appuntamento.
+    `keep_schedule=True` registra l'esito (contatore + motivo) LASCIANDO
+    l'appuntamento dov'e'. Serve alla sonda manuale della console: quella
+    non e' una scadenza scattata da sola, e' una misura in piu' chiesta
+    dall'admin. Raddoppiare li' vorrebbe dire che chi guarda il backend piu'
+    spesso lo fa ricontrollare piu' di rado - fino a spingere al tetto
+    l'appuntamento automatico con qualche click, cioe' il contrario di
+    quello che il pulsante serve a fare.
+
+    Ritorna il nuovo epoch di appuntamento (invariato con `keep_schedule`).
     """
     with _LOCK:
         entry, _existed = _entry_for_mutation(model_key)
@@ -690,8 +699,14 @@ def record_probe_failure(model_key, detail, *, factor=2.0, max_delay_sec=None):
         delay = max(1.0, delay)
         entry["probe_attempts"] = _safe_int(entry.get("probe_attempts", 0)) + 1
         entry["probe_last_error"] = str(detail)[:300] if detail else None
-        entry["probe_next_at"] = time.time() + delay
-        entry["probe_delay_sec"] = int(delay)
+        if keep_schedule:
+            # Nessun `probe_next_at`/`probe_delay_sec` toccato: l'intervallo
+            # stampato dal log resta quello vigente, non quello che avremmo
+            # fissato, altrimenti una forense leggerebbe un ritmo mai in uso.
+            delay = prev
+        else:
+            entry["probe_next_at"] = time.time() + delay
+            entry["probe_delay_sec"] = int(delay)
         _save()
         # Il motivo va nel log, non solo nello stato: `_tts_backend_state.json`
         # sta in una data dir leggibile dal solo root, quindi chi indaga un

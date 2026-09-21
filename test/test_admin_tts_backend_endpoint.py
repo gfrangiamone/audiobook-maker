@@ -1,4 +1,6 @@
 """Endpoint admin per lo stato del backend TTS e il rientro su Cloudflare."""
+import threading
+
 import pytest
 
 import audiobook_app
@@ -14,6 +16,10 @@ def _reset_gemini_backend_cache():
     gemini_tts._BACKEND = {}
     yield
     gemini_tts._BACKEND = {}
+    # Stesso discorso per il registro delle sonde manuali in volo: una voce
+    # rimasta li' bloccherebbe il pulsante (409) per tutti i test successivi.
+    with audiobook_app._MANUAL_PROBE_LOCK:
+        audiobook_app._manual_probe_running.clear()
 
 
 @pytest.fixture
@@ -479,3 +485,163 @@ def test_the_payload_carries_the_cumulative_spend(client, monkeypatch):
     assert body["credit_spent_eur"] == pytest.approx(10.0)
     # Il residuo non sparisce mai dal payload, nemmeno a controllo spento.
     assert "credit_left_usd" in body
+
+
+# ---------------------------------------------------------------------------
+# N6: la sonda a richiesta (action="probe")
+# ---------------------------------------------------------------------------
+#
+# Accanto al pulsante di rientro, che rimette il traffico VERO su un backend
+# non misurato, la console puo' ora chiedere una misura: due parole
+# sintetizzate e buttate. E' la meno rischiosa delle due azioni, e l'unica
+# che si puo' premere senza dover decidere nulla.
+#
+# La sonda dura fino al timeout di produzione (65s in prod), quindi
+# l'endpoint non la aspetta: la avvia in un thread e risponde 202. Il
+# pannello scopre l'esito ri-leggendo lo stato.
+
+def _sonda_bloccante(monkeypatch):
+    """Sostituisce la sonda con una che resta in volo finche' non la liberi.
+
+    Ritorna (partita, libera): il chiamante attende `partita` per sapere che
+    il thread e' dentro la sonda, e setta `libera` per farla finire.
+    """
+    partita = threading.Event()
+    libera = threading.Event()
+
+    def _lenta(mk, *, manual=False):
+        partita.set()
+        libera.wait(5)
+        return "failed"
+
+    monkeypatch.setattr(gemini_tts, "probe_cloudflare", _lenta)
+    return partita, libera
+
+
+def test_probe_is_accepted_and_does_not_wait_for_the_outcome(client, monkeypatch):
+    st.trip("flash31", reason="cf_consecutive_failures", detail="d", job_id="j")
+    partita, libera = _sonda_bloccante(monkeypatch)
+
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "probe"})
+
+    assert r.status_code == 202, "202: accettata, non conclusa"
+    assert r.get_json()["probe_started"] is True
+    assert partita.wait(5), "la sonda deve partire davvero, non solo essere promessa"
+    libera.set()
+
+
+def test_the_probe_response_carries_the_whole_state_not_only_the_probe(
+        client, monkeypatch):
+    # Il pannello ridisegna se stesso con la risposta di ogni azione: un
+    # payload parziale gli farebbe leggere `configured_backend` undefined e
+    # scrivere «Cloudflare non configurato», cioe' il pulsante cancellerebbe
+    # proprio il quadro che serviva ad aggiornare.
+    st.trip("flash31", reason="cf_consecutive_failures", detail="d", job_id="j9")
+    _partita, libera = _sonda_bloccante(monkeypatch)
+
+    body = client.post("/admin/api/tts_backend", headers=AUTH,
+                       json={"action": "probe"}).get_json()
+
+    assert body["configured_backend"] == "cloudflare"
+    assert body["trip_job_id"] == "j9"
+    assert body["active"] == "vertex"
+    assert "credit_left_usd" in body
+    assert "probe_running" in body
+    libera.set()
+
+
+def test_a_second_click_is_refused_without_starting_a_second_probe(
+        client, monkeypatch):
+    st.trip("flash31", reason="cf_consecutive_failures", detail="d", job_id="j")
+    partita, libera = _sonda_bloccante(monkeypatch)
+
+    primo = client.post("/admin/api/tts_backend", headers=AUTH,
+                        json={"action": "probe"})
+    assert partita.wait(5)
+    secondo = client.post("/admin/api/tts_backend", headers=AUTH,
+                          json={"action": "probe"})
+
+    assert primo.status_code == 202
+    assert secondo.status_code == 409
+    assert secondo.get_json()["probe_started"] is False
+    # Il rifiuto resta informativo: il pannello ci ridisegna lo stato.
+    assert secondo.get_json()["probe_running"] is True
+    libera.set()
+
+
+def test_the_probe_never_resets_the_breaker_by_itself(client, monkeypatch):
+    # E' il punto di tutta la differenza fra questo pulsante e quello accanto:
+    # il rientro lo decide `_finish_cf_return` DOPO che Cloudflare ha
+    # risposto. Un reset preventivo qui sarebbe il rientro alla cieca che la
+    # sonda esiste per evitare.
+    st.trip("flash31", reason="cf_consecutive_failures", detail="d", job_id="j")
+    gemini_tts._set_backend("flash31", "vertex")
+    _partita, libera = _sonda_bloccante(monkeypatch)
+
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "probe"})
+
+    assert r.get_json()["tripped_at"] is not None
+    assert st.is_tripped("flash31") is True
+    assert gemini_tts._BACKEND.get("flash31") == "vertex"
+    libera.set()
+
+
+def test_the_probe_is_written_to_the_activity_log(client, monkeypatch):
+    st.trip("flash31", reason="cf_consecutive_failures", detail="d", job_id="j")
+    logged = []
+    monkeypatch.setattr(audiobook_app, "_log_activity",
+                        lambda *a, **kw: logged.append(a))
+    _partita, libera = _sonda_bloccante(monkeypatch)
+
+    client.post("/admin/api/tts_backend", headers=AUTH, json={"action": "probe"})
+
+    assert logged, "una misura chiesta a mano deve lasciare traccia"
+    assert logged[0][2] == "ADMIN_TTS_PROBE"
+    assert logged[0][5] == "flash31"
+    libera.set()
+
+
+def test_probe_with_an_unknown_model_key_is_rejected(client):
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "probe", "model_key": "fantasma"})
+    assert r.status_code == 400
+    assert st.state("fantasma") == {}
+
+
+def test_probe_is_refused_when_the_environment_does_not_select_cloudflare(
+        client, monkeypatch):
+    # Stessa ragione del reset: con questa configurazione nessuna sintesi
+    # userebbe Cloudflare, quindi misurarlo non cambierebbe nulla.
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
+    st.trip("flash31", reason="cf_consecutive_failures", detail="d", job_id="j")
+    monkeypatch.setattr(gemini_tts, "probe_cloudflare",
+                        lambda *a, **kw: pytest.fail("sonda eseguita comunque"))
+
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "probe"})
+
+    assert r.status_code == 409
+    errore = r.get_json()["error"]
+    assert "Sonda" in errore, "il rifiuto deve nominare l'azione chiesta"
+    assert "ABM_GEMINI_BACKEND" in errore
+
+
+def test_the_refusal_explains_the_probe_in_its_own_words(client, monkeypatch):
+    # Lo stesso 409 serve tre azioni diverse: motivare la sonda con la frase
+    # del reset manderebbe l'admin a cercare un breaker che la sonda non
+    # tocca.
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
+    probe = client.post("/admin/api/tts_backend", headers=AUTH,
+                        json={"action": "probe"}).get_json()["error"]
+    reset = client.post("/admin/api/tts_backend", headers=AUTH,
+                        json={"action": "reset"}).get_json()["error"]
+    assert "misurare" in probe
+    assert "riarmare il breaker" in reset
+    assert probe != reset
+
+
+def test_the_get_payload_reports_no_probe_running_when_none_is(client):
+    assert client.get("/admin/api/tts_backend",
+                      headers=AUTH).get_json()["probe_running"] is False

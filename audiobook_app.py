@@ -7196,6 +7196,7 @@ def admin_audit_premium_page():
   <div id="tbDetail" style="font-size:.85rem;color:var(--muted);display:none;margin-top:4px"></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
     <button type="button" id="tbResetBtn" disabled>...</button>
+    <button type="button" id="tbProbeBtn" disabled title="Esegue subito una sonda di rientro invece di aspettare l'appuntamento automatico: sintetizza una parola su Cloudflare e butta l'audio. Se Cloudflare risponde, il rientro avviene da solo; se fallisce, l'appuntamento automatico resta dov'e'.">Sonda ora</button>
     <button type="button" id="tbTopupBtn" disabled title="Da premere dopo aver ricaricato il credito Cloudflare e aggiornato ABM_CF_CREDIT_BALANCE_USD: azzera la spesa accumulata e riarma il pre-allarme per il ciclo successivo.">Ho ricaricato il credito</button>
   </div>
 </div>
@@ -7875,10 +7876,13 @@ def admin_audit_premium_page():
     try {
       const r = await fetch("/admin/api/tts_backend",
                             {headers: {"X-Admin-Token": ADMIN_TOKEN}});
-      if (!r.ok) { $("tbStatus").textContent = "Errore caricamento stato (" + r.status + ")"; return; }
-      tbApply(await r.json());
+      if (!r.ok) { $("tbStatus").textContent = "Errore caricamento stato (" + r.status + ")"; return null; }
+      const s = await r.json();
+      tbApply(s);
+      return s;
     } catch (e) {
       $("tbStatus").textContent = "Errore: " + e;
+      return null;
     }
   }
   // Con la ricarica automatica attiva sul pannello del fornitore il residuo
@@ -7906,6 +7910,11 @@ def admin_audit_premium_page():
     return m ? (h + " h " + m + " min") : (h + " h");
   }
   function tbProbeLine(s){
+    if (s.probe_running) {
+      // Precede ogni altra informazione: mentre la misura e' in corso, il
+      // "fra quanto" dell'appuntamento automatico e' il dato meno utile.
+      return '<br><span style="color:var(--warn,#f59e0b)">sonda manuale in corso...</span>';
+    }
     if (!s.probe_enabled) {
       return '<br><span style="color:var(--muted)">rientro automatico disattivato (<code>ABM_CF_PROBE_ENABLE=0</code>)</span>';
     }
@@ -7920,6 +7929,7 @@ def admin_audit_premium_page():
   function tbApply(s){
     const btn = $("tbResetBtn");
     const topupBtn = $("tbTopupBtn");
+    const probeBtn = $("tbProbeBtn");
     const status = $("tbStatus");
     const detail = $("tbDetail");
     const cfConfigured = (s.configured_backend === "cloudflare");
@@ -7931,6 +7941,12 @@ def admin_audit_premium_page():
     // volta sola nella vita dell'installazione.
     topupBtn.disabled = !cfConfigured;
     topupBtn.textContent = "Ho ricaricato il credito";
+    // La sonda ha senso solo a failover aperto: senza trip non c'e' nulla da
+    // riguadagnare e il backend e' gia' Cloudflare. Durante una sonda in
+    // corso il pulsante resta spento perche' la seconda richiesta verrebbe
+    // comunque respinta con 409 dal guard lato server.
+    probeBtn.disabled = !cfConfigured || !s.tripped_at || !!s.probe_running;
+    probeBtn.textContent = s.probe_running ? "Sonda in corso..." : "Sonda ora";
     if (!cfConfigured) {
       // Mai stampare `active` come se fosse il backend in esecuzione: qui e'
       // solo il ripiego sulla configurazione dichiarata, e `auto` e' un
@@ -8000,7 +8016,43 @@ def admin_audit_premium_page():
       await tbRefresh();
     }
   }
+  // Attende la fine della sonda rileggendo lo stato: la misura vive nel
+  // thread di servizio, non nella risposta HTTP che l'ha avviata. Il tetto di
+  // giri esiste perche' un `probe_running` rimasto appeso (processo riavviato
+  // nel mezzo) non deve lasciare il pannello a girare per sempre.
+  async function tbProbeWatch(){
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const s = await tbRefresh();
+      if (!s) continue;
+      if (!s.probe_running) {
+        if (!s.tripped_at) alert("Sonda riuscita: il TTS e' rientrato su Cloudflare.");
+        return;
+      }
+    }
+  }
+  async function tbProbe(){
+    const btn = $("tbProbeBtn");
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/tts_backend", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({action: "probe"}),
+      });
+      // 409 = sonda gia' in corso: non e' un errore da mostrare come tale,
+      // l'esito della prima vale anche per questo click.
+      if (!r.ok && r.status !== 409) { alert("Errore: " + r.status); await tbRefresh(); return; }
+      tbApply(await r.json());
+      await tbProbeWatch();
+    } catch (e) {
+      alert("Errore: " + e);
+      await tbRefresh();
+    }
+  }
   $("tbResetBtn").addEventListener("click", tbReset);
+  $("tbProbeBtn").addEventListener("click", tbProbe);
   $("tbTopupBtn").addEventListener("click", tbTopup);
 
   // ===================== Tab Traduzioni =====================
@@ -9032,6 +9084,51 @@ def admin_api_gemini_kill_switch():
     })
 
 
+# Sonde manuali in corso, una per model_key. La sonda vera dura fino al
+# timeout di produzione (65s in prod), percio' NON viene eseguita dentro la
+# richiesta HTTP dell'admin: un reverse proxy con `proxy_read_timeout` a 60s
+# taglierebbe la connessione e la console mostrerebbe un 504 su una sonda
+# perfettamente viva, che intanto rientra o fallisce senza che nessuno lo
+# veda. Parte quindi in un thread e la console rilegge lo stato persistito,
+# che e' gia' la fonte di verita' per la sonda automatica.
+_manual_probe_running = set()
+_MANUAL_PROBE_LOCK = threading.Lock()
+
+
+def _manual_probe_start(model_key):
+    """Avvia una sonda manuale in background. False se ce n'e' gia' una.
+
+    Il guard non e' cosmetico: `probe_cloudflare` scrive sullo stato
+    persistito (contatore dei tentativi, ultimo errore) e due sonde
+    sovrapposte sullo stesso modello produrrebbero due misure che si
+    sovrascrivono a vicenda, con l'admin che legge l'esito della prima
+    credendolo quello della seconda. Un click ripetuto sul pulsante e' il
+    caso normale, non quello patologico.
+    """
+    with _MANUAL_PROBE_LOCK:
+        if model_key in _manual_probe_running:
+            return False
+        _manual_probe_running.add(model_key)
+
+    def _run():
+        try:
+            esito = gemini_tts.probe_cloudflare(model_key, manual=True)
+            print(f"[admin] sonda manuale {model_key}: {esito}", flush=True)
+        except Exception as e:
+            # probe_cloudflare non solleva mai, ma questo thread non deve
+            # poter morire lasciando `_manual_probe_running` sporco: da li'
+            # in poi il pulsante resterebbe bloccato fino al riavvio.
+            print(f"[admin] sonda manuale {model_key} esplosa "
+                  f"({type(e).__name__}: {e})", flush=True)
+        finally:
+            with _MANUAL_PROBE_LOCK:
+                _manual_probe_running.discard(model_key)
+
+    threading.Thread(target=_run, daemon=True,
+                     name=f"cf-probe-manual-{model_key}").start()
+    return True
+
+
 def _probe_payload(model_key):
     """Vista JSON dell'appuntamento della sonda di rientro.
 
@@ -9041,9 +9138,12 @@ def _probe_payload(model_key):
     precedente). In quel caso i campi ci sono comunque, a None: il contratto
     non cambia forma fra installazioni, cosi' il client non deve gestirne due.
     """
+    with _MANUAL_PROBE_LOCK:
+        in_corso = model_key in _manual_probe_running
     vuoto = {"probe_enabled": False, "probe_next_at": None,
              "probe_in_sec": None, "probe_attempts": 0,
-             "probe_last_error": None, "probe_delay_sec": 0}
+             "probe_last_error": None, "probe_delay_sec": 0,
+             "probe_running": in_corso}
     try:
         info = tts_backend_state.probe_info(model_key)
         nxt = info.get("next_at")
@@ -9055,9 +9155,64 @@ def _probe_payload(model_key):
             "probe_attempts": info.get("attempts", 0),
             "probe_last_error": info.get("last_error"),
             "probe_delay_sec": info.get("delay_sec", 0),
+            # Riguarda la sola sonda MANUALE: quella automatica gira dentro
+            # il sorvegliante e la console non la vede mai in corso, la vede
+            # solo nei suoi effetti.
+            "probe_running": in_corso,
         }
     except Exception:
         return vuoto
+
+
+def _tts_backend_payload(model_key, configured_backend):
+    """Vista JSON completa dello stato del backend TTS.
+
+    Estratta perche' ogni risposta dell'endpoint - GET, reset,
+    topup e sonda manuale - deve avere la STESSA forma. Una
+    risposta parziale (per esempio il solo blocco `probe_*` della
+    sonda) arriva al pannello come uno stato in cui
+    `configured_backend` manca, e `tbApply` la leggerebbe come
+    «Cloudflare non configurato»: il pulsante appena premuto
+    spegnerebbe il pannello che doveva aggiornare.
+    """
+    s = tts_backend_state.state(model_key)
+    return {
+        "model_key": model_key,
+        # Ripiego sulla configurazione dichiarata, mai sulla stringa
+        # "cloudflare": su un'installazione pulita `state()` ritorna {} e un
+        # default fisso faceva scrivere al pannello «Cloudflare non
+        # configurato · il TTS gira su cloudflare», che si contraddice da
+        # solo nella prima riga che un admin legge dopo il deploy.
+        "active": s.get("active") or configured_backend,
+        "tripped_at": s.get("tripped_at"),
+        "trip_reason": s.get("trip_reason"),
+        "trip_detail": s.get("trip_detail"),
+        "trip_job_id": s.get("trip_job_id"),
+        "consecutive_failures": s.get("consecutive_failures", 0),
+        # Stato della sonda di rientro. `probe_next_at` viaggia come epoch
+        # (float), la stessa forma in cui e' persistito: e' l'unico campo
+        # dello stato che sia un istante confrontabile invece di una marca
+        # ISO, e convertirlo qui obbligherebbe il pannello a ri-parsarlo per
+        # calcolare «fra quanto». `probe_in_sec` e' il comodo derivato, gia'
+        # clampato a zero per un appuntamento scaduto che il sorvegliante non
+        # ha ancora raccolto.
+        **_probe_payload(model_key),
+        # USD e' l'importo autorevole (il credito Cloudflare e' denominato
+        # in dollari); l'equivalente in euro viaggia accanto solo perche' il
+        # pannello lo mostri a chi ragiona in euro, convertito con la stessa
+        # ABM_GEMINI_USD_EUR_RATE usata dal resto dell'app.
+        "credit_left_usd": round(tts_backend_state.credit_left_usd(), 2),
+        "credit_left_eur": round(
+            tts_backend_state.to_eur(tts_backend_state.credit_left_usd()), 2),
+        # Il residuo viaggia SEMPRE, anche a controllo spento: il campo non
+        # sparisce mai dal contratto, cosi' nessun client deve gestire due
+        # forme di payload. E' il pannello a decidere cosa mostrarne.
+        "credit_check_enabled": tts_backend_state.credit_check_enabled(),
+        "credit_spent_usd": round(tts_backend_state.credit_spent_usd(), 2),
+        "credit_spent_eur": round(
+            tts_backend_state.to_eur(tts_backend_state.credit_spent_usd()), 2),
+        "configured_backend": configured_backend,
+    }
 
 
 @app.route("/admin/api/tts_backend", methods=["GET", "POST"])
@@ -9069,6 +9224,15 @@ def admin_api_tts_backend():
     POST -> {"action": "reset"}: riattiva Cloudflare (breaker + cache).
     POST -> {"action": "topup"}: azzera il ledger della spesa dopo una
             ricarica del credito, e NON tocca il breaker.
+    POST -> {"action": "probe"}: esegue SUBITO una sonda di rientro, senza
+            aspettare l'appuntamento automatico. E' la sola azione che
+            misura il backend invece di dichiararlo sano: sintetizza una
+            parola, butta l'audio e, se Cloudflare risponde, rientra da
+            sola. Un fallimento non allunga l'appuntamento automatico (vedi
+            `gemini_tts.probe_cloudflare(manual=True)`), altrimenti
+            guardare piu' spesso farebbe ricontrollare piu' di rado.
+            Risponde 202 con la sonda avviata in background: dura quanto il
+            timeout di produzione e non puo' stare dentro la richiesta HTTP.
 
     Perche' il topup e' un'azione a se' e non piu' un campo del rientro:
     `tts_backend_state.reset_spend()` e' l'unica cosa che riarma il
@@ -9161,7 +9325,7 @@ def admin_api_tts_backend():
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         action = str(data.get("action", "") or "").strip().lower()
-        if action not in ("reset", "topup"):
+        if action not in ("reset", "topup", "probe"):
             return jsonify({"error": f"Azione non riconosciuta: {action!r}"}), 400
         if action == "reset" and data.get("topup"):
             # Forma vecchia dell'API (il topup come campo del rientro): non
@@ -9181,20 +9345,27 @@ def admin_api_tts_backend():
             # materializzerebbe una voce di stato. Motivare il topup con il
             # testo del reset descriverebbe un effetto che quell'azione non
             # ha, e manderebbe l'admin a cercare una voce di stato inesistente.
-            why = ("Il reset creerebbe una voce di stato per un modello che "
-                   "non esiste."
-                   if action == "reset" else
-                   "Il ledger della spesa Cloudflare e' unico per l'account, "
-                   "ma il model_key resta tracciato nel log dell'operazione.")
+            if action == "reset":
+                why = ("Il reset creerebbe una voce di stato per un modello "
+                       "che non esiste.")
+            elif action == "probe":
+                why = ("La sonda chiede a Cloudflare l'id di un modello che "
+                       "non conosciamo: non c'e' nulla da sintetizzare.")
+            else:
+                why = ("Il ledger della spesa Cloudflare e' unico per "
+                       "l'account, ma il model_key resta tracciato nel log "
+                       "dell'operazione.")
             return jsonify({
                 "error": f"model_key sconosciuto: {model_key!r}. {why}",
                 "known_model_keys": sorted(gemini_tts.GEMINI_MODELS),
             }), 400
         if configured_backend != "cloudflare":
-            what = ("Rientro" if action == "reset"
-                    else "Azzeramento del contatore di spesa")
-            why = ("riarmare il breaker" if action == "reset"
-                   else "azzerare il ledger della spesa Cloudflare")
+            what = {"reset": "Rientro",
+                    "probe": "Sonda di rientro"}.get(
+                        action, "Azzeramento del contatore di spesa")
+            why = {"reset": "riarmare il breaker",
+                   "probe": "misurare Cloudflare"}.get(
+                       action, "azzerare il ledger della spesa Cloudflare")
             return jsonify({
                 "error": (f"{what} non applicabile: ABM_GEMINI_BACKEND vale "
                           f"{configured_backend!r}, non 'cloudflare'. Con "
@@ -9206,6 +9377,28 @@ def admin_api_tts_backend():
                           f"servizio."),
                 "configured_backend": configured_backend,
             }), 409
+
+        if action == "probe":
+            # Nessun `reset()` e nessuna invalidazione di cache qui: la sonda
+            # rientra DA SOLA se Cloudflare risponde (`_finish_cf_return`), e
+            # fa gia' tutto il lavoro con la stessa disciplina del rientro
+            # manuale. Un reset preventivo qui sarebbe il rientro alla cieca
+            # che la sonda esiste proprio per evitare.
+            avviata = _manual_probe_start(model_key)
+            _log_activity("", "", "ADMIN_TTS_PROBE", "",
+                          _get_client_ip(), model_key,
+                          f"avviata={avviata}")
+            print(f"[admin] Sonda di rientro manuale richiesta per "
+                  f"{model_key} (avviata: {avviata})")
+            return jsonify({
+                **_tts_backend_payload(model_key, configured_backend),
+                "probe_started": avviata,
+                "message": ("Sonda avviata: l'esito compare qui sotto entro "
+                            "il timeout di produzione."
+                            if avviata else
+                            "Sonda gia' in corso su questo modello: "
+                            "l'esito della prima vale anche per questo click."),
+            }), (202 if avviata else 409)
 
         if action == "topup":
             # Solo il ledger: nessun `reset()`, nessuna invalidazione della
@@ -9245,44 +9438,7 @@ def admin_api_tts_backend():
             print(f"[admin] Backend TTS {model_key} riportato su Cloudflare "
                   f"(aveva trip: {had_trip})")
 
-    s = tts_backend_state.state(model_key)
-    return jsonify({
-        "model_key": model_key,
-        # Ripiego sulla configurazione dichiarata, mai sulla stringa
-        # "cloudflare": su un'installazione pulita `state()` ritorna {} e un
-        # default fisso faceva scrivere al pannello «Cloudflare non
-        # configurato · il TTS gira su cloudflare», che si contraddice da
-        # solo nella prima riga che un admin legge dopo il deploy.
-        "active": s.get("active") or configured_backend,
-        "tripped_at": s.get("tripped_at"),
-        "trip_reason": s.get("trip_reason"),
-        "trip_detail": s.get("trip_detail"),
-        "trip_job_id": s.get("trip_job_id"),
-        "consecutive_failures": s.get("consecutive_failures", 0),
-        # Stato della sonda di rientro. `probe_next_at` viaggia come epoch
-        # (float), la stessa forma in cui e' persistito: e' l'unico campo
-        # dello stato che sia un istante confrontabile invece di una marca
-        # ISO, e convertirlo qui obbligherebbe il pannello a ri-parsarlo per
-        # calcolare «fra quanto». `probe_in_sec` e' il comodo derivato, gia'
-        # clampato a zero per un appuntamento scaduto che il sorvegliante non
-        # ha ancora raccolto.
-        **_probe_payload(model_key),
-        # USD e' l'importo autorevole (il credito Cloudflare e' denominato
-        # in dollari); l'equivalente in euro viaggia accanto solo perche' il
-        # pannello lo mostri a chi ragiona in euro, convertito con la stessa
-        # ABM_GEMINI_USD_EUR_RATE usata dal resto dell'app.
-        "credit_left_usd": round(tts_backend_state.credit_left_usd(), 2),
-        "credit_left_eur": round(
-            tts_backend_state.to_eur(tts_backend_state.credit_left_usd()), 2),
-        # Il residuo viaggia SEMPRE, anche a controllo spento: il campo non
-        # sparisce mai dal contratto, cosi' nessun client deve gestire due
-        # forme di payload. E' il pannello a decidere cosa mostrarne.
-        "credit_check_enabled": tts_backend_state.credit_check_enabled(),
-        "credit_spent_usd": round(tts_backend_state.credit_spent_usd(), 2),
-        "credit_spent_eur": round(
-            tts_backend_state.to_eur(tts_backend_state.credit_spent_usd()), 2),
-        "configured_backend": configured_backend,
-    })
+    return jsonify(_tts_backend_payload(model_key, configured_backend))
 
 
 def _gemini_capability_ok():

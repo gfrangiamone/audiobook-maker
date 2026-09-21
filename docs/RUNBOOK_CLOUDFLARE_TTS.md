@@ -358,14 +358,34 @@ procedura:
    residuo continuerebbe a essere calcolato sulla spesa pre-ricarica. È
    un'azione **distinta dal rientro** e non tocca il breaker: chiede conferma
    esplicita, ed è irreversibile.
-5. **Rientro dal pannello**: pulsante «Riporta su Cloudflare», anch'esso con
-   conferma esplicita.
+5. **Sonda ora** (dal 21/09/2026): pulsante «Sonda ora», accanto al rientro,
+   abilitato solo a breaker scattato. Chiede **subito** la stessa misura che
+   il sorvegliante farebbe al prossimo appuntamento: sintetizza due parole su
+   Cloudflare e le butta. Se Cloudflare risponde, il rientro avviene da solo
+   (stesso cammino della sonda automatica: reset del breaker, cache
+   in-process invalidata, email di rientro); se non risponde, non cambia
+   nulla — nemmeno l'appuntamento automatico, che resta dov'era, così
+   controllare più spesso non fa ricontrollare più di rado.
+
+   È la prima cosa da premere dopo aver risolto la causa: **risponde alla
+   domanda che il pulsante di rientro dà per già risposta**, e al costo di
+   una frazione di centesimo invece che di un job. La risposta è un `202`:
+   la sonda dura fino al timeout di produzione (65 s), il pannello mostra
+   «sonda manuale in corso…» e si aggiorna da solo quando finisce. Un
+   secondo click mentre è in volo riceve `409` e non avvia nulla.
+
+6. **Rientro dal pannello**: pulsante «Riporta su Cloudflare», anch'esso con
+   conferma esplicita. Serve quando si vuole rientrare **senza** misurare
+   (p.es. causa non sondabile, `state_file_unreadable`), o quando la sonda
+   non è applicabile.
 
    > **Il rientro non va fatto prima di aver risolto la causa.** Se il
    > problema persiste (es. credito non ricaricato per davvero, o causa
    > diversa dal credito), il breaker riscatta alla primissima chiamata
    > successiva: ogni ricaduta di questo tipo costa un job (fallimento o
-   > nuovo giro di failover a metà sintesi).
+   > nuovo giro di failover a metà sintesi). È esattamente il rischio che
+   > il punto 5 elimina: a parità di esito, la sonda lo scopre con due
+   > parole invece che con un audiolibro.
 
 ---
 

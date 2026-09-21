@@ -461,21 +461,36 @@ def _cf_probe_enabled():
 
 
 def _cf_probe_first_sec():
-    """Attesa prima della PRIMA sonda dopo un trip (default 30 minuti)."""
+    """Attesa prima della PRIMA sonda dopo un trip (default 15 minuti).
+
+    Era mezz'ora. Dimezzata il 21/09/2026 perche' il prezzo della sonda si e'
+    rivelato molto piu' basso di quanto l'intervallo originale presupponesse:
+    `_CF_PROBE_TEXT` e' una parola, l'addebito e' una frazione di centesimo, e
+    una sonda fallita per timeout non viene nemmeno registrata dal gateway.
+    Il costo vero del failover sta dall'altra parte - ogni mezz'ora in piu' su
+    Vertex e' margine azzerato su tutti i job PREMIUM di quella finestra -
+    quindi ricontrollare il doppio delle volte si ripaga alla prima mezz'ora
+    guadagnata.
+    """
     try:
-        return max(60, int(os.environ.get("ABM_CF_PROBE_FIRST_SEC", "1800") or 1800))
+        return max(60, int(os.environ.get("ABM_CF_PROBE_FIRST_SEC", "900") or 900))
     except (TypeError, ValueError):
-        return 1800
+        return 900
 
 
 def _cf_probe_max_sec():
-    """Tetto del raddoppio (default 6 ore). Un backend giu' da giorni va
+    """Tetto del raddoppio (default 3 ore). Un backend giu' da giorni va
     ricontrollato lo stesso, ma a un ritmo che costa una manciata di
-    richieste rifiutate al giorno, non una ogni mezz'ora per sempre."""
+    richieste rifiutate al giorno, non una ogni quarto d'ora per sempre.
+
+    Era 6 ore, dimezzato insieme a `_cf_probe_first_sec` (21/09/2026) e per la
+    stessa ragione: al tetto vecchio un guasto notturno poteva tenere spento
+    il backend economico fino al mattino dopo pur essendo rientrato da ore.
+    Il tetto nuovo costa al massimo otto sonde al giorno."""
     try:
-        return max(60, int(os.environ.get("ABM_CF_PROBE_MAX_SEC", "21600") or 21600))
+        return max(60, int(os.environ.get("ABM_CF_PROBE_MAX_SEC", "10800") or 10800))
     except (TypeError, ValueError):
-        return 21600
+        return 10800
 
 
 def _cf_probe_timeout_ms():
@@ -499,7 +514,7 @@ def _cf_probe_timeout_ms():
     return max(wanted, _cf_timeout_ms())
 
 
-def _cf_probe_eligible(model_key):
+def _cf_probe_eligible(model_key, *, manual=False):
     """(ammissibile, motivo) per una sonda su questo modello.
 
     Tutte le condizioni si ricontrollano a ogni giro, non si congelano al
@@ -507,8 +522,20 @@ def _cf_probe_eligible(model_key):
     deploy che toglie le credenziali Cloudflare, un `ABM_GEMINI_BACKEND`
     riportato a `vertex` di proposito), e continuare a bussare su un backend
     che nessuna sintesi userebbe piu' e' spesa e rumore puri.
+
+    `manual=True` e' la sonda chiesta a mano dalla console e salta due sole
+    condizioni, quelle che descrivono il RITMO automatico e non la salute del
+    backend: l'interruttore `ABM_CF_PROBE_ENABLE` (spegnerlo significa "non
+    bussare da solo", non "vietato misurare") e la whitelist delle cause
+    sondabili (il fail-safe non si riarma da solo, ma un admin che guarda lo
+    stato puo' chiedergli una misura). Restano tutte le altre: senza
+    credenziali, con un modello che Cloudflare non ospita o senza un trip da
+    riguadagnare la sonda manuale non misurerebbe nulla. Il paragone giusto
+    non e' con "non fare niente" ma con il pulsante di rientro accanto, che
+    rimette il traffico vero su un backend non misurato: una sonda manuale e'
+    sempre la meno rischiosa delle due.
     """
-    if not _cf_probe_enabled():
+    if not manual and not _cf_probe_enabled():
         return False, "rientro automatico disattivato (ABM_CF_PROBE_ENABLE=0)"
     choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
     if choice != "cloudflare":
@@ -521,12 +548,12 @@ def _cf_probe_eligible(model_key):
     st = _backend_state.state(model_key)
     if not st.get("tripped_at"):
         return False, "nessun trip da riguadagnare"
-    if st.get("trip_reason") not in _CF_PROBE_REASONS:
+    if not manual and st.get("trip_reason") not in _CF_PROBE_REASONS:
         return False, f"causa di trip non sondabile: {st.get('trip_reason')!r}"
     return True, ""
 
 
-def _probe_failed(model_key, detail, started):
+def _probe_failed(model_key, detail, started, *, manual=False):
     """Registra una sonda fallita annotando quanto e' durata e con che tetto.
 
     Il motivo nudo ("timeout verso Cloudflare") non basta a decidere se il
@@ -536,13 +563,16 @@ def _probe_failed(model_key, detail, started):
     """
     elapsed = max(0.0, time.time() - started)
     budget = _cf_probe_timeout_ms() / 1000.0
+    marca = " [manuale]" if manual else ""
     _backend_state.record_probe_failure(
-        model_key, f"{detail} (dopo {elapsed:.1f}s, timeout {budget:.0f}s)",
-        max_delay_sec=_cf_probe_max_sec())
+        model_key,
+        f"{detail} (dopo {elapsed:.1f}s, timeout {budget:.0f}s){marca}",
+        max_delay_sec=_cf_probe_max_sec(),
+        keep_schedule=manual)
     return "failed"
 
 
-def probe_cloudflare(model_key):
+def probe_cloudflare(model_key, *, manual=False):
     """Un tentativo di rientro su Cloudflare. Non solleva mai.
 
     La chiama il thread di sorveglianza quando `tts_backend_state.probe_due`
@@ -552,14 +582,32 @@ def probe_cloudflare(model_key):
     del codice autorizzato a farlo, ed e' sicuro solo perche' l'audio
     prodotto viene buttato via invece che consegnato a qualcuno.
 
+    `manual=True` e' la stessa misura chiesta a mano dalla console admin
+    (`action="probe"`), con due differenze, entrambe perche' un click non e'
+    una scadenza: l'ammissibilita' salta le condizioni che descrivono il
+    ritmo automatico (vedi `_cf_probe_eligible`) e un fallimento NON allunga
+    l'appuntamento automatico. Senza la seconda, l'admin che controlla il
+    backend piu' spesso lo farebbe ricontrollare piu' di rado, e bastavano
+    pochi click per spingere la sonda automatica al tetto.
+
+    Una sonda manuale non ammissibile non disarma nulla: il "disarmo" e' la
+    risposta giusta per un appuntamento automatico che non ha piu' senso
+    tenere, ma toglierlo perche' un admin ha premuto un pulsante mentre la
+    configurazione era in mezzo a un deploy spegnerebbe il rientro
+    automatico per sempre, in silenzio.
+
     Returns:
         "returned"  sonda riuscita, breaker resettato, modello su Cloudflare
-        "failed"    sonda fallita, appuntamento raddoppiato
+        "failed"    sonda fallita, appuntamento raddoppiato (invariato se manuale)
         "deferred"  non eseguita ora, appuntamento rimandato invariato
         "disarmed"  non piu' applicabile, sonda disarmata (il trip resta)
+        "skipped"   sonda manuale non ammissibile, nulla toccato
     """
-    ok, why = _cf_probe_eligible(model_key)
+    ok, why = _cf_probe_eligible(model_key, manual=manual)
     if not ok:
+        if manual:
+            print(f"[gemini-tts] sonda manuale {model_key} non eseguita: {why}")
+            return "skipped"
         _backend_state.clear_probe(model_key)
         print(f"[gemini-tts] sonda di rientro {model_key} disarmata: {why}")
         return "disarmed"
@@ -604,16 +652,17 @@ def probe_cloudflare(model_key):
             print(f"[gemini-tts] sonda {model_key}: contenuto rifiutato ma "
                   f"backend raggiungibile, vale come rientro")
             return _finish_cf_return(model_key, started)
-        return _probe_failed(model_key, str(te)[:200], started)
+        return _probe_failed(model_key, str(te)[:200], started, manual=manual)
     except Exception as e:
         # Rete di sicurezza: la sonda gira in un thread di servizio e non
         # deve poter uccidere il sorvegliante con un'eccezione inattesa.
         return _probe_failed(model_key, f"{type(e).__name__}: {str(e)[:160]}",
-                             started)
+                             started, manual=manual)
 
     pcm = (out or {}).get("pcm") or b""
     if not pcm:
-        return _probe_failed(model_key, "risposta senza audio", started)
+        return _probe_failed(model_key, "risposta senza audio", started,
+                             manual=manual)
 
     # La sonda e' audio vero prodotto da Cloudflare: si paga, quindi si
     # addebita. Un rientro che non passasse dal ledger farebbe divergere in
