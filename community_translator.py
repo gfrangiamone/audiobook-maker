@@ -22,6 +22,7 @@ import threading
 import traceback
 
 import generation_engine as ge
+import semantic_judge as sj
 
 
 LANGS: tuple[str, ...] = ("it", "en", "fr", "es", "de", "zh", "hi")
@@ -266,12 +267,156 @@ def translate(payload: dict[str, str], *, timeout: float = 90.0) -> dict | None:
             for k in payload:
                 if k not in slot or not isinstance(slot.get(k), str):
                     slot[k] = ""
+    # Controllo di qualita' in due passate, dalla piu' economica:
+    # 1. giudizio semantico — scarta gli slot che non sono nella loro lingua
+    #    e recupera `source_lang` quando il motore di traduzione non l'ha
+    #    dichiarato (senza, il passo 2 si spegnerebbe del tutto);
+    # 2. confronto esatto — la copia verbatim, che non costa nulla rilevare e
+    #    resta l'unico controllo se il giudizio semantico non e' configurato.
+    src = _semantic_review(data, payload, src)
     data["source_lang"] = src
     _drop_copied_slots(data, payload, src)
+
+    empty_before = _empty_slots(data, payload)
     _retry_missing_slots(data, payload, src, timeout=timeout)
+    # Il retry riempie gli slot, e li verifica solo col confronto esatto: senza
+    # questa ripassata rientrerebbe dalla finestra il testo nella lingua
+    # sbagliata appena scartato dalla porta.
+    refilled = empty_before - _empty_slots(data, payload)
+    if refilled:
+        _semantic_review(data, payload, src, only=refilled)
     keys = ", ".join(payload.keys())
     print(f"[community_translator] translated {keys} (source={src or '?'}, langs={','.join(LANGS)})")
     return data
+
+
+# ---------------------------------------------------------------------------
+# Controllo semantico degli slot (System One)
+# ---------------------------------------------------------------------------
+
+# Sotto questa lunghezza la lingua di un testo non e' determinabile in modo
+# affidabile ("top!", "👌", "merci"): lo slot non viene giudicato. E' lo stesso
+# principio di _IDENTITY_MIN_CHARS, applicato al candidato invece che
+# all'originale.
+_LANG_CHECK_MIN_CHARS = 25
+
+# Si scarta solo il caso netto: la probabilita' che il testo sia nella lingua
+# di destinazione deve essere bassa, non semplicemente incerta. Un buco costa
+# all'utente una lingua (il client ripiega sull'inglese), quindi lo si apre
+# solo quando la traduzione e' evidentemente nella lingua sbagliata.
+_LANG_DROP_BELOW = 0.25
+
+# Confidence minima per sovrascrivere il `source_lang` dichiarato dal motore
+# di traduzione con quello rilevato.
+_SRC_OVERRIDE_CONF = 0.80
+
+_LANG_NAMES_FULL = {
+    "it": "Italian", "en": "English", "fr": "French", "es": "Spanish",
+    "de": "German", "zh": "Chinese", "hi": "Hindi (Devanagari script)",
+}
+
+
+def _slot_key(lg: str, k: str) -> str:
+    return f"{lg}::{k}"
+
+
+def _empty_slots(data: dict, payload: dict[str, str]) -> set:
+    """Insieme di (lingua, chiave) senza testo: la differenza prima/dopo il
+    retry dice quali slot sono stati riempiti."""
+    return {(lg, k) for lg in LANGS for k in payload
+            if not ((data.get(lg) or {}).get(k) or "").strip()}
+
+
+def _semantic_questions(data: dict, payload: dict[str, str], *,
+                        only: set | None = None, detect_src: bool = True) -> dict:
+    """Una Choice per la lingua sorgente + una Noul per ogni slot lungo.
+
+    Domande indipendenti sullo stesso stato: partono insieme in una sola
+    richiesta. Gli id servono solo al codice, quindi ogni istruzione nomina
+    per esteso il percorso e la lingua che deve giudicare.
+
+    `only` limita le Noul a un insieme di (lingua, chiave): serve per la
+    ripassata sugli slot che il retry ha riempito.
+    """
+    if sj.Noul is None:
+        return {}
+    first_key = next(iter(payload))
+    questions: dict = {}
+    if detect_src:
+        questions["source_lang"] = sj.Choice(
+            instructions=f"In which language is `source.{first_key}` written?",
+            criteria=dict(_LANG_NAMES_FULL),
+        )
+    for lg in LANGS:
+        slot = data.get(lg) or {}
+        for k in payload:
+            if only is not None and (lg, k) not in only:
+                continue
+            txt = (slot.get(k) or "").strip()
+            if len(txt) < _LANG_CHECK_MIN_CHARS:
+                continue
+            questions[_slot_key(lg, k)] = sj.Noul(
+                instructions=f"Is the text in `translations.{lg}.{k}` written "
+                             f"in {_LANG_NAMES_FULL[lg]}?",
+                criteria=sj.NoulCriteria(
+                    true=f"The text is in {_LANG_NAMES_FULL[lg]}, even if it "
+                         "keeps untranslated brand names such as AudioBook "
+                         "Maker, EPUB, MP3 or TTS.",
+                    false="The text is in another language: it was copied "
+                          "from the source instead of being translated.",
+                ),
+            )
+    return questions
+
+
+def _semantic_review(data: dict, payload: dict[str, str], src: str,
+                     *, only: set | None = None) -> str:
+    """Scarta gli slot che non sono nella loro lingua e recupera `source_lang`.
+
+    Ritorna la lingua sorgente (quella dichiarata, o quella rilevata se il
+    motore di traduzione non l'ha data o si e' contraddetto con sicurezza).
+
+    Perche' non basta `_looks_untranslated`: quello riconosce solo la copia
+    *identica*. Il commento tedesco riscritto a meta', o tradotto nella lingua
+    sbagliata, passava indisturbato. E con `source_lang` vuoto l'intero
+    controllo si spegneva, perche' senza sorgente la copia lecita non si
+    distingue dallo sbaglio: la Choice chiude anche quel buco.
+    """
+    questions = _semantic_questions(data, payload, only=only,
+                                    detect_src=only is None)
+    if not questions:
+        return src
+    state = {"source": dict(payload), "translations": {
+        lg: dict(data.get(lg) or {}) for lg in LANGS}}
+    resp = sj.ask(state, questions)
+    if resp is None:
+        return src
+
+    detected, conf = sj.choice(resp, "source_lang")
+    if detected in LANGS:
+        if not src:
+            print(f"[community_translator] source_lang assente: rilevato "
+                  f"'{detected}' (conf={conf:.2f})")
+            src = detected
+        elif detected != src and conf >= _SRC_OVERRIDE_CONF:
+            print(f"[community_translator] source_lang dichiarato '{src}' ma "
+                  f"rilevato '{detected}' (conf={conf:.2f}): vince il rilevato")
+            src = detected
+
+    for lg in LANGS:
+        slot = data.get(lg)
+        if not isinstance(slot, dict):
+            continue
+        for k in payload:
+            if only is not None and (lg, k) not in only:
+                continue
+            p = sj.noul(resp, _slot_key(lg, k))
+            if p is None or p >= _LANG_DROP_BELOW:
+                continue
+            print(f"[community_translator] slot {lg}.{k} non e' in "
+                  f"{_LANG_NAMES_FULL[lg]} (p={p:.2f}): scartato")
+            slot[k] = ""
+    return src
 
 
 def _drop_copied_slots(data: dict, payload: dict[str, str], src: str) -> None:

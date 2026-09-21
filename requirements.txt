@@ -7,3 +7,4 @@ qrcode[pil]>=7.4  # QR di trasferimento job sull'app mobile
 numpy>=1.26  # misure acustiche del campione vocale (voice_clone_audio)
 faster-whisper>=1.2  # verifica ASR del campione vocale su CPU (voice_clone_audio); porta ctranslate2
 zhconv  # cinese tradizionale->semplificato nel CER (voice_clone_audio)
+typesafe-sdk>=0.7  # giudizi semantici tipizzati (semantic_judge); opzionale a runtime

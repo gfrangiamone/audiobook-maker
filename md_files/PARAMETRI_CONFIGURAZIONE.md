@@ -72,6 +72,16 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_ACCOUNT_CODE_MAX_ATTEMPTS` | `5` (tentativi sul codice a 6 cifre prima del blocco: serve un nuovo codice) | `accounts.py` | 28 |
 | `ABM_ACCOUNT_HISTORY_MONTHS` | `24` (retention dello storico per account free e per account a pagamento dopo la grace) | `accounts.py` | 29 |
 | `ABM_ACCOUNT_GRACE_DAYS` | `90` (grace dopo la disdetta di un piano a pagamento prima che scatti la retention free) | `accounts.py` | 30 |
+| `ABM_TYPESAFE_API_KEY` | `""` (vuoto; chiave del servizio di giudizi semantici tipizzati. Assente = `semantic_judge.is_available()` False e ogni chiamante ripiega sull'euristica/LLM che aveva prima) | `semantic_judge.py` | 75–76 |
+| `ABM_TYPESAFE_ENABLE` | `1` (kill-switch: `0\|false\|no\|off` spegne tutti i giudizi semantici **anche con la chiave presente**, senza deploy) | `semantic_judge.py` | 79–82 |
+| `ABM_TYPESAFE_MODEL` | `""` (vuoto = modello di default dell'SDK) | `semantic_judge.py` | 113 |
+| `ABM_TYPESAFE_TIMEOUT` | `15.0` (secondi per richiesta) | `semantic_judge.py` | 47, 90–91 |
+| `ABM_TYPESAFE_RETRIES` | `1` (ritentativi su 429/529/errori di rete, con backoff gestito dall'SDK: non si riscrive il ciclo a mano come in `community_moderator`/`abuse_watch`) | `semantic_judge.py` | 48, 103 |
+| `ABM_MODERATION_MIN_SPAM` | `0.70` (soglia di rifiuto del commento community per promozione/spam) | `community_moderator.py` | 130–142 |
+| `ABM_MODERATION_MIN_PROFANITY` | `0.70` (turpiloquio o insulti) | `community_moderator.py` | 130–142 |
+| `ABM_MODERATION_MIN_THREAT` | `0.60` (minacce, violenza, molestie; piu' bassa delle altre perche' il falso negativo costa piu' del falso positivo) | `community_moderator.py` | 130–142 |
+| `ABM_MODERATION_MIN_SEXUAL` | `0.70` (contenuto sessuale esplicito) | `community_moderator.py` | 130–142 |
+| `ABM_MODERATION_MIN_GIBBERISH` | `0.90` (testo privo di significato; la piu' alta: un rifiuto sbagliato qui colpisce le recensioni vere brevissime — «top!», «👌» — che alimentano i rich snippet di `seo_reviews`) | `community_moderator.py` | 130–142 |
 
 ---
 
@@ -1293,11 +1303,51 @@ Login senza password: magic link `/auth/<token>` + codice a 6 cifre nella stessa
 
 ---
 
+## 20. Giudizi semantici tipizzati (`semantic_judge.py`)
+
+Modulo **foglia** (stdlib + `typesafe-sdk`, nessun import dal progetto) che incapsula il servizio di giudizi tipizzati: una richiesta porta piu' domande indipendenti sullo stesso stato, che girano in parallelo lato servizio, e la risposta e' gia' tipizzata — niente parser JSON scritto a mano e niente soglia di severita' nascosta dentro un prompt.
+
+**Invariante di fail-open**: `ask()` non solleva mai e ritorna `None` quando il servizio non e' configurato, e' spento dal kill-switch, non risponde o risponde in modo incompleto. `None` significa **"nessun giudizio"**, mai "approvato": ogni chiamante ripiega sul motore che aveva prima. Disattivare la chiave riporta il comportamento dell'app esattamente a quello precedente all'introduzione del modulo.
+
+| Costante | Valore | Note |
+|----------|--------|------|
+| `_DEFAULT_TIMEOUT` | `15.0` s | override `ABM_TYPESAFE_TIMEOUT` |
+| `_DEFAULT_RETRIES` | `1` | override `ABM_TYPESAFE_RETRIES`; il backoff e' quello della `RetryPolicy` dell'SDK |
+| client | singolo, in cache, ricreato solo se la chiave cambia | `reset()` lo scarta (rotazione chiave / test) |
+| `last_error()` | `(timestamp, messaggio)` dell'ultimo errore | per la console admin |
+| `sdk_import_error()` | messaggio dell'import fallito, vuoto se ok | l'app si avvia anche senza SDK installato |
+
+### 20.1 Moderazione commenti community (`community_moderator.py`)
+
+`validate()` ha tre step, in ordine:
+
+1. `_has_url()` — deterministico e gratuito, invariato: un commento con link o email cade qui, senza costo.
+2. **Giudizi tipizzati** — cinque domande indipendenti (`spam`, `profanity`, `threat`, `sexual`, `gibberish`) in una sola richiesta, ognuna con la sua soglia `ABM_MODERATION_MIN_*`. Sopra soglia vince il motivo che la supera **di piu'**, e quel motivo finisce in `reason`: l'admin legge perche' un commento e' caduto, non piu' sempre `"spam"`.
+3. **Ripiego LLM** — il prompt e il parser JSON preesistenti (`_MODERATION_SYSTEM_PROMPT`, 3 tentativi con backoff `1/2/4` s), usati quando lo step 2 non ha dato un giudizio.
+
+Se entrambi i motori tacciono il commento passa marcato `unvalidated`, come prima.
+
+Valori di `reason`: `url`, `spam`, `profanity`, `threat`, `sexual`, `gibberish`, `llm_error`, `ok`.
+
+### 20.2 Controllo lingua delle traduzioni community (`community_translator.py`)
+
+`_looks_untranslated()` riconosce solo la copia **identica** dell'originale, e con `source_lang` vuoto si spegne del tutto. Il giudizio semantico copre i due buchi:
+
+| Costante | Valore | Perche' |
+|----------|--------|---------|
+| `_LANG_CHECK_MIN_CHARS` | `25` | sotto, la lingua non e' determinabile («top!», «👌»): lo slot non viene nemmeno chiesto |
+| `_LANG_DROP_BELOW` | `0.25` | si scarta solo il caso netto: uno slot vuoto costa all'utente una lingua |
+| `_SRC_OVERRIDE_CONF` | `0.80` | confidence minima per sovrascrivere il `source_lang` dichiarato; se manca, la `Choice` lo riempie senza soglia |
+
+Una `Choice` sulla lingua del testo sorgente piu' una `Noul` per ogni slot abbastanza lungo, tutte nella stessa richiesta. Gli slot sotto `_LANG_DROP_BELOW` vengono svuotati e ripescati da `_retry_missing_slots()`; poiche' quel retry verifica solo con il confronto esatto, gli slot **riempiti dal retry** passano una seconda volta dal giudizio (`only=refilled`), altrimenti il testo nella lingua sbagliata rientrerebbe dalla finestra.
+
+---
+
 ## Riepilogo
 
 | Categoria | Numero parametri |
 |-----------|:---:|
-| Variabili d'ambiente (`ABM_*`) | 27 |
+| Variabili d'ambiente (`ABM_*`) | 37 |
 | Configurazione Flask | 1 |
 | Costanti applicative (`audiobook_app.py`) | 28 |
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
@@ -1312,4 +1362,5 @@ Login senza password: magic link `/auth/<token>` + codice a 6 cifre nella stessa
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
 | Account e storico (`accounts.py`) | 6 |
-| **Totale** | **138** |
+| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni) | 8 |
+| **Totale** | **156** |
