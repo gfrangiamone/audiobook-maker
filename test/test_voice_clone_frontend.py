@@ -285,9 +285,23 @@ def test_registrazione_riascoltabile_anche_se_scartata():
     corpo = _estrai_funzione(VC, "vcSetLocalAudio")
     assert "createObjectURL" in corpo and "revokeObjectURL" in corpo
     up = _estrai_funzione(VC, "vcUploadSample")
-    assert "vcSetLocalAudio(blob)" in up, "la copia locale nasce prima dell'invio"
+    assert "vcSetLocalAudio(blob)" in up, "scartato il campione, si riascolta la copia locale"
     assert "vcSetLocalAudio(null)" in up, "accettato il campione, resta un solo lettore"
     assert "vcSetLocalAudio(null)" in _estrai_funzione(VC, "vcClose")
+
+
+def test_nessun_lettore_mentre_il_campione_e_in_verifica():
+    """Un lettore acceso durante la verifica fa credere che ci sia gia'
+    qualcosa di valutato da riascoltare: la copia locale torna solo se il
+    campione viene scartato o se la rete cade."""
+    up = _estrai_funzione(VC, "vcUploadSample")
+    prima = up[:up.index("vcFetch(")]
+    assert "vcSetLocalAudio(null)" in prima, "prima dell'invio i lettori restano spenti"
+    assert "vcSetLocalAudio(blob)" not in prima, "la copia locale non si mostra in attesa del verdetto"
+    assert "vcSetSampleVisible(false)" in prima
+    ok = up[up.index("if (!r.ok)"):]
+    ok = ok[ok.index("return;"):ok.index(".catch(")]
+    assert "vcSetLocalAudio(blob)" not in ok, "accettato il campione si ascolta quello del server"
 
 
 def test_limite_mb_scritto_non_promesso():
@@ -592,7 +606,7 @@ def test_il_caricamento_sparisce_col_campione_accettato():
     """Registrare e caricare sono alternative: a campione accettato il riquadro
     «scegli un file» invita a rifare quel che e' gia' fatto. Torna con «rifai»."""
     corpo = _estrai_funzione(VC, "vcUploadSample")
-    assert "if (!r.ok) { vcSetUploadVisible(false, true);" in corpo, \
+    assert "if (!r.ok) { vcSetLocalAudio(blob); vcSetUploadVisible(false, true);" in corpo, \
         "solo lo scarto offre il caricamento, come link sotto il messaggio"
     dopo = corpo[corpo.index("if (!r.ok)"):]
     dopo = dopo[dopo.index("return;"):]

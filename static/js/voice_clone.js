@@ -178,10 +178,13 @@
     tgt.textContent = msg; tgt.hidden = false;
   }
 
-  /* La registrazione resta ascoltabile anche quando il campione viene
-     scartato: e' l'unico modo per accorgersi da soli di aver letto male, il
-     campione del server nasce solo se il controllo passa. L'URL precedente va
-     revocato o ogni tentativo si lascia dietro un blob in memoria. */
+  /* La registrazione torna ascoltabile quando il campione viene scartato:
+     e' l'unico modo per accorgersi da soli di aver letto male, il campione
+     del server nasce solo se il controllo passa. Durante la verifica invece
+     resta nascosta: un lettore acceso mentre la valutazione e' in corso fa
+     credere che ci sia gia' qualcosa di valutato da riascoltare. L'URL
+     precedente va revocato o ogni tentativo si lascia dietro un blob in
+     memoria. */
   function vcSetLocalAudio(blob) {
     if (S.localFix) { S.localFix(); S.localFix = null; }
     if (S.localUrl) { try { URL.revokeObjectURL(S.localUrl); } catch (e) {} S.localUrl = null; }
@@ -664,7 +667,9 @@
   function vcUploadSample(blob, filename) {
     if (S.busy) return;
     vcSetBusy(true);
-    vcSetLocalAudio(blob);
+    /* Niente lettori a video finche' la verifica non ha risposto: torna la
+       copia locale se il campione viene scartato, quello del server se passa. */
+    vcSetLocalAudio(null);
     var fd = new FormData();
     fd.append('file', blob, filename);
     fd.append('lang', _val('vcLang'));
@@ -683,7 +688,7 @@
          un «scegli un file» ancora li' inviterebbe a rifare quel che e' fatto.
          La offre come link, perche' il riquadro aperto spingerebbe in basso
          il riascolto e il motivo dello scarto. */
-      if (!r.ok) { vcSetUploadVisible(false, true); vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
+      if (!r.ok) { vcSetLocalAudio(blob); vcSetUploadVisible(false, true); vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
       S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), name: _val('vcName'), voice_code: null};
       var a = $('vcSampleAudio');
       if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
@@ -691,7 +696,7 @@
          copia locale, altrimenti resterebbero due lettori uno sopra l'altro. */
       vcSetLocalAudio(null);
       vcSetSampleVisible(true);
-    }).catch(function () { if (wait) wait.hidden = true; vcSetUploadVisible(false, true); vcSetBusy(false); vcErr(tt('vc_err_generic')); });
+    }).catch(function () { if (wait) wait.hidden = true; vcSetLocalAudio(blob); vcSetUploadVisible(false, true); vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
 
   function vcInitPanel2() {
