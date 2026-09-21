@@ -673,3 +673,108 @@ def purge_expired(now=None):
             (now - 30 * 86400, now - 30 * 86400),
         ).rowcount
     return {"jobs": jobs, "codes": codes, "sessions": sessions}
+
+
+def admin_list(state="all", q="", date_from=None, date_to=None,
+               limit=500, offset=0, now=None):
+    """Elenco account per la console admin: registrazione, ultimo accesso,
+    cancellazione, sessioni attive e storico.
+
+    `state`: all | active (non cancellati) | deleted | never (mai entrati) |
+    dormant (nessuna sessione attiva, account vivo). `q` filtra sull'email
+    (substring, case-insensitive); sugli account cancellati l'email e' gia'
+    un segnaposto `deleted:...`, quindi la ricerca li trova solo per id.
+    `date_from`/`date_to` sono epoch sulla data di registrazione.
+
+    Ritorna {"records": [...], "count": <totale filtrato>, "aggregates": {...}}.
+    """
+    if not enabled():
+        return {"records": [], "count": 0, "aggregates": {}}
+    now = _now(now)
+    limit = max(1, min(int(limit or 500), 2000))
+    offset = max(0, int(offset or 0))
+    where, args = [], []
+    if state == "active":
+        where.append("a.deleted_at IS NULL")
+    elif state == "deleted":
+        where.append("a.deleted_at IS NOT NULL")
+    elif state == "never":
+        where.append("a.deleted_at IS NULL AND a.last_login_at IS NULL")
+    elif state == "dormant":
+        where.append("a.deleted_at IS NULL AND NOT EXISTS ("
+                     "SELECT 1 FROM sessions s WHERE s.account_id=a.id "
+                     "AND s.revoked_at IS NULL AND s.expires_at>?)")
+        args.append(now)
+    if q:
+        where.append("(LOWER(a.email) LIKE ? OR a.id LIKE ?)")
+        like = "%" + str(q).strip().lower() + "%"
+        args += [like, like]
+    if date_from:
+        where.append("a.created_at>=?")
+        args.append(int(date_from))
+    if date_to:
+        where.append("a.created_at<?")
+        args.append(int(date_to))
+    sql_where = ("WHERE " + " AND ".join(where)) if where else ""
+
+    sel = (
+        "SELECT a.id, a.email, a.email_hash, a.lang, a.plan, a.plan_until, "
+        "a.created_at, a.last_login_at, a.deleted_at, "
+        "(SELECT COUNT(*) FROM sessions s WHERE s.account_id=a.id "
+        " AND s.revoked_at IS NULL AND s.expires_at>?) AS sessions_active, "
+        "(SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.account_id=a.id) AS last_seen_at, "
+        "(SELECT COUNT(*) FROM account_jobs j WHERE j.account_id=a.id) AS jobs, "
+        "(SELECT COALESCE(SUM(j.paid_eur),0) FROM account_jobs j WHERE j.account_id=a.id) AS paid_eur "
+        "FROM accounts a " + sql_where +
+        " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
+    )
+    with db.tx() as c:
+        total = c.execute("SELECT COUNT(*) FROM accounts a " + sql_where, tuple(args)).fetchone()[0]
+        rows = c.execute(sel, tuple([now] + args + [limit, offset])).fetchall()
+        # Aggregati sull'intera anagrafica (non sul filtro): servono da
+        # cruscotto, non da conteggio della pagina mostrata.
+        tot_all = c.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+        tot_del = c.execute("SELECT COUNT(*) FROM accounts WHERE deleted_at IS NOT NULL").fetchone()[0]
+        tot_never = c.execute(
+            "SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL AND last_login_at IS NULL"
+        ).fetchone()[0]
+        tot_online = c.execute(
+            "SELECT COUNT(DISTINCT s.account_id) FROM sessions s JOIN accounts a ON a.id=s.account_id "
+            "WHERE a.deleted_at IS NULL AND s.revoked_at IS NULL AND s.expires_at>?",
+            (now,),
+        ).fetchone()[0]
+        last30 = c.execute(
+            "SELECT COUNT(*) FROM accounts WHERE created_at>=?", (now - 30 * 86400,)
+        ).fetchone()[0]
+
+    recs = []
+    for r in rows:
+        d = dict(r)
+        deleted = d.get("deleted_at") is not None
+        if deleted:
+            # L'indirizzo e' gia' stato sostituito da `delete_account`: non
+            # c'e' nulla da mostrare oltre all'hash troncato del segnaposto.
+            d["email"] = ""
+        if deleted:
+            d["state"] = "deleted"
+        elif not d.get("last_login_at"):
+            d["state"] = "never"
+        elif not d.get("sessions_active"):
+            d["state"] = "dormant"
+        else:
+            d["state"] = "active"
+        d["paid_eur"] = round(float(d.get("paid_eur") or 0), 2)
+        d.pop("email_hash", None)
+        recs.append(d)
+    return {
+        "records": recs,
+        "count": int(total),
+        "aggregates": {
+            "total": int(tot_all),
+            "deleted": int(tot_del),
+            "never_logged": int(tot_never),
+            "with_session": int(tot_online),
+            "last30": int(last30),
+            "filtered": int(total),
+        },
+    }

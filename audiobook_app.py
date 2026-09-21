@@ -7205,6 +7205,7 @@ def admin_audit_premium_page():
   <button type="button" class="tab-btn" data-tab="translations">Audit Traduzioni</button>
   <button type="button" class="tab-btn" data-tab="optimization">Audit AI Optimization</button>
   <button type="button" class="tab-btn" data-tab="voices">Voci campionate</button>
+  <button type="button" class="tab-btn" data-tab="accounts">Utenti registrati</button>
 </div>
 
 <div class="tab-panel active" id="tab_tts">
@@ -7481,6 +7482,69 @@ def admin_audit_premium_page():
       </tr></thead>
       <tbody id="vcaRecordsBody">
         <tr><td colspan="15" class="empty-msg">Premi "Aggiorna" per caricare le voci.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_accounts">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="accStateFilter">Stato</label>
+        <select id="accStateFilter">
+          <option value="all">Tutti</option>
+          <option value="active">Attivi (sessione aperta)</option>
+          <option value="dormant">Senza sessione attiva</option>
+          <option value="never">Mai entrati</option>
+          <option value="deleted">Cancellati</option>
+        </select>
+      </div>
+      <div>
+        <label for="accQuery" title="Gli account cancellati non hanno piu' l'email: si cercano per id.">Email o id</label>
+        <input type="text" id="accQuery" placeholder="parte dell'indirizzo">
+      </div>
+      <div>
+        <label for="accDateFrom">Registrati dal</label>
+        <input type="date" id="accDateFrom">
+      </div>
+      <div>
+        <label for="accDateTo">Al</label>
+        <input type="date" id="accDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="accRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid">
+      <div class="agg-box"><div class="agg-label" title="Tutti gli account mai registrati, cancellati compresi.">Account totali</div><div class="agg-value" id="accAggTotal">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Account vivi con almeno una sessione non scaduta ne' revocata.">Con sessione attiva</div><div class="agg-value" id="accAggOnline">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Registrazione avviata ma nessun accesso completato.">Mai entrati</div><div class="agg-value" id="accAggNever">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Cancellazione self-service: email sostituita da un segnaposto, storico rimosso.">Cancellati</div><div class="agg-value" id="accAggDeleted">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Registrazioni negli ultimi 30 giorni.">Nuovi 30 gg</div><div class="agg-value" id="accAggNew">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Utenti (ultimi 500)</h2>
+    <table>
+      <thead><tr>
+        <th title="Data della prima registrazione">Registrato</th>
+        <th>Email</th><th>Lingua</th><th>Piano</th>
+        <th title="Ultimo accesso completato (magic link o codice)">Ultimo accesso</th>
+        <th title="Ultima attivita' vista su una sessione">Ultima attivita'</th>
+        <th title="Sessioni non scadute ne' revocate">Sessioni</th>
+        <th title="Job nello storico dell'area personale">Job</th>
+        <th title="Somma degli importi pagati sui job dello storico">Speso &euro;</th>
+        <th>Stato</th>
+        <th title="Data della cancellazione self-service">Cancellato</th>
+      </tr></thead>
+      <tbody id="accRecordsBody">
+        <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare gli utenti.</td></tr>
       </tbody>
     </table>
   </div>
@@ -8219,6 +8283,68 @@ def admin_audit_premium_page():
   }
   $("vcaRefreshBtn").addEventListener("click", vcaFetch);
 
+  // ===================== Utenti registrati =====================
+  const ACC_STATE_BADGE = {
+    "active":  ["badge-ok", "Attivo"],
+    "dormant": ["badge-muted", "Senza sessione"],
+    "never":   ["badge-warn", "Mai entrato"],
+    "deleted": ["badge-err", "Cancellato"],
+  };
+  function accDate(ts){
+    if (!ts) return "-";
+    const d = new Date(Number(ts)*1000);
+    return d.toLocaleString("it-IT", {day:"2-digit",month:"2-digit",year:"numeric",
+                                      hour:"2-digit",minute:"2-digit"});
+  }
+  async function accFetch(){
+    const p = new URLSearchParams();
+    const st=$("accStateFilter").value, q=$("accQuery").value.trim();
+    const df=$("accDateFrom").value, dt=$("accDateTo").value;
+    if (st && st!=="all") p.set("state",st);
+    if (q) p.set("q",q);
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","500");
+    const r = await fetch("/admin/api/accounts_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento utenti: "+r.status); return; }
+    const d = await r.json();
+    const a = d.aggregates||{};
+    $("accAggTotal").textContent = a.total ?? 0;
+    $("accAggOnline").textContent = a.with_session ?? 0;
+    $("accAggNever").textContent = a.never_logged ?? 0;
+    $("accAggDeleted").textContent = a.deleted ?? 0;
+    $("accAggNew").textContent = a.last30 ?? 0;
+    accRender(d.records||[], d.count||0);
+  }
+  function accRender(recs, total){
+    const tb = $("accRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="11" class="empty-msg">Nessun utente trovato.</td></tr>'; return; }
+    tb.innerHTML = recs.map(r=>{
+      const [bcls,blab] = ACC_STATE_BADGE[r.state]||["badge-muted", r.state||"?"];
+      // Cancellato: l'indirizzo non esiste piu' nel DB, resta solo l'id.
+      const mail = r.email ? esc(r.email) : '<span style="color:var(--muted)">(rimossa)</span>';
+      const plan = esc(r.plan||"free") + (r.plan_until ? `<br><small>fino al ${accDate(r.plan_until)}</small>` : "");
+      const del = r.deleted_at
+        ? `<span class="delta-negative">${accDate(r.deleted_at)}</span>` : "-";
+      return `<tr>
+        <td>${accDate(r.created_at)}</td>
+        <td>${mail}<br><code>${esc(r.id)}</code></td>
+        <td>${esc((r.lang||"").toUpperCase())}</td>
+        <td>${plan}</td>
+        <td>${accDate(r.last_login_at)}</td>
+        <td>${accDate(r.last_seen_at)}</td>
+        <td>${Number(r.sessions_active||0)}</td>
+        <td>${Number(r.jobs||0)}</td>
+        <td>${fmtEur(r.paid_eur)}</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+        <td>${del}</td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 11);
+  }
+  $("accRefreshBtn").addEventListener("click", accFetch);
+  $("accQuery").addEventListener("keydown", (e)=>{ if (e.key==="Enter") accFetch(); });
+
   // ===================== Tab switching =====================
   function showTab(name){
     document.querySelectorAll(".tab-btn").forEach(b => {
@@ -8238,6 +8364,10 @@ def admin_audit_premium_page():
     if (name === "voices" && !window._vcaLoaded) {
       window._vcaLoaded = true;
       vcaFetch();
+    }
+    if (name === "accounts" && !window._accLoaded) {
+      window._accLoaded = true;
+      accFetch();
     }
     if (location.hash !== "#tab-" + name) location.hash = "#tab-" + name;
   }
@@ -8306,6 +8436,7 @@ def admin_audit_premium_page():
   if (_h === "#tab-translations") showTab("translations");
   else if (_h === "#tab-optimization") showTab("optimization");
   else if (_h === "#tab-voices") showTab("voices");
+  else if (_h === "#tab-accounts") showTab("accounts");
 })();
 </script>
 </body></html>"""
@@ -9416,6 +9547,56 @@ def admin_api_voice_clone_audit():
         limit=limit, offset=offset,
         hide_zero=_audit_hide_zero(request.args),
     )
+    return jsonify(out)
+
+
+@app.route("/admin/api/accounts_audit", methods=["GET"])
+def admin_api_accounts_audit():
+    """Anagrafica degli account dell'area personale: data di registrazione,
+    ultimo accesso, sessioni attive, storico e cancellazione. Admin-only.
+
+    `state`: all (default) | active | dormant | never | deleted.
+    `q` cerca nell'email (gli account cancellati hanno gia' un segnaposto al
+    posto dell'indirizzo: li trova solo per id). `date_from`/`date_to`
+    (YYYY-MM-DD, UTC) sulla data di registrazione.
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+    if not accounts.enabled():
+        return jsonify({"error": "accounts disabled"}), 503
+    try:
+        limit = max(1, min(int(request.args.get("limit", 500)), 2000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+
+    from datetime import timedelta
+
+    def _epoch(name, end=False):
+        raw = (request.args.get(name) or "").strip()
+        if not raw:
+            return None
+        try:
+            d = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        if end:
+            d += timedelta(days=1)
+        return int(d.timestamp())
+
+    try:
+        out = accounts.admin_list(
+            state=(request.args.get("state") or "all").strip().lower(),
+            q=(request.args.get("q") or "").strip(),
+            date_from=_epoch("date_from"),
+            date_to=_epoch("date_to", end=True),
+            limit=limit, offset=offset,
+        )
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": f"accounts unavailable: {e}"}), 503
     return jsonify(out)
 
 
