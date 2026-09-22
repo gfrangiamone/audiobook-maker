@@ -119,6 +119,21 @@ def test_a_real_translation_is_not_a_copy(env):
     assert tj.looks_copied(it(), en()) is False
 
 
+def test_without_a_key_even_a_copy_is_left_alone(env, monkeypatch):
+    """Il pre-filtro non passa dal servizio, ma non deve per questo
+    sopravvivergli: senza chiave la traduzione si comporta come prima di
+    questo modulo, copia compresa."""
+    monkeypatch.delenv("ABM_TYPESAFE_API_KEY", raising=False)
+    sj.reset()
+    assert tj.check(it(), it(), "it", "en") == ""
+    assert audit(env) == []
+
+
+def test_off_does_not_reject_a_copy_either(env, monkeypatch):
+    monkeypatch.setenv("ABM_TRJUDGE_MODE", "off")
+    assert tj.check(it(), it(), "it", "en") == ""
+
+
 def test_short_chunks_are_left_alone(env):
     """Un titolo di sezione o una dedica: la domanda sulla completezza non
     significa nulla e due nomi propri possono coincidere fra due lingue."""

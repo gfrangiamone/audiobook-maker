@@ -267,6 +267,12 @@ def check(source, output, src_lang, dst_lang, *, job_id="", chapter="",
     registra ma restituisce sempre `""`.
     """
     try:
+        # Anche il pre-filtro deterministico resta dietro `enabled()`: senza
+        # SDK, senza chiave o in modo `off` la traduzione deve comportarsi
+        # esattamente come prima di questo modulo, e `looks_copied` da solo
+        # farebbe ritentare un chunk che prima passava.
+        if not enabled():
+            return ""
         if len((source or "").strip()) < min_chars():
             return ""
         copied = looks_copied(source, output)

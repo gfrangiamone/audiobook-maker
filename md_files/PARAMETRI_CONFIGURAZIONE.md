@@ -1641,7 +1641,9 @@ pagina.
 testi normalizzati (spazi, maiuscole) e riconosce anche la copia con la coda
 tagliata: e' una certezza, gratis, e non vale una chiamata. La domanda
 semantica serve per il resto — la lingua sbagliata, il riassunto, il
-preambolo, il capitolo tagliato a meta'.
+preambolo, il capitolo tagliato a meta'. Anche questo ramo resta dietro
+`enabled()`: senza SDK, senza chiave o in modo `off` non agisce, o
+basterebbe a far ritentare un chunk che prima della sua esistenza passava.
 
 | Domanda | Tipo | Cosa decide |
 |---|---|---|
