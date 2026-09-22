@@ -298,3 +298,41 @@ def test_generate_pagato_registra_voxcpm_est_e_purpose(client, job_grande, no_re
     purposes = [rec["purpose"] for rec in payment._paid_jobs_done
                 if rec["job_id"] == job_grande]
     assert purposes == ["voxcpm"]
+
+
+# ---------------------------------------------------------------------------
+# Cap di caratteri della gratuita' (ABM_VOXCPM_FREE_MAX_CHARS): il motivo del
+# totale deve arrivare fino alla UI. Senza il flag l'utente vede lo stesso
+# importo minimo su ogni selezione, con la quota mensile ancora capiente e
+# nessuna spiegazione: e' la richiesta di assistenza del 21/09/2026.
+# ---------------------------------------------------------------------------
+
+def test_la_stima_dichiara_il_cap_superato(client, job_piccolo, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "10000")
+    d = stima(client, job_piccolo)
+    assert d["free_cap_exceeded"] is True
+    # Il credito del mese e' intatto: la causa non e' la quota esaurita, e
+    # l'UI non deve raccontare quella.
+    assert d["quota_exhausted"] is False
+    assert d["is_free"] is False
+    assert d["total_eur"] == 0.50
+
+
+def test_sotto_il_cap_il_flag_resta_falso(client, job_piccolo, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "1000000")
+    d = stima(client, job_piccolo)
+    assert d["free_cap_exceeded"] is False
+    assert d["is_free"] is True
+
+
+def test_il_402_di_generate_dichiara_il_cap_superato(client, job_piccolo,
+                                                     no_real_generation, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "10000")
+    client.set_cookie("abm_cid", "cid-vox2")  # owner del job_piccolo
+    r = _post_generate(client, job_piccolo)
+    assert r.status_code == 402, r.get_data(as_text=True)
+    body = r.get_json()
+    # Non e' la quota: il codice resta quello generico e il flag porta la causa.
+    assert body["error_code"] == "payment_required"
+    assert body["free_cap_exceeded"] is True
+    assert body["total_eur"] == 0.50

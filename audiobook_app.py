@@ -14188,6 +14188,7 @@ def api_generate():
                     "threshold_eur": threshold_pre,
                     "quota_used_eur": _quota_dec["quota_used_eur"],
                     "quota_limit_eur": _quota_dec["quota_limit_eur"],
+                    "free_cap_exceeded": bool(_quota_dec.get("free_cap_exceeded")),
                 }), 402
             try:
                 _pay_method = payment.consume_payment_token(
@@ -14348,6 +14349,7 @@ def api_generate():
                     "threshold_eur": threshold_pre,
                     "quota_used_eur": _quota_dec["quota_used_eur"],
                     "quota_limit_eur": _quota_dec["quota_limit_eur"],
+                    "free_cap_exceeded": bool(_quota_dec.get("free_cap_exceeded")),
                 }), 402
             try:
                 _pay_method = payment.consume_payment_token(
@@ -16589,6 +16591,12 @@ def api_combined_estimate():
         "total_eur": total,
         "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
         "quota_exhausted": bool(_quota_dec and _quota_dec["quota_exhausted"]),
+        # Libro sopra il cap della gratuita' (solo VoxCPM, vedi
+        # free_quota._premium_free_max_chars): il totale e' il floor per
+        # generazione, non il listino, e la quota mensile puo' essere ancora
+        # capiente. Senza questo flag l'UI mostra un importo senza causa
+        # (richiesta di assistenza del 21/09/2026).
+        "free_cap_exceeded": bool(_quota_dec and _quota_dec.get("free_cap_exceeded")),
         "free_quota": free_quota.snapshot(_quota_cid) if _has_premium else None,
         "threshold_eur": threshold,
         "rate_step": rate_step,
@@ -17187,6 +17195,7 @@ def api_optimize():
                     "threshold_eur": _threshold_combined,
                     "quota_used_eur": _quota_dec["quota_used_eur"],
                     "quota_limit_eur": _quota_dec["quota_limit_eur"],
+                    "free_cap_exceeded": bool(_quota_dec.get("free_cap_exceeded")),
                 }), 402
             # Validazione + consume del token combinato.
             _consumed = False
@@ -17351,6 +17360,7 @@ def api_optimize():
                     "threshold_eur": _threshold_spx,
                     "quota_used_eur": _quota_dec_spx["quota_used_eur"],
                     "quota_limit_eur": _quota_dec_spx["quota_limit_eur"],
+                    "free_cap_exceeded": bool(_quota_dec_spx.get("free_cap_exceeded")),
                 }), 402
             # Validazione + consume del token combinato.
             _consumed_spx = False
@@ -17503,6 +17513,7 @@ def api_optimize():
                     "threshold_eur": _threshold_vox,
                     "quota_used_eur": _quota_dec_vox["quota_used_eur"],
                     "quota_limit_eur": _quota_dec_vox["quota_limit_eur"],
+                    "free_cap_exceeded": bool(_quota_dec_vox.get("free_cap_exceeded")),
                 }), 402
             # Validazione + consume del token combinato.
             _consumed_vox = False

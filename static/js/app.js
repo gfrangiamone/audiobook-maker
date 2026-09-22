@@ -2128,6 +2128,18 @@ function _freeQuotaStatusLine(used,limit){
   const s=(window.t&&t('free_quota_reset',{rem:rem.toFixed(2),limit:lim.toFixed(2),date:_freeQuotaResetDate()}))||'';
   return (s&&s!=='free_quota_reset')?s:'';
 }
+// Libro sopra il cap della gratuita' PREMIUM (free_quota._premium_free_max_chars):
+// il totale non e' il listino ma il minimo per generazione, e la quota mensile
+// puo' essere ancora capiente. Senza questa nota l'utente vede un importo fisso
+// senza causa e lo legge come un prezzo forfettario (assistenza del 21/09/2026).
+function _freeCapNote(){
+  const s=(window.t&&t('free_cap_note'))||'';
+  if(s&&s!=='free_cap_note')return s;
+  return 'This book is too long for free generation with PREMIUM voices: every '
+    +'generation has a minimum charge, whatever you select. Generate all the '
+    +'chapters you need in a single run: you pay the minimum once instead of '
+    +'once per chapter.';
+}
 function renderEstimate(data){
   const valueEl=document.getElementById('costPreviewValue');
   const detailEl=document.getElementById('costPreviewDetail');
@@ -2189,6 +2201,10 @@ function renderEstimate(data){
         const _fq=data.free_quota||{};
         const _st=_freeQuotaStatusLine(_fq.used_eur,_fq.limit_eur);
         if(_st)segs.push(_st);
+      }else if(data.free_cap_exceeded){
+        // Esclusivo con la quota esaurita: il cap e' la causa vera del totale,
+        // e il credito residuo qui non spiega nulla (anzi, contraddice).
+        segs.push(_freeCapNote());
       }
       if(extra)segs.push(extra);
       if(minsStr)segs.push(minsStr);
@@ -2348,6 +2364,8 @@ function _payMinNoteText(estimate, adjust){
       (_fq.used_eur != null) ? _fq.used_eur : estimate.quota_used_eur,
       (_fq.limit_eur != null) ? _fq.limit_eur : estimate.quota_limit_eur);
     if (_st) segs.push(_st);
+  } else if (estimate.free_cap_exceeded) {
+    segs.push(_freeCapNote());
   }
   const min = Number(estimate.total_eur) || 0;
   const note = (window.t && t('pay_min_note', { min: min.toFixed(2) })) || '';
@@ -6148,8 +6166,11 @@ function closeSelTooLargeModal(){const m=document.getElementById('selTooLargeMod
 function _handlePremiumPaymentRequired(d){
   const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
   const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
-  let msg=((window.t&&t('free_quota_exhausted'))
-    ||"You have used up this month's free PREMIUM voice credit. This generation has a minimum charge.");
+  // `free_cap_exceeded` e' il libro sopra il cap della gratuita': il credito
+  // mensile puo' essere intatto, quindi il messaggio della quota sarebbe falso.
+  let msg=d.free_cap_exceeded?_freeCapNote()
+    :((window.t&&t('free_quota_exhausted'))
+      ||"You have used up this month's free PREMIUM voice credit. This generation has a minimum charge.");
   // Solo il ramo quota: su `payment_required` (libro sopra soglia) il credito
   // mensile non c'entra e la riga sarebbe fuorviante.
   if(d.error_code==='free_quota_exhausted'){
@@ -6174,6 +6195,7 @@ function _handlePremiumPaymentRequired(d){
     is_free:false,
     threshold_eur:Number(d.threshold_eur)||0,
     quota_exhausted:(d.error_code==='free_quota_exhausted'),
+    free_cap_exceeded:!!d.free_cap_exceeded,
     quota_used_eur:Number(d.quota_used_eur)||0,
     quota_limit_eur:Number(d.quota_limit_eur)||0,
   });
