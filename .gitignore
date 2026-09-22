@@ -6,6 +6,7 @@ _debug*
 *.md
 *.ps1
 *.env
+jev_env.txt
 *.egg-info/
 firebase*
 md_files/

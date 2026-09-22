@@ -13,6 +13,14 @@ import community_moderator as cm
 import semantic_judge as sj
 
 
+# Senza `typesafe-sdk` installato le classi delle domande sono None e il
+# motore System One non parte: questi test non hanno nulla da esercitare.
+# I test del fail-open (servizio assente, ripiego sull'LLM) restano attivi:
+# sono proprio quelli che coprono l'ambiente senza SDK.
+requires_sdk = pytest.mark.skipif(
+    sj.Noul is None, reason="typesafe-sdk non installato")
+
+
 # --------------------------------------------------------------------------
 # helper
 # --------------------------------------------------------------------------
@@ -62,12 +70,14 @@ def test_not_available_without_key(no_key):
     assert sj.ask({"x": "y"}, {"q": object()}) is None
 
 
+@requires_sdk
 def test_kill_switch_wins_over_key(with_key, monkeypatch):
     assert sj.is_available() is True
     monkeypatch.setenv("ABM_TYPESAFE_ENABLE", "0")
     assert sj.is_available() is False
 
 
+@requires_sdk
 def test_ask_returns_none_on_client_error(with_key):
     """Un servizio che solleva non deve propagare: None, e il chiamante
     ripiega. E' la stessa garanzia del client LLM in community_moderator."""
@@ -79,6 +89,7 @@ def test_ask_returns_none_on_client_error(with_key):
     assert ts > 0 and "giu'" in msg
 
 
+@requires_sdk
 def test_ask_passes_state_and_questions(with_key):
     seen = {}
 
@@ -115,6 +126,7 @@ def test_url_rejected_before_any_judgement():
     assert out == {"approved": False, "reason": "url", "unvalidated": False}
 
 
+@requires_sdk
 def test_clean_comment_approved_without_llm_fallback(with_key):
     """Giudizio ottenuto: il motore LLM di ripiego non viene sfiorato."""
     with patch.object(sj, "ask", return_value=clean_response()), \
@@ -123,6 +135,7 @@ def test_clean_comment_approved_without_llm_fallback(with_key):
     assert out == {"approved": True, "reason": "ok", "unvalidated": False}
 
 
+@requires_sdk
 def test_short_praise_is_approved(with_key):
     """«top!» e le recensioni brevissime alimentano i rich snippet di
     seo_reviews: la soglia alta su `gibberish` esiste per non perderle."""
@@ -131,6 +144,7 @@ def test_short_praise_is_approved(with_key):
     assert out["approved"] is True
 
 
+@requires_sdk
 @pytest.mark.parametrize("reason", REASONS)
 def test_each_reason_rejects_with_its_own_label(with_key, reason):
     """Il motivo del rifiuto non e' piu' sempre "spam": ogni dimensione ha la
@@ -140,6 +154,7 @@ def test_each_reason_rejects_with_its_own_label(with_key, reason):
     assert out == {"approved": False, "reason": reason, "unvalidated": False}
 
 
+@requires_sdk
 def test_thresholds_are_per_reason(with_key):
     """0.65 supera la soglia delle minacce (0.60) ma non quella dello spam
     (0.70): la severita' vive in codice, non dentro un prompt."""
@@ -150,6 +165,7 @@ def test_thresholds_are_per_reason(with_key):
     assert (out["approved"], out["reason"]) == (False, "threat")
 
 
+@requires_sdk
 def test_threshold_override_from_env(with_key, monkeypatch):
     monkeypatch.setenv("ABM_MODERATION_MIN_SPAM", "0.5")
     with patch.object(sj, "ask", return_value=clean_response(spam=0.65)):
@@ -157,6 +173,7 @@ def test_threshold_override_from_env(with_key, monkeypatch):
     assert (out["approved"], out["reason"]) == (False, "spam")
 
 
+@requires_sdk
 def test_strongest_violation_wins(with_key):
     """Con piu' dimensioni sopra soglia vince quella che la supera di piu':
     l'etichetta descrive il motivo principale, non il primo in ordine."""
@@ -168,6 +185,7 @@ def test_strongest_violation_wins(with_key):
 # community_moderator: ripiego sul motore LLM
 # --------------------------------------------------------------------------
 
+@requires_sdk
 def test_partial_answer_falls_back_instead_of_approving(with_key):
     """Una risposta senza tutte le domande e' monca: non vale
     un'approvazione. Si passa al motore LLM."""
@@ -204,11 +222,10 @@ def test_empty_input_is_approved():
 # domande: costruzione reale con l'SDK installato
 # --------------------------------------------------------------------------
 
+@requires_sdk
 def test_questions_build_with_real_sdk():
     """Le domande vengono costruite con i tipi dell'SDK: se cambiano nome o
     campi, questo test cade qui e non in produzione."""
-    if sj.Noul is None:
-        pytest.skip("typesafe_sdk non installato")
     qs = cm._questions()
     assert set(qs) == set(REASONS)
     for q in qs.values():

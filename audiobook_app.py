@@ -146,6 +146,7 @@ import translation_core
 import community_store
 import community_translator
 import community_moderator
+import semantic_judge
 import pending_jobs
 import db
 import accounts
@@ -21653,6 +21654,21 @@ def _ensure_background_threads():
           f"{'kill ON' if abuse_watch.kill_enabled() else 'observation only'} "
           f"(confidence >= {abuse_watch.confidence_threshold():.2f}, "
           f"keep {abuse_watch.keep_hours()}h)")
+    # Senza questa riga la caduta dei giudizi semantici e' invisibile nei
+    # log: moderazione e traduzioni continuano a funzionare sul motore LLM
+    # di ripiego, quindi nulla segnala che System One non sta girando.
+    if semantic_judge.is_available():
+        print("[startup] Giudizi semantici: on "
+              f"(timeout {semantic_judge.timeout_sec():.0f}s)")
+    else:
+        _sj_why = (
+            f"SDK non importato ({semantic_judge.sdk_import_error()})"
+            if semantic_judge.sdk_import_error()
+            else "ABM_TYPESAFE_ENABLE=0" if not semantic_judge.enabled()
+            else "ABM_TYPESAFE_API_KEY assente"
+        )
+        print(f"[startup] Giudizi semantici: off ({_sj_why}); moderazione e "
+              f"traduzioni community sul motore LLM di ripiego")
 
 _init_log_dedup()
 _ensure_background_threads()

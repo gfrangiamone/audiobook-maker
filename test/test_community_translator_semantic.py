@@ -16,6 +16,14 @@ import community_translator as ct
 import semantic_judge as sj
 
 
+# Senza `typesafe-sdk` installato le classi delle domande sono None e il
+# motore System One non parte: questi test non hanno nulla da esercitare.
+# I test del fail-open (servizio assente, ripiego sull'LLM) restano attivi:
+# sono proprio quelli che coprono l'ambiente senza SDK.
+requires_sdk = pytest.mark.skipif(
+    sj.Noul is None, reason="typesafe-sdk non installato")
+
+
 DE = ("Ich habe seit letzter Woche wann immer ich ein Hoerbuch erstellen lassen "
       "will mit Premium Sprache Deutsch eine Fehlermeldung erhalten")
 IT = ("Da settimana scorsa ogni volta che provo a creare un audiolibro con voce "
@@ -44,9 +52,8 @@ def data_all(text, **overrides):
 # costruzione delle domande
 # --------------------------------------------------------------------------
 
+@requires_sdk
 def test_questions_cover_long_slots_only():
-    if sj.Noul is None:
-        pytest.skip("typesafe_sdk non installato")
     data = data_all(IT, en="ok!", fr="")
     qs = ct._semantic_questions(data, {"comment": ""})
     assert "source_lang" in qs
@@ -56,9 +63,8 @@ def test_questions_cover_long_slots_only():
     assert ct._slot_key("fr", "comment") not in qs
 
 
+@requires_sdk
 def test_questions_restricted_by_only():
-    if sj.Noul is None:
-        pytest.skip("typesafe_sdk non installato")
     data = data_all(IT)
     qs = ct._semantic_questions(data, {"comment": ""},
                                 only={("de", "comment")}, detect_src=False)
@@ -75,6 +81,7 @@ def test_empty_slots():
 # scarto degli slot nella lingua sbagliata
 # --------------------------------------------------------------------------
 
+@requires_sdk
 def test_drops_slot_in_wrong_language():
     """Il caso dell'incidente, ma senza copia identica: tedesco *riscritto*
     nello slot italiano. `_looks_untranslated` non lo vede, il giudizio si."""
@@ -89,6 +96,7 @@ def test_drops_slot_in_wrong_language():
     assert data["fr"]["comment"] == EN       # gli altri non si toccano
 
 
+@requires_sdk
 def test_uncertain_slot_is_kept():
     """Si apre un buco solo sul caso netto: l'incertezza non basta, perche'
     lo slot vuoto costa all'utente una lingua."""
@@ -99,6 +107,7 @@ def test_uncertain_slot_is_kept():
     assert all(data[lg]["comment"] == IT for lg in ct.LANGS)
 
 
+@requires_sdk
 def test_review_limited_to_refilled_slots():
     data = data_all(IT)
     probs = {ct._slot_key(lg, "comment"): 0.01 for lg in ct.LANGS}
@@ -113,6 +122,7 @@ def test_review_limited_to_refilled_slots():
 # lingua sorgente
 # --------------------------------------------------------------------------
 
+@requires_sdk
 def test_source_lang_recovered_when_missing():
     """Senza sorgente `_drop_copied_slots` non fa nulla: la Choice le
     restituisce il presupposto che le mancava."""
@@ -121,6 +131,7 @@ def test_source_lang_recovered_when_missing():
         assert ct._semantic_review(data, {"comment": IT}, "") == "it"
 
 
+@requires_sdk
 def test_declared_source_lang_overridden_only_when_confident():
     data = data_all(IT)
     with patch.object(sj, "ask", return_value=response({}, src="de", conf=0.55)):
@@ -151,6 +162,7 @@ def _llm_payload(it_text):
     })
 
 
+@requires_sdk
 def test_translate_drops_wrong_language_slot_end_to_end():
     calls = []
 
