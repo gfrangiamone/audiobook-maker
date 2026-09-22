@@ -1501,6 +1501,70 @@ per i rifiuti del nuovo motore. Il modulo scrive anche il proprio
 ogni chunk **giudicato**, `applied` incluso: e' il dataset per tarare le soglie
 prima di passare a `on`.
 
+### 20.6 Lingua del libro contro lingua della voce (`voice_language_guard.py`)
+
+Il reclamo classico — «il libro spagnolo letto con voce italiana» — nasce da
+`<dc:language>` sbagliato, frequentissimo sulle traduzioni, oppure da una voce
+scelta a mano. Oggi nessuno lo verifica: `detect_book_language` interviene
+**solo quando il metadato manca**, e se il metadato c'e' ed e' falso il libro
+viene sintetizzato con la fonetica sbagliata. Il costo dell'errore e' l'intero
+audiolibro, pagato e inascoltabile.
+
+La domanda semantica («questo testo e' scritto nella lingua che la voce
+legge?») risponde in qualunque lingua e non aggiunge liste da mantenere. Una
+sola richiesta per job, su un campione preso dal **centro** dei capitoli
+scelti: in testa stanno frontespizio, dedica ed esergo, spesso in un'altra
+lingua, e campionare l'inizio farebbe suonare l'allarme sul libro giusto.
+
+| Variabile | Significato | Default | Codice |
+|---|---|:---:|---|
+| `ABM_VOICELANG_MODE` | `off` \| `observe` \| `on`. Valore ignoto = default, **non** `on`. | `observe` | `voice_language_guard.mode` |
+| `ABM_VOICELANG_MAX_MATCH` | Probabilita' sotto cui il testo non e' nella lingua della voce. | `0.15` | `voice_language_guard.max_match` |
+| `ABM_VOICELANG_MIN_CHARS` | Sotto questa taglia il campione non si giudica. | `600` | `voice_language_guard.min_chars` |
+| `ABM_VOICELANG_SAMPLE` | Caratteri del campione inviato. | `1500` | `voice_language_guard.sample_chars` |
+
+Due domande in una sola richiesta:
+
+| Domanda | Tipo | Cosa decide |
+|---|---|---|
+| `matches` | `Noul` | il corpo del campione e' scritto nella lingua della voce (citazioni, nomi propri e qualche frase straniera non cambiano la lingua di un testo) |
+| `language` | `Choice` | quale lingua e': quella della voce, quella dichiarata nei metadati (se diversa) o `other` |
+
+**Soglia bassa di proposito.** Un avviso di troppo ferma qualcuno che aveva
+ragione — un saggio italiano pieno di citazioni inglesi resta un libro
+italiano — mentre un avviso mancato costa solo la conferma che l'utente
+avrebbe dato comunque.
+
+**Non e' un divieto.** L'esito e' un 409 `language_mismatch` che il client
+traduce in un avviso con le due lingue nominate; `confirm_language: true` nel
+body lo scavalca ed e' l'unico modo di leggere comunque un libro bilingue. Il
+flag vale per il job: la domanda non si ripete a ogni generazione.
+
+**Dove sta il controllo.** Tre punti, tutti prima di un addebito:
+
+| Punto | Perche' li' |
+|---|---|
+| `POST /api/check_language` | Lo chiama il wizard **prima** di aprire il modale di pagamento: nel percorso combinato la cattura PayPal precede `/api/optimize`, e un 409 a cattura avvenuta lascerebbe la scelta fra procedere e una cattura orfana. |
+| `/api/generate` | Prima del preflight di pagamento premium: nessun job avviato, nessun pagamento consumato. |
+| `/api/optimize` | Prima di ogni consumo di pagamento; sul 409 rilascia il claim `optimizing`, altrimenti il job resterebbe brickato. |
+
+`_language_mismatch_hit` memorizza l'esito sul job (`_lang_check`, chiave =
+lingua della voce): il wizard chiede e le route ricontrollano, senza memo lo
+stesso libro pagherebbe due o tre giudizi per una sola generazione. Cambiare
+la lingua della voce e' l'unico motivo per ridomandare.
+
+**Voci senza lingua nell'id.** Gemini, Speechify e le voci campionate non
+portano un locale nell'id: decide il selector del client (`lang` nel body) e,
+in sua assenza, il controllo semplicemente non parte — non si tira a
+indovinare.
+
+L'audit `voice_language_audit_YYYY-MM.jsonl` registra **ogni** controllo,
+passato e non: con le sole segnalazioni si saprebbe quanto spesso il modulo
+sbaglia, mai quanto spesso ha ragione a tacere. Ogni riga porta lingua della
+voce, lingua dichiarata, lingua indovinata, probabilita', `mismatch` e
+`applied`. Come per gli altri giudizi, fail-open: SDK assente, servizio giu' o
+qualunque eccezione valgono «nessun giudizio», e il job parte come prima.
+
 ---
 
 ## Riepilogo
@@ -1522,5 +1586,5 @@ prima di passare a `on`.
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
 | Account e storico (`accounts.py`) | 6 |
-| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM) | 24 |
-| **Totale** | **172** |
+| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM, lingua libro/voce) | 28 |
+| **Totale** | **176** |

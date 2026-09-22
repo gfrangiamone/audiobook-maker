@@ -147,6 +147,7 @@ import community_store
 import community_translator
 import community_moderator
 import semantic_judge
+import voice_language_guard
 import pending_jobs
 import db
 import accounts
@@ -13807,6 +13808,115 @@ def api_export_abm(job_id):
                                       download_name=download_name))
 
 
+def _voice_language_hint(voice_id):
+    """Lingua della voce dedotta dal suo id, `""` se non si puo' dedurre.
+
+    Vale per le voci il cui id nasce da un locale (`it-IT-...`,
+    `en-US-Chirp3-HD-...`): per Gemini, Speechify e le voci campionate l'id non
+    porta la lingua, e allora decide il selector del client. Non si tira a
+    indovinare: senza lingua il controllo semplicemente non parte.
+    """
+    head = (voice_id or "").split("-")[0].strip().lower()
+    if len(head) == 2 and head.isalpha():
+        return head
+    return ""
+
+
+def _language_mismatch_hit(job, job_id, voice, lang, selected_chapters):
+    """Esito del controllo lingua libro/voce, memorizzato sul job.
+
+    La domanda costa una chiamata al giudice, e il wizard la pone prima del
+    pagamento mentre le route la ripetono come rete di sicurezza: senza memo
+    lo stesso libro la pagherebbe due o tre volte. La chiave e' la lingua
+    della voce, perche' cambiarla e' l'unico motivo per ridomandare.
+    """
+    voice_lang = (lang or "") or _voice_language_hint(voice or "")
+    key = (voice_lang or "").strip().split("-")[0].lower()
+    memo = job.get("_lang_check") or {}
+    if key and key in memo:
+        return memo[key]
+    info = job.get("info")
+    texts = []
+    try:
+        chapters = list(getattr(info, "chapters", None) or [])
+        if selected_chapters:
+            sel = set(selected_chapters)
+            chapters = [c for c in chapters if c.index in sel] or chapters
+        texts = [(c.text or "") for c in chapters]
+    except Exception:      # noqa: BLE001 - mai fatale per il job
+        texts = []
+    declared = ""
+    try:
+        declared = getattr(info, "language", "") or ""
+    except Exception:      # noqa: BLE001
+        declared = ""
+    hit = voice_language_guard.check(texts, voice_lang, declared,
+                                     job_id=job_id, voice=voice or "")
+    if key:
+        memo[key] = hit
+        job["_lang_check"] = memo
+    return hit
+
+
+def _language_mismatch_response(job, job_id, voice, lang, selected_chapters,
+                                data):
+    """La risposta 409 da restituire, o `None` se si puo' procedere.
+
+    Non e' un divieto: `confirm_language` nel body vale «l'utente ha visto
+    l'avviso e vuole procedere», ed e' l'unico modo di leggere comunque un
+    libro bilingue. Chi chiama dopo un claim di stato lo rilascia da se'.
+    """
+    if bool((data or {}).get("confirm_language")):
+        return None
+    hit = _language_mismatch_hit(job, job_id, voice, lang, selected_chapters)
+    if hit is None:
+        return None
+    _log_activity(job_id, job.get("original_filename", ""), "LANG_MISMATCH",
+                  job.get("client_id", ""), job.get("client_ip", ""))
+    return jsonify({
+        "error": "The book does not look like it is written in the language "
+                 "of the selected voice.",
+        "error_code": "language_mismatch",
+        "voice_language": hit["voice_language"],
+        "book_language": hit["book_language"],
+    }), 409
+
+
+@app.route("/api/check_language", methods=["POST"])
+def api_check_language():
+    """Il controllo lingua chiesto dal client PRIMA di aprire il pagamento.
+
+    Le guardie dentro /api/generate e /api/optimize restano, ma nel percorso
+    del wizard il pagamento e' gia' catturato quando la richiesta parte: un
+    409 lascerebbe la scelta fra proseguire e una cattura orfana. Qui la
+    domanda arriva mentre non c'e' ancora niente da rimborsare.
+
+    Non fallisce mai in modo visibile: qualunque inciampo vale
+    `{"mismatch": false}`, cioe' il wizard procede come prima di questo
+    controllo.
+    """
+    try:
+        data = request.json or {}
+        job, err, sc = _check_job_owner(data.get("job_id"))
+        if err is not None:
+            return jsonify({"mismatch": False})
+        hit = _language_mismatch_hit(
+            job, data.get("job_id"), data.get("voice") or "",
+            data.get("lang"), _parse_selected_chapters(
+                data.get("selected_chapters")))
+        if hit is None:
+            return jsonify({"mismatch": False})
+        return jsonify({
+            "mismatch": True,
+            "voice_language": hit["voice_language"],
+            "book_language": hit["book_language"],
+        })
+    except Exception as e:      # noqa: BLE001 - mai fatale per il wizard
+        print(f"[voicelang] /api/check_language: {type(e).__name__}: {e}",
+              flush=True)
+        return jsonify({"mismatch": False})
+
+
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
     data = request.json
@@ -13896,6 +14006,18 @@ def api_generate():
         premium=generation_engine.is_premium_job(jobs.get(job_id) or {}))
     if _busy is not None:
         return _busy
+
+    # Lingua del testo contro lingua della voce, PRIMA del preflight di
+    # pagamento: il reclamo classico ("il libro spagnolo letto con voce
+    # italiana") nasce da un <dc:language> sbagliato, frequentissimo sulle
+    # traduzioni, e oggi nessuno lo verifica — detect_book_language interviene
+    # solo quando il metadato manca del tutto. Non e' un divieto: l'utente
+    # conferma e si procede (stesso pattern di `quota_ack`), perche' un libro
+    # bilingue deve restare generabile.
+    _vl = _language_mismatch_response(job, job_id, voice, data.get("lang"),
+                                      selected_chapters, data)
+    if _vl is not None:
+        return _vl
 
     # ----- F3: Gemini payment preflight -----
     # Lo stash di quota vale SOLO per la richiesta corrente: azzeralo qui, in
@@ -16969,6 +17091,17 @@ def api_optimize():
                 "chars_selected": selected_chars_total,
                 "chars_limit": max_text_chars,
             }), 413
+    # Stessa guardia lingua di /api/generate, qui perche' il wizard combinato
+    # paga QUESTA chiamata e poi genera da run_optimization, senza passare da
+    # /api/generate: senza il controllo qui, il percorso piu' caro sarebbe
+    # anche l'unico scoperto. Va prima di ogni consumo di pagamento, e deve
+    # rilasciare il claim "optimizing" o il job resta brickato.
+    _vl = _language_mismatch_response(job, job_id, _voice_in, lang,
+                                      selected_chapters, data)
+    if _vl is not None:
+        _release_opt_claim()
+        return _vl
+
     # Notifica forzata: con sessione attiva il job e' sempre batch sull'email
     # dell'account, qualunque cosa dica il body.
     batch, email = _acct_forced_batch(batch, email)

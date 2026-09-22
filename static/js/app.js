@@ -302,6 +302,11 @@ try{lastVoucherEmail=localStorage.getItem('abm_v_email')||''}catch(e){}
 // modale del limite mensile; viaggia come `quota_ack` su /api/generate e
 // vale solo per il job corrente (azzerato con emailRegistered).
 let _ttsQuotaAck=false;
+// Avviso "il libro non e' nella lingua della voce" (409 language_mismatch):
+// true dopo che l'utente ha confermato di voler procedere lo stesso. Viaggia
+// come `confirm_language` su /api/generate e vale per il job corrente, cosi'
+// una seconda generazione dello stesso libro non ripete la domanda.
+let _langMismatchAck=false;
 
 // ═══════════════════ THEME ═══════════════════
 function detectTheme(){
@@ -2240,6 +2245,11 @@ async function onGenerateClick() {
         if(_chars>_cap){_showSelTooLargeModal(_chars,_cap);return;}
       }
     }
+    // Lingua del libro contro lingua della voce, PRIMA di qualunque
+    // pagamento: la guardia dentro /api/optimize risponderebbe 409 a cattura
+    // PayPal gia' avvenuta, e all'utente resterebbe la scelta fra procedere
+    // comunque e una cattura orfana. Qui non c'e' ancora niente da rimborsare.
+    if(!(await _precheckLanguage()))return;
     await _doCombinedEstimate();
     const est = _estimateCache && _estimateCache.value;
     // Preflight RPD: blocca PRIMA della richiesta pagamento.
@@ -3895,6 +3905,7 @@ async function startCombinedGeneration(combinedPaymentToken){
       var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang,...getParenFlags()};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
       if(_ttsQuotaAck)genPayload.quota_ack=true;
+      if(_langMismatchAck)genPayload.confirm_language=true;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
       if(_isGeminiVoiceId(getCurrentVoiceId())){
         var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
@@ -3908,6 +3919,15 @@ async function startCombinedGeneration(combinedPaymentToken){
       }
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
+      // Il 409 arriva prima che il pagamento sia consumato: la conferma
+      // dell'utente rimanda la STESSA richiesta, cosi' il payment_token del
+      // percorso combinato non si perde per strada.
+      if(gd.error_code==='language_mismatch'){
+        if(!(await _confirmLangMismatch(gd))){_abortGenUi();return}
+        genPayload.confirm_language=true;
+        gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
+        gd=await gr.json();
+      }
       if(gd.error){
         if(gd.error_code==='selection_too_large'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
@@ -4266,7 +4286,7 @@ function showS3Err(msg){
 }
 
 // ═══════════════════ GENERATION ═══════════════════
-function _showLangWarning(){
+function _showLangWarning(detail){
   return new Promise(resolve=>{
     _langWarnResolve=function(val){
       document.getElementById('langWarnModal').classList.remove('open');
@@ -4274,8 +4294,62 @@ function _showLangWarning(){
       resolve(val);
     };
     applyI18n();
+    // `detail` arriva dal 409 language_mismatch e cambia solo il testo: li' la
+    // lingua non e' "non riconosciuta", e' riconosciuta e non e' quella della
+    // voce. Va detto nominando le due lingue, altrimenti l'utente non sa cosa
+    // correggere. Deve stare DOPO applyI18n(), che riscrive i nodi data-t.
+    if(detail){
+      const voiceL=_langLabel(detail.voice_language||'')||(detail.voice_language||'');
+      const bookL=detail.book_language?(_langLabel(detail.book_language)||detail.book_language):'';
+      const key=bookL?'lang_mismatch_body':'lang_mismatch_body_unknown';
+      const ttl=document.getElementById('langWarnTitle');
+      if(ttl)ttl.textContent=t('lang_mismatch_title')||ttl.textContent;
+      const body=document.getElementById('langWarnBody');
+      if(body){
+        const s=t(key)||'';
+        if(s&&s!==key)body.textContent=s.replace('{voice}',voiceL).replace('{book}',bookL);
+      }
+    }
     document.getElementById('langWarnModal').classList.add('open');
   });
+}
+
+/* Avviso lingua libro/voce (409 language_mismatch da /api/generate).
+   Non e' un divieto: un libro bilingue, o un testo pieno di citazioni, deve
+   restare generabile. Se l'utente conferma, la stessa richiesta riparte con
+   `confirm_language` e il flag resta acceso per il job, cosi' la domanda non
+   si ripete a ogni generazione. */
+/* Chiede al server se il libro e' nella lingua della voce e, se non lo e',
+   mostra l'avviso. `true` = si procede. Non ferma mai una generazione per
+   colpa propria: senza risposta, risposta illeggibile o servizio spento il
+   wizard va avanti come prima di questo controllo. */
+async function _precheckLanguage(){
+  if(_langMismatchAck||!jobId)return true;
+  try{
+    const body={job_id:jobId,
+      voice:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',
+      lang:bookLangState.code||cl,
+      selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[]};
+    const r=await fetch('/api/check_language',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!d||!d.mismatch)return true;
+    return await _confirmLangMismatch(d);
+  }catch(e){return true}
+}
+
+async function _confirmLangMismatch(d){
+  const ok=await _showLangWarning({voice_language:d.voice_language||'',
+                                   book_language:d.book_language||''});
+  if(ok)_langMismatchAck=true;
+  return ok;
+}
+
+/* Riporta il pannello allo stato "pronto a generare" dopo un blocco
+   sincrono: nessun job e' partito, nessun pagamento e' stato consumato. */
+function _abortGenUi(){
+  const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+  const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+  unlockUI();generating=false;
 }
 
 // ═══════════════════ DONATE MODAL ═══════════════════
@@ -4351,6 +4425,7 @@ async function startGen(){
     const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2,...getParenFlags()};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     if(_ttsQuotaAck)payload.quota_ack=true;
+    if(_langMismatchAck)payload.confirm_language=true;
     if(_isGeminiVoiceId(getCurrentVoiceId())){
       const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
       if(_gs)payload.gemini_style_instruction=_gs;
@@ -4361,8 +4436,14 @@ async function startGen(){
       const _emo=(document.getElementById('speechifyEmotion')?.value||'');
       if(_emo)payload.speechify_emotion=_emo;
     }
-    const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const d=await r.json();
+    let r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    let d=await r.json();
+    if(d.error_code==='language_mismatch'){
+      if(!(await _confirmLangMismatch(d))){_abortGenUi();return}
+      payload.confirm_language=true;
+      r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      d=await r.json();
+    }
     if(d.error){
       if(d.error_code==='selection_too_large'){
         const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
@@ -5713,7 +5794,7 @@ async function goBackToChapters(){
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
   try{await fetch('/api/reset_to_chapters/'+jobId,{method:'POST'})}catch(e){console.warn('[goBack] reset failed:',e)}
   jobDone=false;generating=false;
-  emailRegistered=false;_ttsQuotaAck=false;
+  emailRegistered=false;_ttsQuotaAck=false;_langMismatchAck=false;
   // Reset chapter selection — uncheck all
   _getAllCheckboxes().forEach(cb=>{cb.checked=false});
   // Reset AI optimization state (keep optimizedChapters so previously optimized chapters remain tracked)
@@ -5793,7 +5874,7 @@ function resetAll(){
   const _vOutR=document.getElementById('vOut');if(_vOutR){_vOutR.value='m4b';onOutputChange();}
   previewStop();
   bookData=null;jobId=null;
-  emailRegistered=false;_ttsQuotaAck=false;previewListened=false;
+  emailRegistered=false;_ttsQuotaAck=false;_langMismatchAck=false;previewListened=false;
   _currentPreviewSig=null;_knownPreviewSigs.clear();
   ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);if(el){el.style.display='none';el.src=''}});
   const coverPlaceholder=document.getElementById('coverPlaceholder');if(coverPlaceholder)coverPlaceholder.style.display='';
