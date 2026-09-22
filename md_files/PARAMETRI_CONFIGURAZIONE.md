@@ -1453,6 +1453,54 @@ in `epub_to_tts` cattura qualunque eccezione e stampa
 `[section_judge] giudizio non applicato: …`, lasciando al parser i suoi
 capitoli.
 
+### 20.5 Controllo dell'output LLM (`llm_output_judge.py`)
+
+`generation_engine._is_prompt_leak` (riga 1048) confronta l'output con il
+system prompt **carattere per carattere**: prefix match sui primi 120 caratteri
+e scan a blocchi di 200. Prende l'eco verbatim e nient'altro. Restano fuori la
+parafrasi delle istruzioni, il preambolo («Ecco il testo ottimizzato:»), il
+rifiuto, e soprattutto il capitolo tornato **riassunto** invece che
+ottimizzato: quel testo passa ogni controllo, viene sintetizzato e fatturato,
+e l'utente scopre ascoltando che meta' pagina non c'e' piu'.
+
+**Pre-filtro gratuito.** Il giudizio si pone solo quando il rapporto fra
+caratteri in uscita e in ingresso e' fuori banda: l'ottimizzazione per il TTS
+riscrive ed espande numeri e abbreviazioni, non dimezza. Dentro la banda —
+il caso normale — non parte alcuna richiesta e il costo resta zero.
+
+| Variabile | Significato | Default | Codice |
+|---|---|:---:|---|
+| `ABM_OUTPUT_JUDGE_MODE` | `off` \| `observe` \| `on`. Valore ignoto = default, **non** `on`. | `observe` | `llm_output_judge.mode` |
+| `ABM_OUTPUT_MIN_META` | Probabilita' da cui in su l'output contiene qualcosa che non e' il testo (preambolo, scuse, istruzioni, rifiuto). | `0.65` | `llm_output_judge.min_meta` |
+| `ABM_OUTPUT_MAX_FAITHFUL` | Probabilita' sotto cui l'output non e' piu' lo stesso passo riscritto (riassunto, tagli, troncamento). | `0.35` | `llm_output_judge.max_faithful` |
+| `ABM_OUTPUT_RATIO_LOW` | Sotto questo rapporto out/in l'output e' sospetto corto. | `0.60` | `llm_output_judge.ratio_low` |
+| `ABM_OUTPUT_RATIO_HIGH` | Sopra questo rapporto e' sospetto lungo. | `1.80` | `llm_output_judge.ratio_high` |
+| `ABM_OUTPUT_MIN_CHARS` | Sotto questa taglia il chunk non si controlla: il rapporto oscilla da solo. | `400` | `llm_output_judge.min_chars` |
+
+Due domande in una sola richiesta, su testa (700 caratteri) e coda (300) di
+entrambi i testi — la coda serve, perche' il troncamento sta li':
+
+| Domanda | Tipo | Cosa decide |
+|---|---|---|
+| `meta` | `Noul` | l'output contiene qualcosa che non e' il passo: preambolo, commento finale, istruzioni ripetute, rifiuto, domanda |
+| `faithful` | `Noul` | l'output e' lo stesso passo riscritto per essere letto, senza niente di tolto e senza fermarsi prima della fine |
+
+**Esito.** Un rifiuto entra nello **stesso** ramo del prompt-leak: scarto dei
+caratteri gia' in streaming, nuovo tentativo con parametri degradati
+(`LLM_LEAK_MAX_RETRIES`) e, se persiste, `_PromptLeakError` — che il chiamante
+traduce in fallback al testo **originale non ottimizzato**. Il capitolo arriva
+sempre: peggio ottimizzato, mai mutilato. L'asimmetria delle soglie segue da
+qui: un falso positivo costa un giro di LLM, un falso negativo consegna un
+riassunto.
+
+Nell'audit `llm_leak_audit_YYYY-MM.jsonl` l'`outcome` resta
+`prompt_leak_fallback` per l'eco letterale (le righe storiche restano
+confrontabili) e diventa `output_rejected_meta` / `output_rejected_unfaithful`
+per i rifiuti del nuovo motore. Il modulo scrive anche il proprio
+`llm_output_judge_audit_YYYY-MM.jsonl` con probabilita', rapporto e motivo di
+ogni chunk **giudicato**, `applied` incluso: e' il dataset per tarare le soglie
+prima di passare a `on`.
+
 ---
 
 ## Riepilogo
@@ -1474,5 +1522,5 @@ capitoli.
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
 | Account e storico (`accounts.py`) | 6 |
-| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro) | 18 |
-| **Totale** | **166** |
+| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM) | 24 |
+| **Totale** | **172** |
