@@ -48,6 +48,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_FREE_QUOTA_EUR_PER_MONTH` | `2.00` (quota gratuita cumulativa per client, € di listino non fatturato per mese solare, sulle voci PREMIUM; `0` disattiva la feature. **Chiave di addebito** `free_quota.charge_key(job_id, voce, capitoli)` = `job_id:<sha1 12 hex di voce|indici capitoli>`, cioè **una generazione**: il retry della stessa generazione è idempotente, un capitolo diverso o un'altra voce sullo stesso job consumano di nuovo. Fino al 21/09/2026 la chiave era il solo `job_id` e un libro da 5 € è stato letto gratis un capitolo per volta sullo stesso job (53 generazioni via `/api/reset_to_chapters`, incidente `Zur1gsLrTEaQjtdTPa7LLg`). La chiave consumata resta in `job["free_quota_key"]` e nel descrittore pending (`free_quota_key`) per il recovery; descrittori più vecchi ripiegano sul `job_id` nudo, che è la chiave con cui hanno addebitato) | `free_quota.py` | `charge_key`, `decision` |
 | `ABM_PREMIUM_MIN_COST_EUR` | `0.50` (importo minimo addebitato a un job PREMIUM quando la quota gratuita mensile è esaurita) | `free_quota.py` | 168 |
 | `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` | `10000000` (quota mensile per client di caratteri sintetizzati con le voci STANDARD; oltre, ogni nuovo libro parte solo dopo il gate email; `0` disattiva la feature) | `free_tts_quota.py` | 52 |
+| `ABM_FREE_TTS_CAP_CHARS_PER_MONTH` | `25000000` (tetto DURO mensile sulle voci STANDARD: nessun ack lo supera, `402 free_tts_cap_reached`; contato su cid canonico e su hash dell'email del gate; `0` disattiva il cap) | `free_tts_quota.py` | 71 |
 | `ABM_FREE_TTS_QUOTA_APP_PUSH_ACK` | `1` (l'app mobile supera il gate quota **senza email** se ha un device push registrato: la consegna la garantisce la notifica. `0`/`false`/`off` riporta l'app al gate email come il web) | `audiobook_app.py` | 2605 |
 | `ABM_QUOTA_DEVICE_MAX_AGE_DAYS` | `90` (età massima della registrazione del device push perché valga come ack del gate quota; `0` = nessun limite di età) | `audiobook_app.py` | 2579 |
 | `ABM_OUTPUT_REUSE` | `1` (riuso dell'output di una generazione identica — stesso client, testo, voce, rate, formato, opzioni parentesi — gia' consegnata e ancora su disco; `0`/`false`/`off` disattiva) | `output_reuse.py` | 54 |
@@ -1158,6 +1159,15 @@ Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi cl
 - **File**: `ABM_DATA_DIR/_free_tts_quota.json` — `{ "YYYY-MM": { cid: { "chars", "jobs": { key: chars }, "gated": n } } }`, write atomico via `community_store.atomic_write_json`, mesi vecchi potati alla scrittura. `month_table()` alimenta il digest.
 - **Env**: `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` (default 10M, `0` = off, letta a ogni chiamata).
 
+#### 17.1.1 Tetto duro mensile (cap)
+
+- **Perche'**: il gate email non e' un soffitto. Caso `0e82f064` (settembre 2026): 42,4 Mchars in un mese, 4,2x la quota, con **una sola** email registrata su ~101 passaggi del gate e un solo cid — quindi `stable_identity` per `abuse_watch` e nessun verdetto di abuso possibile. Il gate rallenta, non limita.
+- **Cosa fa**: `free_tts_quota.cap_decision()` e' valutata in `/api/generate` **prima** del gate. Oltre il cap la risposta e' `402 free_tts_cap_reached` (`quota_used_chars`, `quota_cap_chars`, `chars_selected`), lo stato del job e' ripristinato, nulla viene consumato, il log riporta `QUOTA_CAP` e parte una nota `quota_block` ad `abuse_watch`. **Nessun ack lo supera**: ne' l'email registrata ne' la push. Le voci PREMIUM restano disponibili.
+- **Su cosa e' contato**: due chiavi nello stesso file del mese — l'identita' di quota canonica (cid, con gli alias delle installazioni) **e** `mail:<sha256(ABM_IP_SALT + email del gate)[:16]>`. Blocca se sfonda una delle due: cancellare il cookie non azzera il contatore (la scappatoia del caso `36e901e8`). L'indirizzo non e' mai scritto in chiaro; le chiavi `mail:` sono escluse da `month_table()` (non sono client).
+- **Consumo e storno**: `consume(..., email=...)` somma sulle due chiavi con la stessa chiave di addebito, `refund(..., email=...)` le libera entrambe (il riferimento sul job e' `(cid, chiave, email)`, i descrittori a 2 elementi delle versioni precedenti restano validi). Il consumo avviene se quota **o** cap sono attivi: col solo cap acceso il contatore si riempie comunque, altrimenti il tetto non avrebbe nulla da misurare.
+- **Frontend**: `_handleTtsCapReached` in `static/js/app.js` mostra `tts_cap_msg` (7 lingue) nell'errore di step 3, senza aprire il modale del gate.
+- **Env**: `ABM_FREE_TTS_CAP_CHARS_PER_MONTH` (default 25M, `0` = off, letta a ogni chiamata). Deve restare > `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH`, altrimenti il gate email non viene mai raggiunto.
+
 ### 17.2 Riuso dell'output (`output_reuse.py`)
 
 - **Chiave**: sha256 di testo dei capitoli selezionati (in ordine) + voce + rate + formato + `single_file` + flag lettura parentesi tonde/quadre.
@@ -1178,6 +1188,7 @@ Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi cl
 |----|--------|
 | `QUOTA_BLOCK` | `/api/generate` rifiutato per quota esaurita (nessuna email registrata / nessun ack) |
 | `QUOTA_GATE` | job oltre quota avviato dopo il gate email |
+| `QUOTA_CAP` | `/api/generate` rifiutato per tetto duro mensile raggiunto (nessun ack lo supera) |
 | `QUOTA_ABUSE_KILL` | job in corso ucciso dal verdetto abuso (kill attiva) |
 | `QUOTA_ABUSE_BLOCK` | 403 pre-claim per cid bloccato dal verdetto abuso |
 | `REUSE` | avvio servito con l'output di un job identico (`run_reuse`) |
