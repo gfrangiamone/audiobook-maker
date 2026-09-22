@@ -1,10 +1,17 @@
 """Moderazione LLM dell'abuso della quota voci standard.
 
 Dossier comportamentale per gruppo (IP /24 hashato, fallback cid) con
-ripartizione per cid, segnali S1-S4, giudizio DeepSeek e verdetto persistito
-in `ABM_DATA_DIR/_abuse_dossiers.json`. Modulo foglia: stdlib +
-`community_store.atomic_write_json`; il client LLM arriva da
-`generation_engine` come in `community_moderator`.
+ripartizione per cid, segnali S1-S4, giudizio e verdetto persistito in
+`ABM_DATA_DIR/_abuse_dossiers.json`. Modulo foglia: stdlib +
+`community_store.atomic_write_json` + `semantic_judge`; il client LLM del
+ripiego arriva da `generation_engine` come in `community_moderator`.
+
+Due motori, come in `community_moderator`:
+1. giudizi tipizzati (System One): una richiesta, una Noul sull'evasione del
+   gruppo, una Choice sullo scope, una Noul per ogni cid e una Choice sul
+   motivo. Le soglie di decisione vivono qui sotto, non dentro un prompt;
+2. giudice LLM con `SYSTEM_PROMPT` + JSON a mano: ripiego quando il primo non
+   risponde. Un silenzio non e' mai un verdetto.
 
 Ogni funzione e' fail-open: un errore qui non deve mai fermare /api/generate,
 il cleanup o il digest. Nessun testo utente, IP o email in chiaro: solo
@@ -22,11 +29,18 @@ import time
 from pathlib import Path
 
 from community_store import atomic_write_json
+import semantic_judge as sj
 
 _lock = threading.RLock()
 
 KINDS = ("generate", "quota_gate", "quota_block", "email")
 VERDICTS = ("abuse", "clean", "inconclusive")
+
+# Motivo dominante del verdetto. Sostituisce la frase libera che scriveva il
+# giudice LLM: l'admin legge un'etichetta stabile invece di una frase che
+# cambia a ogni chiamata, e il digest puo' raggrupparci sopra.
+PATTERNS = ("reactive_rotation", "disposable_cookies", "machine_pace",
+            "single_voice_language", "fresh_emails", "none")
 
 _DAY_SEC = 86400
 _RETENTION_SEC = 60 * _DAY_SEC        # dossier senza eventi da 60 giorni: via
@@ -100,6 +114,28 @@ def confidence_threshold():
     usciti a 0.85 senza produrre nulla, e sul primo gruppo sono passati 45
     minuti fra il primo verdetto di abuso e la prima kill."""
     return _env_float("ABM_ABUSE_LLM_CONFIDENCE", 0.85)
+
+
+def min_evasion():
+    """Da qui in su il verdetto e' `abuse`. Separata da
+    `confidence_threshold()`, che governa la kill: un verdetto fra le due
+    soglie finisce nel digest e resta sotto osservazione senza bloccare
+    nessuno."""
+    return _env_float("ABM_ABUSE_MIN_EVASION", 0.80)
+
+
+def max_clean():
+    """Da qui in giu' il verdetto e' `clean`. In mezzo: `inconclusive`.
+
+    Il "be conservative, when in doubt answer inconclusive" era una riga del
+    prompt: la larghezza della banda di incertezza si cambiava riscrivendolo,
+    senza poterla misurare. Ora sono due numeri."""
+    return _env_float("ABM_ABUSE_MAX_CLEAN", 0.20)
+
+
+def min_cid():
+    """Soglia per far entrare un singolo cid nello scope del verdetto."""
+    return _env_float("ABM_ABUSE_MIN_CID", 0.70)
 
 
 def keep_hours():
@@ -724,9 +760,12 @@ def digest_data(window_sec=_DAY_SEC):
 
 
 # ---------------------------------------------------------------------------
-# Giudice LLM (pattern di community_moderator: client riusato da generation_engine)
+# Feature del gruppo (materiale comune ai due motori)
 # ---------------------------------------------------------------------------
 
+# Prompt del motore 2 (ripiego). Le regole di severita' qui dentro
+# ("be conservative", le HARD RULE) sopravvivono solo per quel motore:
+# il motore 1 le tiene in codice, dove si misurano e si testano.
 SYSTEM_PROMPT = """You are the abuse moderator of a free web service that converts e-books into audiobooks with standard neural voices. Standard voices have a monthly free character quota per browser cookie ("cid"). Some users evade the quota by rotating cookies, registering fresh throwaway emails and switching networks, converting hundreds of books at zero revenue.
 
 You receive ONLY aggregated behavioural features for one network group (same hashed /24 subnet) with a breakdown per cid alias (cid_1, cid_2, ...). No text, no identities.
@@ -783,8 +822,10 @@ def _bucket_features(b, now):
     }
 
 
-def build_prompt(group):
-    """(json_utente, alias_map) da sole feature; None se il gruppo non esiste."""
+def _features(group):
+    """(feature, alias_map) da solo comportamento aggregato; None se il gruppo
+    non esiste. Stesso materiale per i due motori: il giudice tipizzato lo
+    riceve come stato, quello LLM serializzato nel prompt."""
     g = dossier(group)
     if not g:
         return None
@@ -796,8 +837,152 @@ def build_prompt(group):
                       **_evasion_features(g, now)),
         "cids": {a: _bucket_features(g["cids"][cid], now) for a, cid in alias.items()},
     }
+    return feats, alias
+
+
+def build_prompt(group):
+    """(json_utente, alias_map) da sole feature; None se il gruppo non esiste."""
+    built = _features(group)
+    if built is None:
+        return None
+    feats, alias = built
     return json.dumps(feats, ensure_ascii=True, separators=(",", ":")), alias
 
+
+# ---------------------------------------------------------------------------
+# Motore 1: giudizi tipizzati (System One)
+# ---------------------------------------------------------------------------
+
+# Il prompt del motore 2 chiede al modello un JSON con verdetto, confidence,
+# scope, lista di cid e una frase. Tre cose andavano storte:
+#   - la `confidence` se la dichiara il modello, e non e' calibrata: emette
+#     0.60 oppure 0.85/0.90/0.95 e nulla in mezzo (vedi
+#     `confidence_threshold`), quindi filtrarci sopra taglia a caso;
+#   - la lista `cids` e' testo libero: il codice a valle deve scartare gli
+#     alias inventati;
+#   - il JSON arriva a volte dentro un fence markdown, e `_parse_verdict`
+#     esiste solo per quello.
+# Qui la risposta e' tipizzata: una probabilita' calibrata per il gruppo, una
+# per ogni cid che esiste davvero, e due scelte su insiemi chiusi.
+
+def _cid_key(alias_name):
+    """Id della domanda per un cid: separato dagli id fissi."""
+    return f"cid::{alias_name}"
+
+
+def _semantic_questions(alias):
+    """Domande indipendenti sullo stesso stato: una sola andata e ritorno."""
+    if sj.Noul is None:
+        return {}
+    Noul, Crit, Choice = sj.Noul, sj.NoulCriteria, sj.Choice
+    questions = {
+        "evasion": Noul(
+            instructions="Is this network group EVADING the free character "
+                         "quota of the standard voices?",
+            criteria=Crit(
+                true="New cookies or new e-mail identities appear right after "
+                     "quota blocks, or cookies are used for a few hours and "
+                     "abandoned, so that the quota gate is never paid: the "
+                     "same actor keeps converting under fresh identities.",
+                false="The volume is high but the identity is stable: "
+                      "long-lived cookies, one e-mail behind the gate "
+                      "acceptances, or the quota was never even reached. "
+                      "Several unrelated users behind one NAT range look like "
+                      "this too: different voices, languages and active hours.",
+            ),
+        ),
+        "scope": Choice(
+            instructions="Does the evasion involve the whole group or only "
+                         "some of its cookies?",
+            criteria={
+                "group": "The cookies share voice, language and hour pattern, "
+                         "and new identities appear in bursts right after "
+                         "blocks: one actor behind all of them.",
+                "cids": "Only some cookies show the pattern; the others look "
+                        "like unrelated users sharing the same network.",
+            },
+        ),
+        "pattern": Choice(
+            instructions="Which behaviour best explains what this group is "
+                         "doing?",
+            criteria={
+                "reactive_rotation": "New cookies created right after a quota "
+                                     "block.",
+                "disposable_cookies": "Cookies used for a couple of hours and "
+                                      "then abandoned, never reaching the gate.",
+                "machine_pace": "Continuous activity at machine-like pace, "
+                                "with very regular gaps.",
+                "single_voice_language": "One voice and one language across "
+                                         "every cookie of the group.",
+                "fresh_emails": "A new e-mail identity for each pass of the "
+                                "quota gate.",
+                "none": "Nothing of the above: the group behaves like ordinary "
+                        "users.",
+            },
+        ),
+    }
+    for a in alias:
+        questions[_cid_key(a)] = Noul(
+            instructions=f"Is the cookie `cids.{a}` one of the identities used "
+                         f"to evade the quota?",
+            criteria=Crit(
+                true=f"`cids.{a}` was created after a block, or was used "
+                     f"briefly and abandoned, and matches the voice, language "
+                     f"and hour pattern of the others.",
+                false=f"`cids.{a}` looks like a separate user sharing the same "
+                      f"network: its own voices, languages and hours, or a "
+                      f"long life with no sign of rotation.",
+            ),
+        )
+    return questions
+
+
+def _semantic_verdict(group, cid=""):
+    """Verdetto dai giudizi tipizzati, gia' persistito. None = nessun giudizio
+    (SDK assente, servizio giu', risposta monca): il chiamante ripiega sul
+    motore LLM. Mai un `clean` preso da un silenzio."""
+    built = _features(group)
+    if built is None:
+        return None
+    feats, alias = built
+    questions = _semantic_questions(alias)
+    if not questions:
+        return None
+    resp = sj.ask(feats, questions)
+    if resp is None:
+        return None
+    p = sj.noul(resp, "evasion")
+    if p is None:
+        return None
+
+    if p >= min_evasion():
+        kind, conf = "abuse", p
+    elif p <= max_clean():
+        kind, conf = "clean", 1.0 - p
+    else:
+        # La banda di incertezza non abilita nulla: confidence a zero, cosi'
+        # `kill_gate` non puo' agire su un verdetto che non c'e'.
+        kind, conf = "inconclusive", 0.0
+
+    scope, _sc = sj.choice(resp, "scope")
+    scope = "group" if scope == "group" else "cids"
+    guilty = [alias[a] for a in alias
+              if (sj.noul(resp, _cid_key(a), 0.0) or 0.0) >= min_cid()]
+    pattern, _pc = sj.choice(resp, "pattern")
+    reason = pattern if pattern in PATTERNS else "none"
+
+    if kind == "abuse" and scope == "cids" and not guilty:
+        # Nessun cid nominato: lo stesso degrado del motore 2, perche' un
+        # `abuse` senza bersaglio non e' azionabile.
+        kind = "inconclusive"
+    return set_verdict(group, {"verdict": kind, "confidence": conf,
+                               "scope": scope, "cids": guilty,
+                               "reason": reason, "trigger_cid": cid})
+
+
+# ---------------------------------------------------------------------------
+# Motore 2: giudice LLM (ripiego; client riusato da generation_engine)
+# ---------------------------------------------------------------------------
 
 def _parse_verdict(text):
     text = (text or "").strip()
@@ -838,11 +1023,21 @@ def _call_llm(user, timeout):
 
 def judge(group, timeout=20.0, attempts=2, cid=""):
     """Verdetto del giudice, gia' persistito con set_verdict. None = fail-open
-    (LLM assente, timeout, risposta malformata): registrato come 'unjudged'.
+    (nessun motore ha risposto): registrato come 'unjudged'.
+
+    Prima i giudizi tipizzati, poi il giudice LLM: `timeout` e `attempts`
+    valgono per il secondo, il primo ha i suoi (ABM_TYPESAFE_*).
 
     `cid` e' il cookie che ha innescato il giudizio: `set_verdict` lo usa per
     non lasciare fuori dallo scope chi sta generando proprio ora."""
     try:
+        # Motore 1: su None si prosegue col motore LLM, mai si conclude.
+        try:
+            v = _semantic_verdict(group, cid=cid)
+        except Exception:
+            v = None
+        if v is not None:
+            return v
         import generation_engine as ge
         try:
             available = bool(ge._llm_available())

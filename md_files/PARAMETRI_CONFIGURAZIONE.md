@@ -1193,9 +1193,11 @@ esaurita, S2 ≥2 cid, S3 ≥`ABM_ABUSE_GATE_DAILY` QUOTA_GATE/24h, S4
 ≥`ABM_ABUSE_CHARS_DAILY` caratteri/24h. Il giudizio si apre a punteggio ≥2, dove
 S4 pesa `ABM_ABUSE_S4_WEIGHT` (default 2) e gli altri 1: **S4 da solo apre il
 giudizio**, perché un cid nuovo su un IP mai visto azzera S1, S2 e S3 insieme e
-chi ruota IP resterebbe altrimenti invisibile. Superata la soglia il giudice DeepSeek
-(client di `generation_engine`, timeout 20s, 1 retry, fail-open) emette un
-verdetto per cid. Kill in corsa e 403 pre-claim solo con
+chi ruota IP resterebbe altrimenti invisibile. Superata la soglia il giudizio passa per due
+motori in cascata: prima i **giudizi tipizzati** (`semantic_judge`, § 20.3),
+poi — solo se quelli non rispondono — il **giudice LLM DeepSeek** (client di
+`generation_engine`, timeout 20s, 1 retry). Entrambi fail-open: se tacciono
+tutti e due, nessun verdetto. Kill in corsa e 403 pre-claim solo con
 `verdict=abuse ∧ confidence ≥ soglia ∧ cid nello scope ∧ job non pagato ∧ voce
 standard`. Op di log: `QUOTA_ABUSE_KILL`, `QUOTA_ABUSE_BLOCK`. Ripristino:
 `POST /admin/api/abuse/clear/<gruppo>` (header `X-Admin-Token`).
@@ -1276,6 +1278,9 @@ il giudice vedeva solo volume e conteggio cid.
 |---|---|---|---|
 | `ABM_ABUSE_KILL_ENABLE` | Interruttore di kill e 403 (`0` = solo giudizio in log e digest). Richiede anche `ABM_ADMIN_EMAIL` non vuoto. Al primo avvio con `1` i verdetti maturati in osservazione vengono azzerati. | `0` | `abuse_watch.kill_enabled` |
 | `ABM_ABUSE_LLM_CONFIDENCE` | Soglia minima di confidenza del verdetto per kill e 403. Il giudice emette solo 0.60 (inconclusive) e 0.85/0.90/0.95 (abuse): a `0.9` metà dei veri positivi veniva scartata. | `0.85` | `abuse_watch.confidence_threshold` |
+| `ABM_ABUSE_MIN_EVASION` | Probabilità di evasione da cui in su il verdetto tipizzato è `abuse` (motore 1). La `confidence` del verdetto è la probabilità stessa, calibrata, quindi qui la soglia taglia davvero — a differenza di `ABM_ABUSE_LLM_CONFIDENCE`, che filtra un valore autodichiarato dal modello. | `0.80` | `abuse_watch.min_evasion` |
+| `ABM_ABUSE_MAX_CLEAN` | Probabilità sotto cui il verdetto tipizzato è `clean`. Fra `MAX_CLEAN` e `MIN_EVASION` il verdetto è `inconclusive` con `confidence` 0: la banda di incertezza non può abilitare la kill per nessun valore di `ABM_ABUSE_LLM_CONFIDENCE`. | `0.20` | `abuse_watch.max_clean` |
+| `ABM_ABUSE_MIN_CID` | Probabilità minima perché un singolo cid entri nello scope di un `abuse` tipizzato. Un `abuse` con scope `cids` e nessun cid sopra soglia degrada a `inconclusive`: non è azionabile. | `0.70` | `abuse_watch.min_cid` |
 | `ABM_ABUSE_KEEP_HOURS` | Conservazione della work_dir (chunk inclusi) dei job uccisi, per il ripristino con riuso chunk. Floor 1. | `24` | `abuse_watch.keep_hours` |
 | `ABM_ABUSE_GATE_DAILY` | Soglia `QUOTA_GATE`/24h del segnale S3. Floor 1. | `5` | `abuse_watch._gate_daily` |
 | `ABM_ABUSE_CHARS_DAILY` | Soglia caratteri/24h del segnale S4 (quota mensile / 4). Floor 1. | `2500000` | `abuse_watch._chars_daily` |
@@ -1341,6 +1346,43 @@ Valori di `reason`: `url`, `spam`, `profanity`, `threat`, `sexual`, `gibberish`,
 
 Una `Choice` sulla lingua del testo sorgente piu' una `Noul` per ogni slot abbastanza lungo, tutte nella stessa richiesta. Gli slot sotto `_LANG_DROP_BELOW` vengono svuotati e ripescati da `_retry_missing_slots()`; poiche' quel retry verifica solo con il confronto esatto, gli slot **riempiti dal retry** passano una seconda volta dal giudizio (`only=refilled`), altrimenti il testo nella lingua sbagliata rientrerebbe dalla finestra.
 
+### 20.3 Giudizio anti-abuso della quota (`abuse_watch.py`)
+
+`judge()` prova prima i giudizi tipizzati e ripiega sul giudice LLM (prompt +
+JSON a mano) quando quelli non rispondono. Il materiale di partenza è lo
+stesso per entrambi: le feature del dossier (`_features()`), con i cid sotto
+alias `cid_1`, `cid_2`, … perché il modello non veda mai un identificativo
+reale.
+
+Una sola richiesta porta tre domande sul gruppo più una per ogni cid:
+
+| Domanda | Tipo | Cosa decide |
+|---|---|---|
+| `evasion` | `Noul` | probabilità che il gruppo stia **evadendo** la quota (non che consumi molto) → `abuse` / `clean` / `inconclusive` per soglia |
+| `scope` | `Choice` (`group`, `cids`) | se il pattern è di tutto il gruppo o solo di alcuni cookie |
+| `pattern` | `Choice` (6 valori) | il motivo, su enum chiuso: `reactive_rotation`, `disposable_cookies`, `machine_pace`, `single_voice_language`, `fresh_emails`, `none` |
+| `cid::<alias>` | `Noul` | per ogni cid **realmente presente** nel dossier, se è una delle identità usate per evadere |
+
+Tre differenze rispetto al solo motore LLM:
+
+- le soglie di decisione stanno in codice (`ABM_ABUSE_MIN_EVASION`,
+  `ABM_ABUSE_MAX_CLEAN`, `ABM_ABUSE_MIN_CID`), non dentro un «be
+  conservative» nel prompt: si misurano e si cambiano senza riscrivere il
+  testo della richiesta;
+- la lista dei cid colpevoli nasce da una domanda per alias esistente, non da
+  un array di testo libero in cui il modello poteva nominare `cid_9`
+  inesistente;
+- nessun parser JSON né fence markdown da ripulire (`_parse_verdict` resta,
+  ma serve solo al motore 2).
+
+**Le guardie deterministiche valgono per entrambi i motori**: `set_verdict`
+applica la guardia di evasione (§ 18) e il declassamento su
+`admin_cleared_recently` a qualunque verdetto arrivi, quindi il falso positivo
+del 14/09/2026 resta impossibile anche con probabilità 0.99 dal motore 1.
+
+**Costo**: il motore 1 sostituisce la chiamata LLM, non si aggiunge. Senza
+`ABM_TYPESAFE_API_KEY` nell'unit systemd il comportamento è identico a prima.
+
 ---
 
 ## Riepilogo
@@ -1362,5 +1404,5 @@ Una `Choice` sulla lingua del testo sorgente piu' una `Noul` per ogni slot abbas
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
 | Account e storico (`accounts.py`) | 6 |
-| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni) | 8 |
-| **Totale** | **156** |
+| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso) | 11 |
+| **Totale** | **159** |
