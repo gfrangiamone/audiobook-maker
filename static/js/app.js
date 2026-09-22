@@ -3940,6 +3940,7 @@ async function startCombinedGeneration(combinedPaymentToken){
           showErr('s3err',t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.');
           unlockUI();generating=false;return;
         }
+        if(gd.error_code==='free_tts_cap_reached'){_handleTtsCapReached(gd);return;}
         if(gd.error_code==='free_tts_quota_exhausted'){_handleTtsQuotaGate(gd);return;}
         if(gd.error_code==='server_busy'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
@@ -4456,6 +4457,7 @@ async function startGen(){
         showErr('s3err',t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.');
         unlockUI();generating=false;return;
       }
+      if(d.error_code==='free_tts_cap_reached'){_handleTtsCapReached(d);return;}
       if(d.error_code==='free_tts_quota_exhausted'){_handleTtsQuotaGate(d);return;}
       if(d.error_code==='free_quota_exhausted'||d.error_code==='payment_required'){
         // Path di retry/generazione post-ottimizzazione standalone: senza
@@ -5193,6 +5195,18 @@ function _handleTtsQuotaGate(d){
   const err=document.getElementById('ttsQuotaErr');if(err){err.style.display='none';err.textContent=''}
   const m=document.getElementById('ttsQuotaModal');if(m)m.classList.add('open');
   try{if(inp)inp.focus()}catch(e){}
+}
+// Tetto mensile delle voci standard: nessuna email lo supera, quindi qui non
+// si apre il modale del gate ma si mostra l'errore con il residuo azzerato.
+function _handleTtsCapReached(d){
+  const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+  const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+  const fmt=(n)=>{n=Number(n)||0;try{return n.toLocaleString()}catch(e){return String(n)}};
+  const cap=fmt(d&&d.quota_cap_chars),used=fmt(d&&d.quota_used_chars);
+  let txt=t('tts_cap_msg',{used:used,cap:cap});
+  if(!txt||txt==='tts_cap_msg')txt='You have reached this month\'s ceiling for the standard voices ('+used+' of '+cap+' characters). The counter resets at the start of next month; the premium voices stay available now.';
+  showErr('s3err',txt);
+  unlockUI();generating=false;
 }
 function closeTtsQuotaModal(){const m=document.getElementById('ttsQuotaModal');if(m)m.classList.remove('open')}
 async function _submitTtsQuotaGate(){

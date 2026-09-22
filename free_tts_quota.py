@@ -10,7 +10,16 @@ Struttura del file `ABM_DATA_DIR/_free_tts_quota.json`:
     {"YYYY-MM": {"<client_id>": {"chars": 1234, "jobs": {"<job_id>": 1234},
                                  "gated": 2}}}
 `gated` conta i job accettati oltre quota (solo osservabilita').
-Nessun dato personale oltre al client_id (cookie anonimo abm_cid).
+
+Oltre la quota c'e' un secondo tetto, questa volta duro: `cap_chars()`
+(`ABM_FREE_TTS_CAP_CHARS_PER_MONTH`, default 25 Mchars). Il gate email non lo
+supera: il caso di settembre 2026 (42 Mchars in un mese con una sola email
+registrata, identita' stabile e quindi nessun segnale di abuso) ha mostrato che
+senza soffitto il gate e' solo un rallentamento. Il cap e' contato sia
+sull'identita' di quota sia sull'hash dell'email del gate (chiavi `mail:<h>`
+nello stesso file del mese), cosi' cancellare il cookie non azzera il contatore.
+Nessun dato personale oltre al client_id (cookie anonimo abm_cid) e all'hash
+irreversibile dell'email (salato con ABM_IP_SALT).
 Best-effort, thread-safe, scrittura atomica: nessuna eccezione propagata.
 Modulo foglia: solo stdlib + community_store.atomic_write_json.
 
@@ -21,6 +30,7 @@ invece, e' legato all'installazione. `ABM_DATA_DIR/_free_tts_quota_ids.json`
 tiene la corrispondenza installazione -> primo client_id visto (canonico) e la
 lista degli alias: tutte le letture e i consumi del mese passano dal canonico.
 """
+import hashlib
 import json
 import os
 import threading
@@ -35,6 +45,8 @@ _KEEP_MONTHS = 3
 _IDS_KEEP_DAYS = 120  # retention dei legami installazione->identita di quota
 _ANON = "_anon"
 DEFAULT_LIMIT_CHARS = 10_000_000
+DEFAULT_CAP_CHARS = 25_000_000
+_MAIL_PREFIX = "mail:"  # prefisso delle chiavi per-email nel bucket del mese
 
 
 def _quota_file():
@@ -54,6 +66,32 @@ def limit_chars():
         return max(0, int(float(raw.replace("_", "").replace(",", "."))))
     except (TypeError, ValueError):
         return DEFAULT_LIMIT_CHARS
+
+
+def cap_chars():
+    """Tetto duro mensile di caratteri sulle voci standard. 0 = nessun cap.
+
+    Diverso da `limit_chars()`: oltre la quota il job passa comunque con il
+    gate email, oltre il cap non passa in alcun modo.
+    """
+    raw = str(os.environ.get("ABM_FREE_TTS_CAP_CHARS_PER_MONTH", DEFAULT_CAP_CHARS))
+    try:
+        return max(0, int(float(raw.replace("_", "").replace(",", "."))))
+    except (TypeError, ValueError):
+        return DEFAULT_CAP_CHARS
+
+
+def mail_key(email):
+    """Chiave di quota derivata dall'email del gate ("" se assente o non valida).
+
+    Hash salato con ABM_IP_SALT e troncato: non consente di risalire
+    all'indirizzo, ma e' stabile fra un cookie e il successivo.
+    """
+    e = (email or "").strip().lower()
+    if not e or "@" not in e:
+        return ""
+    salt = str(os.environ.get("ABM_IP_SALT", ""))
+    return _MAIL_PREFIX + hashlib.sha256((salt + e).encode("utf-8")).hexdigest()[:16]
 
 
 def _ids_file():
@@ -232,32 +270,59 @@ def _bucket(d, cid, create=False):
     return b
 
 
+def _used_key(key):
+    """Caratteri del mese corrente sotto una chiave grezza (cid canonico o `mail:`)."""
+    if not key:
+        return 0
+    with _lock:
+        b = _bucket(_load(), key)
+    return int(b["chars"]) if b else 0
+
+
 def used_chars(client_id):
     """Caratteri gia' sintetizzati con voce standard dal client nel mese corrente."""
+    return _used_key(_norm_client(client_id))
+
+
+def _job_charged_key(key, job_id):
+    jid = (job_id or "").strip()
+    if not jid or not key:
+        return False
     with _lock:
-        b = _bucket(_load(), _norm_client(client_id))
-    return int(b["chars"]) if b else 0
+        b = _bucket(_load(), key)
+    return bool(b) and jid in b["jobs"]
 
 
 def job_charged(client_id, job_id):
     """True se `job_id` ha gia' consumato quota per questo client nel mese
     (idempotenza al retry della stessa generazione)."""
-    jid = (job_id or "").strip()
-    if not jid:
-        return False
-    with _lock:
-        b = _bucket(_load(), _norm_client(client_id))
-    return bool(b) and jid in b["jobs"]
+    return _job_charged_key(_norm_client(client_id), job_id)
 
 
-def consume(client_id, chars, job_id, gated=False):
+def _consume_into(d, key, amount, jid, gated):
+    """Somma su una chiave grezza. Caller sotto `_lock`, con `d` da salvare."""
+    b = _bucket(d, key, create=True)
+    if jid and jid in b["jobs"]:
+        return b["chars"]
+    b["chars"] += amount
+    if jid:
+        b["jobs"][jid] = amount
+    if gated:
+        b["gated"] = int(b.get("gated", 0) or 0) + 1
+    return b["chars"]
+
+
+def consume(client_id, chars, job_id, gated=False, email=""):
     """Somma `chars` al bucket del mese. Idempotente per `job_id`.
 
     `gated=True` marca un job accettato OLTRE quota (gate email superato):
     conta comunque i caratteri, cosi' il totale del mese resta veritiero.
-    Ritorna il totale del mese dopo l'operazione.
+    `email` (quella del gate, se c'e') fa sommare gli stessi caratteri anche
+    sulla chiave `mail:<hash>`: e' il contatore che regge il cap quando il
+    cookie cambia. Ritorna il totale del mese sull'identita' di quota.
     """
     cid = _norm_client(client_id)
+    mkey = mail_key(email)
     jid = (job_id or "").strip()
     try:
         amount = max(0, int(chars or 0))
@@ -265,48 +330,57 @@ def consume(client_id, chars, job_id, gated=False):
         amount = 0
     with _lock:
         d = _load()
-        b = _bucket(d, cid, create=True)
-        if jid and jid in b["jobs"]:
-            return b["chars"]
-        b["chars"] += amount
-        if jid:
-            b["jobs"][jid] = amount
-        if gated:
-            b["gated"] = int(b.get("gated", 0) or 0) + 1
+        total = _consume_into(d, cid, amount, jid, gated)
+        if mkey:
+            _consume_into(d, mkey, amount, jid, gated)
         _save(d)
-        return b["chars"]
+        return total
 
 
-def refund(client_id, job_id):
+def _refund_from(d, key, jid):
+    """Storna `jid` da una chiave grezza. Caller sotto `_lock`."""
+    b = _bucket(d, key)
+    if not b or jid not in b["jobs"]:
+        return 0
+    try:
+        amount = max(0, int(b["jobs"].pop(jid) or 0))
+    except (TypeError, ValueError):
+        amount = 0
+    b["chars"] = max(0, b["chars"] - amount)
+    return amount
+
+
+def refund(client_id, job_id, email=""):
     """Storna il contributo di `job_id` (errore server: il job non ha prodotto
-    nulla). No-op se il job non risulta addebiato. Ritorna i chars stornati."""
+    nulla), sull'identita' di quota e sulla chiave email se passata. No-op se
+    il job non risulta addebiato. Ritorna i chars stornati."""
     cid = _norm_client(client_id)
+    mkey = mail_key(email)
     jid = (job_id or "").strip()
     if not jid:
         return 0
     with _lock:
         d = _load()
-        b = _bucket(d, cid)
-        if not b or jid not in b["jobs"]:
-            return 0
-        try:
-            amount = max(0, int(b["jobs"].pop(jid) or 0))
-        except (TypeError, ValueError):
-            amount = 0
-        b["chars"] = max(0, b["chars"] - amount)
-        _save(d)
+        amount = _refund_from(d, cid, jid)
+        moved = _refund_from(d, mkey, jid) if mkey else 0
+        if amount or moved:
+            _save(d)
         return amount
 
 
 def snapshot(client_id):
     """Stato quota per UI/admin."""
     lim = limit_chars()
+    cap = cap_chars()
     used = used_chars(client_id)
     return {
         "used_chars": used,
         "limit_chars": lim,
         "remaining_chars": max(0, lim - used),
         "exhausted": bool(lim > 0 and used >= lim),
+        "cap_chars": cap,
+        "cap_remaining_chars": max(0, cap - used) if cap > 0 else 0,
+        "cap_reached": bool(cap > 0 and used >= cap),
     }
 
 
@@ -344,6 +418,46 @@ def decision(client_id, chars, job_id=None):
     return out
 
 
+def cap_decision(client_id, chars, job_id=None, email=""):
+    """Esito del tetto duro mensile per un job a voce standard di `chars`.
+
+    Non consuma nulla. Blocca se il mese sfonderebbe il cap su almeno una
+    delle due chiavi: identita' di quota canonica oppure hash dell'email del
+    gate. La seconda e' quella che regge alla cancellazione del cookie.
+    `allowed=True` se il cap e' spento, se il job ha gia' addebitato (retry
+    della stessa generazione) o se nessuna delle due chiavi sfonda.
+    `key` dice quale chiave porta il consumo piu' alto ("cid" o "mail"): e'
+    quella che fa scattare il blocco, utile nei log.
+    """
+    try:
+        need = max(0, int(chars or 0))
+    except (TypeError, ValueError):
+        need = 0
+    cap = cap_chars()
+    out = {"allowed": True, "cap_reached": False, "cap_chars": cap,
+           "used_chars": 0, "chars": need, "remaining_chars": 0, "key": ""}
+    if cap <= 0:
+        return out
+    keys = [("cid", _norm_client(client_id))]
+    mkey = mail_key(email)
+    if mkey:
+        keys.append(("mail", mkey))
+    if job_id and any(_job_charged_key(k, job_id) for _, k in keys):
+        return out
+    worst_kind, worst_used = "", 0
+    for kind, key in keys:
+        used = _used_key(key)
+        if kind == "cid" or used > worst_used:
+            worst_kind, worst_used = kind, used
+    out["used_chars"] = worst_used
+    out["remaining_chars"] = max(0, cap - worst_used)
+    out["key"] = worst_kind
+    if worst_used + need > cap:
+        out["allowed"] = False
+        out["cap_reached"] = True
+    return out
+
+
 def month_table():
     """{client_id: {"chars", "jobs": n, "gated": n}} del mese corrente (digest admin)."""
     with _lock:
@@ -353,8 +467,8 @@ def month_table():
         return {}
     out = {}
     for cid, b in month_data.items():
-        if not isinstance(b, dict):
-            continue
+        if not isinstance(b, dict) or cid.startswith(_MAIL_PREFIX):
+            continue  # le chiavi per-email sono contatori del cap, non client
         try:
             chars = max(0, int(b.get("chars", 0) or 0))
         except (TypeError, ValueError):

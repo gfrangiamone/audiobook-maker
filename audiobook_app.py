@@ -14696,11 +14696,42 @@ def api_generate():
     # partenza certa (sotto), come per la quota premium. La chiave include
     # l'epoch: una ri-generazione dello stesso job e' una nuova sintesi.
     job.pop("_free_tts_quota_charge", None)
-    if _reuse_src is None and not _premium_req and free_tts_quota.limit_chars() > 0:
+    if _reuse_src is None and not _premium_req and (
+            free_tts_quota.limit_chars() > 0 or free_tts_quota.cap_chars() > 0):
         _ftq_cid = _quota_client_id(job)
         _ftq_key = f"{job_id}:{job.get('gen_epoch', 0) + 1}"
-        _ftq_dec = free_tts_quota.decision(_ftq_cid, selected_chars, _ftq_key)
+        _ftq_mail = job.get("notify_email") or ""
         _ftq_gated = False
+        # Tetto duro (ABM_FREE_TTS_CAP_CHARS_PER_MONTH): qui, PRIMA del gate
+        # email, perche' nessun ack lo supera. Contato sull'identita' di quota
+        # e sull'hash dell'email del gate: cancellare il cookie non azzera il
+        # contatore (caso 0e82f064, 42 Mchars in un mese con identita' stabile
+        # e quindi nessun verdetto di abuso).
+        _ftq_cap = free_tts_quota.cap_decision(_ftq_cid, selected_chars, _ftq_key,
+                                               email=_ftq_mail)
+        if not _ftq_cap["allowed"]:
+            with _jobs_lock:
+                if job["status"] == "generating":
+                    job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
+            _log_activity(job_id, job.get("original_filename", ""), "QUOTA_CAP",
+                          client_id, client_ip, _voice_for_log(voice),
+                          browser_lang=job.get("browser_lang", ""))
+            _abuse_note(job_id, job, "quota_block", chars=selected_chars,
+                        voice=_voice_for_log(voice))
+            print(f"[{job_id}] free TTS cap: {_ftq_cap['used_chars']:,}+"
+                  f"{selected_chars:,} > {_ftq_cap['cap_chars']:,} chars "
+                  f"(chiave {_ftq_cap['key']}) -> rifiutato", flush=True)
+            return jsonify({
+                "error": "Monthly ceiling for the standard voices reached. The "
+                         "counter resets next month; the premium voices stay "
+                         "available now.",
+                "error_code": "free_tts_cap_reached",
+                "quota_used_chars": _ftq_cap["used_chars"],
+                "quota_cap_chars": _ftq_cap["cap_chars"],
+                "chars_selected": selected_chars,
+            }), 402
+        _ftq_dec = (free_tts_quota.decision(_ftq_cid, selected_chars, _ftq_key)
+                    if free_tts_quota.limit_chars() > 0 else {"allowed": True})
         if not _ftq_dec["allowed"]:
             _ftq_ack = (bool(data.get("quota_ack")) and bool(job.get("notify_email"))
                         and bool(job.get("email_registered")))
@@ -14742,7 +14773,8 @@ def api_generate():
             # Gate superato (email registrata) oppure SMTP assente: il gate
             # sarebbe impassabile, quindi si lascia passare senza marcare.
             _ftq_gated = bool(_ftq_ack)
-        job["_free_tts_quota_charge"] = (_ftq_cid, _ftq_key, selected_chars, _ftq_gated)
+        job["_free_tts_quota_charge"] = (_ftq_cid, _ftq_key, selected_chars,
+                                         _ftq_gated, _ftq_mail)
 
     # Consumo quota: qui, non prima. Fra il claim atomico e questo punto ci
     # sono ancora uscite sincrone che abortiscono il job senza avviarlo
@@ -14774,14 +14806,15 @@ def api_generate():
     # partire). Il riferimento posato sul job serve a _set_job_status per lo
     # storno in caso di errore server.
     _ftq = job.pop("_free_tts_quota_charge", None)
-    if _ftq is not None and free_tts_quota.limit_chars() > 0:
-        _ftq_cid, _ftq_key, _ftq_chars, _ftq_gated = _ftq
+    if _ftq is not None:
+        _ftq_cid, _ftq_key, _ftq_chars, _ftq_gated, _ftq_mail = _ftq
         try:
             _ftq_total = free_tts_quota.consume(_ftq_cid, _ftq_chars, _ftq_key,
-                                                gated=_ftq_gated)
-            job["_free_tts_quota_ref"] = (_ftq_cid, _ftq_key)
+                                                gated=_ftq_gated, email=_ftq_mail)
+            job["_free_tts_quota_ref"] = (_ftq_cid, _ftq_key, _ftq_mail)
             print(f"[{job_id}] free TTS quota consumed: +{_ftq_chars:,} -> "
-                  f"{_ftq_total:,}/{free_tts_quota.limit_chars():,} chars"
+                  f"{_ftq_total:,}/{free_tts_quota.limit_chars():,} chars "
+                  f"(cap {free_tts_quota.cap_chars():,})"
                   f"{' (gated)' if _ftq_gated else ''}", flush=True)
             if _ftq_gated:
                 _log_activity(job_id, job.get("original_filename", ""), "QUOTA_GATE",

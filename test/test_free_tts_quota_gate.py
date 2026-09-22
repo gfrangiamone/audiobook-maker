@@ -159,7 +159,11 @@ def test_smtp_unavailable_lets_job_through_ungated(client, env, monkeypatch):
 
 
 def test_feature_off_never_gates_or_consumes(client, env, monkeypatch):
+    """Quota e cap spenti: nessun gate e nessun contatore. Col solo cap acceso
+    il consumo avviene comunque (vedi test_free_tts_cap.py): e' il contatore
+    che regge il tetto."""
     monkeypatch.setenv("ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH", "0")
+    monkeypatch.setenv("ABM_FREE_TTS_CAP_CHARS_PER_MONTH", "0")
     _mk_job("ftq-off", 50_000)
     assert _post(client, "ftq-off").status_code == 200
     assert ftq.used_chars(CID) == 0

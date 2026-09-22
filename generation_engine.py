@@ -480,7 +480,11 @@ def _set_job_status(job, status):
         _ftq_ref = job.pop("_free_tts_quota_ref", None)
         if status == "error" and _ftq_ref:
             try:
-                _n = free_tts_quota.refund(_ftq_ref[0], _ftq_ref[1])
+                # 3 elementi dalla v3.67: il terzo e' l'email del gate, da
+                # stornare anche sul contatore del cap. Descrittori vecchi
+                # (2 elementi) restano validi.
+                _ftq_mail = _ftq_ref[2] if len(_ftq_ref) > 2 else ""
+                _n = free_tts_quota.refund(_ftq_ref[0], _ftq_ref[1], email=_ftq_mail)
                 if _n:
                     print(f"[{_ftq_ref[1]}] free TTS quota refunded: -{_n:,} chars "
                           f"(server error)", flush=True)
