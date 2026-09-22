@@ -4512,6 +4512,17 @@ function _showAutoBatchNotice(maskedEmail){
   // che riceverà l'audiolibro via email (sull'indirizzo del pagamento) anche
   // se chiude la pagina. Banner persistente nell'area di generazione.
   if(!maskedEmail)return;
+  // Da loggati il banner verde dell'account (#acctForcedNotice, sotto la
+  // progress bar) dice gia' la stessa identica frase: mostrarne un secondo
+  // sopra la barra duplicava il messaggio. Deleghiamo a _acctApplyForcedEmail,
+  // che nasconde questo banner e tiene vivo solo quello dell'account.
+  if(_acctLoggedIn()){
+    const dup=document.getElementById('autoBatchNotice');
+    if(dup)dup.style.display='none';
+    _lockEmailLateBoxAutoBatch(maskedEmail);
+    if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
+    return;
+  }
   let n=document.getElementById('autoBatchNotice');
   if(!n){
     n=document.createElement('div');
@@ -7306,6 +7317,10 @@ function _acctApplyForcedEmail(){
   // stato registrato, mostrare qui la promessa di consegna sarebbe falsa e
   // contraddirebbe il banner ATTENZIONE "se chiudi la pagina viene annullato".
   const canForceGen=on&&wizMode!=='translate'&&(!generating||jobDone||emailRegistered);
+  // Login a meta' job su un auto-batch partito anonimo: il banner del
+  // pagamento resterebbe a fianco di quello dell'account con lo stesso testo.
+  const abn=document.getElementById('autoBatchNotice');
+  if(abn&&canForceGen)abn.style.display='none';
   const notice=document.getElementById('acctForcedNotice');
   if(notice){
     notice.style.display=canForceGen?'block':'none';
