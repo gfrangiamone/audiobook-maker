@@ -1383,6 +1383,76 @@ del 14/09/2026 resta impossibile anche con probabilità 0.99 dal motore 1.
 **Costo**: il motore 1 sostituisce la chiamata LLM, non si aggiunge. Senza
 `ABM_TYPESAFE_API_KEY` nell'unit systemd il comportamento è identico a prima.
 
+### 20.4 Riconoscimento delle sezioni del libro (`section_judge.py`)
+
+Il parser separa il testo dell'opera dall'apparato critico (indice, colophon,
+bibliografia, note, ringraziamenti) con `epub_to_tts.is_content_chapter`:
+circa novanta frasi in **sei** lingue piu' sei soglie tarate a mano. Il TTS
+legge in oltre cinquanta lingue: su un EPUB polacco, turco o giapponese
+nessuna di quelle frasi corrisponde, e l'utente paga la sintesi della
+bibliografia. Nel verso opposto una soglia tarata su prosa italiana scarta in
+silenzio un epilogo in versi — e lo scarto e' **definitivo e invisibile**: la
+sezione non entra mai in `info.chapters`, quindi non compare nemmeno nella UI.
+
+`section_judge` pone la stessa domanda in forma semantica, che non dipende
+dalla lingua: una `Noul` per sezione, tutte in **una sola** richiesta dopo il
+ciclo di parsing (mai una richiesta per capitolo). Le euristiche restano dove
+sono e decidono da sole quando il modulo tace.
+
+**Cosa viene chiesto.** Non il testo intero — costoso e inutile: per ogni
+sezione partono titolo, posizione nel libro, numero di caratteri, un estratto
+di `_EXCERPT_CHARS = 400` caratteri e le stesse misure su cui ragionano le
+euristiche (righe totali, percentuale di righe corte, percentuale di righe con
+cifre), date come **fatti** invece che come soglie: righe corte piu' numeri di
+pagina sono il profilo di un indice in qualunque lingua.
+
+**Chi viene chiesto** (`_pick`): gli scarti per dimensione decrescente — la
+sezione grossa persa in silenzio e' il danno da intercettare — poi solo le
+**estremita'** fra i capitoli tenuti (primi 3 e ultimi 5), perche' l'apparato
+sta in testa o in coda. Misurato sui dieci EPUB di prova: da 0 a 8 domande per
+libro, molto sotto il cap.
+
+| Variabile | Significato | Default | Codice |
+|---|---|:---:|---|
+| `ABM_SECTION_JUDGE_MODE` | `off` \| `observe` \| `on`. Un valore ignoto vale il default, **non** `on`: un errore di battitura nell'unit non deve accendere gli scarti. | `observe` | `section_judge.mode` |
+| `ABM_SECTION_MIN_RECOVER` | Probabilita' da cui in su una sezione scartata **rientra** nel libro. | `0.55` | `section_judge.min_recover` |
+| `ABM_SECTION_MAX_DROP` | Probabilita' sotto cui una sezione tenuta dalle euristiche **esce**. | `0.12` | `section_judge.max_drop` |
+| `ABM_SECTION_MAX_DROP_RATIO` | Quota massima di caratteri del libro che gli scarti possono togliere. | `0.25` | `section_judge.max_drop_ratio` |
+| `ABM_SECTION_MIN_CHARS` | Sotto questa taglia la sezione non vale una domanda (pagine-immagine, frontespizi vuoti). | `200` | `section_judge.min_chars` |
+| `ABM_SECTION_MAX_KEPT_CHARS` | Sopra questa taglia un capitolo **tenuto** non si chiede: l'apparato sfuggito alle liste e' corto per natura. | `20000` | `section_judge.max_kept_chars` |
+| `ABM_SECTION_MAX_QUESTIONS` | Cap di domande per libro. | `24` | `section_judge.max_questions` |
+
+**Le due soglie non sono simmetriche di proposito**: recuperare per sbaglio
+una pagina di ringraziamenti annoia l'ascoltatore, perdere un epilogo rovina
+il libro. Per questo si recupera a `0.55` e si scarta solo sotto `0.12`; la
+banda in mezzo non tocca nulla.
+
+**Guardie deterministiche** (`decide`), indipendenti da cosa risponde il
+servizio:
+
+- gli scarti consumano un **budget** in caratteri (`max_drop_ratio` del libro)
+  e si spendono dal meno probabile in su: un giudizio sbagliato in massa non
+  puo' svuotare il libro;
+- se gli scarti lascerebbero **zero** capitoli, non si scarta niente;
+- una sezione gia' tenuta non puo' essere «recuperata» due volte.
+
+**Rollout in tre modi.** `observe` (default) **calcola e registra** il
+giudizio ma restituisce sempre «nessuna modifica»: i capitoli del libro sono
+esattamente quelli di oggi. Solo `ABM_SECTION_JUDGE_MODE=on` nell'unit systemd
+applica recuperi e scarti. Senza `ABM_TYPESAFE_API_KEY` il modulo e' inerte in
+qualunque modo.
+
+**Audit**: una riga JSONL per libro in
+`ABM_DATA_DIR/section_judge_audit_YYYY-MM.jsonl` con modo, lingua, titolo,
+durata, sezioni recuperate e scartate e, per ogni sezione interrogata,
+`{id, p, was, chars, title}`. E' il dataset con cui tarare le soglie prima di
+passare a `on` — lo stesso percorso usato per `ABM_ABUSE_KILL_ENABLE`.
+
+**Fail-open**: `review_and_decide` non solleva mai; `_apply_section_judgement`
+in `epub_to_tts` cattura qualunque eccezione e stampa
+`[section_judge] giudizio non applicato: …`, lasciando al parser i suoi
+capitoli.
+
 ---
 
 ## Riepilogo
@@ -1404,5 +1474,5 @@ del 14/09/2026 resta impossibile anche con probabilità 0.99 dal motore 1.
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
 | Account e storico (`accounts.py`) | 6 |
-| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso) | 11 |
-| **Totale** | **159** |
+| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro) | 18 |
+| **Totale** | **166** |

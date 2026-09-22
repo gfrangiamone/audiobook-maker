@@ -31,6 +31,14 @@ except ImportError:
     print("ERRORE: ebooklib non installato. Eseguire: pip install ebooklib", file=sys.stderr)
     sys.exit(1)
 
+# Giudizio semantico sulle sezioni (opzionale). Il parser deve restare
+# eseguibile da solo: senza il modulo, o senza il servizio dietro, restano le
+# euristiche di is_content_chapter e non cambia nulla.
+try:
+    import section_judge
+except Exception:      # noqa: BLE001 - mai fatale per il parsing
+    section_judge = None
+
 try:
     from bs4 import BeautifulSoup, Comment, NavigableString, Tag, XMLParsedAsHTMLWarning
     import warnings
@@ -1269,6 +1277,80 @@ def _resegment_chapters_by_markers(chapters: list) -> list:
     return result
 
 
+def _apply_section_judgement(info, dropped):
+    """Rivede gli scarti delle euristiche con il giudizio semantico.
+
+    `dropped` porta le sezioni che `is_content_chapter`/`_is_title_content`
+    hanno tolto dal libro, ognuna con il numero di capitoli gia' emessi prima
+    di lei (`after`): e' quello che permette di rimetterla al suo posto nello
+    spine invece che in fondo. Il giudizio puo' anche togliere un capitolo che
+    le euristiche avevano tenuto — apparato in una lingua che le liste non
+    coprono.
+
+    Non solleva mai e, se non c'e' giudizio, lascia `info.chapters` com'e'.
+    """
+    if section_judge is None or not info.chapters:
+        return
+    try:
+        if not section_judge.enabled():
+            return
+        total = len(info.chapters) + len(dropped)
+        kept = [{"id": f"kept_{i}", "title": ch.title or "",
+                 "text": ch.text or "", "chars": ch.char_count,
+                 "position": _section_position(i, total)}
+                for i, ch in enumerate(info.chapters)]
+        drops = [{"id": f"drop_{i}", "title": d["title"] or "",
+                  "text": d["text"] or "", "chars": len(d["text"] or ""),
+                  "position": _section_position(d["after"], total)}
+                 for i, d in enumerate(dropped)]
+        book = {"title": info.title or "", "author": info.author or "",
+                "language": info.language or "", "sections_total": total}
+        recover, drop = section_judge.review_and_decide(book, drops, kept)
+        if not recover and not drop:
+            return
+
+        drop_idx = {int(sid.split("_")[1]) for sid in drop
+                    if sid.startswith("kept_")}
+        chapters = [ch for i, ch in enumerate(info.chapters)
+                    if i not in drop_idx]
+        # I recuperi vanno reinseriti dal primo all'ultimo: ogni inserimento
+        # sposta di uno le posizioni successive, e `offset` ne tiene conto.
+        back = sorted((dropped[int(sid.split("_")[1])] for sid in recover
+                       if sid.startswith("drop_")),
+                      key=lambda d: d["after"])
+        for offset, d in enumerate(back):
+            pos = min(len(chapters), max(0, d["after"] + offset))
+            chapters.insert(pos, Chapter(
+                index=0, title=d["title"], text=(d["text"] or "").strip(),
+                source_file=d.get("source_file", ""),
+                synthetic_title=d.get("synthetic_title", False)))
+        for i, ch in enumerate(chapters, start=1):
+            ch.index = i
+        info.chapters = chapters
+        if recover:
+            print(f"[section_judge] {len(recover)} sezioni rimesse nel libro",
+                  flush=True)
+        if drop:
+            print(f"[section_judge] {len(drop)} capitoli tolti come apparato",
+                  flush=True)
+    except Exception as e:      # noqa: BLE001 - un libro non si perde per questo
+        print(f"[section_judge] giudizio non applicato: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+
+def _section_position(idx, total):
+    """`front`, `middle` o `back`: l'apparato sta agli estremi del libro, e
+    saperlo cambia la lettura di una sezione breve e piena di numeri."""
+    if total <= 1:
+        return "front"
+    r = idx / float(total)
+    if r <= 0.15:
+        return "front"
+    if r >= 0.80:
+        return "back"
+    return "middle"
+
+
 def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     """Parsa un file EPUB ed estrae capitoli ottimizzati per TTS."""
     # Pre-flight zip-bomb / total-size guard: ebooklib.read_epub() carica tutto
@@ -1321,6 +1403,12 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     #   contenuto reale arrivi dal file orfano successivo dello spine.
     seen_toc_anchor = False
     pending_toc_title = None
+    # Sezioni tolte dalle euristiche: fin qui sparivano in silenzio, senza
+    # arrivare nemmeno alla lista dei capitoli in pagina. Le si tiene da parte
+    # perche' il giudizio semantico possa rivederle (_apply_section_judgement);
+    # `after` e' il numero di capitoli gia' emessi, cioe' il posto a cui una
+    # sezione recuperata deve tornare.
+    dropped_sections = []
     for item in spine_items:
         html_content = item.get_content().decode("utf-8", errors="replace")
         file_name = item.get_name()
@@ -1401,6 +1489,12 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                     # Le intro brevi (o vuote) dei capitoli principali
                     # sono marcatori strutturali utili per il TTS.
                     if not _is_title_content(section_title):
+                        dropped_sections.append({
+                            "title": section_title or "",
+                            "text": clean.strip(),
+                            "after": len(info.chapters),
+                            "source_file": file_name,
+                        })
                         continue
 
                     clean = _remove_duplicate_heading(clean, section_title)
@@ -1510,6 +1604,15 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                     info.chapters.append(chapter)
                     salvaged_any = True
 
+            if not salvaged_any:
+                dropped_sections.append({
+                    "title": "" if title_is_synthetic else (title or ""),
+                    "text": clean.strip(),
+                    "after": len(info.chapters),
+                    "source_file": file_name,
+                    "synthetic_title": title_is_synthetic,
+                })
+
             # Riconciliazione spine↔TOC: un file CON voce TOC e titolo valido
             # ma corpo non-narrativo (tipica pagina-immagine di apertura
             # capitolo) non va scartato silenziosamente: ricorda il titolo TOC
@@ -1538,6 +1641,9 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         )
         info.chapters.append(chapter)
         pending_toc_title = None
+
+    # ── Revisione semantica degli scarti ──
+    _apply_section_judgement(info, dropped_sections)
 
     # ── Riconoscimento automatico capitoli (allineamento al parsing PDF) ──
     # Se l'indice dell'EPUB codifica meno di 4 capitoli di contenuto (le note e
