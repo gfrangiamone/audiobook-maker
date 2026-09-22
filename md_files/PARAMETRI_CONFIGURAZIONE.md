@@ -1565,6 +1565,57 @@ voce, lingua dichiarata, lingua indovinata, probabilita', `mismatch` e
 `applied`. Come per gli altri giudizi, fail-open: SDK assente, servizio giu' o
 qualunque eccezione valgono «nessun giudizio», e il job parte come prima.
 
+### 20.7 Trascrizione del campione voce (`transcript_judge.py`)
+
+Il gate del voice cloning scarta il campione quando il CER fra la frase
+guidata e la trascrizione whisper supera `ABM_VOICE_CLONE_MAX_CER` (0.25).
+Sopra quella soglia pero' stanno due casi opposti: chi legge **un altro
+testo** — da fermare, perche' la frase guidata e' la prova del consenso — e
+chi legge **la frase giusta** con un accento marcato, una cadenza regionale o
+un microfono mediocre. Il secondo riceve «Transcript does not match» e non ha
+modo di capire cosa correggere: ha letto esattamente quello che c'era scritto.
+
+La domanda si pone **solo sopra soglia** (sotto, il campione e' gia'
+accettato) e puo' soltanto *recuperare*: giudizio mancante, ambiguo o
+negativo lasciano il rifiuto dov'era. Volume minimo — i soli campioni
+respinti — e nessuna possibilita' di allentare il gate per un inciampo
+tecnico.
+
+| Variabile | Significato | Default | Codice |
+|---|---|:---:|---|
+| `ABM_TRANSCRIPT_JUDGE_MODE` | `off` \| `observe` \| `on`. Valore ignoto = default, **non** `on`. | `observe` | `transcript_judge.mode` |
+| `ABM_TRANSCRIPT_MIN_SAME` | Probabilita' da cui in su e' la stessa frase. | `0.85` | `transcript_judge.min_same` |
+| `ABM_TRANSCRIPT_MIN_WHOLE` | Probabilita' da cui in su e' letta per intero. | `0.70` | `transcript_judge.min_whole` |
+| `ABM_TRANSCRIPT_MAX_CER` | CER oltre cui non si chiede nulla. | `0.60` | `transcript_judge.max_cer` |
+| `ABM_TRANSCRIPT_MIN_CHARS` | Frase piu' corta: nessun giudizio. | `20` | `transcript_judge.min_chars` |
+
+Due domande in una sola richiesta, e servono **entrambe** le risposte:
+
+| Domanda | Tipo | Cosa decide |
+|---|---|---|
+| `same` | `Noul` | la trascrizione segue la frase guidata parola per parola, e le differenze sono quelle che un trascrittore fa su un accento marcato: omofoni, nomi storpiati, numeri in cifre, punteggiatura |
+| `whole` | `Noul` | l'inizio e la fine della frase hanno un corrispondente nella trascrizione: mezza frase letta bene resta mezza frase |
+
+**Soglie asimmetriche.** `same` e' alta perche' qui si scavalca un gate
+anti-abuso: il costo di un recupero sbagliato (il campione di una voce
+altrui) non e' paragonabile a quello di un recupero mancato (l'utente
+rilegge). `whole` e' piu' bassa perche' li' l'incertezza nasce quasi sempre
+dalla trascrizione che mangia l'ultima parola, e un campione davvero mozzo
+cade comunque sulle misure di durata, che sono deterministiche.
+
+**Quando non si chiede.** Trascrizione vuota (silenzio o audio illeggibile:
+non c'e' niente da riconoscere), frase guidata sotto `MIN_CHARS`, CER sopra
+`MAX_CER`. Sono tre filtri gratuiti prima di qualunque chiamata.
+
+Il recupero lascia in activity log `VOICE_CLONE_TRANSCRIPT_RESCUED` col CER,
+accanto al `VOICE_CLONE_SAMPLE_REJECTED` che avrebbe preso il suo posto.
+L'audit `transcript_judge_audit_YYYY-MM.jsonl` registra **ogni** campione
+giudicato, recuperato e non, con frase, trascrizione, CER e probabilita': e'
+il dataset con cui decidere se accendere `on`, cioe' quante letture corrette
+il CER stava buttando via. Fail-close sul recupero: SDK assente, servizio
+giu' o qualunque eccezione valgono «nessun recupero», e il rifiuto resta
+quello di prima.
+
 ---
 
 ## Riepilogo
@@ -1586,5 +1637,5 @@ qualunque eccezione valgono «nessun giudizio», e il job parte come prima.
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
 | Account e storico (`accounts.py`) | 6 |
-| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM, lingua libro/voce) | 28 |
-| **Totale** | **176** |
+| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM, lingua libro/voce, trascrizione campione) | 33 |
+| **Totale** | **181** |

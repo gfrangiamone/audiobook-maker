@@ -148,6 +148,7 @@ import community_translator
 import community_moderator
 import semantic_judge
 import voice_language_guard
+import transcript_judge
 import pending_jobs
 import db
 import accounts
@@ -10221,9 +10222,19 @@ def api_vc_sample():
                 return _vc_err("asr_unavailable", f"Transcript check unavailable: {e}", 503)
             cer = asr["cer"]
             if cer > voice_clone_audio.max_cer():
-                _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", "vc_gate_transcript")
-                return _vc_err("sample_rejected", "Transcript does not match", 400,
-                               reason="vc_gate_transcript", cer=cer, heard=asr.get("heard", ""))
+                # Sopra soglia stanno due casi diversi: chi legge un altro
+                # testo (da fermare: la frase guidata e' la prova del
+                # consenso) e chi legge la frase giusta con un accento che
+                # whisper non sa trascrivere. Il CER non li distingue, e il
+                # secondo non ha modo di capire cosa ha sbagliato. La domanda
+                # semantica puo' solo recuperare: nel dubbio resta il rifiuto.
+                if transcript_judge.rescues(prompt_text, asr.get("heard", ""), cer,
+                                            lang=lang, client_id=cid):
+                    _vc_log("", "VOICE_CLONE_TRANSCRIPT_RESCUED", f"cer={cer:.2f}")
+                else:
+                    _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", "vc_gate_transcript")
+                    return _vc_err("sample_rejected", "Transcript does not match", 400,
+                                   reason="vc_gate_transcript", cer=cer, heard=asr.get("heard", ""))
         rec = voice_clone.create_draft(cid, lang=lang, locale=locale, gender=gender,
                                        prompt_text=prompt_text, sample_wav=wav, original_path=src,
                                        original_ext=ext, metrics=mt.as_dict(),

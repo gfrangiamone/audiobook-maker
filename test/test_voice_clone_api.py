@@ -12,6 +12,7 @@ import payment
 import storage_backend
 import voice_clone as vc
 import voice_clone_audio as vca
+import transcript_judge as tj
 import voice_clone_demo as vcd
 import voxcpm_catalog
 import voxcpm_tts
@@ -687,6 +688,85 @@ def test_sample_asr_non_disponibile(client, monkeypatch):
     assert r.status_code == 503
     assert r.get_json()["error_code"] == "asr_unavailable"
     assert not [f for f in os.listdir(audiobook_app.UPLOAD_DIR) if f.startswith("vc_")]
+
+
+
+def _asr(monkeypatch, heard, cer):
+    """Campione che passa le misure ma non il confronto col testo letto."""
+    monkeypatch.setenv("ABM_VOICE_CLONE_ASR", "1")
+
+    def prepara(src, dst, **kw):
+        open(dst, "wb").write(b"RIFF-wav")
+        return vca.Metrics(**{f: 0.0 for f in vca.Metrics.__dataclass_fields__})
+    monkeypatch.setattr(vca, "prepare_sample", prepara)
+    monkeypatch.setattr(vca, "check_transcript",
+                        lambda w, l, t, **kw: {"cer": cer, "heard": heard,
+                                               "seconds": 1.0})
+
+
+def _post_sample(client):
+    return client.post("/api/voice_clone/sample", data={
+        "file": (io.BytesIO(b"webm-bytes"), "rec.webm"), "lang": "it",
+        "locale": "it-IT", "gender": "f", "prompt_version": "x"},
+        content_type="multipart/form-data")
+
+
+def test_sample_sopra_soglia_cer_resta_rifiutato(client, monkeypatch):
+    """Senza giudizio (il caso di default: modulo in observe o SDK assente)
+    il gate si comporta esattamente come prima."""
+    _asr(monkeypatch, "tutt altra frase", 0.9)
+    monkeypatch.setattr(tj, "rescues", lambda *a, **k: False)
+    r = _post_sample(client)
+    assert r.status_code == 400
+    assert r.get_json()["reason"] == "vc_gate_transcript"
+    assert not [f for f in os.listdir(audiobook_app.UPLOAD_DIR)
+                if f.startswith("vc_")]
+
+
+def test_sample_recuperato_dal_giudizio_crea_la_bozza(client, monkeypatch):
+    """L'accento marcato che whisper non trascrive: il CER boccia, il
+    giudizio riconosce la frase e il campione vive."""
+    _asr(monkeypatch, "la nebia agli irti coli", 0.35)
+    monkeypatch.setattr(tj, "rescues", lambda *a, **k: True)
+    r = _post_sample(client)
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()["state"] == "sample_ok"
+
+
+def test_il_giudizio_riceve_la_frase_guidata_e_la_trascrizione(client,
+                                                               monkeypatch):
+    """Il confronto e' fra quel che c'era scritto e quel che si e' sentito:
+    passare altro renderebbe il giudizio senza senso."""
+    _asr(monkeypatch, "la nebia agli irti coli", 0.35)
+    visti = {}
+
+    def _rescues(expected, heard, cer, **kw):
+        visti.update({"expected": expected, "heard": heard, "cer": cer,
+                      "lang": kw.get("lang"), "cid": kw.get("client_id")})
+        return False
+    monkeypatch.setattr(tj, "rescues", _rescues)
+    _post_sample(client)
+    assert visti["expected"] == _prompt()
+    assert visti["heard"] == "la nebia agli irti coli"
+    assert visti["cer"] == 0.35 and visti["lang"] == "it"
+    assert visti["cid"] == "cid-uno"
+
+
+def test_col_modulo_al_suo_default_il_gate_non_cambia(client, monkeypatch):
+    """Il modulo vero, senza chiave e in `observe`: e' la configurazione con
+    cui il codice arriva in produzione, e li' il gate deve comportarsi
+    esattamente come prima del giudizio."""
+    import semantic_judge as sj
+    monkeypatch.delenv("ABM_TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("ABM_TRANSCRIPT_JUDGE_MODE", raising=False)
+    sj.reset()
+    try:
+        _asr(monkeypatch, "tutt altra frase", 0.9)
+        r = _post_sample(client)
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "vc_gate_transcript"
+    finally:
+        sj.reset()
 
 
 def test_approve_voce_sparita(client, tmp_path):
