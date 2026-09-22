@@ -1616,6 +1616,55 @@ il CER stava buttando via. Fail-close sul recupero: SDK assente, servizio
 giu' o qualunque eccezione valgono «nessun recupero», e il rifiuto resta
 quello di prima.
 
+### 20.8 Controllo a campione della traduzione (`translation_judge.py`)
+
+Sulla community e' gia' successo (incidente dei commenti non tradotti):
+l'LLM, invece di tradurre, ricopia il verbatim sorgente nello slot di
+un'altra lingua. Nella traduzione di un libro lo stesso inciampo non lascia
+traccia — `call_llm` vede una risposta piena, il chunk si concatena, l'epub
+si scrive — e l'utente scopre **pagando** che un capitolo e' rimasto nella
+lingua di partenza, o che meta' pagina e' finita in un riassunto.
+
+Il volume qui e' per chunk, quindi il controllo e' **a campione: il primo
+chunk di ogni capitolo**. E' il punto dove l'errore si manifesta (un modello
+che ricopia lo fa dall'inizio) e costa un giudizio per capitolo, non per
+pagina.
+
+| Variabile | Significato | Default | Codice |
+|---|---|:---:|---|
+| `ABM_TRJUDGE_MODE` | `off` \| `observe` \| `on`. Valore ignoto = default, **non** `on`. | `observe` | `translation_judge.mode` |
+| `ABM_TRJUDGE_MIN_TRANSLATED` | Probabilita' sotto cui il testo non e' nella lingua di destinazione. | `0.50` | `translation_judge.min_translated` |
+| `ABM_TRJUDGE_MIN_COMPLETE` | Probabilita' sotto cui manca del testo. | `0.35` | `translation_judge.min_complete` |
+| `ABM_TRJUDGE_MIN_CHARS` | Chunk piu' corto: nessun giudizio. | `400` | `translation_judge.min_chars` |
+
+**La copia identica non si chiede a nessuno.** `looks_copied` confronta i due
+testi normalizzati (spazi, maiuscole) e riconosce anche la copia con la coda
+tagliata: e' una certezza, gratis, e non vale una chiamata. La domanda
+semantica serve per il resto — la lingua sbagliata, il riassunto, il
+preambolo, il capitolo tagliato a meta'.
+
+| Domanda | Tipo | Cosa decide |
+|---|---|---|
+| `translated` | `Noul` | la prosa e' nella lingua di `target_language` (nomi propri, titoli e citazioni possono restare come sono) |
+| `complete` | `Noul` | ogni passo del sorgente ha un corrispondente, nello stesso ordine, e la fine del sorgente ha una fine nell'output |
+
+**Soglie asimmetriche.** `MIN_COMPLETE` e' bassa perche' tradurre accorpa
+frasi, sposta incisi e cambia paragrafazione, e un giudice prudente lo legge
+come «qualcosa manca»: il caso da prendere e' il riassunto, che e' netto.
+`MIN_TRANSLATED` sta a meta' strada: un chunk ritentato costa una chiamata,
+un capitolo consegnato nella lingua sbagliata costa il libro.
+
+**Cosa succede al sospetto.** Un solo ritentativo dello stesso chunk in
+`run_translation`, poi si consegna comunque: il conteggio resta in
+`job["tr_suspect_chunks"]` e nell'audit. Meglio un capitolo dubbio di un
+libro pagato e perso, e il giudice puo' sbagliare quanto il traduttore.
+
+L'audit `translation_judge_audit_YYYY-MM.jsonl` registra **ogni** chunk
+campionato, passato e non, con job, capitolo, tentativo, lingue e
+probabilita'. Fail-open come gli altri: SDK assente, servizio giu' o
+qualunque eccezione valgono «nessun giudizio», e la traduzione procede come
+prima di questo modulo.
+
 ---
 
 ## Riepilogo
@@ -1637,5 +1686,5 @@ quello di prima.
 | Quota voci standard / riuso / power user | 3 |
 | Voci campionate (`voice_clone.py`, `voice_clone_audio.py`, `voxcpm_tts.py`) | 13 |
 | Account e storico (`accounts.py`) | 6 |
-| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM, lingua libro/voce, trascrizione campione) | 33 |
-| **Totale** | **181** |
+| Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM, lingua libro/voce, trascrizione campione, traduzione a campione) | 37 |
+| **Totale** | **185** |

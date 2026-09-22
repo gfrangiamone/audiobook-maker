@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import generation_engine as ge
 import translation_core as tc
+import translation_judge as tj
 
 
 class _Ch:
@@ -201,3 +202,88 @@ def test_run_translation_blank_translated_title_falls_back(fake_llm, tmp_path, m
     assert job["translated_title"] == "Libro"  # fallback: originale
     body = Path(job["translated_path"]).read_text(encoding="utf-8")
     assert body.startswith("Libro")  # il fallback originale finisce nel manifest/output
+
+
+# ---------------------------------------------------------------------------
+# Controllo a campione della traduzione (primo chunk di ogni capitolo)
+# ---------------------------------------------------------------------------
+
+def _chiamate(monkeypatch, esiti):
+    """`tj.check` che restituisce gli esiti dati, uno per chiamata."""
+    viste = []
+    coda = list(esiti)
+
+    def _check(source, output, s, t, **kw):
+        viste.append({"source": source, "output": output, "src": s, "dst": t,
+                      "chapter": kw.get("chapter"),
+                      "attempt": kw.get("attempt", 1)})
+        return coda.pop(0) if coda else ""
+    monkeypatch.setattr(tj, "check", _check)
+    return viste
+
+
+def test_il_campione_e_un_chunk_per_capitolo(fake_llm, tmp_path, monkeypatch):
+    """Il costo del controllo deve restare per capitolo, non per pagina: un
+    capitolo spezzato in quattro chunk si giudica una volta sola."""
+    chiamate = []
+    monkeypatch.setattr(tc, "call_llm",
+                        lambda p, s, u, **kw: chiamate.append(u) or u.upper())
+    monkeypatch.setattr(tc, "chunk_chars", lambda: 40)
+    job_id, job = _seed_job(tmp_path)
+    job["info"].chapters[0].text = "\n\n".join(
+        f"Paragrafo numero {n}, abbastanza lungo da stare da solo."
+        for n in range(4))
+    job["tr_params"]["selected_chapters"] = [1]
+    viste = _chiamate(monkeypatch, [])
+    ge.run_translation(job_id)
+    assert job["status"] == "translated"
+    assert len(chiamate) > 1
+    assert [v["chapter"] for v in viste] == ["cap 1"]
+
+
+def test_il_chunk_sospetto_si_ritenta_una_volta(fake_llm, tmp_path, monkeypatch):
+    chiamate = []
+    monkeypatch.setattr(tc, "call_llm",
+                        lambda p, s, u, **kw: chiamate.append(u) or u.upper())
+    job_id, job = _seed_job(tmp_path)
+    job["tr_params"]["selected_chapters"] = [1]
+    viste = _chiamate(monkeypatch, ["untranslated", ""])
+    ge.run_translation(job_id)
+    assert chiamate == ["Testo uno.", "Testo uno."]
+    assert [v["attempt"] for v in viste] == [1, 2]
+    assert job["status"] == "translated"
+    assert job.get("tr_suspect_chunks") == 0
+
+
+def test_un_secondo_giro_ancora_sospetto_consegna_e_conta(fake_llm, tmp_path,
+                                                          monkeypatch):
+    """Meglio un capitolo dubbio che un libro pagato e perso: il conteggio
+    resta sul job, la traduzione arriva."""
+    job_id, job = _seed_job(tmp_path)
+    job["tr_params"]["selected_chapters"] = [1]
+    _chiamate(monkeypatch, ["untranslated", "untranslated"])
+    ge.run_translation(job_id)
+    assert job["status"] == "translated"
+    assert job["tr_suspect_chunks"] == 1
+
+
+def test_senza_sospetti_non_si_ritenta_niente(fake_llm, tmp_path, monkeypatch):
+    chiamate = []
+    monkeypatch.setattr(tc, "call_llm",
+                        lambda p, s, u, **kw: chiamate.append(u) or u.upper())
+    job_id, job = _seed_job(tmp_path)
+    _chiamate(monkeypatch, [])
+    ge.run_translation(job_id)
+    assert chiamate == ["Testo uno.", "Testo due."]
+    assert "tr_suspect_chunks" not in job
+
+
+def test_il_giudizio_confronta_sorgente_e_traduzione(fake_llm, tmp_path,
+                                                     monkeypatch):
+    job_id, job = _seed_job(tmp_path)
+    job["tr_params"]["selected_chapters"] = [1]
+    viste = _chiamate(monkeypatch, [])
+    ge.run_translation(job_id)
+    assert viste[0]["source"] == "Testo uno."
+    assert viste[0]["output"] == "TESTO UNO."
+    assert viste[0]["src"] == "it" and viste[0]["dst"] == "en"

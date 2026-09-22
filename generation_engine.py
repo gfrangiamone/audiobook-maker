@@ -42,6 +42,7 @@ import free_tts_quota
 import output_reuse
 import abuse_watch
 import llm_output_judge
+import translation_judge
 import storage_backend
 import storage_tiering
 import translation_core
@@ -3448,17 +3449,42 @@ def run_translation(job_id):
                 ch["text"], translation_core.chunk_chars())
             parts = []
             done_in_chapter = 0
-            for chunk in chunks:
+            for ci, chunk in enumerate(chunks):
                 base = done_in_chapter
 
                 def _pcb(n, _base=base):
                     job["tr_streamed_chars"] = job["tr_processed_chars"] + _base + n
 
-                parts.append(translation_core.call_llm(
-                    provider, system_prompt, chunk,
-                    model=model, usage=usage,
-                    label=f"[cap {i + 1}]",
-                    progress_cb=_pcb, cancel_cb=_cancelled, log=_log))
+                def _traduci():
+                    return translation_core.call_llm(
+                        provider, system_prompt, chunk,
+                        model=model, usage=usage,
+                        label=f"[cap {i + 1}]",
+                        progress_cb=_pcb, cancel_cb=_cancelled, log=_log)
+
+                out = _traduci()
+                # Campione: solo il primo chunk del capitolo. Un modello che
+                # ricopia il sorgente invece di tradurlo lo fa dall'inizio, e
+                # qui il controllo costa un giudizio per capitolo invece che
+                # per pagina. Un solo ritentativo: se il secondo giro non
+                # convince si consegna comunque, contato in tr_suspect_chunks
+                # — meglio un capitolo dubbio che un libro pagato e perso.
+                if ci == 0:
+                    etichetta = f"cap {i + 1}"
+                    motivo = translation_judge.check(
+                        chunk, out, source, target, job_id=job_id,
+                        chapter=etichetta)
+                    if motivo:
+                        _log(f"traduzione sospetta ({motivo}) su {etichetta}: "
+                             f"ritento il primo chunk")
+                        job["tr_suspect_chunks"] = job.get("tr_suspect_chunks", 0) + 1
+                        secondo = _traduci()
+                        if not translation_judge.check(
+                                chunk, secondo, source, target, job_id=job_id,
+                                chapter=etichetta, attempt=2):
+                            job["tr_suspect_chunks"] -= 1
+                        out = secondo
+                parts.append(out)
                 done_in_chapter += len(chunk)
             out_chapters.append({
                 "index": ch["index"],

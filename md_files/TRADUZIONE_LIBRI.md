@@ -66,7 +66,10 @@ Parametri: `PARAMETRI_CONFIGURAZIONE.md` §3.6.2.
    applicata anche a `/api/optimize`), consumo voucher/PayPal (importo = `due_eur`),
    spawn thread. Activity log: `TRANSLATE`.
 5. **Esecuzione** (`run_translation`): per capitolo selezionato → chunk 20k paragraph-aware
-   → `call_llm`; titoli in coda; scrittura in `<job_dir>/output_<epoch>/<nome>.<fmt>`;
+   → `call_llm`; **controllo a campione** sul primo chunk di ogni capitolo
+   (`translation_judge.check`: e' nella lingua di destinazione? c'e' tutto?) con un
+   solo ritentativo, poi si consegna comunque contando `tr_suspect_chunks`;
+   titoli in coda; scrittura in `<job_dir>/output_<epoch>/<nome>.<fmt>`;
    campi job `translated_path/name/chapters/lang/optimized`. Heartbeat 60s via `last_poll`
    (SSE lo aggiorna; **bypass se `email_registered`**); annullo via `tr_cancelled`
    (endpoint `POST /api/translate_cancel`).
