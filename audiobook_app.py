@@ -21813,6 +21813,26 @@ def _ensure_background_threads():
         )
         print(f"[startup] Giudizi semantici: off ({_sj_why}); moderazione e "
               f"traduzioni community sul motore LLM di ripiego")
+    # Il modo dei singoli punti non si deduce dalla riga sopra: con la chiave
+    # presente e i modi al default `observe` il servizio viene interrogato e
+    # l'audit si riempie, ma nessuno di questi controlli tocca quello che
+    # l'utente riceve. In prod le ABM_* stanno nell'unit e la shell ssh non
+    # le eredita, quindi il log e' l'unico posto dove leggerle davvero.
+    _sj_punti = []
+    for _sj_nome, _sj_mod in (("sezioni", "section_judge"),
+                              ("output", "llm_output_judge"),
+                              ("lingua-voce", "voice_language_guard"),
+                              ("trascrizione", "transcript_judge"),
+                              ("traduzione", "translation_judge")):
+        try:
+            _sj_m = __import__(_sj_mod)
+            _sj_punti.append(f"{_sj_nome}={_sj_m.mode()}"
+                             f"{'' if _sj_m.enabled() else '*'}")
+        except Exception as _sj_e:      # noqa: BLE001 - mai bloccante
+            _sj_punti.append(f"{_sj_nome}=?({type(_sj_e).__name__})")
+    print(f"[startup] Modi dei giudizi: {', '.join(_sj_punti)} "
+          f"(* = inerte, il canale e' spento; solo `on` agisce, "
+          f"`observe` misura e basta)")
 
 _init_log_dedup()
 _ensure_background_threads()

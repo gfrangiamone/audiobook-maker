@@ -1322,6 +1322,15 @@ Modulo **foglia** (stdlib + `typesafe-sdk`, nessun import dal progetto) che inca
 | `last_error()` | `(timestamp, messaggio)` dell'ultimo errore | per la console admin |
 | `sdk_import_error()` | messaggio dell'import fallito, vuoto se ok | l'app si avvia anche senza SDK installato |
 
+**Come si legge lo stato reale.** Le `ABM_*` stanno nell'unit systemd e la shell ssh non le eredita, quindi l'unico posto dove verificarle e' il log di avvio. Due righe, subito dopo quella dell'anti-abuso:
+
+```
+[startup] Giudizi semantici: on (timeout 15s)
+[startup] Modi dei giudizi: sezioni=observe*, output=on, lingua-voce=on, trascrizione=observe*, traduzione=on (* = inerte, il canale e' spento; solo `on` agisce, `observe` misura e basta)
+```
+
+La prima riga e' il **canale** (SDK, chiave, kill-switch); con `off` ne dice il motivo. La seconda e' il modo di ogni punto: la chiave da sola non fa agire nessuno, perche' il default e' `observe` ovunque. L'asterisco segnala il caso che altrimenti si legge male — modo `on` ma canale spento, cioe' nessun giudizio nonostante la configurazione dica di si'.
+
 ### 20.1 Moderazione commenti community (`community_moderator.py`)
 
 `validate()` ha tre step, in ordine:
