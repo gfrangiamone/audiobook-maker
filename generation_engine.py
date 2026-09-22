@@ -687,6 +687,42 @@ class _CancelledError(Exception):
     pass
 
 
+class _JobDirGoneError(Exception):
+    """La job dir e' sparita sotto il thread mentre sintetizzava.
+
+    Non e' un guasto del motore vocale: il cleanup per heartbeat perso
+    cancella la cartella del job, e un chunk gia' in volo se ne accorge solo
+    quando prova a scrivere il proprio file. I ritentativi del motore durano
+    piu' del controllo di annullamento a inizio giro, quindi fra il controllo
+    e la scrittura c'e' una finestra in cui la cartella puo' sparire.
+
+    Distinguerla serve a due cose: non ritentare una scrittura su un path che
+    non esiste piu' (il fallback al silenzio fallirebbe sullo stesso path,
+    rilanciando a cascata) e non registrare come «morte silenziosa» una
+    cancellazione voluta. L'esito del job resta `error` — non e' stato
+    consegnato niente, e su `error` la quota gratuita viene stornata.
+    """
+    pass
+
+
+def _job_dir_gone(job, work_dir):
+    """True se la cartella del job e' stata cancellata sotto il thread.
+
+    Servono due indizi insieme. Il solo flag di annullamento non basta:
+    l'annullamento chiesto dall'utente lascia la cartella al suo posto. La
+    sola cartella mancante nemmeno: un path di consegna andato a buon fine
+    puo' averla ripulita, e li' un guasto va ancora registrato come tale.
+    Insieme, invece, descrivono un caso solo — il cleanup posa il flag e poi
+    cancella — e permettono di distinguerlo da un guasto vero.
+    """
+    try:
+        if not (job or {}).get("cancelled"):
+            return False
+        return not os.path.isdir(str(work_dir))
+    except Exception:      # noqa: BLE001 - un dubbio vale «non e' sparita»
+        return False
+
+
 class _SimpleChapter:
     """Lightweight chapter object compatible with BookInfo.chapters interface."""
     def __init__(self, index, title, text):
@@ -6615,6 +6651,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 try:
                     result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
                 except Exception as _edge_err:
+                    # Prima di ripiegare sul silenzio: la cartella esiste
+                    # ancora? Se il cleanup l'ha cancellata mentre il chunk
+                    # era in volo, `_generate_silence_mp3` scriverebbe sullo
+                    # stesso path mancante e rilancerebbe dentro il gestore,
+                    # uccidendo il thread con un traceback incatenato al
+                    # posto di una diagnosi.
+                    if _job_dir_gone(job, work_dir):
+                        raise _JobDirGoneError(
+                            f"chunk {i}: work dir rimossa durante la sintesi "
+                            f"(cancel_reason="
+                            f"{job.get('cancel_reason') or 'ignoto'}, "
+                            f"causa: {type(_edge_err).__name__})") from None
                     print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
                     import traceback
                     traceback.print_exc()
@@ -7740,16 +7788,33 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] {e} — thread terminato senza toccare lo stato")
             return
 
-        # Marker forense: preserva la work_dir per analisi post-mortem
-        # anche se il codice di cleanup successivo dovesse fallire.
-        _write_forensic_marker(
-            job_id,
-            kind="silent_death",
-            outcome="error",
-            reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
-        )
-        print(f"[{job_id}] FORENSIC: silent thread death — "
-              f"{type(e).__name__}: {e}")
+        # La job dir cancellata sotto il thread non e' una morte silenziosa:
+        # e' il cleanup per heartbeat perso, cioe' un annullamento deliberato
+        # che il thread scopre in ritardo. Il doppio requisito (flag di
+        # annullamento *e* cartella mancante) tiene fuori il caso in cui la
+        # dir sia stata ripulita da un path di consegna andato a buon fine.
+        _dir_gone = (isinstance(e, _JobDirGoneError)
+                     or _job_dir_gone(job, work_dir))
+
+        if _dir_gone:
+            # Nessun marker forense: non c'e' piu' una work_dir da preservare,
+            # e la riga sotto dice gia' tutto quello che serve a leggere il
+            # log. L'esito resta `error` (nulla consegnato -> storno della
+            # quota gratuita e rimborso dei job premium, piu' sotto).
+            print(f"[{job_id}] generazione interrotta: la cartella del job e' "
+                  f"stata rimossa dal cleanup mentre la sintesi era in corso "
+                  f"— {type(e).__name__}: {e}")
+        else:
+            # Marker forense: preserva la work_dir per analisi post-mortem
+            # anche se il codice di cleanup successivo dovesse fallire.
+            _write_forensic_marker(
+                job_id,
+                kind="silent_death",
+                outcome="error",
+                reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
+            )
+            print(f"[{job_id}] FORENSIC: silent thread death — "
+                  f"{type(e).__name__}: {e}")
 
         # Quota Gemini (RPD/daily) e budget guard interno: il job e' interrotto
         # a meta'. L'audio parziale non viene consegnato, quindi l'operazione e'
@@ -7898,8 +7963,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             except Exception as _ref_err:
                 print(f"[{job_id}] VoxCPM refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_refunded")
-        import traceback
-        traceback.print_exc()
+        if not _dir_gone:
+            import traceback
+            traceback.print_exc()
     finally:
         # Rete di sicurezza: un'eccezione o una cancellazione a meta' encode non
         # deve lasciare uno slot di assembly occupato per sempre. release() e'
