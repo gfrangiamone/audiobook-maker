@@ -17,7 +17,7 @@ restano dove sono e decidono da sole quando questo modulo tace.
 Modulo **foglia**: stdlib + `semantic_judge`, nessun import dal progetto.
 
 Configurazione (env):
-  ABM_SECTION_JUDGE_MODE     off | observe | on          (default: observe)
+  ABM_SECTION_JUDGE_MODE     off | observe | recover | on  (default: observe)
   ABM_SECTION_MIN_RECOVER    p da cui in su si recupera   (default: 0.55)
   ABM_SECTION_MAX_DROP       p sotto cui si scarta        (default: 0.12)
   ABM_SECTION_MAX_DROP_RATIO quota max di caratteri scartabili (default: 0.25)
@@ -42,7 +42,12 @@ import semantic_judge as sj
 _EXCERPT_CHARS = 400
 
 _DEFAULT_MODE = "observe"
-_MODES = ("off", "observe", "on")
+# La rampa e' in quattro gradini, non un interruttore: i due errori non
+# pesano uguale. `recover` rimette nel libro le sezioni che le euristiche
+# avevano perso e **ignora** gli scarti: il peggio che puo' fare e' leggere
+# una pagina di ringraziamenti in piu' — che l'utente vede nella lista dei
+# capitoli — mentre uno scarto sbagliato e' invisibile e definitivo.
+_MODES = ("off", "observe", "recover", "on")
 
 
 def _env(name, default=""):
@@ -64,8 +69,9 @@ def _env_int(name, default):
 
 
 def mode():
-    """`off`, `observe` o `on`. Un valore ignoto vale il default, non `on`:
-    un errore di battitura nell'unit systemd non deve accendere gli scarti."""
+    """`off`, `observe`, `recover` o `on`. Un valore ignoto vale il default,
+    non `on`: un errore di battitura nell'unit systemd non deve accendere gli
+    scarti."""
     m = _env("ABM_SECTION_JUDGE_MODE", _DEFAULT_MODE).lower()
     return m if m in _MODES else _DEFAULT_MODE
 
@@ -75,7 +81,16 @@ def enabled():
 
 
 def applies():
-    """True se il verdetto cambia davvero i capitoli del libro."""
+    """True se il verdetto cambia davvero i capitoli del libro.
+
+    Vero in `recover` e in `on`: in entrambi i modi le sezioni recuperate
+    rientrano nel libro."""
+    return mode() in ("recover", "on")
+
+
+def drops_apply():
+    """True solo in `on`: togliere un capitolo e' l'unica mossa irreversibile
+    e invisibile all'utente, quindi ha un gradino tutto suo."""
     return mode() == "on"
 
 
@@ -403,6 +418,8 @@ def write_audit(book, verdicts, dropped, kept, recover, drop, *, elapsed=0.0,
             "title": (book or {}).get("title", "")[:120],
             "sections_total": (book or {}).get("sections_total", 0),
             "elapsed_s": round(float(elapsed), 2),
+            "applied": ("recover+drop" if drops_apply()
+                        else "recover" if applies() else "none"),
             "thresholds": thresholds(),
             "kept_total": len(kept or []),
             "dropped_total": len(dropped or []),
@@ -437,7 +454,9 @@ def review_and_decide(book, dropped, kept, *, timeout=None):
     """Giro completo: giudizio, guardie, audit. Ritorna `(recover, drop)`.
 
     In modo `observe` l'audit viene scritto e le liste tornano vuote: si
-    misura su libri veri senza toccare quello che l'utente riceve.
+    misura su libri veri senza toccare quello che l'utente riceve. In modo
+    `recover` tornano i soli recuperi: gli scarti restano una proposta
+    registrata nell'audit, dove si continuano a tarare.
     """
     t0 = time.monotonic()
     stats = {}
@@ -449,4 +468,6 @@ def review_and_decide(book, dropped, kept, *, timeout=None):
                 elapsed=time.monotonic() - t0, stats=stats)
     if not applies():
         return [], []
+    if not drops_apply():
+        return recover, []
     return recover, drop

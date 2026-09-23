@@ -87,6 +87,21 @@ def test_unknown_mode_does_not_switch_on(monkeypatch):
     assert sjg.applies() is False
 
 
+def test_recover_is_a_mode_of_its_own(monkeypatch):
+    """Il gradino intermedio: i recuperi entrano nel libro, gli scarti no."""
+    monkeypatch.setenv("ABM_SECTION_JUDGE_MODE", "recover")
+    assert sjg.mode() == "recover"
+    assert sjg.applies() is True
+    assert sjg.drops_apply() is False
+
+
+def test_only_on_removes_chapters(monkeypatch):
+    for m, drops in (("off", False), ("observe", False),
+                     ("recover", False), ("on", True)):
+        monkeypatch.setenv("ABM_SECTION_JUDGE_MODE", m)
+        assert sjg.drops_apply() is drops, m
+
+
 def test_off_asks_nothing(env, monkeypatch):
     monkeypatch.setenv("ABM_SECTION_JUDGE_MODE", "off")
     with patch.object(sj, "ask",
@@ -393,6 +408,50 @@ def test_on_applies_and_audits(env):
 
 
 @requires_sdk
+def test_on_also_removes_chapters(env):
+    """Il gradino piu' alto: recuperi e scarti insieme."""
+    drops = [section("drop_0", chars=5000)]
+    kept = [section("kept_0", chars=5000), section("kept_1", chars=90_000)]
+    with patch.object(sj, "ask",
+                      return_value=response({"drop_0": 0.95, "kept_0": 0.02})):
+        recover, drop = sjg.review_and_decide({}, drops, kept)
+    assert recover == ["drop_0"] and drop == ["kept_0"]
+
+
+@requires_sdk
+def test_recover_mode_applies_recoveries_only(env, monkeypatch):
+    """`recover` prende tutto il valore misurato senza la mossa
+    irreversibile: la sezione persa rientra, il capitolo sotto soglia resta
+    dov'e' e lo scarto resta una proposta registrata nell'audit."""
+    monkeypatch.setenv("ABM_SECTION_JUDGE_MODE", "recover")
+    drops = [section("drop_0", chars=5000)]
+    kept = [section("kept_0", chars=5000), section("kept_1", chars=90_000)]
+    with patch.object(sj, "ask",
+                      return_value=response({"drop_0": 0.95, "kept_0": 0.02})):
+        recover, drop = sjg.review_and_decide({}, drops, kept)
+    assert recover == ["drop_0"]
+    assert drop == [], "in `recover` nessun capitolo esce dal libro"
+    row = json.loads(_audit_lines(env)[0])
+    assert row["mode"] == "recover" and row["applied"] == "recover"
+    assert row["drop"] == ["kept_0"], "lo scarto si continua a tarare"
+
+
+@requires_sdk
+def test_the_audit_says_what_was_applied(env, monkeypatch):
+    """Tre modi, tre righe: l'analisi non deve indovinare che cosa il libro
+    ha davvero ricevuto."""
+    seen = []
+    for m in ("observe", "recover", "on"):
+        monkeypatch.setenv("ABM_SECTION_JUDGE_MODE", m)
+        with patch.object(sj, "ask", return_value=response({"drop_0": 0.95})):
+            sjg.review_and_decide({}, [section("drop_0")],
+                                  [section("kept_0"), section("kept_1")])
+    for line in _audit_lines(env):
+        seen.append(json.loads(line)["applied"])
+    assert seen == ["none", "recover", "recover+drop"]
+
+
+@requires_sdk
 def test_audit_records_thresholds_totals_and_cuts(env, monkeypatch):
     """Le soglie con cui la riga e' nata, i totali del libro e i tagli: senza
     di loro due finestre di misura non si possono confrontare, e non si sa se
@@ -541,6 +600,23 @@ def test_a_parser_numbered_chapter_survives_the_judgement(env):
     with patch.object(sj, "ask", return_value=response({"kept_2": 0.01})):
         E._apply_section_judgement(info, [])
     assert [c.title for c in info.chapters] == ["Jeden", "Dwa", "Sezione 3"]
+
+
+@requires_sdk
+def test_recover_mode_does_not_touch_the_parser_chapters(env, monkeypatch):
+    """Dal lato parser: la sezione persa torna al suo posto, il capitolo che
+    il giudizio darebbe per apparato resta nel libro."""
+    monkeypatch.setenv("ABM_SECTION_JUDGE_MODE", "recover")
+    info = SimpleNamespace(
+        title="T", author="A", language="tr",
+        chapters=[E.Chapter(index=1, title="Bir", text="a" * 5000),
+                  E.Chapter(index=2, title="Kaynakça", text="c" * 5000)])
+    dropped = [{"title": "Sonsöz", "text": "d" * 5000, "after": 2}]
+    with patch.object(sj, "ask",
+                      return_value=response({"drop_0": 0.9, "kept_1": 0.01})):
+        E._apply_section_judgement(info, dropped)
+    assert [c.title for c in info.chapters] == ["Bir", "Kaynakça", "Sonsöz"]
+    assert [c.index for c in info.chapters] == [1, 2, 3]
 
 
 def test_parser_survives_a_broken_judgement(env, monkeypatch):

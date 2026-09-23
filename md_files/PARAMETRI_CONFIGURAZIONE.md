@@ -1437,7 +1437,7 @@ saturato su 3 libri prima di passare a 32.
 
 | Variabile | Significato | Default | Codice |
 |---|---|:---:|---|
-| `ABM_SECTION_JUDGE_MODE` | `off` \| `observe` \| `on`. Un valore ignoto vale il default, **non** `on`: un errore di battitura nell'unit non deve accendere gli scarti. | `observe` | `section_judge.mode` |
+| `ABM_SECTION_JUDGE_MODE` | `off` \| `observe` \| `recover` \| `on`. Un valore ignoto vale il default, **non** `on`: un errore di battitura nell'unit non deve accendere gli scarti. | `observe` | `section_judge.mode` |
 | `ABM_SECTION_MIN_RECOVER` | Probabilita' da cui in su una sezione scartata **rientra** nel libro. | `0.55` | `section_judge.min_recover` |
 | `ABM_SECTION_MAX_DROP` | Probabilita' sotto cui una sezione tenuta dalle euristiche **esce**. In produzione `0.08`: a `0.12` finivano sotto soglia capitoli veri (un `EPILOGUE` a `p=0.12`). | `0.12` | `section_judge.max_drop` |
 | `ABM_SECTION_MAX_DROP_RATIO` | Quota massima di caratteri del libro che gli scarti possono togliere. | `0.25` | `section_judge.max_drop_ratio` |
@@ -1469,11 +1469,31 @@ servizio:
 - se gli scarti lascerebbero **zero** capitoli, non si scarta niente;
 - una sezione gia' tenuta non puo' essere «recuperata» due volte.
 
-**Rollout in tre modi.** `observe` (default) **calcola e registra** il
-giudizio ma restituisce sempre «nessuna modifica»: i capitoli del libro sono
-esattamente quelli di oggi. Solo `ABM_SECTION_JUDGE_MODE=on` nell'unit systemd
-applica recuperi e scarti. Senza `ABM_TYPESAFE_API_KEY` il modulo e' inerte in
-qualunque modo.
+**Rollout in quattro modi**, perche' i due errori non pesano uguale:
+
+| Modo | Recuperi | Scarti | Audit |
+|---|:---:|:---:|:---:|
+| `off` | no | no | no (non chiede niente) |
+| `observe` (default) | no | no | si' |
+| `recover` | **si'** | no | si' (lo scarto resta una proposta) |
+| `on` | si' | **si'** | si' |
+
+`recover` e' il gradino intermedio da cui passare prima di `on`: prende tutto
+il valore misurato — in produzione i recuperi valevano 106 sezioni e 1,147
+Mchar in un mese, fra cui capitoli singoli da 99k, 83k e 74k caratteri buttati
+in silenzio — **senza** la mossa irreversibile. Un recupero sbagliato fa
+leggere una pagina di ringraziamenti e l'utente la vede nella lista dei
+capitoli; uno scarto sbagliato e' invisibile (la sezione non entra mai in
+`info.chapters`) e definitivo. `applies()` e' vero in `recover` e in `on`,
+`drops_apply()` solo in `on`; la riga di audit porta `applied` =
+`none` \| `recover` \| `recover+drop`, cosi' l'analisi non deve indovinare che
+cosa il libro ha davvero ricevuto.
+
+Senza `ABM_TYPESAFE_API_KEY` il modulo e' inerte in qualunque modo. `mode()`
+rilegge l'env a ogni chiamata, ma l'env sta **nell'unit systemd**: tornare
+indietro richiede `daemon-reload` + `restart`, quindi una finestra senza
+generazioni in volo (il restart azzera `jobs{}`; i job batch-orfani rientrano
+dal recovery riusando i chunk su disco).
 
 **Audit**: una riga JSONL per libro in
 `ABM_DATA_DIR/section_judge_audit_YYYY-MM.jsonl` con modo, lingua, titolo,
