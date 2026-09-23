@@ -1429,18 +1429,22 @@ pagina sono il profilo di un indice in qualunque lingua.
 **Chi viene chiesto** (`_pick`): gli scarti per dimensione decrescente — la
 sezione grossa persa in silenzio e' il danno da intercettare — poi solo le
 **estremita'** fra i capitoli tenuti (primi 3 e ultimi 5), perche' l'apparato
-sta in testa o in coda. Misurato sui dieci EPUB di prova: da 0 a 8 domande per
-libro, molto sotto il cap.
+sta in testa o in coda. Un capitolo tenuto **sotto `ABM_SECTION_MIN_DROP_CHARS`
+non si chiede affatto**: la domanda si paga e la risposta non potrebbe
+comunque toglierlo dal libro. Misurato sui dieci EPUB di prova: da 0 a 8
+domande per libro; in produzione (302 libri, settembre 2026) mediana 5 e cap
+saturato su 3 libri prima di passare a 32.
 
 | Variabile | Significato | Default | Codice |
 |---|---|:---:|---|
 | `ABM_SECTION_JUDGE_MODE` | `off` \| `observe` \| `on`. Un valore ignoto vale il default, **non** `on`: un errore di battitura nell'unit non deve accendere gli scarti. | `observe` | `section_judge.mode` |
 | `ABM_SECTION_MIN_RECOVER` | Probabilita' da cui in su una sezione scartata **rientra** nel libro. | `0.55` | `section_judge.min_recover` |
-| `ABM_SECTION_MAX_DROP` | Probabilita' sotto cui una sezione tenuta dalle euristiche **esce**. | `0.12` | `section_judge.max_drop` |
+| `ABM_SECTION_MAX_DROP` | Probabilita' sotto cui una sezione tenuta dalle euristiche **esce**. In produzione `0.08`: a `0.12` finivano sotto soglia capitoli veri (un `EPILOGUE` a `p=0.12`). | `0.12` | `section_judge.max_drop` |
 | `ABM_SECTION_MAX_DROP_RATIO` | Quota massima di caratteri del libro che gli scarti possono togliere. | `0.25` | `section_judge.max_drop_ratio` |
-| `ABM_SECTION_MIN_CHARS` | Sotto questa taglia la sezione non vale una domanda (pagine-immagine, frontespizi vuoti). | `200` | `section_judge.min_chars` |
-| `ABM_SECTION_MAX_KEPT_CHARS` | Sopra questa taglia un capitolo **tenuto** non si chiede: l'apparato sfuggito alle liste e' corto per natura. | `20000` | `section_judge.max_kept_chars` |
-| `ABM_SECTION_MAX_QUESTIONS` | Cap di domande per libro. | `24` | `section_judge.max_questions` |
+| `ABM_SECTION_MIN_CHARS` | Sotto questa taglia la sezione non vale una domanda (pagine-immagine, frontespizi vuoti). Vale per i **recuperi**: `Epigraph` (233 char) e `Author's Note` (261) sono corti e sono opera dell'autore. | `200` | `section_judge.min_chars` |
+| `ABM_SECTION_MIN_DROP_CHARS` | Sotto questa taglia un capitolo **tenuto** non si scarta e non si chiede. Misurato in `observe`: 121 dei 171 scarti proposti stavano sotto i mille caratteri e valevano 59.000 char in tutto, i 18 sopra i tremila ne valevano 134.000. Le briciole sono occhielli e pagine di apertura: il rischio non vale i secondi risparmiati. | `600` | `section_judge.min_drop_chars` |
+| `ABM_SECTION_MAX_KEPT_CHARS` | Sopra questa taglia un capitolo **tenuto** non si chiede: l'apparato sfuggito alle liste e' corto per natura. In produzione `25000`. | `20000` | `section_judge.max_kept_chars` |
+| `ABM_SECTION_MAX_QUESTIONS` | Cap di domande per libro. In produzione `32`. | `24` | `section_judge.max_questions` |
 
 **Le due soglie non sono simmetriche di proposito**: recuperare per sbaglio
 una pagina di ringraziamenti annoia l'ascoltatore, perdere un epilogo rovina
@@ -1453,6 +1457,15 @@ servizio:
 - gli scarti consumano un **budget** in caratteri (`max_drop_ratio` del libro)
   e si spendono dal meno probabile in su: un giudizio sbagliato in massa non
   puo' svuotare il libro;
+- un capitolo il cui **titolo l'ha scritto il parser** (`synthetic_title`, il
+  «Sezione 4» dei file senza intestazione) non si scarta **mai**: misurato in
+  `observe`, quelle sezioni prendono `p` mediana 0,58 contro 0,93 delle altre
+  e una su tre finisce sotto la soglia di scarto. Il titolo mancante e' un
+  fatto del file, non del libro: viaggia come tale anche nella domanda
+  (`title_generated`, piu' una riga nel criterio `false`), ma la guardia non
+  dipende da come risponde il servizio. Vale in un verso solo: una sezione
+  senza titolo si **recupera** normalmente;
+- un capitolo tenuto sotto `min_drop_chars` non si scarta (vedi tabella);
 - se gli scarti lascerebbero **zero** capitoli, non si scarta niente;
 - una sezione gia' tenuta non puo' essere «recuperata» due volte.
 
@@ -1465,8 +1478,21 @@ qualunque modo.
 **Audit**: una riga JSONL per libro in
 `ABM_DATA_DIR/section_judge_audit_YYYY-MM.jsonl` con modo, lingua, titolo,
 durata, sezioni recuperate e scartate e, per ogni sezione interrogata,
-`{id, p, was, chars, title}`. E' il dataset con cui tarare le soglie prima di
-passare a `on` — lo stesso percorso usato per `ABM_ABUSE_KILL_ENABLE`.
+`{id, p, was, chars, position, synthetic_title, title}`. La riga porta anche:
+
+- `thresholds`: **tutte** le soglie attive al momento della scrittura. Senza
+  di loro due finestre di misura non sono confrontabili — la prima analisi di
+  settembre 2026 non poteva distinguere le righe nate con `max_drop=0.12` da
+  quelle nate con `0.08`;
+- `kept_total`, `dropped_total`, `kept_chars_total`, `dropped_chars_total`: i
+  totali del libro, per pesare un recupero contro la sua taglia;
+- `picks`: `asked`, `asked_dropped`, `asked_kept`, `skipped_by_cap` (domande
+  tagliate da `max_questions`), `drop_below_threshold`, `drop_blocked` (scarti
+  fermati dalle guardie), `drop_budget_chars`, `drop_chars`, `recover_chars`.
+  Dice se uno scarto l'ha fermato il budget, il pavimento o il verdetto.
+
+E' il dataset con cui tarare le soglie prima di passare a `on` — lo stesso
+percorso usato per `ABM_ABUSE_KILL_ENABLE`.
 
 **Fail-open**: `review_and_decide` non solleva mai; `_apply_section_judgement`
 in `epub_to_tts` cattura qualunque eccezione e stampa

@@ -1295,12 +1295,17 @@ def _apply_section_judgement(info, dropped):
         if not section_judge.enabled():
             return
         total = len(info.chapters) + len(dropped)
+        # `synthetic_title` viaggia con la sezione: il giudizio deve sapere
+        # che quel titolo l'ha scritto il parser, e la guardia in `decide`
+        # ci si appoggia per non scartare un capitolo senza titolo nel file.
         kept = [{"id": f"kept_{i}", "title": ch.title or "",
                  "text": ch.text or "", "chars": ch.char_count,
+                 "synthetic_title": bool(getattr(ch, "synthetic_title", False)),
                  "position": _section_position(i, total)}
                 for i, ch in enumerate(info.chapters)]
         drops = [{"id": f"drop_{i}", "title": d["title"] or "",
                   "text": d["text"] or "", "chars": len(d["text"] or ""),
+                  "synthetic_title": bool(d.get("synthetic_title", False)),
                   "position": _section_position(d["after"], total)}
                  for i, d in enumerate(dropped)]
         book = {"title": info.title or "", "author": info.author or "",
