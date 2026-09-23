@@ -396,6 +396,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Wizard generation button
   const btnGenerate=document.getElementById('btnGenerate');
   if(btnGenerate)btnGenerate.onclick=onGenerateClick;
+  // Fumetto PREMIUM: esce quando parte l'ascolto dell'anteprima con voce Standard.
+  const _prevAudioEl=document.getElementById('previewAudioWiz');
+  if(_prevAudioEl){
+    _prevAudioEl.addEventListener('play',_maybeShowPreviewPromo);
+    _prevAudioEl.addEventListener('ended',_dismissPreviewPromo);
+  }
   // Payment modal (Gemini Premium) listeners
   document.getElementById('btnPayCancel')?.addEventListener('click', closePaymentModal);
   document.getElementById('btnPayCancel2')?.addEventListener('click', closePaymentModal);
@@ -556,7 +562,7 @@ function goToStep(n){
   if(n>_wizMaxStep+1)return; // can always go to next step
   if(n===_wizMaxStep+1)_unlockStep(n); // auto-unlock next step
   // Pause preview audio when switching panels (don't invalidate generated preview)
-  if(n!==_wizStep){const a=document.getElementById('previewAudioWiz');if(a)a.pause();}
+  if(n!==_wizStep){const a=document.getElementById('previewAudioWiz');if(a)a.pause();_dismissPreviewPromo();}
   const panels=document.querySelectorAll('.panel');
   panels.forEach(p=>p.classList.remove('active'));
   let panelId='panel'+n;
@@ -1977,6 +1983,7 @@ function switchAudioTab(tab){
   // Premium = "scoperta" → soppressione definitiva di coachmark e badge.
   _dismissPremiumHint();
   _dismissVcPromo();
+  _dismissPreviewPromo();
   if(tab==='premium')_markPremiumDiscovered();
   document.querySelectorAll('.tab-bar .tab').forEach(t=>{
     const active=t.dataset.tab===tab;
@@ -2818,6 +2825,7 @@ function _onPreviewParamsChanged(){
   if(!bookData||!bookData.preview_text)return;
   const newSig=_getPreviewSig();
   if(newSig===_currentPreviewSig)return;
+  _dismissPreviewPromo();
   const audio=document.getElementById('previewAudioWiz');
   const wrap=document.getElementById('previewAudioWrap');
   const btn=document.getElementById('btnPrev');
@@ -2840,6 +2848,7 @@ function _onPreviewParamsChanged(){
 }
 
 function _resetPreviewState(){
+  _dismissPreviewPromo();
   _previewGenerated=false;
   _currentPreviewSig=null;
   const wrap=document.getElementById('previewAudioWrap');
@@ -2854,6 +2863,7 @@ function _resetPreviewState(){
 }
 
 function previewStop(){
+  _dismissPreviewPromo();
   _prevLoading=false;
   _previewGenerated=false;
   const audio=document.getElementById('previewAudioWiz');
@@ -2861,6 +2871,46 @@ function previewStop(){
   const wrap=document.getElementById('previewAudioWrap');
   if(wrap)wrap.classList.remove('visible');
   _updatePreviewBtn();
+}
+
+// ══════ Fumetto PREMIUM durante l'ascolto dell'anteprima ══════
+// Chi sta ascoltando l'anteprima con una voce gratuita e' nell'unico momento
+// in cui il confronto con le voci a pagamento ha senso: la bolla esce al play
+// e, se cliccata, porta sulla tab PREMIUM. Cap: una volta al giorno e mai dopo
+// che l'utente ha gia' aperto la tab (stessa nozione di "discovered" del
+// coachmark sulla tab-bar), cosi' la promozione non diventa rumore.
+const _PREVIEW_PROMO_KEY='abm_preview_promo_day';
+let _previewPromoTimer=null;
+
+function _previewPromoEligible(){
+  if(!wizardState||wizardState.audioTab!=='standard')return false;
+  if(!_premiumTabAvailable())return false;
+  if(_premiumHintLoad().discovered)return false;
+  try{if(localStorage.getItem(_PREVIEW_PROMO_KEY)===_premiumHintToday())return false;}catch(e){}
+  return true;
+}
+
+function _maybeShowPreviewPromo(){
+  const coach=document.getElementById('previewPremiumCoach');
+  if(!coach||!coach.hidden)return;
+  if(!_previewPromoEligible())return;
+  coach.hidden=false;
+  try{localStorage.setItem(_PREVIEW_PROMO_KEY,_premiumHintToday());}catch(e){}
+  if(_previewPromoTimer)clearTimeout(_previewPromoTimer);
+  _previewPromoTimer=setTimeout(_dismissPreviewPromo,15000);
+}
+
+function _dismissPreviewPromo(){
+  const coach=document.getElementById('previewPremiumCoach');
+  if(coach)coach.hidden=true;
+  if(_previewPromoTimer){clearTimeout(_previewPromoTimer);_previewPromoTimer=null;}
+}
+
+function _previewPromoGo(){
+  _dismissPreviewPromo();
+  const audio=document.getElementById('previewAudioWiz');
+  if(audio)audio.pause();
+  switchAudioTab('premium');
 }
 
 async function previewRead(){

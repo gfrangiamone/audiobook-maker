@@ -1147,6 +1147,18 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .prem-coach { left:0 !important; right:0; max-width:none; }
   .prem-coach::before { left:auto; right:60px; }
 }
+/* Fumetto PREMIUM sopra il player dell'anteprima: stessa veste del coachmark
+   sulla tab, ma in flusso e non assoluto - sta dentro #previewAudioWrap,
+   spinge il player in basso invece di coprirlo e punta la freccia ai comandi
+   di riproduzione. Il media query sopra riallinea a destra la freccia delle
+   bolle ancorate alla tab-bar: qui va tenuta a sinistra. */
+.prem-coach.preview-coach { position:relative; bottom:auto; left:0; right:auto;
+                            max-width:none; margin:0 0 14px; --arrow-left:26px; }
+.preview-coach .vc-promo-go { display:flex; align-items:flex-start; gap:8px; }
+.preview-coach-ico { flex:0 0 auto; color:#d4a83a; font-size:14px; line-height:1.35; }
+@media (max-width:720px) {
+  .prem-coach.preview-coach::before { left:var(--arrow-left,26px); right:auto; }
+}
 .cost-preview-box { background:var(--bgm,#f5f1e8); border-radius:8px; padding:12px 14px; margin:12px 0; }
 .cost-preview-box .cost-label { font-size:12px; color:var(--txm,#9e9890); text-transform:uppercase; }
 .cost-preview-box .cost-value { font-size:22px; font-weight:600; color:var(--accent,#a07d3a); }
