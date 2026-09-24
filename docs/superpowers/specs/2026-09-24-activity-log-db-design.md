@@ -80,8 +80,15 @@ Stessi 9 campi e stesso ordine del formato su disco, che non cambia:
 **Parsing**
 
 - `split_line(line) -> Row | None` — spostata da `user_stats` (split ancorato: 2 campi a sinistra,
-  6 a destra, `#` tollerato nel titolo, righe storiche corte completate a destra). `user_stats`
-  la reimporta per compatibilita'.
+  6 a destra, `#` tollerato nel titolo, righe storiche corte completate a destra).
+  `user_stats` **non** la reimporta: e' un modulo foglia e non importa nulla dal progetto
+  (neanche un'altra foglia). Diventa invece un modulo sulle sole righe (vedi sotto).
+- `file_rows(path) -> Iterator[Row]` — righe di un file qualsiasi, per test e script locali.
+
+**Test**
+
+- `reset() -> None` — azzera set di dedup, mese corrente e cache di `delivered_ids`. Sostituisce
+  i test che oggi toccano `_logged_sids_ops`, `_logged_month`, `_delivered_ids_cache`.
 
 **Lettura**
 
@@ -97,6 +104,22 @@ Stessi 9 campi e stesso ordine del formato su disco, che non cambia:
 **Fuori dal modulo:** le aggregazioni di dominio restano dove sono ma consumano `Row`:
 `_parse_log_sessions` (pannello admin, export), `user_stats.parse_sessions`/`analyze`/`power_users`,
 statistiche community.
+
+**`user_stats` sulle righe.** Le funzioni ricevono un iterabile di 9-tuple (`Row` o tuple
+equivalenti) invece di un path, senza importare `activity_log`:
+`parse_sessions(rows)`, `analyze(rows, ym="", ip_fallback=True, payments=None)` (il mese non si
+ricava piu' dal nome file; `"file"` lo imposta il chiamante), `power_users(rows, since, ...)` (il
+chiamante passa le righe dall'inizio del mese di `since`, come oggi i due file interi). Escono da
+`user_stats` `split_line`, `_YM_IN_NAME`, `_ym_from_name`; i loro test passano a
+`test_activity_log.py`. Lo script locale non tracciato `scripts/analyze_user_concentration.py`
+va adeguato a mano (`user_stats.analyze(activity_log.file_rows(p), ym=...)`).
+
+**Righe senza `job_id` nelle aggregazioni.** Oggi `_parse_log_sessions` e `power_users` fanno
+`strip()` prima dello split: la riga di sistema (che inizia con `" # "`) perde il primo
+separatore, i campi slittano e la riga viene di fatto ignorata (data non valida o `ts` fuori
+finestra). Col parsing corretto queste righe diventerebbero una sessione `""` nel pannello e IP
+spuri nei power user: entrambe le funzioni le scartano esplicitamente, come gia' fa
+`user_stats.parse_sessions`. Uscita invariata.
 
 **Fuori perimetro fase 1:** `scripts/migration/migration_recover_prep.py`, `backup_ABM.sh`,
 `restore_ABM.sh` (autonomi, formato e posizione invariati); `FORENSICS_PLAYBOOK.md`.
@@ -148,8 +171,8 @@ Un commit per punto, suite verde a ogni passo.
 | 7 | `user_stats.parse_sessions`/`analyze`/`power_users`, `api_admin_user_stats`, `_power_users_data` | righe + `ym`; cache con chiave `fingerprint(ym)` |
 | 8 | navigazione mesi del pannello admin | `months()` |
 
-Criterio di chiusura: in `audiobook_app.py` e `user_stats.py` nessun percorso `activity_*.log`
-residuo (restano solo nomi di operazioni e commenti).
+Criterio di chiusura: in `audiobook_app.py` e `user_stats.py` nessun `open()`, `glob()` o path
+costruito verso `activity_*.log` (restano commenti e il nome file mostrato nel pannello).
 
 ### Test
 
@@ -162,6 +185,8 @@ residuo (restano solo nomi di operazioni e commenti).
 - `iter_rows`: attraversa due mesi, filtra per `ops` e intervallo, esclude le righe fuori intervallo;
 - `delivered_ids` su N mesi, con cache;
 - `months()` ordinati e limitati ai nomi validi; `fingerprint` cambia dopo un `log()`;
+- `split_line`: i casi oggi in `test_admin_user_stats.py` (cancelletto nel titolo, `platform`
+  vuota, riga corta, riga incompleta);
 - file assente, righe malformate, byte non UTF-8: nessuna eccezione.
 
 **C3:** gli eventi `M4B_*` scritti da `generation_engine` portano il `job_id` del job.
