@@ -1933,55 +1933,12 @@ def _send_interrupted_email(rec, refund_code=None):
         print(f"[{rec.get('id')}] interrupted email failed (non-fatal): {e}")
 
 
-_delivered_ids_lock = threading.Lock()
-_delivered_ids_cache = {"value": None, "expires": 0.0}
-
-
-def _delivered_job_ids(months=3):
-    """Set dei job_id con COMPLETE / OPT_COMPLETE negli ultimi `months` log
-    mensili di attività. È la sola traccia persistente di "consegnato": il dict
-    jobs è in RAM e al boot è vuoto. Cache 5 minuti (il recovery interroga molti
-    descrittori in sequenza)."""
-    now = time.time()
-    with _delivered_ids_lock:
-        cached = _delivered_ids_cache["value"]
-        if cached is not None and now < _delivered_ids_cache["expires"]:
-            return cached
-    complete_ids, opt_ids = set(), set()
-    d = datetime.now()
-    year, month = d.year, d.month
-    for _ in range(max(1, int(months))):
-        log_path = SCRIPT_DIR / f"activity_{year:04d}-{month:02d}.log"
-        if log_path.exists():
-            try:
-                with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        parts = line.rstrip("\n").split(" # ")
-                        if len(parts) < 4:
-                            continue
-                        op = parts[3].strip()
-                        if op == "COMPLETE":
-                            complete_ids.add(parts[0].strip())
-                        elif op == "OPT_COMPLETE":
-                            opt_ids.add(parts[0].strip())
-            except OSError as e:
-                print(f"[recover] lettura {log_path.name} fallita: {e}")
-        month -= 1
-        if month == 0:
-            month, year = 12, year - 1
-    value = {"complete": complete_ids, "opt_complete": opt_ids}
-    with _delivered_ids_lock:
-        _delivered_ids_cache["value"] = value
-        _delivered_ids_cache["expires"] = time.time() + 300
-    return value
-
-
 def _orphan_job_delivered(job_id, rec):
     """True se l'activity log dimostra che questo job è stato portato a termine.
     Per la fase 'optimize' basta OPT_COMPLETE; per 'generate' serve COMPLETE
     (un OPT_COMPLETE senza COMPLETE significa audio mai prodotto)."""
     try:
-        idx = _delivered_job_ids()
+        idx = activity_log.delivered_ids()
     except Exception as e:
         print(f"[recover] {job_id}: check consegna fallito, procedo col rimborso: {e}")
         return False
