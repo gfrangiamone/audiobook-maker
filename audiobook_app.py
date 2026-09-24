@@ -4701,7 +4701,10 @@ def admin_logs():
         "TR_EMAIL_SENT": ("#0d9488", "#f0fdfa"),
     }
 
-    cards_html = ""
+    # Pezzi in lista e un solo join finale: con += su una stringa da decine di
+    # MB (agosto 2026: 17k sessioni) ogni aggiunta ricopiava tutto, costo
+    # quadratico che su Windows bloccava la pagina per minuti.
+    cards_parts = []
     now = datetime.now()
     for day_key in sorted(days.keys(), reverse=True):
         day_sessions = days[day_key]
@@ -4713,14 +4716,14 @@ def admin_logs():
         except ValueError:
             day_label = day_key
 
-        cards_html += f"""<div class="day-group collapsed" data-day="{day_key}">
+        cards_parts.append(f"""<div class="day-group collapsed" data-day="{day_key}">
 <div class="day-header" onclick="this.parentElement.classList.toggle('collapsed')">
 <span class="day-label">{day_label}</span>
 <span class="day-count">{day_count}<span class="day-sep">/</span><span class="day-completed">{day_completed}</span></span>
 <span class="day-chevron">›</span>
 </div>
 <div class="day-cards">
-"""
+""")
         for sid, s in day_sessions:
             is_progress = _session_in_progress(s, sid)
             is_completed = _session_completed(s)
@@ -4888,7 +4891,7 @@ def admin_logs():
                 f'data-title="{html_mod.escape(s["filename"])}" '
                 f'title="Interrompi job (admin)">⛔</button>'
             ) if is_progress else ""
-            cards_html += f"""<div class="{card_cls}" {data_attrs}>
+            cards_parts.append(f"""<div class="{card_cls}" {data_attrs}>
 <div class="card-top">
 <span class="card-title" title="{html_mod.escape(s['filename'])}">{display_title}</span>
 <span class="badge" style="color:{fg};background:{bg}">{op}</span>{kill_btn}
@@ -4903,8 +4906,9 @@ def admin_logs():
 </div>
 {m4b_subbar}
 </div>
-"""
-        cards_html += "</div></div>\n"
+""")
+        cards_parts.append("</div></div>\n")
+    cards_html = "".join(cards_parts)
 
     # Il vecchio istogramma orario per lingua e' stato sostituito dal pannello
     # di carico (/api/admin/load_stats): niente piu' aggregazione qui.
