@@ -4365,20 +4365,18 @@ def _power_users_data():
     il precedente a cavallo del mese) + quota caratteri del mese."""
     if POWER_USER_JOBS_PER_DAY <= 0:
         return None
-    import user_stats
     from datetime import datetime, timedelta
     now = datetime.now()
     since = now - timedelta(hours=24)
-    paths = []
-    for ym in sorted({since.strftime("%Y-%m"), now.strftime("%Y-%m")}):
-        p = SCRIPT_DIR / f"activity_{ym}.log"
-        if p.exists():
-            paths.append(p)
+    # Dall'inizio del mese di `since`: i contatori mensili (books_month,
+    # starts_month) contano tutto il mese, non solo le ultime 24h.
+    month_start = since.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     try:
         qt = free_tts_quota.month_table()
     except Exception:
         qt = {}
-    rows = user_stats.power_users(paths, since, min_jobs=POWER_USER_JOBS_PER_DAY,
+    rows = user_stats.power_users(activity_log.iter_rows(month_start), since,
+                                  min_jobs=POWER_USER_JOBS_PER_DAY,
                                   quota_table=qt, top=10,
                                   month_ym=now.strftime("%Y-%m"))
     return {"rows": rows, "min_jobs": POWER_USER_JOBS_PER_DAY,
@@ -12710,9 +12708,9 @@ def api_admin_load_stats():
     return jsonify(data)
 
 
-# Cache dell'analisi utenza: la scansione di activity_YYYY-MM.log costa ~1s su
-# un mese pieno (15 MB) e il pannello viene aperto e richiuso di continuo.
-# Chiave = (ym, mtime, size) del file: un log che cresce invalida da solo.
+# Cache dell'analisi utenza: la scansione di un mese pieno costa ~1s e il
+# pannello viene aperto e richiuso di continuo. Chiave = (ym, impronta del
+# mese in activity_log, impronta dei pagamenti): un log che cresce invalida da solo.
 _USER_STATS_CACHE = {}
 _USER_STATS_CACHE_MAX = 6
 
@@ -12733,9 +12731,10 @@ def api_admin_user_stats():
     ym = (request.args.get("ym") or "").strip()
     if not _YM_RE.match(ym):
         return jsonify({"error": "Invalid month (expected YYYY-MM)"}), 400
-    log_path = SCRIPT_DIR / f"activity_{ym}.log"
-    if not log_path.exists():
-        data = user_stats.empty_result(log_path.name)
+    log_name = f"activity_{ym}.log"
+    fp = activity_log.fingerprint(ym)
+    if fp is None:
+        data = user_stats.empty_result(log_name)
         data["ym"] = ym
         data["log_missing"] = True
         return jsonify(data)
@@ -12747,27 +12746,23 @@ def api_admin_user_stats():
     # se il log del mese non e' cambiato.
     pay_key = (len(pay_records),
                max((r.get("captured_at") or 0 for r in pay_records), default=0))
-    try:
-        st = log_path.stat()
-        key = (ym, int(st.st_mtime), st.st_size, pay_key)
-    except OSError:
-        key = None
-    if key is not None and key in _USER_STATS_CACHE:
+    key = (ym, fp, pay_key)
+    if key in _USER_STATS_CACHE:
         return jsonify(_USER_STATS_CACHE[key])
 
     t0 = time.time()
     try:
-        data = user_stats.analyze(log_path, payments=pay_records)
+        data = user_stats.analyze(activity_log.month_rows(ym), ym=ym,
+                                  payments=pay_records)
     except Exception as e:
         print(f"[admin] user_stats {ym} failed: {e}", flush=True)
         return jsonify({"error": f"Analysis failed: {e}"}), 500
     data["ym"] = ym
-    data["file"] = log_path.name  # mai il path assoluto del server
+    data["file"] = log_name  # mai il path assoluto del server
     data["elapsed_sec"] = round(time.time() - t0, 2)
-    if key is not None:
-        if len(_USER_STATS_CACHE) >= _USER_STATS_CACHE_MAX:
-            _USER_STATS_CACHE.pop(next(iter(_USER_STATS_CACHE)), None)
-        _USER_STATS_CACHE[key] = data
+    if len(_USER_STATS_CACHE) >= _USER_STATS_CACHE_MAX:
+        _USER_STATS_CACHE.pop(next(iter(_USER_STATS_CACHE)), None)
+    _USER_STATS_CACHE[key] = data
     return jsonify(data)
 
 

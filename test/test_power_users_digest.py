@@ -1,6 +1,8 @@
 """Sezione "power user" del digest admin: user_stats.power_users + blocco HTML."""
+import itertools
 from datetime import datetime
 
+import activity_log
 import user_stats
 
 STD = "en-US-AriaNeural"
@@ -39,7 +41,7 @@ def test_power_users_counts_and_threshold(tmp_path):
     lines.append(_line("l2", "2026-08-30 14:00:00", "z.epub", "GENERATE", "light", "4.4.4.4"))
     p = _write_log(tmp_path, lines)
 
-    rows = user_stats.power_users([p], since, min_jobs=5,
+    rows = user_stats.power_users(activity_log.file_rows(p), since, min_jobs=5,
                                   quota_table={"heavy": {"chars": 12_000_000, "jobs": 9, "gated": 1}})
     assert [r["client_id"] for r in rows] == ["heavy"]
     h = rows[0]
@@ -55,9 +57,12 @@ def test_power_users_ip_fallback_and_missing_file(tmp_path):
     since = datetime(2026, 8, 30, 0, 0, 0)
     lines = [_line(f"a{i}", f"2026-08-30 0{i}:00:00", "b.epub", "GENERATE", "", "9.9.9.9") for i in range(3)]
     p = _write_log(tmp_path, lines)
-    rows = user_stats.power_users([p, tmp_path / "activity_2026-07.log"], since, min_jobs=3)
+    rows = user_stats.power_users(
+        itertools.chain(activity_log.file_rows(p),
+                        activity_log.file_rows(tmp_path / "activity_2026-07.log")),
+        since, min_jobs=3)
     assert rows and rows[0]["client_id"] == "ip:9.9.9.9" and rows[0]["jobs_24h"] == 3
-    assert user_stats.power_users([p], since, min_jobs=4) == []
+    assert user_stats.power_users(activity_log.file_rows(p), since, min_jobs=4) == []
 
 
 def test_grey_source_hints():
@@ -116,7 +121,7 @@ def test_power_users_counts_abuse_ops(tmp_path):
     lines.append(_line("k2", "2026-08-30 19:05:00", "b.epub", "QUOTA_ABUSE_BLOCK", "bad", "5.5.5.5"))
     lines.append(_line("k3", "2026-08-01 19:05:00", "b.epub", "QUOTA_ABUSE_BLOCK", "bad", "5.5.5.5"))
     p = _write_log(tmp_path, lines)
-    rows = user_stats.power_users([p], since, min_jobs=5)
+    rows = user_stats.power_users(activity_log.file_rows(p), since, min_jobs=5)
     assert rows[0]["client_id"] == "bad" and rows[0]["abuse_24h"] == 2
 
 
@@ -128,6 +133,16 @@ def test_power_users_visible_below_min_jobs_with_abuse_events(tmp_path):
     lines = [_line("g1", "2026-08-30 13:00:00", "b.epub", "GENERATE", "sneaky", "6.6.6.6")]
     lines.append(_line("k1", "2026-08-30 13:05:00", "b.epub", "QUOTA_ABUSE_KILL", "sneaky", "6.6.6.6"))
     p = _write_log(tmp_path, lines)
-    rows = user_stats.power_users([p], since, min_jobs=5)
+    rows = user_stats.power_users(activity_log.file_rows(p), since, min_jobs=5)
     assert [r["client_id"] for r in rows] == ["sneaky"]
     assert rows[0]["jobs_24h"] == 1 and rows[0]["abuse_24h"] == 1
+
+
+def test_power_users_ignora_le_righe_senza_job(tmp_path):
+    since = datetime(2026, 8, 30, 12, 0, 0)
+    lines = [' # 2026-08-30 13:00:00 # "" # GENERATE #  # 7.7.7.7 # en-US-AriaNeural # en # web']
+    lines += [_line(f"g{i}", f"2026-08-30 1{3 + i}:00:00", "b.epub", "GENERATE", "cidX", "1.1.1.1")
+              for i in range(2)]
+    p = _write_log(tmp_path, lines)
+    rows = user_stats.power_users(activity_log.file_rows(p), since, min_jobs=1)
+    assert [r["client_id"] for r in rows] == ["cidX"]

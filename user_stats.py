@@ -4,20 +4,20 @@ Risponde alla domanda "quanti utenti hanno determinato il 50% / 70% / 90%
 delle generazioni completate del mese?", separando la coorte PREMIUM da
 quella FREE.
 
-Sorgente: `activity_YYYY-MM.log` (formato
-`job_id # ts # "file" # OPERATION # client_id # ip # voice # lang # platform`).
+Sorgente: le righe del business log mensile, gia' spezzate nei 9 campi
+`job_id, ts, filename, op, client_id, ip, voice, lang, platform` (vedi
+`activity_log.Row`). Il modulo non legge file: le righe le passa il chiamante
+(`activity_log.month_rows(ym)` nell'app, `activity_log.file_rows(path)` negli
+script), cosi' resta una foglia pura.
 
 Definizione di coorte (variante B, allineata a
 `generation_engine.is_premium_job`): PREMIUM = voce a pagamento **oppure**
 pagamento incassato sulla sessione. Nota: i pagamenti con buono non lasciano
 `PAYMENT_CAPTURED` nel log, quindi restano visibili solo se la voce e' premium.
 
-Solo stdlib: usabile dall'app (pannello Stats di /admin/log-activity), dallo
-script `scripts/analyze_user_concentration.py` e direttamente sul server.
+Solo stdlib, nessun import dal progetto.
 """
 import json
-import os
-import re
 from collections import Counter, OrderedDict
 from datetime import datetime
 
@@ -39,87 +39,45 @@ FASCE_SPESA = ((1.0, "< 1"), (3.0, "1-3"), (10.0, "3-10"), (30.0, "10-30"),
                (None, "> 30"))
 COORTI = ("premium", "free", "totale")
 
-# Nome canonico del business log mensile.
-_YM_IN_NAME = re.compile(r"^activity_(\d{4}-\d{2})\.log$")
-
 
 def is_premium_voice(voice):
     return bool(voice) and (voice.startswith(GEMINI_VOICE_PREFIX)
                             or voice.startswith(SPEECHIFY_VOICE_PREFIX))
 
 
-def split_line(line):
-    """Spezza una riga del log nei 9 campi, tollerando '#' nel nome file.
-
-    Il separatore e' ' # ' ma un titolo tipo "Riftwar Saga # 2 Empire.epub"
-    lo contiene: uno split secco produce campi sfasati (l'operazione diventa
-    un pezzo del titolo, e la sessione sparisce dalle aggregazioni). Si
-    ancorano quindi i 2 campi di testa e i 6 di coda, lasciando al nome file
-    tutto il resto. Su agosto 2026: ~200 righe recuperate, 80 sessioni COMPLETE
-    che il vecchio split perdeva.
-
-    Ritorna None se la riga non ha nemmeno i campi minimi.
-    """
-    line = line.rstrip("\r\n")
-    if line.endswith(" #"):
-        # `platform` vuoto: la riga finisce con " # " e chi ha gia' fatto
-        # strip() si e' mangiato l'ultimo separatore. Senza questo ripristino
-        # l'ancoraggio a destra slitta di un campo (lang diventa "en #" e, se
-        # il titolo contiene " # ", l'operazione diventa un pezzo di titolo).
-        line += " "
-    head = line.split(" # ", 2)
-    if len(head) < 3:
-        return None
-    sid, ts, rest = head
-    tail = rest.rsplit(" # ", 6)
-    if len(tail) < 7:
-        # Riga corta (log storico senza platform/lang): completa a destra.
-        tail = tail + [""] * (7 - len(tail))
-    filename, operation, client_id, client_ip, voice, lang, platform = tail[:7]
-    return (sid.strip(), ts.strip(), filename.strip().strip('"'),
-            operation.strip(), client_id.strip(), client_ip.strip(),
-            voice.strip(), lang.strip(), platform.strip())
-
-
-def parse_sessions(path):
+def parse_sessions(rows):
     """Aggrega le righe del log per job_id.
 
-    Ritorna OrderedDict job_id -> {events:set, voice, lang, client_id,
-    client_ip, platform, day}. Come `_parse_log_sessions` in audiobook_app.py:
-    per voice/lang/client_id/ip vince l'ultimo valore non vuoto.
+    `rows`: iterabile di 9-tuple (es. `activity_log.Row`). Ritorna OrderedDict
+    job_id -> {events:set, voice, lang, client_id, client_ip, platform, day}.
+    Come `_parse_log_sessions` in audiobook_app.py: per voice/lang/client_id/ip
+    vince l'ultimo valore non vuoto.
     """
     sessions = OrderedDict()
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            fields = split_line(line)
-            if not fields:
-                continue
-            sid, dt_str, _filename, operation, client_id, client_ip, voice, lang, platform = fields
-            if not sid:
-                continue  # righe di sistema (voucher, admin) senza job
-            if operation.startswith("VOUCHER_ATTEMPT"):
-                continue
+    for fields in rows:
+        sid, dt_str, _filename, operation, client_id, client_ip, voice, lang, platform = fields
+        if not sid:
+            continue  # righe di sistema (voucher, admin) senza job
+        if operation.startswith("VOUCHER_ATTEMPT"):
+            continue
 
-            s = sessions.get(sid)
-            if s is None:
-                s = sessions[sid] = {
-                    "events": set(), "voice": "", "lang": "", "client_id": "",
-                    "client_ip": "", "platform": "", "day": dt_str[:10],
-                }
-            s["events"].add(operation)
-            if client_id:
-                s["client_id"] = client_id
-            if client_ip:
-                s["client_ip"] = client_ip
-            if voice:
-                s["voice"] = voice
-            if lang:
-                s["lang"] = lang
-            if platform and not s["platform"]:
-                s["platform"] = platform
+        s = sessions.get(sid)
+        if s is None:
+            s = sessions[sid] = {
+                "events": set(), "voice": "", "lang": "", "client_id": "",
+                "client_ip": "", "platform": "", "day": dt_str[:10],
+            }
+        s["events"].add(operation)
+        if client_id:
+            s["client_id"] = client_id
+        if client_ip:
+            s["client_ip"] = client_ip
+        if voice:
+            s["voice"] = voice
+        if lang:
+            s["lang"] = lang
+        if platform and not s["platform"]:
+            s["platform"] = platform
     return sessions
 
 
@@ -447,23 +405,16 @@ def spend_by_user(sessions, payments, ym="", ip_fallback=True):
     return per_user, meta
 
 
-def _ym_from_name(path):
-    """Mese dal nome `activity_YYYY-MM.log`; "" se il nome non lo dice.
+def analyze(rows, ym="", ip_fallback=True, payments=None):
+    """Analisi completa di un mese di log.
 
-    Il filtro sul mese e' pericoloso al contrario (un mese sbagliato azzera
-    silenziosamente gli incassi), quindi si accetta solo la forma esatta.
-    """
-    m = _YM_IN_NAME.match(os.path.basename(str(path)))
-    return m.group(1) if m else ""
-
-
-def analyze(path, ip_fallback=True, payments=None):
-    """Analisi completa di un file di log. `path` deve esistere.
-
+    `rows`: righe del mese (vedi `parse_sessions`). `ym`: mese YYYY-MM degli
+    incassi da considerare; "" = nessun filtro (sconsigliato: un mese
+    sbagliato azzera in silenzio gli incassi, uno assente li somma tutti).
     `payments`: record di `_payments.json` (order_id -> dict) o loro lista;
     servono per la concentrazione in valore, che il solo log non consente.
     """
-    sessions = parse_sessions(path)
+    sessions = parse_sessions(rows)
 
     counts = {"premium": Counter(), "free": Counter(), "totale": Counter()}
     started = {"premium": 0, "free": 0, "totale": 0}
@@ -489,11 +440,11 @@ def analyze(path, ip_fallback=True, payments=None):
             counts["totale"][u] += 1
 
     per_user_eur, spend_meta = spend_by_user(sessions, payments,
-                                             ym=_ym_from_name(path),
+                                             ym=ym,
                                              ip_fallback=ip_fallback)
 
     res = {
-        "file": str(path),
+        "file": "",
         "sessioni_totali": len(sessions),
         "ip_fallback": ip_fallback,
         "senza_identita": no_user,
@@ -514,7 +465,7 @@ def analyze(path, ip_fallback=True, payments=None):
     res["spesa"] = spesa
 
     # Mix linguistico: dove si concentrano i libri (per coorte) e il fatturato.
-    res["lingue"] = language_stats(sessions, payments, ym=_ym_from_name(path))
+    res["lingue"] = language_stats(sessions, payments, ym=ym)
 
     # Sovrapposizione fra le due coorti.
     p, f = set(counts["premium"]), set(counts["free"])
@@ -572,12 +523,12 @@ def grey_source(filename):
     return ""
 
 
-def power_users(paths, since, min_jobs=5, quota_table=None, top=10, month_ym=None):
+def power_users(rows, since, min_jobs=5, quota_table=None, top=10, month_ym=None):
     """Client con >= `min_jobs` avvii a voce STANDARD (GENERATE + REUSE) dal
     datetime `since` in poi, ordinati per avvii decrescenti (max `top`).
 
-    `paths`: file activity_YYYY-MM.log da leggere (mese corrente, piu' il
-    precedente a cavallo del mese). `quota_table`: output di
+    `rows`: righe del log dall'inizio del mese di `since` a oggi (i contatori
+    mensili leggono tutto il mese). `quota_table`: output di
     `free_tts_quota.month_table()` per caratteri e job oltre quota del mese.
     `month_ym`: mese (YYYY-MM) dei contatori mensili; default = mese di `since`.
     Identita' = client_id, fallback `ip:<ip>` (come `user_key`). Nessun dato
@@ -586,68 +537,63 @@ def power_users(paths, since, min_jobs=5, quota_table=None, top=10, month_ym=Non
     since_str = since.strftime("%Y-%m-%d %H:%M:%S")
     month_ym = month_ym or since.strftime("%Y-%m")
     users = {}
-    for path in paths:
-        try:
-            fh = open(path, encoding="utf-8", errors="replace")
-        except OSError:
+    for fl in rows:
+        sid, ts, fn, op, cid, ip, voice, lang, plat = fl
+        if not sid:
+            # Righe di sistema: nessun job da contare, e l'IP dell'admin non
+            # deve finire fra gli IP di un client.
             continue
-        with fh:
-            for line in fh:
-                fl = split_line(line.strip())
-                if not fl:
-                    continue
-                sid, ts, fn, op, cid, ip, voice, lang, plat = fl
-                key = cid or (f"ip:{ip}" if ip else "")
-                if not key:
-                    continue
-                u = users.get(key)
-                if u is None:
-                    u = users[key] = {
-                        "jobs_24h": 0, "reuse_24h": 0, "premium_24h": 0,
-                        "gate_24h": 0, "block_24h": 0, "abuse_24h": 0, "books_month": 0,
-                        "starts_month": 0, "ips": set(), "platforms": Counter(),
-                        "sources": Counter(), "langs": Counter(),
-                    }
-                recent = ts >= since_str
-                in_month = ts.startswith(month_ym)
-                premium = is_premium_voice(voice)
-                if op == "GENERATE":
-                    if premium:
-                        if recent:
-                            u["premium_24h"] += 1
-                    else:
-                        if in_month:
-                            u["starts_month"] += 1
-                        if recent:
-                            u["jobs_24h"] += 1
-                        if lang:
-                            u["langs"][_lang_key(lang)] += 1
-                elif op == "REUSE":
-                    if in_month:
-                        u["starts_month"] += 1
-                    if recent:
-                        u["jobs_24h"] += 1
-                        u["reuse_24h"] += 1
-                elif op == "COMPLETE":
-                    if in_month and not premium:
-                        u["books_month"] += 1
-                elif op == "QUOTA_GATE":
-                    if recent:
-                        u["gate_24h"] += 1
-                elif op == "QUOTA_BLOCK":
-                    if recent:
-                        u["block_24h"] += 1
-                elif op in ("QUOTA_ABUSE_KILL", "QUOTA_ABUSE_BLOCK"):
-                    if recent:
-                        u["abuse_24h"] += 1
-                elif op == "ANALYZE":
-                    src = grey_source(fn)
-                    if src and in_month:
-                        u["sources"][src] += 1
-                if recent and ip:
-                    u["ips"].add(ip)
-                if plat:
-                    u["platforms"][plat] += 1
+        key = cid or (f"ip:{ip}" if ip else "")
+        if not key:
+            continue
+        u = users.get(key)
+        if u is None:
+            u = users[key] = {
+                "jobs_24h": 0, "reuse_24h": 0, "premium_24h": 0,
+                "gate_24h": 0, "block_24h": 0, "abuse_24h": 0, "books_month": 0,
+                "starts_month": 0, "ips": set(), "platforms": Counter(),
+                "sources": Counter(), "langs": Counter(),
+            }
+        recent = ts >= since_str
+        in_month = ts.startswith(month_ym)
+        premium = is_premium_voice(voice)
+        if op == "GENERATE":
+            if premium:
+                if recent:
+                    u["premium_24h"] += 1
+            else:
+                if in_month:
+                    u["starts_month"] += 1
+                if recent:
+                    u["jobs_24h"] += 1
+                if lang:
+                    u["langs"][_lang_key(lang)] += 1
+        elif op == "REUSE":
+            if in_month:
+                u["starts_month"] += 1
+            if recent:
+                u["jobs_24h"] += 1
+                u["reuse_24h"] += 1
+        elif op == "COMPLETE":
+            if in_month and not premium:
+                u["books_month"] += 1
+        elif op == "QUOTA_GATE":
+            if recent:
+                u["gate_24h"] += 1
+        elif op == "QUOTA_BLOCK":
+            if recent:
+                u["block_24h"] += 1
+        elif op in ("QUOTA_ABUSE_KILL", "QUOTA_ABUSE_BLOCK"):
+            if recent:
+                u["abuse_24h"] += 1
+        elif op == "ANALYZE":
+            src = grey_source(fn)
+            if src and in_month:
+                u["sources"][src] += 1
+        if recent and ip:
+            u["ips"].add(ip)
+        if plat:
+            u["platforms"][plat] += 1
     qt = quota_table or {}
     rows = []
     for key, u in users.items():

@@ -96,3 +96,37 @@ def test_pagina_admin_regge_byte_non_utf8(logs, monkeypatch):
     with patch("audiobook_app._admin_auth_ok", return_value=True):
         r = audiobook_app.app.test_client().get("/admin/log-activity")
     assert r.status_code == 200
+
+
+def test_power_users_data_legge_il_mese_corrente(logs, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "POWER_USER_JOBS_PER_DAY", 3)
+    now = datetime.now()
+    righe = []
+    for i in range(3):
+        when = now - timedelta(minutes=10 * (i + 1))
+        righe.append((when, _line(f"p{i}", when.strftime("%Y-%m-%d %H:%M:%S"),
+                                  "GENERATE", cid="heavy", voice="en-US-AriaNeural")))
+    _write_by_month(logs, righe)
+    data = audiobook_app._power_users_data()
+    assert [r["client_id"] for r in data["rows"]] == ["heavy"]
+    assert data["rows"][0]["jobs_24h"] == 3
+
+
+def test_endpoint_user_stats_invalida_la_cache_quando_il_log_cresce(logs, monkeypatch):
+    from unittest.mock import patch
+    # ADMIN_TOKEN vuoto fa uscire la route con 404 prima del controllo auth
+    # patchato: stesso adattamento di plumbing di test_pagina_admin_regge_byte_non_utf8.
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
+    audiobook_app._USER_STATS_CACHE.clear()
+    p = logs / "activity_2026-08.log"
+    p.write_text(_line("J1", "2026-08-01 10:00:00", "COMPLETE", cid="a") + "\n", encoding="utf-8")
+    with patch("audiobook_app._admin_auth_ok", return_value=True):
+        c = audiobook_app.app.test_client()
+        d1 = c.get("/api/admin/user_stats?ym=2026-08").get_json()
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(_line("J2", "2026-08-01 11:00:00", "COMPLETE", cid="b") + "\n")
+        d2 = c.get("/api/admin/user_stats?ym=2026-08").get_json()
+    audiobook_app._USER_STATS_CACHE.clear()
+    assert d1["coorti"]["totale"]["generazioni"] == 1
+    assert d2["coorti"]["totale"]["generazioni"] == 2
+    assert d2["file"] == "activity_2026-08.log"
