@@ -491,6 +491,19 @@ def job_timeout_s():
     return _f("ABM_VOXCPM_JOB_TIMEOUT_S", 1800.0)
 
 
+# Quanto l'Execution Timeout chiesto a RunPod per ogni job supera il tetto del
+# client. Il client misura dall'IN_PROGRESS che VEDE, cioe' qualche sonda dopo
+# l'avvio vero: senza margine RunPod ucciderebbe il job per prima, con un
+# FAILED invece del nostro cancel. Il 24/09/2026 l'Execution Timeout della
+# console (600 s) stava sotto il tetto (1800 s) e ha chiuso due capitoli lunghi
+# a meta', uccidendo il libro.
+_EXEC_TIMEOUT_MARGINE_S = 120.0
+
+# La stringa con cui RunPod chiude un job oltre il suo Execution Timeout: lo
+# stato e' FAILED, non TIMED_OUT, e la causa sta solo in `error`.
+_EXEC_TIMEOUT_RUNPOD = "executiontimeout exceeded"
+
+
 def poll_seconds():
     return _f("ABM_VOXCPM_POLL_S", 2.0)
 
@@ -636,7 +649,13 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
     tetto_exec = job_timeout_s() if timeout is None else float(timeout)
     tetto_coda = queue_timeout_s() if queue_timeout is None else float(queue_timeout)
 
-    job_id = _submit(payload, ses, sleep)
+    # L'Execution Timeout viaggia col job, non si affida alla console: e' il
+    # tetto del client piu' il margine, cosi' i due non possono divergere.
+    # Copia, non modifica: `synthesize_chapter` rilegge il suo payload.
+    corpo = dict(payload)
+    corpo.setdefault("policy", {
+        "executionTimeout": int((tetto_exec + _EXEC_TIMEOUT_MARGINE_S) * 1000)})
+    job_id = _submit(corpo, ses, sleep)
     try:
         return _attendi_esito(job_id, ses, sleep, attesa, tetto_exec,
                               tetto_coda, clock, on_queue, cancelled=cancelled,
@@ -831,10 +850,12 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
             dettaglio = json.dumps(out) if out else json.dumps(
                 st.get("error") or st)
             testo = f"job {job_id} {stato}: {dettaglio[:400]}"
-            if stato in ("TIMED_OUT", "CANCELLED"):
+            if (stato in ("TIMED_OUT", "CANCELLED")
+                    or _EXEC_TIMEOUT_RUNPOD in testo.lower()):
                 # RunPod l'ha chiuso lei, non il worker: e' "partito e mai
                 # arrivato", cioe' esattamente VoxcpmBloccato (§9.4) — non un
-                # generico VoxcpmJobError non ritentabile.
+                # generico VoxcpmJobError non ritentabile. L'Execution Timeout
+                # dell'endpoint arriva come FAILED, ma e' lo stesso caso.
                 raise VoxcpmBloccato(testo, job_id)
             raise _errore_del_job(out, testo, job_id)
 
