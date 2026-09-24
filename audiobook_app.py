@@ -4194,6 +4194,13 @@ def web_manifest():
 # voce PREMIUM sulla riga la sessione entra nel filtro "PREMIUM" del pannello.
 _PREMIUM_START_OPS = frozenset({"GENERATE", "OPTIMIZE"})
 
+# generation_engine._log_m4b_progress scrive il proprio payload libero
+# (size_mb=... elapsed_s=... pct=... status=...) nella colonna voice delle
+# righe M4B_START/M4B_PROGRESS/M4B_END. Queste righe non devono aggiornare
+# voice/lang/ip della sessione ("ultimo valore non vuoto vince" altrimenti
+# sovrascrive la voce reale con il payload): vedi item 1 del final-fix-brief.
+_M4B_OP_PREFIX = "M4B_"
+
 
 def _parse_log_sessions(ym):
     """Sessioni del business log del mese YYYY-MM.
@@ -4230,13 +4237,16 @@ def _parse_log_sessions(ym):
             and (_is_gemini_voice(voice) or _is_speechify_voice(voice)
                  or _is_voxcpm_voice(voice))
         )
+        is_m4b = operation.startswith(_M4B_OP_PREFIX)
         if sid not in sessions:
             sessions[sid] = {
                 "first_dt": dt, "last_dt": dt,
                 "filename": filename, "last_op": operation,
                 "events": [operation],
-                "client_id": client_id, "client_ip": client_ip,
-                "voice": voice, "browser_lang": browser_lang,
+                "client_id": client_id,
+                "client_ip": "" if is_m4b else client_ip,
+                "voice": "" if is_m4b else voice,
+                "browser_lang": "" if is_m4b else browser_lang,
                 "platform": platform,
                 "transferred": operation == "TRANSFER",
                 "premium_started": premium_started,
@@ -4258,11 +4268,14 @@ def _parse_log_sessions(ym):
             s["events"].append(operation)
             if client_id:
                 s["client_id"] = client_id
-            if client_ip:
+            # Le righe M4B_* portano il payload libero nel campo voice (e
+            # ripetono client_ip/lang del job): non devono vincere su
+            # "ultimo valore non vuoto" per voice/lang/ip.
+            if client_ip and not is_m4b:
                 s["client_ip"] = client_ip
-            if voice:
+            if voice and not is_m4b:
                 s["voice"] = voice
-            if browser_lang:
+            if browser_lang and not is_m4b:
                 s["browser_lang"] = browser_lang
             if platform and not s["platform"]:
                 s["platform"] = platform

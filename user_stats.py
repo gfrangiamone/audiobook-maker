@@ -32,6 +32,12 @@ GENERATE_OP = "GENERATE"
 # Pagamenti incassati (PayPal). Un job con uno di questi eventi e' PREMIUM a
 # prescindere dalla voce: copre l'ottimizzazione AI pagata su voce standard.
 PAID_OPS = frozenset({"PAYMENT_CAPTURED"})
+# generation_engine._log_m4b_progress scrive il proprio payload libero
+# (size_mb=... elapsed_s=... pct=... status=...) nella colonna voice delle
+# righe M4B_START/M4B_PROGRESS/M4B_END. Queste righe non devono aggiornare
+# voice/lang/ip della sessione ("ultimo valore non vuoto vince" altrimenti
+# sovrascrive la voce reale con il payload).
+M4B_OP_PREFIX = "M4B_"
 
 QUANTILI = (0.50, 0.70, 0.90)
 # Fasce di spesa (EUR) per l'istogramma del fatturato per utente.
@@ -68,13 +74,14 @@ def parse_sessions(rows):
                 "client_ip": "", "platform": "", "day": dt_str[:10],
             }
         s["events"].add(operation)
+        is_m4b = operation.startswith(M4B_OP_PREFIX)
         if client_id:
             s["client_id"] = client_id
-        if client_ip:
+        if client_ip and not is_m4b:
             s["client_ip"] = client_ip
-        if voice:
+        if voice and not is_m4b:
             s["voice"] = voice
-        if lang:
+        if lang and not is_m4b:
             s["lang"] = lang
         if platform and not s["platform"]:
             s["platform"] = platform

@@ -2772,6 +2772,7 @@ def _log_m4b_progress(job_id: str, job: dict, event: str, **fields) -> None:
             client_ip=job.get("ip", ""),
             voice=payload,
             browser_lang=job.get("lang", ""),
+            epoch=job.get("gen_epoch"),
         )
     except Exception as e:
         # Logging non deve mai crashare il thread di generazione.

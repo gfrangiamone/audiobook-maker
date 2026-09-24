@@ -85,6 +85,25 @@ def test_sessioni_admin_mese_assente(logs):
     assert audiobook_app._parse_log_sessions("2026-01") == ({}, {})
 
 
+def test_sessioni_admin_m4b_non_sovrascrive_voce_sessione(logs):
+    """Item 1: generation_engine._log_m4b_progress scrive il proprio payload
+    libero (size_mb=... elapsed_s=... pct=... status=...) nel campo voice
+    delle righe M4B_*. La sessione deve conservare la voce reale del GENERATE."""
+    now = datetime.now()
+    ts = now.strftime("%Y-%m-%d %H:%M:%S")
+    _write_by_month(logs, [
+        (now, _line("J1", ts, "GENERATE", voice="gemini:Kore")),
+        (now, _line("J1", ts, "M4B_START", voice="size_mb=12.3")),
+        (now, _line("J1", ts, "M4B_END", voice="elapsed_s=8 pct=100 status=ok")),
+    ])
+    sessions, _ = audiobook_app._parse_log_sessions(now.strftime("%Y-%m"))
+    s = sessions["J1"]
+    assert s["voice"] == "gemini:Kore"
+    # Le righe M4B_* contano comunque come eventi della sessione.
+    assert s["events"] == ["GENERATE", "M4B_START", "M4B_END"]
+    assert s["last_op"] == "M4B_END"
+
+
 def test_pagina_admin_regge_byte_non_utf8(logs, monkeypatch):
     from unittest.mock import patch
     ym = datetime.now().strftime("%Y-%m")
@@ -95,6 +114,20 @@ def test_pagina_admin_regge_byte_non_utf8(logs, monkeypatch):
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
     with patch("audiobook_app._admin_auth_ok", return_value=True):
         r = audiobook_app.app.test_client().get("/admin/log-activity")
+    assert r.status_code == 200
+
+
+def test_export_xlsx_regge_byte_non_utf8(logs, monkeypatch):
+    """Item 4: /admin/log-activity/export (xlsx) non deve rompersi quando il
+    file del mese contiene byte non-UTF8 (stesso fixture del test equivalente
+    per /admin/log-activity)."""
+    from unittest.mock import patch
+    ym = datetime.now().strftime("%Y-%m")
+    (logs / f"activity_{ym}.log").write_bytes(
+        b"\xff\xfe\n" + _line("J1", f"{ym}-01 10:00:00", "COMPLETE").encode("utf-8") + b"\n")
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
+    with patch("audiobook_app._admin_auth_ok", return_value=True):
+        r = audiobook_app.app.test_client().get("/admin/log-activity/export")
     assert r.status_code == 200
 
 

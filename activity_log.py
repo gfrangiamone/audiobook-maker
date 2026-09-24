@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
-_YM_RE = re.compile(r"^\d{4}-\d{2}$")
-_YM_IN_NAME = re.compile(r"^activity_(\d{4}-\d{2})\.log$")
+_YM_RE = re.compile(r"^\d{4}-\d{2}\Z")
+_YM_IN_NAME = re.compile(r"^activity_(\d{4}-\d{2})\.log\Z")
 # Il recovery interroga molti descrittori in sequenza: 5 minuti bastano.
 _DELIVERED_TTL = 300.0
 

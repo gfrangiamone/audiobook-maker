@@ -53,6 +53,43 @@ def test_parse_sessions_accetta_righe_e_scarta_quelle_senza_job():
     assert list(user_stats.parse_sessions(rows)) == ["j1"]
 
 
+def test_parse_sessions_m4b_non_sovrascrive_la_voce():
+    """Item 1: le righe M4B_* portano nel campo voice il payload libero di
+    _log_m4b_progress (size_mb=... elapsed_s=... pct=... status=...), non una
+    voce. Non devono spodestare la voce reale vista sul GENERATE, altrimenti
+    `analyze` classifica come FREE una sessione premium."""
+    rows = [
+        activity_log.Row("j1", "2026-08-01 10:00:00", "a.epub", "GENERATE", "cidA",
+                         "1.1.1.1", "gemini:Kore", "it", "web"),
+        activity_log.Row("j1", "2026-08-01 10:20:00", "a.epub", "M4B_START", "cidA",
+                         "1.1.1.1", "size_mb=12.3", "it", "web"),
+        activity_log.Row("j1", "2026-08-01 10:21:00", "a.epub", "M4B_END", "cidA",
+                         "1.1.1.1", "elapsed_s=8 pct=100 status=ok", "it", "web"),
+    ]
+    sessions = user_stats.parse_sessions(rows)
+    s = sessions["j1"]
+    assert s["voice"] == "gemini:Kore"
+    assert user_stats.cohort_of(s) == "premium"
+
+
+def test_analyze_sessione_m4b_senza_complete_resta_premium(logfile):
+    """Stesso scenario end-to-end via `analyze`: GENERATE con voce premium poi
+    M4B_START/M4B_END senza COMPLETE. La coorte premium deve contare l'avvio."""
+    extra = (
+        'jm4b # 2026-08-03 09:00:00 # "m.epub" # GENERATE # cidM # 4.4.4.4'
+        ' # gemini:Kore # it # web\n'
+        'jm4b # 2026-08-03 09:05:00 # "m.epub" # M4B_START # cidM # 4.4.4.4'
+        ' # size_mb=12.3 # it # web\n'
+        'jm4b # 2026-08-03 09:06:00 # "m.epub" # M4B_END # cidM # 4.4.4.4'
+        ' # elapsed_s=8 pct=100 status=ok # it # web\n'
+    )
+    p = logfile.parent / "activity_2026-08b.log"
+    p.write_text(logfile.read_text(encoding="utf-8") + extra, encoding="utf-8")
+    res = user_stats.analyze(activity_log.file_rows(p), ym="2026-08")
+    # jm4b si aggiunge a j1 fra gli avvii premium; nessun COMPLETE per jm4b.
+    assert res["coorti"]["premium"]["generazioni_avviate"] == 3
+
+
 def test_user_stats_resta_un_modulo_foglia():
     import ast
     import pathlib

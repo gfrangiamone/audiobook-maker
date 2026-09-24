@@ -60,6 +60,55 @@ def test_log_m4b_progress_end_no_throttle(monkeypatch):
     assert captured[0][0][2] == "M4B_END"
 
 
+def test_log_m4b_progress_passa_epoch_a_log_activity(monkeypatch):
+    """Item 2: _log_m4b_progress deve passare epoch=job.get("gen_epoch") a
+    _log_activity, come fanno gli altri eventi di ciclo (GENERATE/REUSE/COMPLETE)."""
+    import generation_engine
+
+    captured = []
+    monkeypatch.setattr(generation_engine, "_log_activity",
+                        lambda *a, **kw: captured.append((a, kw)))
+    job = {"original_filename": "libro.epub", "gen_epoch": 3}
+
+    generation_engine._log_m4b_progress("J1", job, "START", size_mb=12.3)
+
+    assert len(captured) == 1
+    assert captured[0][1]["epoch"] == 3
+
+
+def test_log_m4b_progress_epoch_diverse_due_righe_m4b_start(monkeypatch):
+    """Item 2: senza epoch il dedup di activity_log su (job_id, "M4B_START")
+    sopprimeva la 2a riga in una ri-generazione dello stesso job_id nello
+    stesso mese. Con epoch=gen_epoch le due generazioni restano distinte."""
+    import pathlib
+    import tempfile
+    from datetime import datetime
+
+    import activity_log
+    import audiobook_app
+    import generation_engine
+
+    script_dir = pathlib.Path(tempfile.mkdtemp())
+    monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", script_dir)
+    activity_log.reset()
+    monkeypatch.setattr(generation_engine, "_log_activity", audiobook_app._log_activity)
+
+    job_run1 = {"client_id": "c", "ip": "1.1.1.1", "lang": "it",
+                "original_filename": "f.epub", "gen_epoch": 1}
+    job_run2 = {"client_id": "c", "ip": "1.1.1.1", "lang": "it",
+                "original_filename": "f.epub", "gen_epoch": 2}
+
+    generation_engine._log_m4b_progress("JOB", job_run1, "START", size_mb=1.0)
+    generation_engine._log_m4b_progress("JOB", job_run2, "START", size_mb=2.0)
+
+    ym = datetime.now().strftime("%Y-%m")
+    lines = (script_dir / f"activity_{ym}.log").read_text(encoding="utf-8").splitlines()
+    m4b_start_lines = [l for l in lines if l.split(" # ")[3] == "M4B_START"]
+    assert len(m4b_start_lines) == 2
+
+    activity_log.reset()
+
+
 def test_run_generation_passa_job_id_a_ogni_evento_m4b():
     """C3: tutti i chiamanti in run_generation passano job_id come primo argomento."""
     import ast

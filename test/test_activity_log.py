@@ -182,6 +182,32 @@ def test_ym_non_valido(log_dir, ym):
     assert activity_log.fingerprint(ym) is None
 
 
+def test_ym_con_a_capo_finale_non_valido(log_dir):
+    """Item 3: `$` di _YM_RE combacia anche prima di un '\\n' finale ('2026-09\\n'
+    passava). Con `\\Z` un mese con a-capo in coda non deve piu' risolversi.
+
+    NB: month_rows/fingerprint tornano gia' vuoto/None con la regex vecchia,
+    perche' il path risultante ("activity_2026-09\\n.log") non combacia col
+    file reale sul filesystem: questo test da solo non discrimina il bug (vedi
+    test_ym_re_rifiuta_a_capo_finale sotto, che verifica la regex stessa)."""
+    _write(log_dir, "2026-09", [_line("J1", "2026-09-01 10:00:00", "COMPLETE")])
+    assert list(activity_log.month_rows("2026-09\n")) == []
+    assert activity_log.fingerprint("2026-09\n") is None
+
+
+def test_ym_re_rifiuta_a_capo_finale():
+    """Item 3, verifica diretta sulla regex (vedi nota sopra: il test
+    behavioral su month_rows/fingerprint non discrimina il bug su questo
+    filesystem)."""
+    assert activity_log._YM_RE.match("2026-09\n") is None
+    assert activity_log._YM_RE.match("2026-09") is not None
+
+
+def test_ym_in_name_rifiuta_a_capo_finale():
+    assert activity_log._YM_IN_NAME.match("activity_2026-09.log\n") is None
+    assert activity_log._YM_IN_NAME.match("activity_2026-09.log") is not None
+
+
 def test_iter_rows_attraversa_i_mesi_e_filtra(log_dir):
     _write(log_dir, "2026-07", [
         _line("A", "2026-07-30 10:00:00", "COMPLETE"),   # prima di since
