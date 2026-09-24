@@ -3238,7 +3238,7 @@ def _is_resume_or_probe_request():
 
 
 # ----------------------------------------------------------------------
-# COMMUNITY STATS — derivate dai log activity_YYYY-MM.log esistenti
+# COMMUNITY STATS — derivate dal business log (activity_log)
 # ----------------------------------------------------------------------
 # Conta operation=='COMPLETE' (audiolibri generati con successo) e aggrega
 # per lingua TTS (voice.split('-')[0]). Cache in-memory: 60s today, 5min mese.
@@ -3247,23 +3247,7 @@ _stats_lock = threading.Lock()
 _stats_today_cache = {"value": None, "expires": 0.0}
 _stats_month_cache = {"value": None, "expires": 0.0}
 
-
-def _parse_activity_lines(yyyymm: str):
-    """Itera (ts_str, operation, voice) dalle righe del log mensile.
-    Formato: '<sid> # <ts> # "<file>" # <op> # <cid> # <ip> # <voice> # <lang>'.
-    Resiliente a righe malformate."""
-    log_path = SCRIPT_DIR / f"activity_{yyyymm}.log"
-    if not log_path.exists():
-        return
-    try:
-        with open(log_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.rstrip("\n").split(" # ")
-                if len(parts) < 7:
-                    continue
-                yield parts[1], parts[3], parts[6]
-    except OSError:
-        return
+_COMMUNITY_OPS = frozenset({"COMPLETE", "OPT_COMPLETE"})
 
 
 def _stats_today_count() -> int:
@@ -3272,13 +3256,8 @@ def _stats_today_count() -> int:
     with _stats_lock:
         if _stats_today_cache["value"] is not None and now < _stats_today_cache["expires"]:
             return _stats_today_cache["value"]
-    today = datetime.now()
-    yyyymm = today.strftime("%Y-%m")
-    today_str = today.strftime("%Y-%m-%d")
-    count = 0
-    for ts, op, _voice in _parse_activity_lines(yyyymm):
-        if op in ("COMPLETE", "OPT_COMPLETE") and ts.startswith(today_str):
-            count += 1
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    count = sum(1 for _ in activity_log.iter_rows(midnight, ops=_COMMUNITY_OPS))
     with _stats_lock:
         _stats_today_cache["value"] = count
         _stats_today_cache["expires"] = now + 60.0
@@ -3293,16 +3272,14 @@ def _stats_month_by_lang() -> dict:
     with _stats_lock:
         if _stats_month_cache["value"] is not None and now < _stats_month_cache["expires"]:
             return _stats_month_cache["value"]
-    yyyymm = datetime.now().strftime("%Y-%m")
+    month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     by_lang: dict[str, int] = defaultdict(int)
     total = 0
-    for _ts, op, voice in _parse_activity_lines(yyyymm):
-        if op not in ("COMPLETE", "OPT_COMPLETE"):
-            continue
+    for row in activity_log.iter_rows(month_start, ops=_COMMUNITY_OPS):
         total += 1
-        if not voice:
+        if not row.voice:
             continue
-        lang = voice.split("-")[0].strip().lower()
+        lang = row.voice.split("-")[0].strip().lower()
         if lang:
             by_lang[lang] += 1
     sorted_langs = sorted(by_lang.items(), key=lambda kv: kv[1], reverse=True)
