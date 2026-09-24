@@ -2741,7 +2741,7 @@ def _m4b_progress_simulator(job: dict, duration_audio_sec: float, stop_event: "t
             pass
 
 
-def _log_m4b_progress(job: dict, event: str, **fields) -> None:
+def _log_m4b_progress(job_id: str, job: dict, event: str, **fields) -> None:
     """Scrive riga in activity_YYYY-MM.log per eventi M4B_* con throttling 10s per PROGRESS.
 
     Definita QUI (non importata da audiobook_app): importare il modulo entry-point
@@ -2749,8 +2749,9 @@ def _log_m4b_progress(job: dict, event: str, **fields) -> None:
     contiene 'audiobook_app'), ri-spawnando cleanup/recover. Vedi convenzione #1.
     Usa la funzione di log iniettata via configure() (`_log_activity`).
 
+    job_id: chiave del job in `_jobs` (il dict del job non la contiene).
     event: "START" | "PROGRESS" | "END"
-    fields: size_mb, pct, msg, status, elapsed_s, duration_s (liberi -> campo `voice`)
+    fields: size_mb, pct, msg, status, elapsed_s, duration_s (campi liberi, finiscono nel campo `voice`)
     """
     if event == "PROGRESS":
         now = time.time()
@@ -2758,12 +2759,13 @@ def _log_m4b_progress(job: dict, event: str, **fields) -> None:
             return
         job["_m4b_last_log_ts"] = now
 
+    # Componi i fields in un payload sintetico nel campo `voice` (libero).
     payload_parts = [f"{k}={fields[k]}" for k in sorted(fields.keys())]
     payload = " ".join(payload_parts)[:200]  # cap a 200 char
 
     try:
         _log_activity(
-            job.get("job_id", ""),
+            job_id,
             job.get("original_filename", ""),
             "M4B_" + event,
             client_id=job.get("client_id", ""),
@@ -6890,7 +6892,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     )
                     _m4b_sim.start()
 
-                    _log_m4b_progress(job, "START", size_mb=round(
+                    _log_m4b_progress(job_id, job, "START", size_mb=round(
                         sum(os.path.getsize(p) for p in all_parts if os.path.exists(p)) / 1e6, 2
                     ))
 
@@ -6928,7 +6930,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         if not m4b_ok:
                             job["m4b_progress_total"] = 0  # nasconde sotto-barra
                         _log_m4b_progress(
-                            job, "END",
+                            job_id, job, "END",
                             status=_m4b_status.get("status", "fail" if not m4b_ok else "ok"),
                             pct=job.get("m4b_progress_current", 0),
                             elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),
@@ -6981,7 +6983,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 )
                 _m4b_sim.start()
 
-                _log_m4b_progress(job, "START", size_mb=round(
+                _log_m4b_progress(job_id, job, "START", size_mb=round(
                     (os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0) / 1e6, 2
                 ))
 
@@ -7029,7 +7031,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if not job.get("output_m4b"):
                         job["m4b_progress_total"] = 0  # nasconde sotto-barra
                     _log_m4b_progress(
-                        job, "END",
+                        job_id, job, "END",
                         status=_m4b_status.get("status", "fail" if not job.get("output_m4b") else "ok"),
                         pct=job.get("m4b_progress_current", 0),
                         elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),
@@ -7317,7 +7319,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     )
                     _m4b_sim.start()
 
-                    _log_m4b_progress(job, "START", size_mb=round(
+                    _log_m4b_progress(job_id, job, "START", size_mb=round(
                         (os.path.getsize(temp_full_mp3) if os.path.exists(temp_full_mp3) else 0) / 1e6, 2
                     ))
 
@@ -7349,7 +7351,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         if not job.get("output_m4b"):
                             job["m4b_progress_total"] = 0
                         _log_m4b_progress(
-                            job, "END",
+                            job_id, job, "END",
                             status=_m4b_status.get("status", "fail" if not job.get("output_m4b") else "ok"),
                             pct=job.get("m4b_progress_current", 0),
                             elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),

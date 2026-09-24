@@ -44,8 +44,8 @@ def test_log_m4b_progress_definito_in_generation_engine():
     orig = generation_engine._log_activity
     generation_engine._log_activity = lambda *a, **kw: captured.append((a, kw))
     try:
-        job = {"job_id": "R1", "client_id": "c", "ip": "1.1.1.1", "lang": "it"}
-        generation_engine._log_m4b_progress(job, "START", size_mb=0.0)
+        job = {"client_id": "c", "ip": "1.1.1.1", "lang": "it"}
+        generation_engine._log_m4b_progress("R1", job, "START", size_mb=0.0)
     finally:
         generation_engine._log_activity = orig
 
