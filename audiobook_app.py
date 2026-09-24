@@ -158,9 +158,12 @@ import tts_backend_state
 import user_stats
 import activity_log
 
-# Il business log vive in SCRIPT_DIR (fase 1). La callable e' risolta a ogni
-# scrittura/lettura: patchare SCRIPT_DIR nei test basta a spostarlo.
-activity_log.configure(log_dir=lambda: SCRIPT_DIR)
+# Il business log vive in ABM_ACTIVITY_LOG_DIR se impostata (in prod la data
+# dir, dopo lo spostamento della fase 2), altrimenti in SCRIPT_DIR. La
+# callable e' risolta a ogni scrittura/lettura: patchare SCRIPT_DIR nei test
+# basta a spostarlo. activity.db (ABM_ACTIVITY_DB=dual|db) sta accanto ai file.
+activity_log.configure(
+    log_dir=lambda: Path(os.environ.get("ABM_ACTIVITY_LOG_DIR") or SCRIPT_DIR))
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -21599,6 +21602,17 @@ def _cf_probe_supervisor():
                   f"{type(e).__name__}: {e}", flush=True)
 
 
+def _start_activity_sync():
+    """Allinea activity.db ai file in un thread, solo con ABM_ACTIVITY_DB
+    dual|db. Finche' non ha finito il modo db legge dal file."""
+    if activity_log.mode() == "off":
+        return None
+    t = threading.Thread(target=activity_log.sync_all, daemon=True,
+                         name="activity-sync")
+    t.start()
+    return t
+
+
 def _ensure_background_threads():
     global _cleanup_started
     if _cleanup_started:
@@ -21611,6 +21625,7 @@ def _ensure_background_threads():
         threading.Thread(target=_load_metrics_supervisor, daemon=True).start()
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
+    _start_activity_sync()
     if db.is_ready():
         threading.Thread(target=_account_maintenance_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).

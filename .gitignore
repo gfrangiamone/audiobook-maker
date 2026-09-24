@@ -69,3 +69,6 @@ out/
 
 # Catalogo voci VoxCPM impacchettato (740 MB di wav, importato da abm-voxcpm-worker)
 voxcpm2/
+
+# activity log su SQLite (ABM_ACTIVITY_DB), accanto ai file in dev
+activity.db*
