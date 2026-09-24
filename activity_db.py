@@ -163,9 +163,22 @@ def _values(ym, rec, epoch, seq):
 def insert_new(conn, ym, row, epoch=None):
     """Dedup del modo db: True se la riga e' entrata, False se la chiave
     (ym, job_id, op, op_arg, epoch) c'era gia'. Job vuoto: entra sempre."""
+    return _insert_new_row(conn, ym, row, epoch) is not None
+
+
+def _insert_new_row(conn, ym, row, epoch=None):
+    """Come insert_new ma ritorna l'id della riga appena entrata (None se
+    la chiave c'era gia'). Uso interno di activity_log: se la scrittura sul
+    file fallisce dopo un insert riuscito, l'id serve a compensare con
+    `delete_row` cosi' il DB non resta avanti al file."""
     cur = conn.execute(_INSERT.format("OR IGNORE"),
                        _values(ym, to_columns(row), epoch, 0))
-    return cur.rowcount == 1
+    return cur.lastrowid if cur.rowcount == 1 else None
+
+
+def delete_row(conn, rowid):
+    """Cancella una riga per id: compensazione best-effort di chi scrive."""
+    conn.execute("DELETE FROM events WHERE id = ?", (rowid,))
 
 
 def insert_mirror(conn, ym, row, epoch=None):

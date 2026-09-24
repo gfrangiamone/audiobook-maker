@@ -202,3 +202,100 @@ def test_scrittura_lenta_segnalata(ddir, monkeypatch, capsys):
     assert "scrittura DB lenta: GENERATE" in capsys.readouterr().out
     st = activity_log.db_stats()
     assert st["writes"] == 1 and st["max_ms"] >= st["avg_ms"] >= 0.0
+
+
+def test_db_scrittura_file_fallita_compensa_la_riga_nel_db(ddir, monkeypatch):
+    """Fix round 1, finding 1: in modo db il DB accetta la riga prima del
+    file; se poi il file fallisce, la riga appena entrata nel DB va tolta
+    (altrimenti resta un evento nel DB che il file non ha mai avuto, e ogni
+    ritentativo la trova gia' deduplicata senza mai raggiungere il file)."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", "db")
+    real_open = open
+    fail = {"on": True}
+
+    def fake_open(path, *a, **kw):
+        if fail["on"] and str(path).endswith(".log"):
+            raise OSError("disco pieno")
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    activity_log.log("J1", "a.epub", "COMPLETE")
+    ym = _ym()
+    assert _file(ddir, ym) == []
+    assert _db(ddir, ym) == []                    # compensata: nessuna riga orfana
+    assert not activity_log._db_ready.is_set()
+
+    fail["on"] = False
+    activity_log.log("J1", "a.epub", "COMPLETE")   # ritentativo, ora il file scrive
+    assert [r[3] for r in _file(ddir, ym)] == ["COMPLETE"]
+    assert _db(ddir, ym) == _file(ddir, ym)
+
+
+def test_scrittura_db_fallita_toglie_la_disponibilita_del_db(ddir, monkeypatch):
+    """Fix round 1, finding 2: un fallimento del DB (non un dedup: il DB
+    non ha proprio risposto) toglie `_db_ready` ai lettori, che tornano sul
+    file finche' un sync_all non la ripristina."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", "dual")
+    activity_log.log("J0", "a.epub", "GENERATE")
+    activity_log.sync_all()
+    assert activity_log._db_ready.is_set()
+
+    real_insert_mirror = activity_db.insert_mirror
+
+    def boom(*a, **k):
+        raise RuntimeError("disco pieno")
+
+    monkeypatch.setattr(activity_db, "insert_mirror", boom)
+    activity_log.log("J1", "a.epub", "COMPLETE")
+    ym = _ym()
+    assert not activity_log._db_ready.is_set()
+    assert [r[3] for r in _file(ddir, ym)] == ["GENERATE", "COMPLETE"]
+
+    monkeypatch.setattr(activity_db, "insert_mirror", real_insert_mirror)
+    assert activity_log.sync_all() == 1            # il mese va ricostruito
+    assert activity_log._db_ready.is_set()
+    assert _db(ddir, ym) == _file(ddir, ym)
+
+
+def test_scrittura_db_fallita_in_modo_db_toglie_la_disponibilita(ddir, monkeypatch):
+    """Come sopra ma in modo db: il fallimento e' sull'insert che decide il
+    dedup, non sul mirror."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", "db")
+    activity_log.log("J0", "a.epub", "GENERATE")
+    activity_log.sync_all()
+    assert activity_log._db_ready.is_set()
+
+    real = activity_db._insert_new_row
+
+    def boom(*a, **k):
+        raise RuntimeError("disco pieno")
+
+    monkeypatch.setattr(activity_db, "_insert_new_row", boom)
+    activity_log.log("J1", "a.epub", "COMPLETE")
+    ym = _ym()
+    assert not activity_log._db_ready.is_set()
+    assert [r[3] for r in _file(ddir, ym)] == ["GENERATE", "COMPLETE"]
+
+    monkeypatch.setattr(activity_db, "_insert_new_row", real)
+    assert activity_log.sync_all() == 1
+    assert activity_log._db_ready.is_set()
+    assert _db(ddir, ym) == _file(ddir, ym)
+
+
+def test_compensazione_fallita_toglie_comunque_la_disponibilita(ddir, monkeypatch):
+    """Fix round 1, finding 2 (ultima frase): se anche la compensazione
+    fallisce, log() non solleva e la disponibilita' del DB va comunque
+    tolta."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", "db")
+    monkeypatch.setattr(activity_db, "delete_row",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        if str(path).endswith(".log"):
+            raise OSError("disco pieno")
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    activity_log.log("J1", "a.epub", "COMPLETE")   # non deve sollevare
+    assert not activity_log._db_ready.is_set()

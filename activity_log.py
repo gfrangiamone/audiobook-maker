@@ -36,6 +36,9 @@ MODES = ("off", "dual", "db")
 # Oltre questa soglia una scrittura sul DB finisce nel log di servizio: e'
 # la misura che decide fra scrittura sincrona e coda (spec, addendum 7).
 _SLOW_DB_MS = 50.0
+# Sentinella di _db_write: distingue "il DB non risponde" da un esito
+# legittimo di fn() che puo' essere None (es. dedup gia' presente).
+_FAIL = object()
 
 
 class Row(NamedTuple):
@@ -116,7 +119,7 @@ def _close_writer():
 
 def _db_write(fn, ym, row, epoch):
     """`fn(conn, ym, row, epoch)` sul DB, con `_lock` gia' preso. Mai
-    un'eccezione: None se il DB non risponde."""
+    un'eccezione: `_FAIL` se il DB non risponde."""
     try:
         conn = _writer()
         t0 = time.perf_counter()
@@ -124,7 +127,7 @@ def _db_write(fn, ym, row, epoch):
     except Exception as e:
         _close_writer()
         print(f"[activity_log] scrittura DB {row[3]} fallita: {e}")
-        return None
+        return _FAIL
     ms = (time.perf_counter() - t0) * 1000.0
     _db_stats["writes"] += 1
     _db_stats["total_ms"] += ms
@@ -215,6 +218,13 @@ def log(job_id, filename, op, client_id="", ip="", voice="", lang="",
     entra tale e quale nel DB. `db`: decide il DB (chiave del mese, epoca
     compresa, anche dopo un riavvio) e il file riceve solo le righe nuove;
     se il DB non risponde la riga va comunque nel file, senza dedup.
+
+    Nel modo db, se il DB accetta la riga ma la scrittura sul file fallisce
+    poi, la riga appena entrata nel DB viene tolta (best-effort): il DB non
+    deve restare avanti al file. In `dual`/`db` un fallimento del DB (non
+    un dedup: il DB non ha proprio risposto) toglie la disponibilita' del
+    DB ai lettori (`_db_ready`) finche' il prossimo `sync_all` non la
+    ripristina.
     """
     global _month
     now = datetime.now()
@@ -228,9 +238,15 @@ def log(job_id, filename, op, client_id="", ip="", voice="", lang="",
     # La riga del DB e' quella che il file restituira' rileggendola.
     row = tuple(split_line(line)) if m != "off" else None
     with _lock:
+        rowid = None
         if m == "db":
-            if _db_write(activity_db.insert_new, ym, row, epoch) is False:
-                return
+            res = _db_write(activity_db._insert_new_row, ym, row, epoch)
+            if res is _FAIL:
+                _db_ready.clear()
+            elif res is None:
+                return   # dedup: la chiave c'era gia'
+            else:
+                rowid = res
         else:
             if ym != _month:
                 _month = ym
@@ -242,13 +258,20 @@ def log(job_id, filename, op, client_id="", ip="", voice="", lang="",
                 f.write(line)
         except Exception as e:
             print(f"[activity_log] scrittura {op} fallita: {e}")
+            if rowid is not None:
+                try:
+                    activity_db.delete_row(_writer(), rowid)
+                except Exception:
+                    _close_writer()
+                _db_ready.clear()
             return
         if m == "db":
             return
         if key is not None:
             _keys.add(key)
         if m == "dual":
-            _db_write(activity_db.insert_mirror, ym, row, epoch)
+            if _db_write(activity_db.insert_mirror, ym, row, epoch) is _FAIL:
+                _db_ready.clear()
 
 
 def init_dedup():
