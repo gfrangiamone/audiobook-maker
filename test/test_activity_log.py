@@ -4,6 +4,7 @@ In fase 2 questi test verranno parametrizzati anche sul backend SQLite: vanno
 scritti solo contro le funzioni pubbliche, mai contro il formato del file,
 salvo dove il formato e' esso stesso il contratto (andata e ritorno).
 """
+import sqlite3
 from datetime import datetime, timedelta
 
 import pytest
@@ -357,3 +358,55 @@ def test_famiglie_sovraccariche_andata_e_ritorno(log_dir):
         ("vc1", "speed=1.1", "VOICE_CLONE_SPEED", "c1", "", "", "", ""),
         ("acct-1234abcd", "", "ACCOUNT_LOGIN", "c1", "", "", "", ""),
     ]
+
+
+# --------------------------------------------------------- fix round 1 (db)
+
+@_db_only
+def test_c1_errore_a_meta_lotto_ripiega_sul_file_completo(log_dir, monkeypatch):
+    """select_rows pesca a lotti da 2000: un errore dopo il primo lotto non
+    deve ne' sollevare ne' consegnare un mese incompleto (issue C1)."""
+    now = datetime.now()
+    ts = now.strftime("%Y-%m-%d %H:%M:%S")
+    ym = _ym(now)
+    lines = [_line(f"J{i}", ts, "COMPLETE") for i in range(5000)] + [
+        _line("JDONE", ts, "COMPLETE")]
+    _write(log_dir, ym, lines)     # 5001 righe: piu' di un lotto di select_rows
+    attesi = [f"J{i}" for i in range(5000)] + ["JDONE"]
+
+    real_select_rows = activity_db.select_rows
+
+    def _boom_a_meta(conn, *a, **kw):
+        for i, row in enumerate(real_select_rows(conn, *a, **kw)):
+            if i >= 2000:
+                raise sqlite3.DatabaseError("boom a meta' lotto")
+            yield row
+    monkeypatch.setattr(activity_db, "select_rows", _boom_a_meta)
+
+    assert [r.job_id for r in activity_log.month_rows(ym)] == attesi
+    assert activity_log.delivered_ids(months=1)["complete"] == set(attesi)
+
+
+@_db_only
+def test_i1_lettura_fallita_toglie_db_ready_e_non_ritenta(log_dir, monkeypatch):
+    """Un fallimento di lettura spegne `_db_ready`: la lettura successiva va
+    dritta al file, senza ritoccare il DB (issue I1)."""
+    now = datetime.now()
+    ts = now.strftime("%Y-%m-%d %H:%M:%S")
+    ym = _ym(now)
+    _write(log_dir, ym, [_line("J1", ts, "COMPLETE")])
+    assert activity_log._db_ready.is_set()
+
+    chiamate = []
+
+    def _boom(conn, *a, **kw):
+        chiamate.append(1)
+        raise sqlite3.DatabaseError("boom")
+    monkeypatch.setattr(activity_db, "select_rows", _boom)
+
+    assert [r.job_id for r in activity_log.month_rows(ym)] == ["J1"]
+    assert not activity_log._db_ready.is_set()
+    assert len(chiamate) == 1
+
+    assert [r.job_id for r in activity_log.month_rows(ym)] == ["J1"]
+    assert len(chiamate) == 1          # la seconda lettura non ha toccato il DB

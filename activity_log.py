@@ -401,20 +401,26 @@ def _months_between(since, until):
             y, m = y + 1, 1
 
 
+def _filter_rows(rows, since_ts, until_ts, ops):
+    """`rows` ristrette a `since_ts <= ts < until_ts` (None: nessun limite)
+    e a `ops` (None: tutte). Condivisa dal file e dal ripiego del DB."""
+    for row in rows:
+        if since_ts is not None and row.ts < since_ts:
+            continue
+        if until_ts is not None and row.ts >= until_ts:
+            continue
+        if ops is not None and row.op not in ops:
+            continue
+        yield row
+
+
 def _file_iter_rows(since, until=None, ops=None):
     """Righe con `since <= ts < until` (until assente: fino a oggi), in
     ordine di file; `ops`: insieme di operazioni esatte da tenere."""
     since_s = since.strftime(TS_FMT)
     until_s = until.strftime(TS_FMT) if until else None
     for ym in _months_between(since, until):
-        for row in _file_month_rows(ym):
-            if row.ts < since_s:
-                continue
-            if until_s is not None and row.ts >= until_s:
-                continue
-            if ops is not None and row.op not in ops:
-                continue
-            yield row
+        yield from _filter_rows(_file_month_rows(ym), since_s, until_s, ops)
 
 
 def _file_fingerprint(ym):
@@ -432,27 +438,52 @@ def _use_db():
     return mode() == "db" and _db_ready.is_set()
 
 
-def _db_rows(fallback, ym_from, ym_to, since_ts=None, until_ts=None, ops=None):
-    """Righe dal DB; se il DB non si apre o la query fallisce prima della
-    prima riga, quelle di `fallback()` (il file, registro completo)."""
-    conn = None
-    try:
-        conn = activity_db.reader(_db_path())
-        it = activity_db.select_rows(conn, ym_from, ym_to, since_ts, until_ts, ops)
-        first = next(it, None)
-    except (sqlite3.Error, OSError, RuntimeError) as e:
-        if conn is not None:
-            conn.close()
-        print(f"[activity_log] lettura DB fallita, uso il file: {e}")
-        yield from fallback()
-        return
-    try:
-        if first is not None:
-            yield Row(*first)
-            for t in it:
-                yield Row(*t)
-    finally:
-        conn.close()
+def _db_read_failed(e):
+    """Un fallimento di lettura toglie la disponibilita' del DB ai lettori,
+    come un fallimento di scrittura (`log`): il prossimo `sync_all` riuscito
+    la ripristina. Un solo log per fallimento: chi chiama smette di
+    interrogare il DB per il resto della lettura in corso (vedi `_db_rows`),
+    e le letture successive, a `_db_ready` spento, non arrivano nemmeno qui."""
+    with _lock:
+        _db_ready.clear()
+    print(f"[activity_log] lettura DB fallita, uso il file: {e}")
+
+
+def _ym_range(ym_from, ym_to):
+    """Mesi YYYY-MM da `ym_from` a `ym_to` inclusi, in ordine."""
+    y, m = int(ym_from[:4]), int(ym_from[5:7])
+    y2, m2 = int(ym_to[:4]), int(ym_to[5:7])
+    while (y, m) <= (y2, m2):
+        yield f"{y:04d}-{m:02d}"
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+
+
+def _db_rows(ym_from, ym_to, since_ts=None, until_ts=None, ops=None):
+    """Righe dal DB, un mese alla volta: ogni mese si materializza per
+    intero dentro il try prima di consegnare qualunque riga, cosi' un
+    errore a meta' lettura (`select_rows` pesca a lotti da 2000) non esce
+    mai con un cursore ancora aperto, ne' con un mese consegnato a meta'.
+    Il primo mese che fallisce ripiega sul file (registro completo) per se'
+    e per tutti i mesi restanti di questa lettura, senza ritentare il DB."""
+    db_ok = True
+    for ym in _ym_range(ym_from, ym_to):
+        if db_ok:
+            try:
+                conn = activity_db.reader(_db_path())
+                try:
+                    rows = [Row(*t) for t in activity_db.select_rows(
+                        conn, ym, ym, since_ts, until_ts, ops)]
+                finally:
+                    conn.close()
+            except (sqlite3.Error, OSError, RuntimeError) as e:
+                db_ok = False
+                _db_read_failed(e)
+            else:
+                yield from rows
+                continue
+        yield from _filter_rows(_file_month_rows(ym), since_ts, until_ts, ops)
 
 
 def month_rows(ym):
@@ -460,7 +491,7 @@ def month_rows(ym):
     if not _YM_RE.match(ym or ""):
         return
     if _use_db():
-        yield from _db_rows(lambda: _file_month_rows(ym), ym, ym)
+        yield from _db_rows(ym, ym)
         return
     yield from _file_month_rows(ym)
 
@@ -470,8 +501,7 @@ def iter_rows(since, until=None, ops=None):
     ordine di mese e di scrittura; `ops`: insieme di operazioni esatte."""
     if _use_db():
         end = until or datetime.now()
-        yield from _db_rows(lambda: _file_iter_rows(since, until, ops),
-                            since.strftime("%Y-%m"), end.strftime("%Y-%m"),
+        yield from _db_rows(since.strftime("%Y-%m"), end.strftime("%Y-%m"),
                             since.strftime(TS_FMT),
                             until.strftime(TS_FMT) if until else None, ops)
         return
