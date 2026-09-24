@@ -333,6 +333,55 @@ def test_cancelled_dal_lato_runpod_e_bloccato():
     assert e.value.ritentabile is True
 
 
+def test_execution_timeout_di_runpod_e_bloccato():
+    # 24/09/2026: l'Execution Timeout dell'endpoint (600 s) ha chiuso a meta'
+    # un capitolo lungo, e RunPod lo riporta FAILED con la sola stringa
+    # "executionTimeout exceeded". Letto come VoxcpmJobError nudo uccideva il
+    # libro intero con rimborso; e' invece "partito e mai arrivato", come
+    # TIMED_OUT.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-21"})],
+        get=[FintaRisposta(body={"status": "FAILED",
+                                 "error": "executionTimeout exceeded"})],
+    )
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+    with pytest.raises(voxcpm_tts.VoxcpmBloccato) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert e.value.ritentabile is True
+    assert "executionTimeout" in str(e.value)
+
+
+def test_il_job_porta_un_execution_timeout_oltre_il_tetto_del_client():
+    # Senza `policy` vale l'Execution Timeout della console, che puo' stare
+    # sotto il tetto del client e uccidere il job prima che il client lo
+    # consideri bloccato. Il margine lascia scattare per primo il tetto del
+    # client, che cancella il job da se' e sa di doverlo rifare.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-22"})],
+        get=[FintaRisposta(body={"status": "COMPLETED", "output": {}})],
+    )
+    payload = {"input": {"action": "generate"}}
+    voxcpm_tts.run_job(payload, session=ses, sleep=dormi_finto, poll=0,
+                       timeout=1800)
+    corpo = ses.post_fatte[0]["json"]
+    assert corpo["input"] == {"action": "generate"}
+    assert corpo["policy"]["executionTimeout"] == int(
+        (1800 + voxcpm_tts._EXEC_TIMEOUT_MARGINE_S) * 1000)
+    # Il payload del chiamante non si tocca: `synthesize_chapter` lo rilegge.
+    assert "policy" not in payload
+
+
+def test_il_tetto_di_esecuzione_segue_l_ambiente(monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_JOB_TIMEOUT_S", "3600")
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-23"})],
+        get=[FintaRisposta(body={"status": "COMPLETED", "output": {}})],
+    )
+    voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert ses.post_fatte[0]["json"]["policy"]["executionTimeout"] == int(
+        (3600 + voxcpm_tts._EXEC_TIMEOUT_MARGINE_S) * 1000)
+
+
 def test_status_401_non_ritenta_e_non_e_ritentabile():
     # Come per la sottomissione: una chiave revocata resta revocata, e
     # rimettersi ad aspettare fino al tetto di coda o di esecuzione la
