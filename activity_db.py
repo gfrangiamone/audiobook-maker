@@ -37,8 +37,10 @@ _COLS = ("ym", "ts", "job_id", "op", "op_arg", "filename", "client_id", "ip",
          "voice", "detail", "lang", "platform", "epoch", "seq")
 _INSERT = ("INSERT {} INTO events (" + ", ".join(_COLS) + ") VALUES ("
            + ", ".join("?" * len(_COLS)) + ")")
-_SEL = ("job_id", "ts", "filename", "op", "op_arg", "client_id", "ip",
-        "voice", "detail", "lang", "platform")
+# Lettura: i primi 9 campi nell'ordine di FIELDS (op gia' completa), poi op
+# base e detail per rimettere il payload nella sua colonna.
+_ROW_SEL = ("job_id", "ts", "filename", _FULL_OP, "client_id", "ip",
+            "voice", "lang", "platform", "op", "detail")
 
 _MIGRATIONS = (
     ("001_events", (
@@ -264,7 +266,7 @@ def select_rows(conn, ym_from, ym_to, since_ts=None, until_ts=None, ops=None,
     """Righe (tuple di 9) dei mesi ym_from..ym_to inclusi, in ordine di mese
     e di scrittura. since_ts/until_ts: stringhe nel formato del file, since
     incluso, until escluso. ops: op complete (con suffisso) da tenere."""
-    sql = ["SELECT", ", ".join(_SEL), "FROM events WHERE ym >= ? AND ym <= ?"]
+    sql = ["SELECT", ", ".join(_ROW_SEL), "FROM events WHERE ym >= ? AND ym <= ?"]
     args = [ym_from, ym_to]
     if since_ts is not None:
         sql.append("AND ts >= ?")
@@ -285,4 +287,24 @@ def select_rows(conn, ym_from, ym_to, since_ts=None, until_ts=None, ops=None,
         if not chunk:
             return
         for r in chunk:
-            yield from_columns(dict(zip(_SEL, r)))
+            yield _row_from_select(r)
+
+
+# Stessa inversa di from_columns, ma su tuple (vedi _ROW_SEL): solo le righe
+# con `detail` (poche) ricopiano la tupla. Un mese intero sono ~85k righe:
+# niente dict per riga.
+_DETAIL_IDX = {}   # op base -> indice in FIELDS del campo che ospita detail (o None)
+
+
+def _row_from_select(r):
+    op = r[9]
+    try:
+        idx = _DETAIL_IDX[op]
+    except KeyError:
+        field = _detail_field(op)
+        idx = _DETAIL_IDX[op] = None if field is None else FIELDS.index(field)
+    if idx is None:
+        return r[:9]
+    out = list(r[:9])
+    out[idx] = r[10]
+    return tuple(out)

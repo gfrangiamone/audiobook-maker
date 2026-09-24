@@ -75,6 +75,15 @@ def test_andata_e_ritorno_identica(row):
     assert activity_db.from_columns(activity_db.to_columns(row)) == row
 
 
+def test_andata_e_ritorno_identica_passando_dal_db(conn):
+    """select_rows ricompone l'op in SQL e rimette detail a mano sulla tupla:
+    deve restituire le stesse righe di from_columns(to_columns(...))."""
+    for i, row in enumerate(ROUND_TRIP):
+        activity_db.insert_mirror(conn, "2026-08", row, epoch=i)
+    assert _all(conn) == ROUND_TRIP
+    assert all(type(r) is tuple for r in _all(conn))
+
+
 def test_payload_m4b_va_in_detail():
     rec = activity_db.to_columns(_r(op="M4B_END", voice="size_mb=1"))
     assert rec["voice"] == "" and rec["detail"] == "size_mb=1"
