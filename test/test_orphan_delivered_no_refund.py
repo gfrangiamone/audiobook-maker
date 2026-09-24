@@ -105,5 +105,5 @@ def test_consegna_riconosciuta_con_cancelletto_nel_titolo(recovery_env):
     script_dir, _calls = recovery_env
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     _write_activity(script_dir, [
-        f'JHASH # {ts} # "Saga # 2.epub" # COMPLETE # cid # 1.2.3.4 # it-IT-X # it'])
+        f'JHASH # {ts} # "Saga # 2.epub" # COMPLETE # cid # 1.2.3.4 # it-IT-X # it # web'])
     assert "JHASH" in activity_log.delivered_ids()["complete"]
