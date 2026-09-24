@@ -380,7 +380,7 @@ def months():
     return sorted(found, reverse=True)
 
 
-def month_rows(ym):
+def _file_month_rows(ym):
     """Righe del mese YYYY-MM; mese non valido o assente: nessuna riga."""
     if not _YM_RE.match(ym or ""):
         return
@@ -401,13 +401,13 @@ def _months_between(since, until):
             y, m = y + 1, 1
 
 
-def iter_rows(since, until=None, ops=None):
+def _file_iter_rows(since, until=None, ops=None):
     """Righe con `since <= ts < until` (until assente: fino a oggi), in
     ordine di file; `ops`: insieme di operazioni esatte da tenere."""
     since_s = since.strftime(TS_FMT)
     until_s = until.strftime(TS_FMT) if until else None
     for ym in _months_between(since, until):
-        for row in month_rows(ym):
+        for row in _file_month_rows(ym):
             if row.ts < since_s:
                 continue
             if until_s is not None and row.ts >= until_s:
@@ -417,7 +417,7 @@ def iter_rows(since, until=None, ops=None):
             yield row
 
 
-def fingerprint(ym):
+def _file_fingerprint(ym):
     """Firma del mese per invalidare le cache; None se il mese non c'e'."""
     if not _YM_RE.match(ym or ""):
         return None
@@ -426,6 +426,73 @@ def fingerprint(ym):
     except (OSError, RuntimeError):
         return None
     return (st.st_mtime_ns, st.st_size)
+
+
+def _use_db():
+    return mode() == "db" and _db_ready.is_set()
+
+
+def _db_rows(fallback, ym_from, ym_to, since_ts=None, until_ts=None, ops=None):
+    """Righe dal DB; se il DB non si apre o la query fallisce prima della
+    prima riga, quelle di `fallback()` (il file, registro completo)."""
+    conn = None
+    try:
+        conn = activity_db.reader(_db_path())
+        it = activity_db.select_rows(conn, ym_from, ym_to, since_ts, until_ts, ops)
+        first = next(it, None)
+    except (sqlite3.Error, OSError, RuntimeError) as e:
+        if conn is not None:
+            conn.close()
+        print(f"[activity_log] lettura DB fallita, uso il file: {e}")
+        yield from fallback()
+        return
+    try:
+        if first is not None:
+            yield Row(*first)
+            for t in it:
+                yield Row(*t)
+    finally:
+        conn.close()
+
+
+def month_rows(ym):
+    """Righe del mese YYYY-MM; mese non valido o assente: nessuna riga."""
+    if not _YM_RE.match(ym or ""):
+        return
+    if _use_db():
+        yield from _db_rows(lambda: _file_month_rows(ym), ym, ym)
+        return
+    yield from _file_month_rows(ym)
+
+
+def iter_rows(since, until=None, ops=None):
+    """Righe con `since <= ts < until` (until assente: fino a oggi), in
+    ordine di mese e di scrittura; `ops`: insieme di operazioni esatte."""
+    if _use_db():
+        end = until or datetime.now()
+        yield from _db_rows(lambda: _file_iter_rows(since, until, ops),
+                            since.strftime("%Y-%m"), end.strftime("%Y-%m"),
+                            since.strftime(TS_FMT),
+                            until.strftime(TS_FMT) if until else None, ops)
+        return
+    yield from _file_iter_rows(since, until, ops)
+
+
+def fingerprint(ym):
+    """Firma del mese per invalidare le cache; None se il mese non c'e'."""
+    if not _YM_RE.match(ym or ""):
+        return None
+    if _use_db():
+        try:
+            conn = activity_db.reader(_db_path())
+            try:
+                fp = activity_db.fingerprint(conn, ym)
+            finally:
+                conn.close()
+            return None if fp is None else ("db",) + fp
+        except (sqlite3.Error, OSError, RuntimeError):
+            pass
+    return _file_fingerprint(ym)
 
 
 def delivered_ids(months=3):
