@@ -4896,14 +4896,7 @@ def admin_logs():
     # Il vecchio istogramma orario per lingua e' stato sostituito dal pannello
     # di carico (/api/admin/load_stats): niente piu' aggregazione qui.
 
-    available_months = []
-    try:
-        for f in sorted(SCRIPT_DIR.glob("activity_*.log"), reverse=True):
-            m = re.search(r'activity_(\d{4}-\d{2})\.log', f.name)
-            if m:
-                available_months.append(m.group(1))
-    except Exception:
-        pass
+    available_months = activity_log.months()
 
     # Niente token in query string: l'auth admin viaggia via cookie HttpOnly
     # abm_admin_session (inviato automaticamente sulle navigazioni <a>). Un
