@@ -4196,87 +4196,78 @@ _PREMIUM_START_OPS = frozenset({"GENERATE", "OPTIMIZE"})
 
 
 def _parse_log_sessions(ym):
-    """Parse log file for given YYYY-MM and return (sessions OrderedDict, client_session_count dict)."""
+    """Sessioni del business log del mese YYYY-MM.
+
+    Ritorna (sessions OrderedDict job_id -> dict, client_session_count dict)."""
     from datetime import datetime
     from collections import OrderedDict
 
-    log_path = SCRIPT_DIR / f"activity_{ym}.log"
     sessions = OrderedDict()
+    for fields in activity_log.month_rows(ym):
+        (sid, dt_str, filename, operation, client_id, client_ip,
+         voice, browser_lang, platform) = fields
+        # Righe di sistema (voucher, admin, backend TTS) senza job: non sono
+        # sessioni. Prima uscivano di fatto perche' lo strip() iniziale
+        # sfasava i campi e la data non si leggeva piu'.
+        if not sid:
+            continue
+        # Skip voucher audit entries — not conversion activity
+        if operation.startswith("VOUCHER_ATTEMPT"):
+            continue
 
-    if not log_path.exists():
-        return sessions, {}
+        try:
+            dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
 
-    with open(log_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            # Split ancorato (2 campi a sinistra, 6 a destra): il vecchio
-            # `line.split("#")` sfasava i campi su ogni titolo contenente '#'
-            # ("Riftwar Saga # 2 Empire.epub" -> operazione "2 Empire"), e la
-            # sessione spariva dalle aggregazioni.
-            fields = user_stats.split_line(line)
-            if not fields:
-                continue
-            (sid, dt_str, filename, operation, client_id, client_ip,
-             voice, browser_lang, platform) = fields
-            # Skip voucher audit entries — not conversion activity
-            if operation.startswith("VOUCHER_ATTEMPT"):
-                continue
-
-            try:
-                dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                continue
-
-            # Avvio reale del libro con voce PREMIUM: GENERATE, oppure
-            # OPTIMIZE del wizard combinato (ottimizza + auto-gen), che porta
-            # la voce di destinazione gia' in fase di ottimizzazione AI. Si
-            # guarda la voce della RIGA, non l'ultima vista sulla sessione:
-            # un'anteprima premium seguita da un OPTIMIZE senza voce non conta.
-            premium_started = (
-                operation in _PREMIUM_START_OPS
-                and (_is_gemini_voice(voice) or _is_speechify_voice(voice)
-                     or _is_voxcpm_voice(voice))
-            )
-            if sid not in sessions:
-                sessions[sid] = {
-                    "first_dt": dt, "last_dt": dt,
-                    "filename": filename, "last_op": operation,
-                    "events": [operation],
-                    "client_id": client_id, "client_ip": client_ip,
-                    "voice": voice, "browser_lang": browser_lang,
-                    "platform": platform,
-                    "transferred": operation == "TRANSFER",
-                    "premium_started": premium_started,
-                }
-            else:
-                s = sessions[sid]
-                if premium_started:
-                    s["premium_started"] = True
-                if dt < s["first_dt"]:
-                    s["first_dt"] = dt
-                if dt >= s["last_dt"]:
-                    s["last_dt"] = dt
-                    s["last_op"] = operation
-                # Solo se valorizzato: gli eventi di servizio (TRANSFER,
-                # ADMIN_COPY*) loggano filename vuoto e altrimenti cancellavano
-                # il titolo del libro dalla card della sessione.
-                if filename:
-                    s["filename"] = filename
-                s["events"].append(operation)
-                if client_id:
-                    s["client_id"] = client_id
-                if client_ip:
-                    s["client_ip"] = client_ip
-                if voice:
-                    s["voice"] = voice
-                if browser_lang:
-                    s["browser_lang"] = browser_lang
-                if platform and not s["platform"]:
-                    s["platform"] = platform
-                if operation == "TRANSFER":
-                    s["transferred"] = True
+        # Avvio reale del libro con voce PREMIUM: GENERATE, oppure
+        # OPTIMIZE del wizard combinato (ottimizza + auto-gen), che porta
+        # la voce di destinazione gia' in fase di ottimizzazione AI. Si
+        # guarda la voce della RIGA, non l'ultima vista sulla sessione:
+        # un'anteprima premium seguita da un OPTIMIZE senza voce non conta.
+        premium_started = (
+            operation in _PREMIUM_START_OPS
+            and (_is_gemini_voice(voice) or _is_speechify_voice(voice)
+                 or _is_voxcpm_voice(voice))
+        )
+        if sid not in sessions:
+            sessions[sid] = {
+                "first_dt": dt, "last_dt": dt,
+                "filename": filename, "last_op": operation,
+                "events": [operation],
+                "client_id": client_id, "client_ip": client_ip,
+                "voice": voice, "browser_lang": browser_lang,
+                "platform": platform,
+                "transferred": operation == "TRANSFER",
+                "premium_started": premium_started,
+            }
+        else:
+            s = sessions[sid]
+            if premium_started:
+                s["premium_started"] = True
+            if dt < s["first_dt"]:
+                s["first_dt"] = dt
+            if dt >= s["last_dt"]:
+                s["last_dt"] = dt
+                s["last_op"] = operation
+            # Solo se valorizzato: gli eventi di servizio (TRANSFER,
+            # ADMIN_COPY*) loggano filename vuoto e altrimenti cancellavano
+            # il titolo del libro dalla card della sessione.
+            if filename:
+                s["filename"] = filename
+            s["events"].append(operation)
+            if client_id:
+                s["client_id"] = client_id
+            if client_ip:
+                s["client_ip"] = client_ip
+            if voice:
+                s["voice"] = voice
+            if browser_lang:
+                s["browser_lang"] = browser_lang
+            if platform and not s["platform"]:
+                s["platform"] = platform
+            if operation == "TRANSFER":
+                s["transferred"] = True
 
     client_session_count = {}
     for s in sessions.values():

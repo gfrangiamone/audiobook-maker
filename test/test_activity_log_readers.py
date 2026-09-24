@@ -60,3 +60,39 @@ def test_statistiche_community_escludono_ieri_dal_conteggio_di_oggi(logs):
         (now, _line("NEW", now.strftime("%Y-%m-%d %H:%M:%S"), "COMPLETE")),
     ])
     assert audiobook_app._stats_today_count() == 1
+
+
+def test_sessioni_admin_ignorano_le_righe_senza_job_e_reggono_byte_rotti(logs):
+    raw = (
+        ' # 2026-08-01 09:00:00 # "" # ADMIN_TTS_PROBE #  # 9.9.9.9 # k # avviata=True # \n'
+        ' # 2026-08-01 09:01:00 # "" # VOUCHER_ATTEMPT #  # 9.9.9.9 # AB12... # ok # \n'
+    ).encode("utf-8") + b"\xff\xfe\n" + (
+        _line("J1", "2026-08-01 10:00:00", "GENERATE", fn="Saga # 2.epub", cid="cidA") + "\n"
+        + _line("J1", "2026-08-01 10:30:00", "COMPLETE", fn="Saga # 2.epub", cid="cidA") + "\n"
+    ).encode("utf-8")
+    (logs / "activity_2026-08.log").write_bytes(raw)
+
+    sessions, per_client = audiobook_app._parse_log_sessions("2026-08")
+
+    assert list(sessions) == ["J1"]
+    s = sessions["J1"]
+    assert s["filename"] == "Saga # 2.epub"
+    assert s["events"] == ["GENERATE", "COMPLETE"] and s["last_op"] == "COMPLETE"
+    assert per_client == {"cidA": 1}
+
+
+def test_sessioni_admin_mese_assente(logs):
+    assert audiobook_app._parse_log_sessions("2026-01") == ({}, {})
+
+
+def test_pagina_admin_regge_byte_non_utf8(logs, monkeypatch):
+    from unittest.mock import patch
+    ym = datetime.now().strftime("%Y-%m")
+    (logs / f"activity_{ym}.log").write_bytes(
+        b"\xff\xfe\n" + _line("J1", f"{ym}-01 10:00:00", "COMPLETE").encode("utf-8") + b"\n")
+    # ADMIN_TOKEN vuoto fa uscire la route con 404 prima del controllo auth
+    # patchato: adattamento di plumbing rispetto al brief, non nella logica.
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
+    with patch("audiobook_app._admin_auth_ok", return_value=True):
+        r = audiobook_app.app.test_client().get("/admin/log-activity")
+    assert r.status_code == 200
