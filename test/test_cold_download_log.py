@@ -19,7 +19,8 @@ def app_env(monkeypatch, tmp_path):
     log_dir = tmp_path / "app"
     log_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", log_dir)
-    audiobook_app._logged_sids_ops.clear()
+    import activity_log
+    activity_log.reset()
     return audiobook_app, tmp_path, log_dir
 
 

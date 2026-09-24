@@ -156,6 +156,11 @@ import account_page
 import page_brand
 import tts_backend_state
 import user_stats
+import activity_log
+
+# Il business log vive in SCRIPT_DIR (fase 1). La callable e' risolta a ogni
+# scrittura/lettura: patchare SCRIPT_DIR nei test basta a spostarlo.
+activity_log.configure(log_dir=lambda: SCRIPT_DIR)
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -3127,25 +3132,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["last_poll"] = time.time()
 
 #  -  -  Activity log  -  -
-_log_lock = threading.Lock()
-_logged_month: str = ""
-_logged_sids_ops: set[tuple] = set()  # (job_id, op) o (job_id, op, epoch) per eventi di ciclo
-
-def _init_log_dedup():
-    """Popola il set di dedup dal file di log del mese corrente."""
-    global _logged_month, _logged_sids_ops
-    from datetime import datetime
-    _logged_month = datetime.now().strftime('%Y-%m')
-    log_path = SCRIPT_DIR / f"activity_{_logged_month}.log"
-    if not log_path.exists():
-        return
-    with _log_lock:
-        _logged_sids_ops.clear()
-        with open(log_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.strip().split(" # ")
-                if len(parts) >= 4:
-                    _logged_sids_ops.add((parts[0], parts[3]))
 
 def _voice_for_log(voice):
     """C2: l'id di una voce campionata (voxcpm:mine:<token>) non deve mai
@@ -3229,38 +3215,16 @@ def _voice_plan_info(voice):
 
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
-    """Scrive una riga nel business log mensile, deduplicando per (job_id, operazione).
+    """Scrive una riga nel business log mensile (vedi activity_log.log).
 
-    `epoch` (es. job["gen_epoch"]): se fornito entra nella chiave di dedup,
-    così gli eventi di CICLO (GENERATE/COMPLETE) di una RI-generazione dello
-    stesso job_id — cancel su job done + nuovo /api/generate, stesso mese —
-    non vengono soppressi come duplicati. Gli eventi soggetti a spam (download
-    aperti da prefetch HEAD/Range) restano col dedup secco a 2-tuple, perché
-    chiamati senza `epoch`. NB: _init_log_dedup ricostruisce dal file solo
-    chiavi 2-tuple (l'epoca non è persistita su riga); dopo un restart un job
-    ripreso/ri-eseguito può quindi ri-loggare il proprio evento di ciclo —
-    comportamento corretto (è una nuova esecuzione), non spam di download.
+    Dedup per (job_id, operazione); con `epoch` (es. job["gen_epoch"]) la
+    chiave include l'epoca, cosi' GENERATE/COMPLETE di una RI-generazione
+    dello stesso job_id non vengono soppressi. Gli eventi senza job_id
+    (voucher, admin, backend TTS) non si deduplicano mai.
     """
-    global _logged_month
-    from datetime import datetime
-    now = datetime.now()
-    current_month = now.strftime('%Y-%m')
-    log_path = SCRIPT_DIR / f"activity_{current_month}.log"
-    ts = now.strftime('%Y-%m-%d %H:%M:%S')
-    key = (session_id, operation) if epoch is None else (session_id, operation, epoch)
-    with _log_lock:
-        if current_month != _logged_month:
-            _logged_month = current_month
-            _logged_sids_ops.clear()
-        if key in _logged_sids_ops:
-            return
-        line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang} # {platform}\n'
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(line)
-            _logged_sids_ops.add(key)
-        except OSError:
-            pass
+    activity_log.log(session_id, filename, operation, client_id=client_id,
+                     ip=client_ip, voice=voice, lang=browser_lang,
+                     platform=platform, epoch=epoch)
 
 
 def _job_original_filename(job_id):
@@ -21867,7 +21831,7 @@ def _ensure_background_threads():
           f"(* = inerte, il canale e' spento; solo `on` agisce, "
           f"`observe` misura e basta)")
 
-_init_log_dedup()
+activity_log.init_dedup()
 _ensure_background_threads()
 
 if __name__ == "__main__":

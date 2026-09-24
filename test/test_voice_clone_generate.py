@@ -138,8 +138,8 @@ def test_generate_maschera_il_token_nel_log_e_nel_digest(client, tmp_path, monke
     monkeypatch.setattr(audiobook_app.threading, "Thread",
                         lambda *a, **k: type("T", (), {"start": lambda self: None})())
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", tmp_path)
-    audiobook_app._logged_sids_ops.clear()
-    audiobook_app._logged_month = None
+    import activity_log
+    activity_log.reset()
     monkeypatch.setattr(email_service, "ADMIN_EMAIL", "admin@x.it")
     email_service._admin_queue.clear()
 

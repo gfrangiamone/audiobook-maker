@@ -11,8 +11,14 @@ prefetch HEAD/Range, chiamati senza epoch) restano col dedup secco a 2-tuple.
 """
 import pathlib
 import tempfile
+from datetime import datetime
 
+import activity_log
 import audiobook_app
+
+
+def _cur_month():
+    return datetime.now().strftime("%Y-%m")
 
 
 def _read_ops(script_dir, month):
@@ -24,8 +30,7 @@ def _read_ops(script_dir, month):
 def _reset_log(monkeypatch):
     script_dir = pathlib.Path(tempfile.mkdtemp())
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", script_dir)
-    monkeypatch.setattr(audiobook_app, "_logged_month", "")
-    monkeypatch.setattr(audiobook_app, "_logged_sids_ops", set())
+    activity_log.reset()
     return script_dir
 
 
@@ -40,7 +45,7 @@ def test_regeneration_logs_distinct_lifecycle_events(monkeypatch):
     audiobook_app._log_activity("JOB", "f.epub", "GENERATE", "c", "ip", "zh-CN-XiaoyiNeural", "zh", epoch=2)
     audiobook_app._log_activity("JOB", "f.epub", "COMPLETE", "c", "ip", "zh-CN-XiaoyiNeural", "zh", epoch=2)
 
-    ops = _read_ops(script_dir, audiobook_app._logged_month)
+    ops = _read_ops(script_dir, _cur_month())
     assert ops.count("GENERATE") == 2
     assert ops.count("COMPLETE") == 2
 
@@ -52,7 +57,7 @@ def test_same_epoch_repeats_are_deduped(monkeypatch):
     audiobook_app._log_activity("JOB", "f.epub", "GENERATE", "c", "ip", "v", "zh", epoch=5)
     audiobook_app._log_activity("JOB", "f.epub", "GENERATE", "c", "ip", "v", "zh", epoch=5)
 
-    assert _read_ops(script_dir, audiobook_app._logged_month).count("GENERATE") == 1
+    assert _read_ops(script_dir, _cur_month()).count("GENERATE") == 1
 
 
 def test_no_epoch_events_keep_strict_dedup(monkeypatch):
@@ -62,4 +67,14 @@ def test_no_epoch_events_keep_strict_dedup(monkeypatch):
     audiobook_app._log_activity("JOB", "f.epub", "DOWNLOAD", "c", "ip", "v", "zh")
     audiobook_app._log_activity("JOB", "f.epub", "DOWNLOAD", "c", "ip", "v", "zh")
 
-    assert _read_ops(script_dir, audiobook_app._logged_month).count("DOWNLOAD") == 1
+    assert _read_ops(script_dir, _cur_month()).count("DOWNLOAD") == 1
+
+
+def test_eventi_senza_job_non_deduplicati(monkeypatch):
+    """C1: ogni tentativo voucher e' un evento distinto, anche nello stesso processo."""
+    script_dir = _reset_log(monkeypatch)
+
+    audiobook_app._log_activity("", "", "VOUCHER_ATTEMPT", "", "1.1.1.1", "AB12...", "invalid")
+    audiobook_app._log_activity("", "", "VOUCHER_ATTEMPT", "", "1.1.1.1", "CD34...", "invalid")
+
+    assert _read_ops(script_dir, _cur_month()).count("VOUCHER_ATTEMPT") == 2
