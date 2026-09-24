@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+import activity_log
 import audiobook_app
 import payment
 import user_stats
@@ -20,26 +21,6 @@ import user_stats
 # ---------------------------------------------------------------------------
 # user_stats: parsing e coorti
 # ---------------------------------------------------------------------------
-
-def test_split_line_tollera_il_cancelletto_nel_nome_file():
-    """Uno split secco su ' # ' sfasa i campi e fa sparire la sessione."""
-    line = ('job1 # 2026-08-01 10:00:00 # "Riftwar Saga # 2 Empire.epub" # COMPLETE'
-            ' # cid1 # 1.2.3.4 # gemini:flash25:Zephyr # it # web')
-    f = user_stats.split_line(line)
-    assert f == ("job1", "2026-08-01 10:00:00", "Riftwar Saga # 2 Empire.epub",
-                 "COMPLETE", "cid1", "1.2.3.4", "gemini:flash25:Zephyr", "it", "web")
-
-
-def test_split_line_riga_corta_non_esplode():
-    f = user_stats.split_line('job1 # 2026-08-01 10:00:00 # "x.epub" # GENERATE')
-    assert f is not None
-    assert f[3] == "GENERATE"
-    assert f[8] == ""
-
-
-def test_split_line_riga_incompleta_scartata():
-    assert user_stats.split_line("solo testo") is None
-
 
 def test_cohort_voce_premium():
     assert user_stats.cohort_of({"voice": "gemini:flash25:Zephyr", "events": set()}) == "premium"
@@ -61,6 +42,65 @@ def test_user_key_usa_ip_solo_in_fallback():
     assert user_stats.user_key(s) == "cid1"
     assert user_stats.user_key({"client_id": "", "client_ip": "1.2.3.4"}) == "ip:1.2.3.4"
     assert user_stats.user_key({"client_id": "", "client_ip": "1.2.3.4"}, ip_fallback=False) == ""
+
+
+def test_parse_sessions_accetta_righe_e_scarta_quelle_senza_job():
+    rows = [
+        activity_log.Row("", "2026-08-01 09:00:00", "", "ADMIN_TTS_PROBE", "", "9.9.9.9", "k", "x", ""),
+        activity_log.Row("j1", "2026-08-01 10:00:00", "a.epub", "COMPLETE", "cidA", "1.1.1.1",
+                         "it-IT-X", "it", "web"),
+    ]
+    assert list(user_stats.parse_sessions(rows)) == ["j1"]
+
+
+def test_parse_sessions_m4b_non_sovrascrive_la_voce():
+    """Item 1: le righe M4B_* portano nel campo voice il payload libero di
+    _log_m4b_progress (size_mb=... elapsed_s=... pct=... status=...), non una
+    voce. Non devono spodestare la voce reale vista sul GENERATE, altrimenti
+    `analyze` classifica come FREE una sessione premium."""
+    rows = [
+        activity_log.Row("j1", "2026-08-01 10:00:00", "a.epub", "GENERATE", "cidA",
+                         "1.1.1.1", "gemini:Kore", "it", "web"),
+        activity_log.Row("j1", "2026-08-01 10:20:00", "a.epub", "M4B_START", "cidA",
+                         "1.1.1.1", "size_mb=12.3", "it", "web"),
+        activity_log.Row("j1", "2026-08-01 10:21:00", "a.epub", "M4B_END", "cidA",
+                         "1.1.1.1", "elapsed_s=8 pct=100 status=ok", "it", "web"),
+    ]
+    sessions = user_stats.parse_sessions(rows)
+    s = sessions["j1"]
+    assert s["voice"] == "gemini:Kore"
+    assert user_stats.cohort_of(s) == "premium"
+
+
+def test_analyze_sessione_m4b_senza_complete_resta_premium(logfile):
+    """Stesso scenario end-to-end via `analyze`: GENERATE con voce premium poi
+    M4B_START/M4B_END senza COMPLETE. La coorte premium deve contare l'avvio."""
+    extra = (
+        'jm4b # 2026-08-03 09:00:00 # "m.epub" # GENERATE # cidM # 4.4.4.4'
+        ' # gemini:Kore # it # web\n'
+        'jm4b # 2026-08-03 09:05:00 # "m.epub" # M4B_START # cidM # 4.4.4.4'
+        ' # size_mb=12.3 # it # web\n'
+        'jm4b # 2026-08-03 09:06:00 # "m.epub" # M4B_END # cidM # 4.4.4.4'
+        ' # elapsed_s=8 pct=100 status=ok # it # web\n'
+    )
+    p = logfile.parent / "activity_2026-08b.log"
+    p.write_text(logfile.read_text(encoding="utf-8") + extra, encoding="utf-8")
+    res = user_stats.analyze(activity_log.file_rows(p), ym="2026-08")
+    # jm4b si aggiunge a j1 fra gli avvii premium; nessun COMPLETE per jm4b.
+    assert res["coorti"]["premium"]["generazioni_avviate"] == 3
+
+
+def test_user_stats_resta_un_modulo_foglia():
+    import ast
+    import pathlib
+    src = pathlib.Path(user_stats.__file__).read_text(encoding="utf-8")
+    mods = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Import):
+            mods.update(a.name.split(".")[0] for a in n.names)
+        elif isinstance(n, ast.ImportFrom):
+            mods.add((n.module or "").split(".")[0])
+    assert mods <= {"json", "collections", "datetime"}
 
 
 def test_concentration_quantili_su_distribuzione_nota():
@@ -99,7 +139,7 @@ def logfile(tmp_path):
 
 
 def test_analyze_coorti_e_overlap(logfile):
-    res = user_stats.analyze(str(logfile))
+    res = user_stats.analyze(activity_log.file_rows(logfile), ym="2026-08")
 
     prem, free, tot = (res["coorti"][k] for k in ("premium", "free", "totale"))
     # j1 (voce gemini) e j3 (pagamento incassato) sono premium; j2 e j4 free.
@@ -114,7 +154,7 @@ def test_analyze_coorti_e_overlap(logfile):
 
 def test_analyze_conta_le_sessioni_con_cancelletto(logfile):
     """j2 ha un '#' nel titolo: deve comunque risultare completata."""
-    res = user_stats.analyze(str(logfile))
+    res = user_stats.analyze(activity_log.file_rows(logfile), ym="2026-08")
     assert res["sessioni_totali"] == 4
     assert res["coorti"]["free"]["generazioni"] == 1
 
@@ -154,7 +194,7 @@ def _ts(day, hour=12):
 
 
 def test_spend_by_user_attribuisce_via_job_id(logfile):
-    sessions = user_stats.parse_sessions(str(logfile))
+    sessions = user_stats.parse_sessions(activity_log.file_rows(logfile))
     pays = [
         {"job_id": "j1", "amount_eur": 3.0, "captured_at": _ts(1)},
         {"job_id": "j3", "amount_eur": 2.5, "captured_at": _ts(2)},
@@ -167,7 +207,7 @@ def test_spend_by_user_attribuisce_via_job_id(logfile):
 
 
 def test_spend_by_user_esclude_altri_mesi_e_unfunded(logfile):
-    sessions = user_stats.parse_sessions(str(logfile))
+    sessions = user_stats.parse_sessions(activity_log.file_rows(logfile))
     pays = [
         {"job_id": "j1", "amount_eur": 3.0, "captured_at": _ts(1)},
         {"job_id": "j1", "amount_eur": 9.0,
@@ -186,20 +226,15 @@ def test_spend_by_user_esclude_altri_mesi_e_unfunded(logfile):
 
 def test_analyze_espone_la_concentrazione_di_spesa(logfile):
     pays = [{"job_id": "j3", "amount_eur": 2.5, "captured_at": _ts(2)}]
-    res = user_stats.analyze(str(logfile), payments=pays)
+    res = user_stats.analyze(activity_log.file_rows(logfile), ym="2026-08", payments=pays)
     assert res["spesa"]["totale_eur"] == 2.5
     assert res["spesa"]["utenti"] == 1
     assert res["spesa"]["quantili"]["90%"]["utenti"] == 1
 
 
 def test_analyze_senza_pagamenti_ha_comunque_la_chiave(logfile):
-    res = user_stats.analyze(str(logfile))
+    res = user_stats.analyze(activity_log.file_rows(logfile), ym="2026-08")
     assert res["spesa"]["totale_eur"] == 0.0 and res["spesa"]["pagamenti"] == 0
-
-
-def test_ym_dal_nome_del_file():
-    assert user_stats._ym_from_name("/opt/x/activity_2026-08.log") == "2026-08"
-    assert user_stats._ym_from_name("altro.log") == ""
 
 
 def test_load_payments_file_assente(tmp_path):
@@ -394,23 +429,6 @@ def logfile_lingue(tmp_path):
     return p
 
 
-def test_split_line_regge_il_campo_finale_vuoto():
-    """Con `platform` vuota la riga finisce con ' # ': lo strip a monte si
-    mangiava l'ultimo separatore e l'ancoraggio a destra slittava."""
-    line = ('j1 # 2026-08-01 10:00:00 # "a.epub" # COMPLETE # cid1 # 1.2.3.4'
-            ' # en-US-GuyNeural # en # ')
-    assert user_stats.split_line(line.strip())[7:] == ("en", "")
-
-
-def test_split_line_cancelletto_nel_titolo_e_platform_vuota():
-    """Il caso peggiore: senza il ripristino l'operazione diventava titolo."""
-    line = ('j1 # 2026-08-01 10:00:00 # "Riftwar # 2.epub" # GENERATE # cid1'
-            ' # 1.2.3.4 # gemini:flash31:Despina # de # ')
-    f = user_stats.split_line(line.strip())
-    assert f[2] == "Riftwar # 2.epub" and f[3] == "GENERATE"
-    assert f[7] == "de" and f[8] == ""
-
-
 @pytest.mark.parametrize("raw,atteso", [
     ("it", "it"), ("en-US", "en"), ("ZH", "zh"), ("pt_BR", "pt"),
     ("", "?"), ("   ", "?"), ("x", "?"),
@@ -438,7 +456,7 @@ def test_ripartizione_vuota_non_divide_per_zero():
 
 
 def test_language_stats_conta_solo_le_voci_premium(logfile_lingue):
-    sessions = user_stats.parse_sessions(str(logfile_lingue))
+    sessions = user_stats.parse_sessions(activity_log.file_rows(logfile_lingue))
     lg = user_stats.language_stats(sessions, [], ym="2026-08")
     righe = {r["lingua"]: r["valore"] for r in lg["libri"]["righe"]}
     # le voci standard stanno nell'altra classifica. x1 non dichiara la
@@ -449,7 +467,7 @@ def test_language_stats_conta_solo_le_voci_premium(logfile_lingue):
 
 
 def test_language_stats_separa_i_libri_a_voce_free(logfile_lingue):
-    sessions = user_stats.parse_sessions(str(logfile_lingue))
+    sessions = user_stats.parse_sessions(activity_log.file_rows(logfile_lingue))
     lg = user_stats.language_stats(sessions, [], ym="2026-08")
     righe = {r["lingua"]: r["valore"] for r in lg["libri_free"]["righe"]}
     # f1+f2 in italiano, f3 in en-GB (normalizzato en), f4 senza lingua
@@ -462,7 +480,7 @@ def test_language_stats_separa_i_libri_a_voce_free(logfile_lingue):
 
 
 def test_language_stats_incassi_per_lingua_del_libro(logfile_lingue):
-    sessions = user_stats.parse_sessions(str(logfile_lingue))
+    sessions = user_stats.parse_sessions(activity_log.file_rows(logfile_lingue))
     pays = [
         {"job_id": "p1", "amount_eur": 10.0, "captured_at": _ts(1)},
         {"job_id": "p3", "amount_eur": 5.0, "captured_at": _ts(1)},
@@ -485,7 +503,7 @@ def test_language_stats_incassi_per_lingua_del_libro(logfile_lingue):
 
 def test_analyze_espone_le_lingue(logfile_lingue):
     pays = [{"job_id": "p1", "amount_eur": 10.0, "captured_at": _ts(1)}]
-    res = user_stats.analyze(str(logfile_lingue), payments=pays)
+    res = user_stats.analyze(activity_log.file_rows(logfile_lingue), ym="2026-08", payments=pays)
     assert res["lingue"]["libri"]["righe"][0]["lingua"] == "de"
     assert res["lingue"]["incassi"]["totale"] == 10.0
 

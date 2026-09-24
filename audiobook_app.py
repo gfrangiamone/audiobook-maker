@@ -156,6 +156,11 @@ import account_page
 import page_brand
 import tts_backend_state
 import user_stats
+import activity_log
+
+# Il business log vive in SCRIPT_DIR (fase 1). La callable e' risolta a ogni
+# scrittura/lettura: patchare SCRIPT_DIR nei test basta a spostarlo.
+activity_log.configure(log_dir=lambda: SCRIPT_DIR)
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -1928,55 +1933,12 @@ def _send_interrupted_email(rec, refund_code=None):
         print(f"[{rec.get('id')}] interrupted email failed (non-fatal): {e}")
 
 
-_delivered_ids_lock = threading.Lock()
-_delivered_ids_cache = {"value": None, "expires": 0.0}
-
-
-def _delivered_job_ids(months=3):
-    """Set dei job_id con COMPLETE / OPT_COMPLETE negli ultimi `months` log
-    mensili di attività. È la sola traccia persistente di "consegnato": il dict
-    jobs è in RAM e al boot è vuoto. Cache 5 minuti (il recovery interroga molti
-    descrittori in sequenza)."""
-    now = time.time()
-    with _delivered_ids_lock:
-        cached = _delivered_ids_cache["value"]
-        if cached is not None and now < _delivered_ids_cache["expires"]:
-            return cached
-    complete_ids, opt_ids = set(), set()
-    d = datetime.now()
-    year, month = d.year, d.month
-    for _ in range(max(1, int(months))):
-        log_path = SCRIPT_DIR / f"activity_{year:04d}-{month:02d}.log"
-        if log_path.exists():
-            try:
-                with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        parts = line.rstrip("\n").split(" # ")
-                        if len(parts) < 4:
-                            continue
-                        op = parts[3].strip()
-                        if op == "COMPLETE":
-                            complete_ids.add(parts[0].strip())
-                        elif op == "OPT_COMPLETE":
-                            opt_ids.add(parts[0].strip())
-            except OSError as e:
-                print(f"[recover] lettura {log_path.name} fallita: {e}")
-        month -= 1
-        if month == 0:
-            month, year = 12, year - 1
-    value = {"complete": complete_ids, "opt_complete": opt_ids}
-    with _delivered_ids_lock:
-        _delivered_ids_cache["value"] = value
-        _delivered_ids_cache["expires"] = time.time() + 300
-    return value
-
-
 def _orphan_job_delivered(job_id, rec):
     """True se l'activity log dimostra che questo job è stato portato a termine.
     Per la fase 'optimize' basta OPT_COMPLETE; per 'generate' serve COMPLETE
     (un OPT_COMPLETE senza COMPLETE significa audio mai prodotto)."""
     try:
-        idx = _delivered_job_ids()
+        idx = activity_log.delivered_ids()
     except Exception as e:
         print(f"[recover] {job_id}: check consegna fallito, procedo col rimborso: {e}")
         return False
@@ -3127,25 +3089,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["last_poll"] = time.time()
 
 #  -  -  Activity log  -  -
-_log_lock = threading.Lock()
-_logged_month: str = ""
-_logged_sids_ops: set[tuple] = set()  # (job_id, op) o (job_id, op, epoch) per eventi di ciclo
-
-def _init_log_dedup():
-    """Popola il set di dedup dal file di log del mese corrente."""
-    global _logged_month, _logged_sids_ops
-    from datetime import datetime
-    _logged_month = datetime.now().strftime('%Y-%m')
-    log_path = SCRIPT_DIR / f"activity_{_logged_month}.log"
-    if not log_path.exists():
-        return
-    with _log_lock:
-        _logged_sids_ops.clear()
-        with open(log_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.strip().split(" # ")
-                if len(parts) >= 4:
-                    _logged_sids_ops.add((parts[0], parts[3]))
 
 def _voice_for_log(voice):
     """C2: l'id di una voce campionata (voxcpm:mine:<token>) non deve mai
@@ -3229,38 +3172,16 @@ def _voice_plan_info(voice):
 
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
-    """Scrive una riga nel business log mensile, deduplicando per (job_id, operazione).
+    """Scrive una riga nel business log mensile (vedi activity_log.log).
 
-    `epoch` (es. job["gen_epoch"]): se fornito entra nella chiave di dedup,
-    così gli eventi di CICLO (GENERATE/COMPLETE) di una RI-generazione dello
-    stesso job_id — cancel su job done + nuovo /api/generate, stesso mese —
-    non vengono soppressi come duplicati. Gli eventi soggetti a spam (download
-    aperti da prefetch HEAD/Range) restano col dedup secco a 2-tuple, perché
-    chiamati senza `epoch`. NB: _init_log_dedup ricostruisce dal file solo
-    chiavi 2-tuple (l'epoca non è persistita su riga); dopo un restart un job
-    ripreso/ri-eseguito può quindi ri-loggare il proprio evento di ciclo —
-    comportamento corretto (è una nuova esecuzione), non spam di download.
+    Dedup per (job_id, operazione); con `epoch` (es. job["gen_epoch"]) la
+    chiave include l'epoca, cosi' GENERATE/COMPLETE di una RI-generazione
+    dello stesso job_id non vengono soppressi. Gli eventi senza job_id
+    (voucher, admin, backend TTS) non si deduplicano mai.
     """
-    global _logged_month
-    from datetime import datetime
-    now = datetime.now()
-    current_month = now.strftime('%Y-%m')
-    log_path = SCRIPT_DIR / f"activity_{current_month}.log"
-    ts = now.strftime('%Y-%m-%d %H:%M:%S')
-    key = (session_id, operation) if epoch is None else (session_id, operation, epoch)
-    with _log_lock:
-        if current_month != _logged_month:
-            _logged_month = current_month
-            _logged_sids_ops.clear()
-        if key in _logged_sids_ops:
-            return
-        line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang} # {platform}\n'
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(line)
-            _logged_sids_ops.add(key)
-        except OSError:
-            pass
+    activity_log.log(session_id, filename, operation, client_id=client_id,
+                     ip=client_ip, voice=voice, lang=browser_lang,
+                     platform=platform, epoch=epoch)
 
 
 def _job_original_filename(job_id):
@@ -3301,38 +3222,6 @@ def _cold_op(operation):
     return f"{operation}_COLD"
 
 
-def _log_m4b_progress(job: dict, event: str, **fields) -> None:
-    """Scrive riga in activity_YYYY-MM.log per eventi M4B_* con throttling 10s per PROGRESS.
-
-    event: "START" | "PROGRESS" | "END"
-    fields: size_mb, pct, msg, status, elapsed_s, duration_s (campi liberi, finiscono nel campo `voice`)
-    """
-    if event == "PROGRESS":
-        now = time.time()
-        if now - job.get("_m4b_last_log_ts", 0) < 10:
-            return
-        job["_m4b_last_log_ts"] = now
-
-    # Componi i fields in un payload sintetico nel campo `voice` (libero).
-    # Manteniamo la firma _log_activity(sid, filename, operation, client_id, ip, voice, lang).
-    payload_parts = [f"{k}={fields[k]}" for k in sorted(fields.keys())]
-    payload = " ".join(payload_parts)[:200]  # cap a 200 char
-
-    try:
-        _log_activity(
-            job.get("job_id", ""),
-            job.get("original_filename", ""),
-            "M4B_" + event,
-            client_id=job.get("client_id", ""),
-            client_ip=job.get("ip", ""),
-            voice=payload,
-            browser_lang=job.get("lang", ""),
-        )
-    except Exception as e:
-        # Logging non deve mai crashare il thread di generazione.
-        print(f"[_log_m4b_progress] errore scrittura log: {e}")
-
-
 def _is_resume_or_probe_request():
     """True se la richiesta corrente è HEAD o resume con Range header.
 
@@ -3349,7 +3238,7 @@ def _is_resume_or_probe_request():
 
 
 # ----------------------------------------------------------------------
-# COMMUNITY STATS — derivate dai log activity_YYYY-MM.log esistenti
+# COMMUNITY STATS — derivate dal business log (activity_log)
 # ----------------------------------------------------------------------
 # Conta operation=='COMPLETE' (audiolibri generati con successo) e aggrega
 # per lingua TTS (voice.split('-')[0]). Cache in-memory: 60s today, 5min mese.
@@ -3358,23 +3247,7 @@ _stats_lock = threading.Lock()
 _stats_today_cache = {"value": None, "expires": 0.0}
 _stats_month_cache = {"value": None, "expires": 0.0}
 
-
-def _parse_activity_lines(yyyymm: str):
-    """Itera (ts_str, operation, voice) dalle righe del log mensile.
-    Formato: '<sid> # <ts> # "<file>" # <op> # <cid> # <ip> # <voice> # <lang>'.
-    Resiliente a righe malformate."""
-    log_path = SCRIPT_DIR / f"activity_{yyyymm}.log"
-    if not log_path.exists():
-        return
-    try:
-        with open(log_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.rstrip("\n").split(" # ")
-                if len(parts) < 7:
-                    continue
-                yield parts[1], parts[3], parts[6]
-    except OSError:
-        return
+_COMMUNITY_OPS = frozenset({"COMPLETE", "OPT_COMPLETE"})
 
 
 def _stats_today_count() -> int:
@@ -3383,13 +3256,8 @@ def _stats_today_count() -> int:
     with _stats_lock:
         if _stats_today_cache["value"] is not None and now < _stats_today_cache["expires"]:
             return _stats_today_cache["value"]
-    today = datetime.now()
-    yyyymm = today.strftime("%Y-%m")
-    today_str = today.strftime("%Y-%m-%d")
-    count = 0
-    for ts, op, _voice in _parse_activity_lines(yyyymm):
-        if op in ("COMPLETE", "OPT_COMPLETE") and ts.startswith(today_str):
-            count += 1
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    count = sum(1 for _ in activity_log.iter_rows(midnight, ops=_COMMUNITY_OPS))
     with _stats_lock:
         _stats_today_cache["value"] = count
         _stats_today_cache["expires"] = now + 60.0
@@ -3404,16 +3272,14 @@ def _stats_month_by_lang() -> dict:
     with _stats_lock:
         if _stats_month_cache["value"] is not None and now < _stats_month_cache["expires"]:
             return _stats_month_cache["value"]
-    yyyymm = datetime.now().strftime("%Y-%m")
+    month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     by_lang: dict[str, int] = defaultdict(int)
     total = 0
-    for _ts, op, voice in _parse_activity_lines(yyyymm):
-        if op not in ("COMPLETE", "OPT_COMPLETE"):
-            continue
+    for row in activity_log.iter_rows(month_start, ops=_COMMUNITY_OPS):
         total += 1
-        if not voice:
+        if not row.voice:
             continue
-        lang = voice.split("-")[0].strip().lower()
+        lang = row.voice.split("-")[0].strip().lower()
         if lang:
             by_lang[lang] += 1
     sorted_langs = sorted(by_lang.items(), key=lambda kv: kv[1], reverse=True)
@@ -4328,89 +4194,93 @@ def web_manifest():
 # voce PREMIUM sulla riga la sessione entra nel filtro "PREMIUM" del pannello.
 _PREMIUM_START_OPS = frozenset({"GENERATE", "OPTIMIZE"})
 
+# generation_engine._log_m4b_progress scrive il proprio payload libero
+# (size_mb=... elapsed_s=... pct=... status=...) nella colonna voice delle
+# righe M4B_START/M4B_PROGRESS/M4B_END. Queste righe non devono aggiornare
+# voice/lang/ip della sessione ("ultimo valore non vuoto vince" altrimenti
+# sovrascrive la voce reale con il payload): vedi item 1 del final-fix-brief.
+_M4B_OP_PREFIX = "M4B_"
+
 
 def _parse_log_sessions(ym):
-    """Parse log file for given YYYY-MM and return (sessions OrderedDict, client_session_count dict)."""
+    """Sessioni del business log del mese YYYY-MM.
+
+    Ritorna (sessions OrderedDict job_id -> dict, client_session_count dict)."""
     from datetime import datetime
     from collections import OrderedDict
 
-    log_path = SCRIPT_DIR / f"activity_{ym}.log"
     sessions = OrderedDict()
+    for fields in activity_log.month_rows(ym):
+        (sid, dt_str, filename, operation, client_id, client_ip,
+         voice, browser_lang, platform) = fields
+        # Righe di sistema (voucher, admin, backend TTS) senza job: non sono
+        # sessioni. Prima uscivano di fatto perche' lo strip() iniziale
+        # sfasava i campi e la data non si leggeva piu'.
+        if not sid:
+            continue
+        # Skip voucher audit entries — not conversion activity
+        if operation.startswith("VOUCHER_ATTEMPT"):
+            continue
 
-    if not log_path.exists():
-        return sessions, {}
+        try:
+            dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
 
-    with open(log_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            # Split ancorato (2 campi a sinistra, 6 a destra): il vecchio
-            # `line.split("#")` sfasava i campi su ogni titolo contenente '#'
-            # ("Riftwar Saga # 2 Empire.epub" -> operazione "2 Empire"), e la
-            # sessione spariva dalle aggregazioni.
-            fields = user_stats.split_line(line)
-            if not fields:
-                continue
-            (sid, dt_str, filename, operation, client_id, client_ip,
-             voice, browser_lang, platform) = fields
-            # Skip voucher audit entries — not conversion activity
-            if operation.startswith("VOUCHER_ATTEMPT"):
-                continue
-
-            try:
-                dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                continue
-
-            # Avvio reale del libro con voce PREMIUM: GENERATE, oppure
-            # OPTIMIZE del wizard combinato (ottimizza + auto-gen), che porta
-            # la voce di destinazione gia' in fase di ottimizzazione AI. Si
-            # guarda la voce della RIGA, non l'ultima vista sulla sessione:
-            # un'anteprima premium seguita da un OPTIMIZE senza voce non conta.
-            premium_started = (
-                operation in _PREMIUM_START_OPS
-                and (_is_gemini_voice(voice) or _is_speechify_voice(voice)
-                     or _is_voxcpm_voice(voice))
-            )
-            if sid not in sessions:
-                sessions[sid] = {
-                    "first_dt": dt, "last_dt": dt,
-                    "filename": filename, "last_op": operation,
-                    "events": [operation],
-                    "client_id": client_id, "client_ip": client_ip,
-                    "voice": voice, "browser_lang": browser_lang,
-                    "platform": platform,
-                    "transferred": operation == "TRANSFER",
-                    "premium_started": premium_started,
-                }
-            else:
-                s = sessions[sid]
-                if premium_started:
-                    s["premium_started"] = True
-                if dt < s["first_dt"]:
-                    s["first_dt"] = dt
-                if dt >= s["last_dt"]:
-                    s["last_dt"] = dt
-                    s["last_op"] = operation
-                # Solo se valorizzato: gli eventi di servizio (TRANSFER,
-                # ADMIN_COPY*) loggano filename vuoto e altrimenti cancellavano
-                # il titolo del libro dalla card della sessione.
-                if filename:
-                    s["filename"] = filename
-                s["events"].append(operation)
-                if client_id:
-                    s["client_id"] = client_id
-                if client_ip:
-                    s["client_ip"] = client_ip
-                if voice:
-                    s["voice"] = voice
-                if browser_lang:
-                    s["browser_lang"] = browser_lang
-                if platform and not s["platform"]:
-                    s["platform"] = platform
-                if operation == "TRANSFER":
-                    s["transferred"] = True
+        # Avvio reale del libro con voce PREMIUM: GENERATE, oppure
+        # OPTIMIZE del wizard combinato (ottimizza + auto-gen), che porta
+        # la voce di destinazione gia' in fase di ottimizzazione AI. Si
+        # guarda la voce della RIGA, non l'ultima vista sulla sessione:
+        # un'anteprima premium seguita da un OPTIMIZE senza voce non conta.
+        premium_started = (
+            operation in _PREMIUM_START_OPS
+            and (_is_gemini_voice(voice) or _is_speechify_voice(voice)
+                 or _is_voxcpm_voice(voice))
+        )
+        is_m4b = operation.startswith(_M4B_OP_PREFIX)
+        if sid not in sessions:
+            sessions[sid] = {
+                "first_dt": dt, "last_dt": dt,
+                "filename": filename, "last_op": operation,
+                "events": [operation],
+                "client_id": client_id,
+                "client_ip": "" if is_m4b else client_ip,
+                "voice": "" if is_m4b else voice,
+                "browser_lang": "" if is_m4b else browser_lang,
+                "platform": platform,
+                "transferred": operation == "TRANSFER",
+                "premium_started": premium_started,
+            }
+        else:
+            s = sessions[sid]
+            if premium_started:
+                s["premium_started"] = True
+            if dt < s["first_dt"]:
+                s["first_dt"] = dt
+            if dt >= s["last_dt"]:
+                s["last_dt"] = dt
+                s["last_op"] = operation
+            # Solo se valorizzato: gli eventi di servizio (TRANSFER,
+            # ADMIN_COPY*) loggano filename vuoto e altrimenti cancellavano
+            # il titolo del libro dalla card della sessione.
+            if filename:
+                s["filename"] = filename
+            s["events"].append(operation)
+            if client_id:
+                s["client_id"] = client_id
+            # Le righe M4B_* portano il payload libero nel campo voice (e
+            # ripetono client_ip/lang del job): non devono vincere su
+            # "ultimo valore non vuoto" per voice/lang/ip.
+            if client_ip and not is_m4b:
+                s["client_ip"] = client_ip
+            if voice and not is_m4b:
+                s["voice"] = voice
+            if browser_lang and not is_m4b:
+                s["browser_lang"] = browser_lang
+            if platform and not s["platform"]:
+                s["platform"] = platform
+            if operation == "TRANSFER":
+                s["transferred"] = True
 
     client_session_count = {}
     for s in sessions.values():
@@ -4508,20 +4378,18 @@ def _power_users_data():
     il precedente a cavallo del mese) + quota caratteri del mese."""
     if POWER_USER_JOBS_PER_DAY <= 0:
         return None
-    import user_stats
     from datetime import datetime, timedelta
     now = datetime.now()
     since = now - timedelta(hours=24)
-    paths = []
-    for ym in sorted({since.strftime("%Y-%m"), now.strftime("%Y-%m")}):
-        p = SCRIPT_DIR / f"activity_{ym}.log"
-        if p.exists():
-            paths.append(p)
+    # Dall'inizio del mese di `since`: i contatori mensili (books_month,
+    # starts_month) contano tutto il mese, non solo le ultime 24h.
+    month_start = since.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     try:
         qt = free_tts_quota.month_table()
     except Exception:
         qt = {}
-    rows = user_stats.power_users(paths, since, min_jobs=POWER_USER_JOBS_PER_DAY,
+    rows = user_stats.power_users(activity_log.iter_rows(month_start), since,
+                                  min_jobs=POWER_USER_JOBS_PER_DAY,
                                   quota_table=qt, top=10,
                                   month_ym=now.strftime("%Y-%m"))
     return {"rows": rows, "min_jobs": POWER_USER_JOBS_PER_DAY,
@@ -5041,14 +4909,7 @@ def admin_logs():
     # Il vecchio istogramma orario per lingua e' stato sostituito dal pannello
     # di carico (/api/admin/load_stats): niente piu' aggregazione qui.
 
-    available_months = []
-    try:
-        for f in sorted(SCRIPT_DIR.glob("activity_*.log"), reverse=True):
-            m = re.search(r'activity_(\d{4}-\d{2})\.log', f.name)
-            if m:
-                available_months.append(m.group(1))
-    except Exception:
-        pass
+    available_months = activity_log.months()
 
     # Niente token in query string: l'auth admin viaggia via cookie HttpOnly
     # abm_admin_session (inviato automaticamente sulle navigazioni <a>). Un
@@ -12853,9 +12714,9 @@ def api_admin_load_stats():
     return jsonify(data)
 
 
-# Cache dell'analisi utenza: la scansione di activity_YYYY-MM.log costa ~1s su
-# un mese pieno (15 MB) e il pannello viene aperto e richiuso di continuo.
-# Chiave = (ym, mtime, size) del file: un log che cresce invalida da solo.
+# Cache dell'analisi utenza: la scansione di un mese pieno costa ~1s e il
+# pannello viene aperto e richiuso di continuo. Chiave = (ym, impronta del
+# mese in activity_log, impronta dei pagamenti): un log che cresce invalida da solo.
 _USER_STATS_CACHE = {}
 _USER_STATS_CACHE_MAX = 6
 
@@ -12876,9 +12737,10 @@ def api_admin_user_stats():
     ym = (request.args.get("ym") or "").strip()
     if not _YM_RE.match(ym):
         return jsonify({"error": "Invalid month (expected YYYY-MM)"}), 400
-    log_path = SCRIPT_DIR / f"activity_{ym}.log"
-    if not log_path.exists():
-        data = user_stats.empty_result(log_path.name)
+    log_name = f"activity_{ym}.log"
+    fp = activity_log.fingerprint(ym)
+    if fp is None:
+        data = user_stats.empty_result(log_name)
         data["ym"] = ym
         data["log_missing"] = True
         return jsonify(data)
@@ -12890,27 +12752,23 @@ def api_admin_user_stats():
     # se il log del mese non e' cambiato.
     pay_key = (len(pay_records),
                max((r.get("captured_at") or 0 for r in pay_records), default=0))
-    try:
-        st = log_path.stat()
-        key = (ym, int(st.st_mtime), st.st_size, pay_key)
-    except OSError:
-        key = None
-    if key is not None and key in _USER_STATS_CACHE:
+    key = (ym, fp, pay_key)
+    if key in _USER_STATS_CACHE:
         return jsonify(_USER_STATS_CACHE[key])
 
     t0 = time.time()
     try:
-        data = user_stats.analyze(log_path, payments=pay_records)
+        data = user_stats.analyze(activity_log.month_rows(ym), ym=ym,
+                                  payments=pay_records)
     except Exception as e:
         print(f"[admin] user_stats {ym} failed: {e}", flush=True)
         return jsonify({"error": f"Analysis failed: {e}"}), 500
     data["ym"] = ym
-    data["file"] = log_path.name  # mai il path assoluto del server
+    data["file"] = log_name  # mai il path assoluto del server
     data["elapsed_sec"] = round(time.time() - t0, 2)
-    if key is not None:
-        if len(_USER_STATS_CACHE) >= _USER_STATS_CACHE_MAX:
-            _USER_STATS_CACHE.pop(next(iter(_USER_STATS_CACHE)), None)
-        _USER_STATS_CACHE[key] = data
+    if len(_USER_STATS_CACHE) >= _USER_STATS_CACHE_MAX:
+        _USER_STATS_CACHE.pop(next(iter(_USER_STATS_CACHE)), None)
+    _USER_STATS_CACHE[key] = data
     return jsonify(data)
 
 
@@ -21867,7 +21725,7 @@ def _ensure_background_threads():
           f"(* = inerte, il canale e' spento; solo `on` agisce, "
           f"`observe` misura e basta)")
 
-_init_log_dedup()
+activity_log.init_dedup()
 _ensure_background_threads()
 
 if __name__ == "__main__":

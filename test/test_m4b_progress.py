@@ -8,57 +8,118 @@ from unittest.mock import patch, MagicMock
 # Task 1 — _log_m4b_progress
 # ---------------------------------------------------------------------------
 
-def test_log_m4b_progress_emits_start_line(tmp_path, monkeypatch):
-    """_log_m4b_progress con event=START deve scrivere 1 riga M4B_START."""
-    import audiobook_app
+def test_log_m4b_progress_emits_start_line(monkeypatch):
+    """START scrive 1 riga M4B_START col job_id passato, anche se il dict
+    del job non ha la chiave "job_id" (come i veri jobs[job_id])."""
+    import generation_engine
 
     captured = []
-    monkeypatch.setattr(audiobook_app, "_log_activity",
+    monkeypatch.setattr(generation_engine, "_log_activity",
                         lambda *a, **kw: captured.append((a, kw)))
-    job = {"job_id": "J1", "client_id": "c1", "ip": "1.2.3.4",
-           "voice": "it-IT-Isola", "lang": "it"}
+    job = {"client_id": "c1", "ip": "1.2.3.4", "voice": "it-IT-Isola", "lang": "it",
+           "original_filename": "libro.epub"}
 
-    audiobook_app._log_m4b_progress(job, "START", size_mb=12.3, msg="start")
+    generation_engine._log_m4b_progress("J1", job, "START", size_mb=12.3, msg="start")
 
     assert len(captured) == 1
     args, kwargs = captured[0]
     assert args[0] == "J1"
+    assert args[1] == "libro.epub"
     assert args[2] == "M4B_START"
+    assert kwargs["client_id"] == "c1"
 
 
 def test_log_m4b_progress_throttles_progress_lines(monkeypatch):
-    """Chiamate ravvicinate M4B_PROGRESS: solo la prima emette riga."""
-    import audiobook_app
+    """Chiamate ravvicinate M4B_PROGRESS: al massimo una riga ogni 10 s."""
+    import generation_engine
 
     captured = []
-    monkeypatch.setattr(audiobook_app, "_log_activity",
+    monkeypatch.setattr(generation_engine, "_log_activity",
                         lambda *a, **kw: captured.append((a, kw)))
-    job = {"job_id": "J2", "_m4b_last_log_ts": 0.0}
+    job = {"_m4b_last_log_ts": 0.0}
 
     for pct in (10, 20, 30):
-        audiobook_app._log_m4b_progress(job, "PROGRESS", pct=pct, msg="enc")
+        generation_engine._log_m4b_progress("J2", job, "PROGRESS", pct=pct, msg="enc")
 
-    # Solo la prima passa (timestamp=0.0 < now-10). Le altre 2 sono filtrate
-    # solo se nel frattempo _m4b_last_log_ts è stato aggiornato.
-    # Però qui il throttling controlla `now - last >= 10`: a 0.0 la prima passa,
-    # poi la seconda chiama throttling=False (now-last < 10) e viene filtrata.
-    # Verifichiamo che in 3 chiamate ravvicinate ci sia <= 1 emissione.
     assert len(captured) <= 1
 
 
 def test_log_m4b_progress_end_no_throttle(monkeypatch):
-    """M4B_END non è soggetto a throttling."""
-    import audiobook_app
+    """M4B_END non e' soggetto a throttling."""
+    import generation_engine
 
     captured = []
-    monkeypatch.setattr(audiobook_app, "_log_activity",
+    monkeypatch.setattr(generation_engine, "_log_activity",
                         lambda *a, **kw: captured.append((a, kw)))
-    job = {"job_id": "J3", "_m4b_last_log_ts": time.time()}
+    job = {"_m4b_last_log_ts": time.time()}
 
-    audiobook_app._log_m4b_progress(job, "END", status="ok", pct=100, size_mb=50.0)
+    generation_engine._log_m4b_progress("J3", job, "END", status="ok", pct=100, size_mb=50.0)
 
     assert len(captured) == 1
+    assert captured[0][0][0] == "J3"
     assert captured[0][0][2] == "M4B_END"
+
+
+def test_log_m4b_progress_passa_epoch_a_log_activity(monkeypatch):
+    """Item 2: _log_m4b_progress deve passare epoch=job.get("gen_epoch") a
+    _log_activity, come fanno gli altri eventi di ciclo (GENERATE/REUSE/COMPLETE)."""
+    import generation_engine
+
+    captured = []
+    monkeypatch.setattr(generation_engine, "_log_activity",
+                        lambda *a, **kw: captured.append((a, kw)))
+    job = {"original_filename": "libro.epub", "gen_epoch": 3}
+
+    generation_engine._log_m4b_progress("J1", job, "START", size_mb=12.3)
+
+    assert len(captured) == 1
+    assert captured[0][1]["epoch"] == 3
+
+
+def test_log_m4b_progress_epoch_diverse_due_righe_m4b_start(monkeypatch):
+    """Item 2: senza epoch il dedup di activity_log su (job_id, "M4B_START")
+    sopprimeva la 2a riga in una ri-generazione dello stesso job_id nello
+    stesso mese. Con epoch=gen_epoch le due generazioni restano distinte."""
+    import pathlib
+    import tempfile
+    from datetime import datetime
+
+    import activity_log
+    import audiobook_app
+    import generation_engine
+
+    script_dir = pathlib.Path(tempfile.mkdtemp())
+    monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", script_dir)
+    activity_log.reset()
+    monkeypatch.setattr(generation_engine, "_log_activity", audiobook_app._log_activity)
+
+    job_run1 = {"client_id": "c", "ip": "1.1.1.1", "lang": "it",
+                "original_filename": "f.epub", "gen_epoch": 1}
+    job_run2 = {"client_id": "c", "ip": "1.1.1.1", "lang": "it",
+                "original_filename": "f.epub", "gen_epoch": 2}
+
+    generation_engine._log_m4b_progress("JOB", job_run1, "START", size_mb=1.0)
+    generation_engine._log_m4b_progress("JOB", job_run2, "START", size_mb=2.0)
+
+    ym = datetime.now().strftime("%Y-%m")
+    lines = (script_dir / f"activity_{ym}.log").read_text(encoding="utf-8").splitlines()
+    m4b_start_lines = [l for l in lines if l.split(" # ")[3] == "M4B_START"]
+    assert len(m4b_start_lines) == 2
+
+    activity_log.reset()
+
+
+def test_run_generation_passa_job_id_a_ogni_evento_m4b():
+    """C3: tutti i chiamanti in run_generation passano job_id come primo argomento."""
+    import ast
+    import inspect
+    import generation_engine
+
+    tree = ast.parse(inspect.getsource(generation_engine.run_generation))
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_log_m4b_progress"]
+    assert len(calls) == 6
+    assert all(isinstance(c.args[0], ast.Name) and c.args[0].id == "job_id" for c in calls)
 
 
 # ---------------------------------------------------------------------------

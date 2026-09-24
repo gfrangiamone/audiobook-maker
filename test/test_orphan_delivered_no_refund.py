@@ -8,6 +8,7 @@ già consegnato. Qui si verifica che l'activity log faccia da prova di consegna.
 """
 import time
 import pytest
+import activity_log
 import payment
 import audiobook_app
 
@@ -28,8 +29,7 @@ def _activity_line(job_id, op):
 def recovery_env(monkeypatch, tmp_path):
     """SCRIPT_DIR isolata, cache consegne azzerata, store pagamenti su tmp."""
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", tmp_path)
-    audiobook_app._delivered_ids_cache["value"] = None
-    audiobook_app._delivered_ids_cache["expires"] = 0.0
+    activity_log.reset()
     monkeypatch.setattr(payment, "_vouchers", {})
     monkeypatch.setattr(payment, "_payments", {})
     monkeypatch.setattr(payment, "_VOUCHERS_FILE", tmp_path / "_vouchers.json")
@@ -42,8 +42,7 @@ def recovery_env(monkeypatch, tmp_path):
     monkeypatch.setattr(audiobook_app, "_send_interrupted_email",
                         lambda rec, refund_code=None: None)
     yield tmp_path, calls
-    audiobook_app._delivered_ids_cache["value"] = None
-    audiobook_app._delivered_ids_cache["expires"] = 0.0
+    activity_log.reset()
 
 
 def _paid_rec(job_id, phase="generate"):
@@ -100,3 +99,11 @@ def test_missing_activity_log_does_not_block_refund(recovery_env):
     audiobook_app._orphan_fallback("jobNOLOG", rec)
     assert len(payment._vouchers) == 1
     assert calls["mark_failed"] == ["jobNOLOG"]
+
+
+def test_consegna_riconosciuta_con_cancelletto_nel_titolo(recovery_env):
+    script_dir, _calls = recovery_env
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    _write_activity(script_dir, [
+        f'JHASH # {ts} # "Saga # 2.epub" # COMPLETE # cid # 1.2.3.4 # it-IT-X # it # web'])
+    assert "JHASH" in activity_log.delivered_ids()["complete"]
