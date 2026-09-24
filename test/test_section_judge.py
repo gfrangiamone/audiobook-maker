@@ -255,6 +255,60 @@ def test_excerpt_not_whole_text(env):
     assert sent["chars"] == 35000
 
 
+def test_body_excerpts_come_from_inside_a_long_section():
+    """Karl May, `Inhalt` da 115.000 caratteri: sommario in testa, romanzo
+    dopo. L'estratto iniziale e' un indice, quelli interni sono prosa."""
+    toc = "\n".join(f"Kapitel {i}    {i * 17}" for i in range(1, 40))
+    prose = "Wir ritten durch die Wüste und sprachen kein Wort. " * 2400
+    text = toc + "\n\n" + prose
+    assert "Kapitel" in sjg._excerpt(text)
+    body = sjg._body_excerpts(text)
+    assert len(body) == sjg._BODY_SAMPLES
+    for b in body:
+        assert "Kapitel" not in b and "Wüste" in b
+        assert len(b) <= sjg._EXCERPT_CHARS + 2
+        assert b[1] != " "
+
+
+def test_short_sections_carry_no_body_excerpts():
+    assert sjg._body_excerpts("Danksagung. " * 1000) == []
+
+
+@requires_sdk
+def test_long_sections_are_judged_from_inside(env):
+    seen = {}
+
+    def _ask(state, questions, timeout=None):
+        seen["state"] = state
+        seen["q"] = questions
+        return response({"drop_0": 0.9, "drop_1": 0.1})
+
+    long_text = "Inhalt\n" + "Prosa des Romans. " * 8000
+    with patch.object(sj, "ask", side_effect=_ask):
+        sjg.review({}, [section("drop_0", chars=len(long_text),
+                                title="Inhalt", text=long_text),
+                        section("drop_1", chars=1500)], [])
+    sent = {s["id"]: s for s in seen["state"]["sections"]}
+    assert len(sent["drop_0"]["body_excerpts"]) == sjg._BODY_SAMPLES
+    assert "body_excerpts" not in sent["drop_1"]
+    ins = {sid: seen["q"][sjg._key(sid)].instructions
+           for sid in ("drop_0", "drop_1")}
+    assert "body_excerpts" in ins["drop_0"]
+    assert "body_excerpts" not in ins["drop_1"]
+
+
+def test_audit_records_body_sampling(env):
+    long_s = section("drop_0", chars=30000, text="Prosa. " * 5000)
+    short_s = section("drop_1")
+    sjg.write_audit({}, {"drop_0": 0.9, "drop_1": 0.2}, [long_s, short_s],
+                    [section("kept_0")], ["drop_0"], [])
+    path = [p for p in os.listdir(env) if p.startswith("section_judge_audit")]
+    rec = json.loads(open(os.path.join(env, path[0]),
+                          encoding="utf-8").readline())
+    flags = {s["id"]: s["body_sampled"] for s in rec["sections"]}
+    assert flags == {"drop_0": True, "drop_1": False}
+
+
 @requires_sdk
 def test_line_statistics_travel_with_the_excerpt(env):
     """Righe corte e numeri sono il profilo di un indice in ogni lingua."""

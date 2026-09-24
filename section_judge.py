@@ -41,6 +41,16 @@ import semantic_judge as sj
 # molto e non aggiungerebbe nulla.
 _EXCERPT_CHARS = 400
 
+# Oltre questa taglia l'inizio non basta piu'. Misurato in `recover` il
+# 24/09/2026: due volumi di Karl May avevano la sezione `Inhalt` da 115.000 e
+# 161.000 caratteri — il sommario stampato in testa e poi il romanzo, nello
+# stesso file. L'estratto iniziale era un indice e il giudizio ha visto un
+# indice: p=0,42, e un sesto del libro e' rimasto fuori. L'apparato vero e'
+# corto per natura, quindi una sezione lunga si giudica anche da dentro.
+# Vale in ogni lingua: nessuna lista di titoli «da indice».
+_BODY_SAMPLE_FROM_CHARS = 20000
+_BODY_SAMPLES = 2
+
 _DEFAULT_MODE = "observe"
 # La rampa e' in quattro gradini, non un interruttore: i due errori non
 # pesano uguale. `recover` rimette nel libro le sezioni che le euristiche
@@ -174,6 +184,26 @@ def _excerpt(text):
     return t[:_EXCERPT_CHARS].rstrip() + "…"
 
 
+def _body_sampled(s):
+    return len((s.get("text") or "").strip()) >= _BODY_SAMPLE_FROM_CHARS
+
+
+def _body_excerpts(text):
+    """Estratti presi dall'interno della sezione, a 1/3 e 2/3, allineati a un
+    inizio di parola. Vuoto sotto `_BODY_SAMPLE_FROM_CHARS`."""
+    t = (text or "").strip()
+    if len(t) < _BODY_SAMPLE_FROM_CHARS:
+        return []
+    out = []
+    for i in range(1, _BODY_SAMPLES + 1):
+        start = len(t) * i // (_BODY_SAMPLES + 1)
+        ws = t.find(" ", start, start + 80)
+        if ws != -1:
+            start = ws + 1
+        out.append("…" + t[start:start + _EXCERPT_CHARS].strip() + "…")
+    return out
+
+
 def _stats(text):
     """Le stesse misure su cui ragionano le euristiche, date al giudizio come
     fatti invece che come soglie: righe corte e numeri di pagina sono il
@@ -207,6 +237,8 @@ def _state(book, sections):
                 "chars": s.get("chars", 0),
                 "title_generated": bool(s.get("synthetic_title")),
                 "excerpt": _excerpt(s.get("text", "")),
+                **({"body_excerpts": _body_excerpts(s.get("text", ""))}
+                   if _body_sampled(s) else {}),
                 **_stats(s.get("text", "")),
             }
             for s in sections
@@ -231,9 +263,16 @@ def _questions(sections):
             f"because the file carries none: that is a fact about the file "
             f"and no evidence either way — judge the excerpt alone."
         )
+        body = "" if not _body_sampled(s) else (
+            f" `sections.{sid}` is long: its title and opening may be a table "
+            f"of contents or a front page printed at the head of the work "
+            f"itself. Judge it by `sections.{sid}.body_excerpts`, taken from "
+            f"inside the section; if they are running text, the section is "
+            f"the work."
+        )
         questions[_key(sid)] = Noul(
             instructions=f"Should section `sections.{sid}` be read aloud as "
-                         f"part of the audiobook?",
+                         f"part of the audiobook?" + body,
             criteria=Crit(
                 true=f"`sections.{sid}` is part of the work itself: narrative, "
                      f"argument, dialogue, verse, a preface or an afterword "
@@ -438,6 +477,7 @@ def write_audit(book, verdicts, dropped, kept, recover, drop, *, elapsed=0.0,
                     "position": by_id.get(sid, {}).get("position", ""),
                     "synthetic_title": bool(
                         by_id.get(sid, {}).get("synthetic_title")),
+                    "body_sampled": _body_sampled(by_id.get(sid, {})),
                     "title": (by_id.get(sid, {}).get("title", "") or "")[:80],
                 }
                 for sid, p in sorted(verdicts.items(), key=lambda kv: kv[1])
