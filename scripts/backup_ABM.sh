@@ -65,27 +65,33 @@ for f in _download_tokens.json _payments.json _vouchers.json google_tts_usage.js
     fi
 done
 
-# Database SQLite degli account (abm.db): copia coerente via API di backup
-# (sicura anche con l'app in scrittura); fallback a cp se manca sqlite3 o se
-# il backup a caldo fallisce. Mai fatale: un intoppo su abm.db non deve far
-# saltare il resto del backup giornaliero (log, chiavi, systemd, tar, rotazione).
-if [ -f "$DATA_DIR/abm.db" ]; then
+# Database SQLite (abm.db, activity.db): copia coerente via API di backup
+# (sicura anche con l'app in scrittura e il WAL attivo); fallback a cp se
+# manca sqlite3 o se il backup a caldo fallisce. Mai fatale: un intoppo su un
+# DB non deve far saltare il resto del backup giornaliero.
+backup_sqlite() {
+    local name="$1"
+    [ -f "$DATA_DIR/$name" ] || return 0
     if command -v sqlite3 >/dev/null 2>&1; then
-        sqlite3 "$DATA_DIR/abm.db" ".backup '$BACKUP_DIR/data/abm.db'" || {
-            echo "  ATTENZIONE: backup sqlite di abm.db fallito, uso cp a freddo"
-            cp "$DATA_DIR/abm.db" "$BACKUP_DIR/data/abm.db" 2>/dev/null || true
-            [ -f "$DATA_DIR/abm.db-wal" ] && cp "$DATA_DIR/abm.db-wal" "$BACKUP_DIR/data/" 2>/dev/null || true
-        }
-    else
-        cp "$DATA_DIR/abm.db" "$BACKUP_DIR/data/abm.db" 2>/dev/null || true
-        [ -f "$DATA_DIR/abm.db-wal" ] && cp "$DATA_DIR/abm.db-wal" "$BACKUP_DIR/data/" 2>/dev/null || true
+        sqlite3 "$DATA_DIR/$name" ".backup '$BACKUP_DIR/data/$name'" && return 0
+        echo "  ATTENZIONE: backup sqlite di $name fallito, uso cp a freddo"
     fi
-fi
+    cp "$DATA_DIR/$name" "$BACKUP_DIR/data/$name" 2>/dev/null || true
+    [ -f "$DATA_DIR/$name-wal" ] && cp "$DATA_DIR/$name-wal" "$BACKUP_DIR/data/" 2>/dev/null || true
+    return 0
+}
+backup_sqlite abm.db
+# Indice del business log (ABM_ACTIVITY_DB): ricostruibile dai file, ma
+# copiarlo evita di rifarlo al primo avvio dopo un restore.
+backup_sqlite activity.db
 
 # ── 6. Log attivita' ──
 echo "[6/9] Backup log attivita'..."
 mkdir -p "$BACKUP_DIR/logs"
+# Posizione storica (SCRIPT_DIR) e, dallo spostamento, ABM_ACTIVITY_LOG_DIR
+# = data dir: si copiano entrambe, una delle due e' vuota.
 cp /opt/audiobook-maker/activity_*.log "$BACKUP_DIR/logs/" 2>/dev/null || true
+cp "$DATA_DIR"/activity_*.log "$BACKUP_DIR/logs/" 2>/dev/null || true
 cp "$DATA_DIR/voucher_admin.log" "$BACKUP_DIR/logs/" 2>/dev/null || true
 
 # ── 7. Chiavi SSH (per deploy GitHub Actions) ──
