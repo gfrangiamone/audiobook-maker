@@ -2,6 +2,7 @@
 """Manutenzione account: purge periodica, backup locale coerente, copia
 giornaliera su R2 con rotazione. Tutto best-effort, mai fatale."""
 import shutil
+from pathlib import Path
 import sqlite3
 import subprocess
 import time
@@ -119,6 +120,23 @@ def test_supervisor_runs_once_then_sleeps(env, monkeypatch):
     assert len(calls) == 2
 
 
+def _posix_bash():
+    """bash utilizzabile dai test. Su Windows scarta la bash di WSL in
+    System32/WindowsApps (non vede i path Windows dei file temporanei) e
+    ripiega su quella installata accanto a git."""
+    bash = shutil.which("bash")
+    low = (bash or "").lower().replace("/", "\\")
+    if bash and "\\system32\\" not in low and "\\windowsapps\\" not in low:
+        return bash
+    git = shutil.which("git")
+    if git:
+        for cand in (Path(git).parent.parent / "bin" / "bash.exe",
+                     Path(git).parent.parent / "usr" / "bin" / "bash.exe"):
+            if cand.is_file():
+                return str(cand)
+    return None
+
+
 def test_backup_script_covers_sqlite():
     src = open("scripts/backup_ABM.sh", encoding="utf-8").read()
     # abm.db e activity.db passano entrambi dalla stessa funzione
@@ -147,9 +165,11 @@ def test_backup_script_covers_sqlite():
     assert 'cp "$DATA_DIR/$name"' in src
     # copia anche il file -wal, se presente, accanto al fallback a freddo
     assert '$name-wal' in src
-    bash = shutil.which("bash")
+    bash = _posix_bash()
     if bash:
-        out = subprocess.run([bash, "-n", "scripts/backup_ABM.sh"],
+        # via stdin: la copia di lavoro puo' avere CRLF (autocrlf), il
+        # server riceve LF
+        out = subprocess.run([bash, "-n"], input=src,
                              capture_output=True, text=True)
         assert out.returncode == 0, out.stderr
 
@@ -160,9 +180,9 @@ def test_restore_script_act_dir_takes_last_uncommented(tmp_path):
     all'inizio riga, una riga commentata o duplicata finisce comunque nel
     grep e produce un ACT_DIR multi-riga che fa fallire silenziosamente
     la `cp` successiva (`|| true`), pur stampando 'ripristinati'."""
-    bash = shutil.which("bash")
+    bash = _posix_bash()
     if not bash:
-        pytest.skip("bash non disponibile")
+        pytest.skip("bash POSIX non disponibile")
     src = open("scripts/restore_ABM.sh", encoding="utf-8").read()
     line = next(
         l for l in src.splitlines()
@@ -173,14 +193,15 @@ def test_restore_script_act_dir_takes_last_uncommented(tmp_path):
         '# Environment="ABM_ACTIVITY_LOG_DIR=/old"\n'
         'Environment="ABM_ACTIVITY_LOG_DIR=/a"\n'
         'Environment=ABM_ACTIVITY_LOG_DIR=/b\n',
-        encoding="utf-8",
+        encoding="utf-8", newline="\n",
     )
     patched = line.replace(
         "/etc/systemd/system/audiobook-maker.service.d/override.conf",
         override.as_posix(),
     )
     script = tmp_path / "extract_act_dir.sh"
-    script.write_text(patched + '\necho "$ACT_DIR"\n', encoding="utf-8")
+    script.write_text(patched + '\necho "$ACT_DIR"\n', encoding="utf-8",
+                      newline="\n")
     out = subprocess.run([bash, script.as_posix()], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "/b"
