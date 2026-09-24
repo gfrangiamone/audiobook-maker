@@ -130,7 +130,7 @@ fi
 if [ -d "$BACKUP_DIR/logs" ]; then
     # I log vanno dove li cerca l'app: ABM_ACTIVITY_LOG_DIR dell'override
     # appena ripristinato, altrimenti la cartella dell'app (SCRIPT_DIR).
-    ACT_DIR=$(grep 'ABM_ACTIVITY_LOG_DIR' /etc/systemd/system/audiobook-maker.service.d/override.conf 2>/dev/null | sed 's/.*ABM_ACTIVITY_LOG_DIR=//' | sed 's/"//g')
+    ACT_DIR=$(grep -E '^[[:space:]]*Environment=.*ABM_ACTIVITY_LOG_DIR=' /etc/systemd/system/audiobook-maker.service.d/override.conf 2>/dev/null | tail -n1 | sed 's/.*ABM_ACTIVITY_LOG_DIR=//; s/"//g; s/[[:space:]].*$//')
     ACT_DIR=${ACT_DIR:-/opt/audiobook-maker}
     mkdir -p "$ACT_DIR"
     cp "$BACKUP_DIR/logs/activity_"*.log "$ACT_DIR/" 2>/dev/null || true

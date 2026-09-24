@@ -1,7 +1,9 @@
 # test/test_account_maintenance.py
 """Manutenzione account: purge periodica, backup locale coerente, copia
 giornaliera su R2 con rotazione. Tutto best-effort, mai fatale."""
+import shutil
 import sqlite3
+import subprocess
 import time
 
 import pytest
@@ -119,22 +121,66 @@ def test_supervisor_runs_once_then_sleeps(env, monkeypatch):
 
 def test_backup_script_covers_sqlite():
     src = open("scripts/backup_ABM.sh", encoding="utf-8").read()
+    # abm.db e activity.db passano entrambi dalla stessa funzione
+    # backup_sqlite() (copia coerente via API sqlite3, fallback a cp a
+    # freddo se sqlite3 manca o il backup a caldo fallisce).
+    assert "backup_sqlite abm.db" in src
+    assert "backup_sqlite activity.db" in src
     assert "abm.db" in src and ".backup" in src
     # Non basta che i due token esistano da qualche parte nel file: la
     # chiamata sqlite3 deve essere effettivamente guardata (lo script ha
     # `set -e` in testa, riga 8), con un fallback a `cp` a freddo visibile
-    # in un messaggio di avviso, cosi' un fallimento del backup di abm.db
+    # in un messaggio di avviso, cosi' un fallimento del backup di un DB
     # non fa saltare il resto del backup giornaliero (log, chiavi, tar,
     # rotazione).
     backup_line = next(
         line for line in src.splitlines()
         if "sqlite3" in line and ".backup" in line
     )
-    assert "||" in backup_line, (
-        "la chiamata `sqlite3 ... \".backup\"` non e' guardata da `||`: "
-        "sotto `set -e` un suo fallimento aborterebbe l'intero script"
+    assert "&& return 0" in backup_line or "||" in backup_line, (
+        "la chiamata `sqlite3 ... \".backup\"` non e' guardata: sotto "
+        "`set -e` un suo fallimento aborterebbe l'intero script"
     )
     assert "ATTENZIONE" in src, "manca il messaggio di avviso sul fallback a cp"
-    # il fallback a cp a freddo deve comparire almeno due volte: una per il
-    # ramo "sqlite3 assente" e una per il ramo "sqlite3 presente ma fallito"
-    assert src.count('cp "$DATA_DIR/abm.db"') >= 2
+    # il fallback a cp a freddo deve comparire, con il file-per-nome
+    # generico della funzione, non piu' hardcoded su abm.db
+    assert 'cp "$DATA_DIR/$name"' in src
+    # copia anche il file -wal, se presente, accanto al fallback a freddo
+    assert '$name-wal' in src
+    bash = shutil.which("bash")
+    if bash:
+        out = subprocess.run([bash, "-n", "scripts/backup_ABM.sh"],
+                             capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+
+
+def test_restore_script_act_dir_takes_last_uncommented(tmp_path):
+    """ACT_DIR (riga ~133 di restore_ABM.sh) deve leggere solo l'ultima
+    riga Environment= non commentata di override.conf: senza ancoraggio
+    all'inizio riga, una riga commentata o duplicata finisce comunque nel
+    grep e produce un ACT_DIR multi-riga che fa fallire silenziosamente
+    la `cp` successiva (`|| true`), pur stampando 'ripristinati'."""
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash non disponibile")
+    src = open("scripts/restore_ABM.sh", encoding="utf-8").read()
+    line = next(
+        l for l in src.splitlines()
+        if l.strip().startswith("ACT_DIR=$(grep")
+    )
+    override = tmp_path / "override.conf"
+    override.write_text(
+        '# Environment="ABM_ACTIVITY_LOG_DIR=/old"\n'
+        'Environment="ABM_ACTIVITY_LOG_DIR=/a"\n'
+        'Environment=ABM_ACTIVITY_LOG_DIR=/b\n',
+        encoding="utf-8",
+    )
+    patched = line.replace(
+        "/etc/systemd/system/audiobook-maker.service.d/override.conf",
+        override.as_posix(),
+    )
+    script = tmp_path / "extract_act_dir.sh"
+    script.write_text(patched + '\necho "$ACT_DIR"\n', encoding="utf-8")
+    out = subprocess.run([bash, script.as_posix()], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "/b"

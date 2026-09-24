@@ -12,6 +12,7 @@ activity_log.Row (FIELDS): questo modulo non importa activity_log.
 import sqlite3
 import time
 from pathlib import Path
+from typing import cast
 
 DB_FILENAME = "activity.db"
 FIELDS = ("job_id", "ts", "filename", "op", "client_id", "ip", "voice",
@@ -131,8 +132,11 @@ def _detail_field(op):
 def to_columns(row):
     """Tupla di 9 campi (ordine FIELDS) -> colonne di `events` senza
     ym/epoch/seq."""
-    rec = dict(zip(FIELDS, row))
-    base, sep, arg = rec["op"].partition(":")
+    rec: dict[str, str | None] = dict(zip(FIELDS, row))
+    # "op" e' sempre popolato (mai None) dalla tupla di 9 stringhe di
+    # activity_log.Row; il cast serve solo a Pyright, che dopo
+    # l'annotazione sopra vede tutti i valori come str | None.
+    base, sep, arg = cast(str, rec["op"]).partition(":")
     rec["op"], rec["op_arg"] = base, (arg if sep else None)
     rec["detail"] = ""
     field = _detail_field(base)

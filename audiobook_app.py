@@ -21613,6 +21613,35 @@ def _start_activity_sync():
     return t
 
 
+def _warn_stale_activity_logs(script_dir, log_dir, today=None):
+    """ABM_ACTIVITY_LOG_DIR sposta i log fuori da SCRIPT_DIR (fase 2): se
+    SCRIPT_DIR contiene ancora file degli ultimi 3 mesi (corrente + 2
+    precedenti) nessuno li legge piu' ne' li scrive - restano li' morti.
+    Avvisa una volta all'avvio; ritorna i nomi trovati (anche se log_dir
+    coincide con script_dir, nel qual caso e' sempre vuoto)."""
+    script_dir = Path(script_dir).resolve()
+    log_dir = Path(log_dir).resolve()
+    if log_dir == script_dir:
+        return []
+    when = today or datetime.now()
+    months = set()
+    y, m = when.year, when.month
+    for _ in range(3):
+        months.add(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    try:
+        names = [p.name for p in script_dir.glob("activity_*.log")]
+    except OSError:
+        return []
+    stale = sorted(n for n in names if n[len("activity_"):-len(".log")] in months)
+    if stale:
+        print(f"[activity_log] ATTENZIONE: log in SCRIPT_DIR non letti: "
+              f"{', '.join(stale)}")
+    return stale
+
+
 def _ensure_background_threads():
     global _cleanup_started
     if _cleanup_started:
@@ -21626,6 +21655,7 @@ def _ensure_background_threads():
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
     _start_activity_sync()
+    _warn_stale_activity_logs(SCRIPT_DIR, activity_log._dir())
     if db.is_ready():
         threading.Thread(target=_account_maintenance_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
