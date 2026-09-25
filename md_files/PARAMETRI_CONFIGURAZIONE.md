@@ -449,7 +449,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_CONCURRENCY` | `32` Chunk in volo dentro un singolo job del worker. | `voxcpm_tts.py` | 74 |
 | `ABM_VOXCPM_CHUNK_CHARS` | `280` Tetto di caratteri per chunk delle voci `voxcpm:` (clamp 40–2000). Il worker non rispezza i chunk ricevuti: oltre questo tetto il timbro deriva dentro il chunk. Deve coincidere con `ABM_VOXCPM_CHUNK_MAX_CHARS` dell'endpoint. Sceso da 300 a 280 l'11/9/2026: `tts_split._pick_sentence_slack` concede a una frase il 15% di sforamento pur di non spezzarla sulle virgole (tetto effettivo 322), e partire da 280 tiene quel tetto vicino ai 300 misurati sul worker. | `voxcpm_tts.py` | 98 |
 | `ABM_VOXCPM_QUEUE_TIMEOUT_S` | `900` Quanto si aspetta in coda un job VoxCPM prima di dichiarare l'endpoint saturo. Scaduto, il job si cancella e non si ritenta. | `voxcpm_tts.py` | 245 |
-| `ABM_VOXCPM_JOB_TIMEOUT_S` | `1800` Quanto puo' durare l'esecuzione di un job VoxCPM. Scaduto, il job si cancella (RunPod fattura a secondi) e si ritenta. | `voxcpm_tts.py` | 249 |
+| `ABM_VOXCPM_JOB_TIMEOUT_S` | `1800` Quanto puo' durare l'esecuzione di un job VoxCPM. Scaduto, il job si cancella (RunPod fattura a secondi) e si ritenta. Ogni job porta a RunPod `policy.executionTimeout` = questo valore + `_EXEC_TIMEOUT_MARGINE_S` (120 s), cosi' l'Execution Timeout della console non puo' scendere sotto il tetto del client (24/09/2026: console a 600 s, capitoli lunghi chiusi con `FAILED executionTimeout exceeded`, ora trattato come `VoxcpmBloccato` e ritentato). | `voxcpm_tts.py` | 249 |
 | `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
 | `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
 | `ABM_VOXCPM_PROGRESS` | `1` Il client ascolta gli avanzamenti parziali del worker (`chunks_done` dal polling di `/status`) e la barra si muove coi chunk. A `0` la barra torna a muoversi solo a capitolo consegnato: interruttore da girare se il polling dovesse mai pesare, senza ricostruire l'immagine sulla GPU. | `voxcpm_tts.py` | 506 |
@@ -1426,6 +1426,15 @@ euristiche (righe totali, percentuale di righe corte, percentuale di righe con
 cifre), date come **fatti** invece che come soglie: righe corte piu' numeri di
 pagina sono il profilo di un indice in qualunque lingua.
 
+Da `_BODY_SAMPLE_FROM_CHARS = 20000` caratteri in su partono anche
+`body_excerpts`: `_BODY_SAMPLES = 2` estratti da 400 caratteri presi a 1/3 e
+2/3 della sezione, piu' una riga nella domanda che chiede di giudicare da
+quelli. Misurato in `recover` il 24/09/2026: due volumi di Karl May avevano
+`Inhalt` da 115k e 161k caratteri, sommario in testa e romanzo dopo nello
+stesso file; l'estratto iniziale era un indice e uno dei due e' rimasto fuori
+a `p=0,42`. La regola e' sulla taglia, non su una lista di titoli «da indice»:
+l'apparato vero e' corto per natura e deve valere in ogni lingua.
+
 **Chi viene chiesto** (`_pick`): gli scarti per dimensione decrescente — la
 sezione grossa persa in silenzio e' il danno da intercettare — poi solo le
 **estremita'** fra i capitoli tenuti (primi 3 e ultimi 5), perche' l'apparato
@@ -1498,7 +1507,7 @@ dal recovery riusando i chunk su disco).
 **Audit**: una riga JSONL per libro in
 `ABM_DATA_DIR/section_judge_audit_YYYY-MM.jsonl` con modo, lingua, titolo,
 durata, sezioni recuperate e scartate e, per ogni sezione interrogata,
-`{id, p, was, chars, position, synthetic_title, title}`. La riga porta anche:
+`{id, p, was, chars, position, synthetic_title, body_sampled, title}`. La riga porta anche:
 
 - `thresholds`: **tutte** le soglie attive al momento della scrittura. Senza
   di loro due finestre di misura non sono confrontabili — la prima analisi di
