@@ -966,6 +966,20 @@ def speed_effettiva(passo_voce, rate):
     return max(0.5, min(2.0, round(float(passo_voce) * (1.0 + pct / 100.0), 3)))
 
 
+def denoise_mine():
+    """Vero se i campioni degli utenti vanno puliti dal worker (`denoise`).
+
+    Solo le voci `voxcpm:mine`: il campione registrato dall'utente arriva da
+    un microfono qualunque, in una stanza qualunque, e il fondo si clona. Il
+    catalogo no: quei campioni sono gia' stati scelti e spolverati a orecchio,
+    e una voce approvata non si rifa'. `ABM_VOXCPM_DENOISE_MINE=0` spegne la
+    pulizia senza toccare il codice, per l'A/B o se il worker la sbagliasse.
+    Un worker che non conosce il campo lo ignora: niente da coordinare col
+    deploy dell'immagine.
+    """
+    return os.environ.get("ABM_VOXCPM_DENOISE_MINE", "1").strip() != "0"
+
+
 def clone_block(voice_id):
     """I campi del payload che determinano la voce, in modalita' `hifi`.
 
@@ -982,10 +996,14 @@ def clone_block(voice_id):
     Per gli id `voxcpm:mine:<token>` il campione e la frase vengono da
     `voice_clone.resolve`; la cache e' la stessa, per `voice_id`.
     """
+    # Il flag si decide a ogni chiamata e non si memorizza: spegnere la
+    # pulizia dall'ambiente deve valere dal job dopo, non dal riavvio.
+    extra = ({"denoise": True}
+             if voice_clone_token(voice_id) is not None and denoise_mine() else {})
     with _clone_lock:
         pronto = _clone_cache.get(voice_id)
     if pronto is not None:
-        return dict(pronto)
+        return {**pronto, **extra}
 
     tok = voice_clone_token(voice_id)
     if tok is not None:
@@ -1013,7 +1031,7 @@ def clone_block(voice_id):
         _clone_cache[voice_id] = blocco
         if len(_clone_cache) > _CLONE_CACHE_MAX:
             _clone_cache.popitem(last=False)
-    return dict(blocco)
+    return {**blocco, **extra}
 
 
 # Chiavi di un output di job che si possono stampare in un messaggio

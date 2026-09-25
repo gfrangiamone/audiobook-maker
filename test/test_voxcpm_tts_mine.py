@@ -86,3 +86,27 @@ def test_lingua_voce(tmp_path):
     with pytest.raises(ValueError) as ei:
         voxcpm_tts._lingua_voce("voxcpm:mine:" + token)
     assert token not in str(ei.value)      # mai il token nel messaggio d'errore
+
+
+def test_clone_block_mine_chiede_la_pulizia(tmp_path, monkeypatch):
+    # Il campione dell'utente viene da un microfono qualunque: il worker lo
+    # passa da ZipEnhancer prima di codificarlo.
+    monkeypatch.delenv("ABM_VOXCPM_DENOISE_MINE", raising=False)
+    vid = vc.voice_id_of(_voce(tmp_path))
+    assert voxcpm_tts.clone_block(vid)["denoise"] is True
+    assert voxcpm_tts.clone_block(vid)["denoise"] is True   # anche dalla cache
+
+
+def test_clone_block_catalogo_non_chiede_la_pulizia(monkeypatch):
+    # Le voci del catalogo sono gia' scelte e spolverate: una voce approvata
+    # non si rifa', neanche di sbieco.
+    monkeypatch.delenv("ABM_VOXCPM_DENOISE_MINE", raising=False)
+    assert "denoise" not in voxcpm_tts.clone_block("voxcpm:v2:it-IT/Stefano")
+
+
+def test_clone_block_pulizia_spenta_dall_ambiente_vale_subito(tmp_path, monkeypatch):
+    vid = vc.voice_id_of(_voce(tmp_path))
+    assert voxcpm_tts.clone_block(vid)["denoise"] is True
+    monkeypatch.setenv("ABM_VOXCPM_DENOISE_MINE", "0")
+    # gia' in cache: l'interruttore vale lo stesso, dal job dopo
+    assert "denoise" not in voxcpm_tts.clone_block(vid)
