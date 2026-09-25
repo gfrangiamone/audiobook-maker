@@ -69,6 +69,20 @@ def test_dual_file_e_db_identici(ddir, monkeypatch):
     assert activity_log.parity(ym) == {}
 
 
+def test_connessione_di_scrittura_aspetta_piu_a_lungo(ddir, monkeypatch):
+    """La ricostruzione di un mese chiuso all'avvio tiene il DB per secondi:
+    la connessione che scrive le righe nuove non deve arrendersi dopo 2 s."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", "dual")
+    activity_log.log("J1", "a.epub", "GENERATE")
+    busy = activity_log._wconn.execute("PRAGMA busy_timeout").fetchone()[0]
+    assert busy == activity_log._WRITER_BUSY_MS == 15000
+    c = activity_db.connect(ddir / activity_db.DB_FILENAME)
+    try:
+        assert c.execute("PRAGMA busy_timeout").fetchone()[0] == 2000
+    finally:
+        c.close()
+
+
 def test_dual_ripetizione_dopo_riavvio_entra_anche_nel_db(ddir, monkeypatch):
     monkeypatch.setenv("ABM_ACTIVITY_DB", "dual")
     activity_log.log("J1", "a.epub", "GENERATE", epoch=1)

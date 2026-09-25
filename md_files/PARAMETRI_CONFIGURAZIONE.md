@@ -1782,6 +1782,13 @@ non ci sono: `--dir` esplicito).
 
 `sync` della CLI ricostruisce i mesi chiusi con una transazione di scrittura su activity.db; se
 lo si lancia con l'app accesa e un mese va davvero ricostruito, una scrittura dell'app puo'
-superare il busy_timeout (2 s): l'app smette di usare il DB (letture dal file) fino al prossimo
+superare il busy_timeout: l'app smette di usare il DB (letture dal file) fino al prossimo
 restart. Nessuna perdita di dati; meglio lanciarlo a servizio fermo, oppure riavviare dopo.
+
+busy_timeout: `15000` ms sulla connessione che scrive le righe nuove
+(`activity_log._WRITER_BUSY_MS`, `activity_log.py` riga 93), `2000` ms (default di
+`activity_db.connect`) per tutte le altre, compresa quella di `sync_month`. Il 25/09/2026, al
+primo avvio in `dual`, la ricostruzione dei mesi chiusi da parte di `sync_all` ha tenuto il DB
+oltre 2 s e una GENERATE e' uscita dal DB con `database is locked`. L'attesa avviene sotto
+`_lock`: mentre un mese si ricostruisce anche gli altri `log()` aspettano, fino a 15 s.
 `parity` e `bench` sono solo lettura sul DB vivo / su una cartella temporanea.

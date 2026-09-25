@@ -94,15 +94,18 @@ def _migrate(conn, name, statements):
     conn.execute("COMMIT")
 
 
-def connect(path):
+def connect(path, busy_ms=2000):
     """Connessione di scrittura (autocommit): crea il file se manca e
-    applica le migrazioni. Chi la condivide fra thread la serializza."""
+    applica le migrazioni. Chi la condivide fra thread la serializza.
+
+    `busy_ms` e' quanto una scrittura aspetta un'altra transazione prima di
+    fallire con `database is locked`."""
     conn = sqlite3.connect(str(path), check_same_thread=False,
-                           isolation_level=None, timeout=2.0)
+                           isolation_level=None, timeout=busy_ms / 1000.0)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=2000")
+        conn.execute(f"PRAGMA busy_timeout={int(busy_ms)}")
         conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations "
                      "(name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)")
         for name, statements in _MIGRATIONS:

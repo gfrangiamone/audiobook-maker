@@ -84,6 +84,15 @@ def _path(ym):
     return _dir() / f"activity_{ym}.log"
 
 
+# Attesa della connessione che scrive le righe nuove. Il 25/09/2026, al primo
+# avvio in `dual`, `sync_all` ricostruiva i mesi chiusi con transazioni da
+# decine di migliaia di righe fuori da `_lock`: una GENERATE ha aspettato piu'
+# dei 2 s di default ed e' uscita dal DB con `database is locked`. L'attesa
+# avviene sotto `_lock`, quindi blocca anche gli altri `log()`, ma solo mentre
+# un mese si ricostruisce: meglio qualche secondo di ritardo che una riga persa.
+_WRITER_BUSY_MS = 15000
+
+
 def mode():
     """Modo del backend, letto a ogni chiamata; valore ignoto = off."""
     m = os.environ.get("ABM_ACTIVITY_DB", "off").strip().lower()
@@ -101,7 +110,7 @@ def _writer():
     path = _db_path()
     if _wconn is None or _wpath != path:
         _close_writer()
-        _wconn = activity_db.connect(path)
+        _wconn = activity_db.connect(path, busy_ms=_WRITER_BUSY_MS)
         _wpath = path
     return _wconn
 
