@@ -118,8 +118,12 @@ def connect(path, busy_ms=2000):
 
 def reader(path):
     """Connessione di sola lettura su un DB esistente: se il file manca
-    solleva sqlite3.OperationalError invece di crearlo vuoto."""
-    uri = Path(path).resolve().as_uri() + "?mode=rw"
+    solleva sqlite3.OperationalError invece di crearlo vuoto.
+
+    `mode=ro`, non `rw` + query_only: chiudendosi come ultima connessione
+    (script lanciato a servizio fermo) una connessione rw fa il checkpoint
+    del WAL dentro il DB, cioe' scrive."""
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=2.0)
     conn.execute("PRAGMA query_only=1")
     return conn

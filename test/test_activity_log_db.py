@@ -1,4 +1,6 @@
 """activity_log con activity.db: modi, doppia scrittura, dedup sul DB, sync."""
+import shutil
+import sqlite3
 from datetime import datetime
 
 import pytest
@@ -207,6 +209,45 @@ def test_parity_senza_db(ddir):
         _line("J1", "2026-07-01 10:00:00", "COMPLETE") + "\n", encoding="utf-8")
     assert activity_log.parity("2026-07") == {"COMPLETE": (1, 0)}
     assert not (ddir / activity_db.DB_FILENAME).exists()
+
+
+def test_parity_non_scrive_nel_db(ddir, monkeypatch, tmp_path_factory):
+    """parity si lancia anche come root a servizio fermo: aprendo il DB in
+    scrittura, la chiusura dell'ultima connessione farebbe il checkpoint del
+    WAL dentro activity.db. Deve solo leggere."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", "dual")
+    activity_log.log("J1", "a.epub", "COMPLETE")
+    ym = _ym()
+    # Istantanea col WAL ancora pieno, come dopo un processo ucciso.
+    snap = tmp_path_factory.mktemp("snap")
+    db = activity_db.DB_FILENAME
+    for name in (f"activity_{ym}.log", db, db + "-wal", db + "-shm"):
+        shutil.copy2(ddir / name, snap / name)
+    db_bytes = (snap / db).read_bytes()
+    wal_bytes = (snap / (db + "-wal")).read_bytes()
+    assert wal_bytes
+    activity_log.configure(lambda: snap)
+    assert activity_log.parity(ym) == {}
+    assert (snap / db).read_bytes() == db_bytes
+    assert (snap / (db + "-wal")).read_bytes() == wal_bytes
+
+
+def test_parity_dopo_chiusura_pulita(ddir, monkeypatch):
+    """Servizio fermato bene: niente -wal accanto al DB."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", "dual")
+    activity_log.log("J1", "a.epub", "COMPLETE")
+    activity_log.reset()
+    assert not (ddir / (activity_db.DB_FILENAME + "-wal")).exists()
+    assert activity_log.parity(_ym()) == {}
+
+
+def test_parity_db_illeggibile_e_un_errore(ddir):
+    """Un DB presente ma inservibile non deve sembrare vuoto (db=0)."""
+    (ddir / "activity_2026-07.log").write_text(
+        _line("J1", "2026-07-01 10:00:00", "COMPLETE") + "\n", encoding="utf-8")
+    (ddir / activity_db.DB_FILENAME).write_bytes(b"non e' un database sqlite" * 100)
+    with pytest.raises(sqlite3.DatabaseError):
+        activity_log.parity("2026-07")
 
 
 def test_scrittura_lenta_segnalata(ddir, monkeypatch, capsys):

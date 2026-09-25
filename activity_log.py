@@ -363,11 +363,12 @@ def parity(ym):
     if not _YM_RE.match(ym or ""):
         raise ValueError(f"mese non valido: {ym!r}")
     in_file = Counter(r.op for r in file_rows(_path(ym)))
-    try:
-        conn = activity_db.reader(_db_path())
-    except sqlite3.OperationalError:
+    # Solo il DB che non c'e' vale come vuoto: uno presente ma che non si
+    # apre (permessi, file rovinato) solleva, invece di mostrare db=0.
+    if not _db_path().exists():
         in_db = {}
     else:
+        conn = activity_db.reader(_db_path())
         try:
             in_db = activity_db.op_counts(conn, ym)
         finally:
