@@ -11903,8 +11903,59 @@ def _account_downloads_for(row, now=None, index=None):
     return out
 
 
+# Una riga "running" il cui job non esiste piu' (ne' in memoria ne' come
+# descrittore di recovery) oltre questa finestra e' persa: la si chiude.
+_ACCT_STALE_RUNNING_SEC = 30 * 60
+_ACCT_SETTLE_MAP = {"done": "done", "partial": "done", "error": "error",
+                    "cancelled": "cancelled", "canceled": "cancelled"}
+
+
+def _account_settled_status(job_id, row_updated_at, now):
+    """Esito da scrivere su una riga di storico ancora "running", o None se il
+    job e' (o puo' ancora essere) vivo. Rete di sicurezza per i path che
+    escono dalla generazione senza passare da `_set_job_status` su un
+    terminale (crash del thread, cancel riportato ad "analyzed", cleanup,
+    riavvio senza recovery): senza, il job resterebbe "in corso" per sempre
+    nell'area personale web e nell'app."""
+    with _jobs_lock:
+        job = jobs.get(job_id)
+        st = job.get("status") if isinstance(job, dict) else None
+        interrupted = bool(isinstance(job, dict) and job.get("server_interrupted"))
+        cancelled = bool(isinstance(job, dict) and job.get("cancelled"))
+    if job is not None:
+        if st in _ACCT_SETTLE_MAP:
+            return "error" if interrupted else _ACCT_SETTLE_MAP[st]
+        # Cancel riportato ad "analyzed": il job non sta piu' generando.
+        if st == "analyzed" and (cancelled or interrupted):
+            return "error" if interrupted else "cancelled"
+        return None
+    if now - float(row_updated_at or 0) < _ACCT_STALE_RUNNING_SEC:
+        return None
+    try:
+        if pending_jobs.is_active(job_id):
+            return None
+    except Exception:  # noqa: BLE001  store illeggibile: nel dubbio non chiudere
+        return None
+    return "error"
+
+
+def _account_reconcile_running(rows, now):
+    for r in rows:
+        if r.get("status") != "running":
+            continue
+        try:
+            st = _account_settled_status(r["job_id"], r.get("updated_at"), now)
+            if st and accounts.settle_running(r["job_id"], st):
+                print(f"[{r['job_id']}] storico account: running -> {st} (riconciliato)",
+                      flush=True)
+                r["status"] = st
+        except Exception as e:  # noqa: BLE001
+            print(f"WARNING [{r.get('job_id')}] riconciliazione storico: {e}", flush=True)
+
+
 def _account_rows_for(acct, page):
     rows, total = accounts.list_jobs(acct["id"], page=page, per_page=_ACCT_PER_PAGE)
+    _account_reconcile_running(rows, time.time())
     now = time.time()
     index = _download_tokens_index()
     out = []
@@ -15020,6 +15071,9 @@ def api_account_progress():
         info = _job_progress_info(job)
         if job.get("server_interrupted"):
             info["status"] = "interrupted"
+        elif job.get("status") == "analyzed" and job.get("cancelled"):
+            # Cancel riportato ad "analyzed": per lo storico e' concluso.
+            info["status"] = "cancelled"
         out[jid] = info
     resp = jsonify({"jobs": out})
     resp.headers["Cache-Control"] = "no-store"
@@ -20969,6 +21023,16 @@ def _cleanup_job(job_id, reason=""):
 
     with _jobs_lock:
         _prev = jobs.pop(job_id, None)
+    # Job tolto dalla memoria prima di un terminale (cancel riportato ad
+    # "analyzed", heartbeat perso, ...): lo storico account non deve restare
+    # "running" per sempre. settle_running non tocca esiti gia' scritti.
+    if isinstance(_prev, dict) and _prev.get("status") not in _ACCT_SETTLE_MAP:
+        try:
+            accounts.settle_running(
+                job_id, "cancelled" if (_prev.get("cancelled")
+                                        and not _prev.get("server_interrupted")) else "error")
+        except Exception as e:  # noqa: BLE001
+            print(f"[cleanup] {job_id} account settle failed (non-fatal): {e}")
     # Job mai partito (status analyzed): un descrittore di recovery ancora
     # aperto (register_email prima di un /api/generate poi rifiutato) farebbe
     # ripartire al boot un job che nessuno ha piu' — con voce premium, gratis.

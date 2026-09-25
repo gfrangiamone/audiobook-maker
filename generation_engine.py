@@ -7773,6 +7773,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _mark_pending_failed(job_id, "cancelled")
             _set_job_status(job, "analyzed")
             job["progress_message"] = "Cancelled"
+            # "analyzed" non e' un terminale: senza questa notifica la riga
+            # di storico account resta "running" per sempre, anche dopo che
+            # la cleanup "stale analyzed" ha tolto il job dalla memoria
+            # (incidente uLTdBu1Pwz6NkxjMejBrPA, 24/09/2026). Il kill admin
+            # non e' una scelta dell'utente: per lui il job e' fallito.
+            _account_notify_status(
+                job, "error" if job.get("server_interrupted") else "cancelled")
             _cancel_cleanup_workdir(job, job_id, work_dir, partial_audio_delivered)
 
         print(f"[{job_id}] Generation cancelled, resources freed"

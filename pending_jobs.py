@@ -73,6 +73,13 @@ def mark_failed(job_id: str) -> None:
     _require().update(job_id, {"state": "failed"})
 
 
+def is_active(job_id: str) -> bool:
+    """True se il job ha un descrittore non 'failed': il recovery al riavvio
+    lo rilancera', quindi non e' (ancora) perso."""
+    rec = _require().get(job_id)
+    return rec is not None and rec.get("state") != "failed"
+
+
 def orphans() -> list[dict]:
     """Descrittori da recuperare: tutti tranne quelli marcati 'failed'."""
     return [r for r in _require().all(include_archived=True) if r.get("state") != "failed"]

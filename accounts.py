@@ -478,6 +478,22 @@ def update_status(job_id, status, download_token=""):
         return cur.rowcount > 0
 
 
+def settle_running(job_id, status):
+    """Chiude la riga solo se e' ancora 'running': non sovrascrive mai un esito
+    gia' scritto dal motore. Usata dalla riconciliazione dei job spariti."""
+    if not enabled():
+        return False
+    status = "cancelled" if status == "canceled" else status
+    if status not in JOB_STATUSES or status == "running":
+        return False
+    with db.tx() as c:
+        cur = c.execute(
+            "UPDATE account_jobs SET status=?, updated_at=? WHERE job_id=? AND status='running'",
+            (status, int(time.time()), str(job_id)),
+        )
+        return cur.rowcount > 0
+
+
 def set_download_token(job_id, token):
     if not enabled() or not token:
         return False
