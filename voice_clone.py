@@ -329,11 +329,20 @@ def upload_to_r2(rec, name):
 
 
 def remove_files(rec):
-    """Cancella cartella locale e prefisso R2 della voce. Non solleva."""
-    shutil.rmtree(voice_dir(rec["token"]), ignore_errors=True)
+    """Cancella cartella locale e prefisso R2 della voce. Non solleva.
+
+    Un token vuoto o con separatori/punti farebbe puntare voice_dir/r2_key
+    alla radice `user_voices/` (o sopra, con '..'): cancellare cosi'
+    spazzerebbe via campioni e registro di tutte le voci. Si rifiuta e si
+    logga."""
+    token = str(rec.get("token") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        print(f"[voice_clone] remove_files rifiutata per {rec.get('id')}: token non valido {token!r}")
+        return
+    shutil.rmtree(voice_dir(token), ignore_errors=True)
     if storage_backend.is_enabled():
         try:
-            storage_backend.delete_prefix(r2_key(rec["token"], ""))
+            storage_backend.delete_prefix(r2_key(token, ""))
         except Exception as e:
             print(f"[voice_clone] delete R2 fallita per {rec['id']}: {e}")
 

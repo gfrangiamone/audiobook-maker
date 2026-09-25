@@ -6,7 +6,7 @@
     python3 scripts/activity_db.py bench  [--dir DIR] [-n N]
 
 --dir: cartella di activity_*.log e activity.db. Default: ABM_ACTIVITY_LOG_DIR,
-poi /opt/audiobook-maker/data. Nella shell ssh di prod le ABM_* dell'unit
+poi /opt/audiobook-maker/data/logs. Nella shell ssh di prod le ABM_* dell'unit
 systemd non ci sono: passare --dir esplicito.
 
 parity  conteggi per op e mese fra file e DB; exit 1 se qualcosa differisce.
@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import activity_log  # noqa: E402
 
-DEFAULT_DIR = "/opt/audiobook-maker/data"
+DEFAULT_DIR = "/opt/audiobook-maker/data/logs"
 
 
 def _ym_arg(value):

@@ -109,7 +109,7 @@ pip install pymupdf --break-system-packages 2>/dev/null || pip install pymupdf
 
 # ---------- 7. Crea directory ----------
 echo "[6/10] Creazione directory..."
-mkdir -p /opt/audiobook-maker/data
+mkdir -p /opt/audiobook-maker/data /opt/audiobook-maker/data/logs
 mkdir -p /etc/audiobook-maker
 
 # ---------- 8. Crea servizio systemd ----------
@@ -136,7 +136,7 @@ cat > /etc/systemd/system/audiobook-maker.service.d/override.conf << ENVEOF
 [Service]
 Environment="ABM_BASE_URL=https://audiobook-maker.com"
 Environment="ABM_DATA_DIR=/opt/audiobook-maker/data"
-Environment="ABM_ACTIVITY_LOG_DIR=/opt/audiobook-maker/data"
+Environment="ABM_ACTIVITY_LOG_DIR=/opt/audiobook-maker/data/logs"
 Environment="ABM_SMTP_HOST=${SMTP_HOST}"
 Environment="ABM_SMTP_PORT=${SMTP_PORT}"
 Environment="ABM_SMTP_USER=${SMTP_USER}"

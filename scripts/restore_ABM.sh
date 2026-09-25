@@ -123,7 +123,6 @@ mkdir -p /opt/audiobook-maker/data
 if [ -d "$BACKUP_DIR/data" ]; then
     cp "$BACKUP_DIR/data/"*.json /opt/audiobook-maker/data/ 2>/dev/null || true
     cp "$BACKUP_DIR/data/abm.db" /opt/audiobook-maker/data/ 2>/dev/null || true
-    cp "$BACKUP_DIR/data/activity.db" /opt/audiobook-maker/data/ 2>/dev/null || true
     echo "  File dati ripristinati:"
     ls -lh /opt/audiobook-maker/data/*.json 2>/dev/null || true
 fi
@@ -134,6 +133,8 @@ if [ -d "$BACKUP_DIR/logs" ]; then
     ACT_DIR=${ACT_DIR:-/opt/audiobook-maker}
     mkdir -p "$ACT_DIR"
     cp "$BACKUP_DIR/logs/activity_"*.log "$ACT_DIR/" 2>/dev/null || true
+    # activity.db sta accanto ai log (ABM_ACTIVITY_DB=dual|db).
+    cp "$BACKUP_DIR/data/activity.db" "$ACT_DIR/" 2>/dev/null || true
     cp "$BACKUP_DIR/logs/voucher_admin.log" /opt/audiobook-maker/data/ 2>/dev/null || true
     echo "  Log attivita' ripristinati in $ACT_DIR."
 fi

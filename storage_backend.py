@@ -42,6 +42,11 @@ def is_enabled():
     )
 
 
+# Radici che delete_prefix non cancella mai per intero (vedi l'incidente
+# del 12/09/2026 sulla cartella delle voci).
+_PROTECTED_ROOTS = frozenset({"user_voices", "voices", "accounts", "logs"})
+
+
 def _full_key(key):
     """Antepone l'eventuale prefisso di namespacing del bucket."""
     k = key.lstrip("/")
@@ -202,7 +207,14 @@ def list_prefix(prefix):
 
 def delete_prefix(prefix):
     """Cancella tutti gli oggetti sotto `prefix` (cold cleanup di un job dir).
-    Pagina e cancella a batch di 1000."""
+    Pagina e cancella a batch di 1000.
+
+    Rifiuta (ValueError) il prefisso vuoto, che vuoterebbe il bucket, e la
+    radice intera di un prefisso riservato (campioni vocali, log, backup
+    degli account): li' si cancella solo una sottocartella, mai tutto."""
+    root = prefix.strip("/")
+    if not root or root in _PROTECTED_ROOTS:
+        raise ValueError(f"delete_prefix rifiutata sul prefisso {prefix!r}")
     client = _get_client()
     full = _full_key(prefix)
     paginator = client.get_paginator("list_objects_v2")

@@ -70,28 +70,33 @@ done
 # manca sqlite3 o se il backup a caldo fallisce. Mai fatale: un intoppo su un
 # DB non deve far saltare il resto del backup giornaliero.
 backup_sqlite() {
-    local name="$1"
-    [ -f "$DATA_DIR/$name" ] || return 0
+    local name="$1" src_dir="${2:-$DATA_DIR}"
+    [ -f "$src_dir/$name" ] || return 0
     if command -v sqlite3 >/dev/null 2>&1; then
-        sqlite3 "$DATA_DIR/$name" ".backup '$BACKUP_DIR/data/$name'" && return 0
+        sqlite3 "$src_dir/$name" ".backup '$BACKUP_DIR/data/$name'" && return 0
         echo "  ATTENZIONE: backup sqlite di $name fallito, uso cp a freddo"
     fi
-    cp "$DATA_DIR/$name" "$BACKUP_DIR/data/$name" 2>/dev/null || true
-    [ -f "$DATA_DIR/$name-wal" ] && cp "$DATA_DIR/$name-wal" "$BACKUP_DIR/data/" 2>/dev/null || true
+    cp "$src_dir/$name" "$BACKUP_DIR/data/$name" 2>/dev/null || true
+    [ -f "$src_dir/$name-wal" ] && cp "$src_dir/$name-wal" "$BACKUP_DIR/data/" 2>/dev/null || true
     return 0
 }
 backup_sqlite abm.db
+# Cartella del business log: ABM_ACTIVITY_LOG_DIR dell'override (in prod
+# data/logs), altrimenti la cartella dell'app (SCRIPT_DIR).
+ACT_DIR=$(grep -E '^[[:space:]]*Environment=.*ABM_ACTIVITY_LOG_DIR=' /etc/systemd/system/audiobook-maker.service.d/override.conf 2>/dev/null | tail -n1 | sed 's/.*ABM_ACTIVITY_LOG_DIR=//; s/"//g; s/[[:space:]].*$//')
+ACT_DIR=${ACT_DIR:-/opt/audiobook-maker}
 # Indice del business log (ABM_ACTIVITY_DB): ricostruibile dai file, ma
-# copiarlo evita di rifarlo al primo avvio dopo un restore.
-backup_sqlite activity.db
+# copiarlo evita di rifarlo al primo avvio dopo un restore. Sta accanto ai log.
+backup_sqlite activity.db "$ACT_DIR"
 
 # ── 6. Log attivita' ──
 echo "[6/9] Backup log attivita'..."
 mkdir -p "$BACKUP_DIR/logs"
-# Posizione storica (SCRIPT_DIR) e, dallo spostamento, ABM_ACTIVITY_LOG_DIR
-# = data dir: si copiano entrambe, una delle due e' vuota.
+# ABM_ACTIVITY_LOG_DIR (ACT_DIR, sopra) e le posizioni storiche (SCRIPT_DIR,
+# data dir): si copiano tutte, quelle dismesse sono vuote.
 cp /opt/audiobook-maker/activity_*.log "$BACKUP_DIR/logs/" 2>/dev/null || true
 cp "$DATA_DIR"/activity_*.log "$BACKUP_DIR/logs/" 2>/dev/null || true
+cp "$ACT_DIR"/activity_*.log "$BACKUP_DIR/logs/" 2>/dev/null || true
 cp "$DATA_DIR/voucher_admin.log" "$BACKUP_DIR/logs/" 2>/dev/null || true
 
 # ── 7. Chiavi SSH (per deploy GitHub Actions) ──

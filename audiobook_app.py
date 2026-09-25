@@ -20278,14 +20278,31 @@ CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 # nessuno sweep lo raggiunge (i backup sono file, non cartelle), ma riservarlo
 # costa una parola e impedisce che un domani un delete_prefix("accounts/")
 # cancelli le copie del database degli account.
-_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices", "accounts"})
+# "logs" e' la cartella del business log in prod (ABM_ACTIVITY_LOG_DIR =
+# data/logs): file mensili + activity.db, mai una job dir. In piu' qualunque
+# ABM_ACTIVITY_LOG_DIR che cada dentro il data dir e' riservata col suo nome,
+# qualunque esso sia (vedi _reserved_data_dir_names).
+_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices", "accounts", "logs"})
+
+
+def _reserved_data_dir_names():
+    """_RESERVED_DATA_DIRS piu' il nome della cartella dei log, se sta
+    direttamente nel data dir. Risolta a ogni chiamata: segue l'env."""
+    names = set(_RESERVED_DATA_DIRS)
+    try:
+        log_dir = _activity_log_dir().resolve()
+        if log_dir.parent == UPLOAD_DIR.resolve():
+            names.add(log_dir.name)
+    except OSError:
+        pass
+    return names
 
 
 def _is_job_dir(entry):
     """True se la voce del data dir e' (o e' stata) la cartella di un job."""
     return (entry.is_dir()
             and not entry.name.startswith("_")
-            and entry.name not in _RESERVED_DATA_DIRS)
+            and entry.name not in _reserved_data_dir_names())
 
 
 def _assembly_purge_hold(job, now):
@@ -20579,8 +20596,9 @@ def _delete_cold_for_job(job_id):
     il cleanup locale."""
     if not storage_backend.is_enabled() or not job_id:
         return
-    if job_id in _RESERVED_DATA_DIRS:
-        # Non e' un job: sotto quel prefisso ci sono i campioni vocali.
+    if job_id in _reserved_data_dir_names():
+        # Non e' un job: sotto quel prefisso ci sono campioni vocali, log o
+        # backup degli account.
         print(f"[cleanup] Cold delete rifiutato sul prefisso riservato {job_id}/")
         return
     try:
