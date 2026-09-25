@@ -21972,7 +21972,7 @@ if __name__ == "__main__":
     print(f"{'='*50}")
     print(f"  Script folder: {SCRIPT_DIR}")
     print(f"  Data folder:   {UPLOAD_DIR}")
-    print(f"  Activity log:  {SCRIPT_DIR / 'activity_YYYY-MM.log'}")
+    print(f"  Activity log:  {_activity_log_dir() / 'activity_YYYY-MM.log'}")
     _max_text_chars_startup = os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")
     print(f"  ABM_MAX_TEXT_CHARS: {_max_text_chars_startup} "
           f"({'env' if 'ABM_MAX_TEXT_CHARS' in os.environ else 'default'})")
