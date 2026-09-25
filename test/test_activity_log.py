@@ -4,10 +4,12 @@ In fase 2 questi test verranno parametrizzati anche sul backend SQLite: vanno
 scritti solo contro le funzioni pubbliche, mai contro il formato del file,
 salvo dove il formato e' esso stesso il contratto (andata e ritorno).
 """
+import sqlite3
 from datetime import datetime, timedelta
 
 import pytest
 
+import activity_db
 import activity_log
 from activity_log import Row
 
@@ -27,6 +29,7 @@ def _write(d, ym, lines, raw=None):
         p.write_bytes(raw)
     else:
         p.write_text("".join(l + "\n" for l in lines), encoding="utf-8")
+    _sync()
     return p
 
 
@@ -35,14 +38,23 @@ def _line(job, ts, op, fn="a.epub", cid="c", ip="1.1.1.1", voice="it-IT-X",
     return f'{job} # {ts} # "{fn}" # {op} # {cid} # {ip} # {voice} # {lang} # {plat}'
 
 
-@pytest.fixture
-def log_dir(tmp_path):
+@pytest.fixture(params=["off", "db"])
+def log_dir(request, tmp_path, monkeypatch):
+    """Ogni test di contratto gira sul backend file (`off`) e sul DB (`db`)."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", request.param)
     prev = activity_log._log_dir
     activity_log.configure(lambda: tmp_path)
     activity_log.reset()
+    activity_log.sync_all()
     yield tmp_path
     activity_log.reset()
     activity_log.configure(prev)
+
+
+def _sync():
+    """Dopo una scrittura diretta del file, il DB la riprende come all'avvio."""
+    if activity_log.mode() != "off":
+        activity_log.sync_all()
 
 
 def _ops_now():
@@ -96,6 +108,7 @@ def test_c2_init_dedup_ricostruisce_le_chiavi_giuste(log_dir):
     assert _ops_now().count("VOUCHER_ATTEMPT") == 2
 
 
+@pytest.mark.parametrize("log_dir", ["off"], indirect=True)
 def test_cambio_mese_azzera_il_dedup(log_dir):
     activity_log.log("J1", "a.epub", "GENERATE")
     # Simula un processo acceso dal mese precedente: il set appartiene a un
@@ -279,3 +292,121 @@ def test_delivered_ids_un_mese_solo(log_dir):
     now = datetime.now()
     _write(log_dir, _prev_ym(now), [_line("OLD", "2000-01-01 00:00:00", "COMPLETE")])
     assert activity_log.delivered_ids(months=1)["complete"] == set()
+
+
+# ---------------------------------------------------------------- backend db
+
+def _db_only(fn):
+    return pytest.mark.parametrize("log_dir", ["db"], indirect=True)(fn)
+
+
+@_db_only
+def test_modo_db_legge_dal_db_non_dal_file(log_dir):
+    activity_log.log("J1", "a.epub", "COMPLETE")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(log_dir / f"activity_{_ym(datetime.now())}.log", "a", encoding="utf-8") as f:
+        f.write(_line("J2", ts, "COMPLETE") + "\n")        # nel file ma non nel DB
+    assert [r.job_id for r in activity_log.month_rows(_ym(datetime.now()))] == ["J1"]
+
+
+@_db_only
+def test_modo_db_senza_sync_legge_il_file(log_dir):
+    activity_log.reset()                                   # _db_ready spento
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    (log_dir / f"activity_{_ym(datetime.now())}.log").write_text(
+        _line("J9", ts, "COMPLETE") + "\n", encoding="utf-8")
+    assert [r.job_id for r in activity_log.month_rows(_ym(datetime.now()))] == ["J9"]
+    assert activity_log.delivered_ids(months=1)["complete"] == {"J9"}
+
+
+@_db_only
+def test_modo_db_db_illeggibile_ripiega_sul_file(log_dir):
+    now = datetime.now()
+    ts = now.strftime("%Y-%m-%d %H:%M:%S")
+    _write(log_dir, _ym(now), [_line("J1", ts, "COMPLETE")])
+    with activity_log._lock:
+        activity_log._close_writer()
+    for suffix in ("-wal", "-shm"):
+        (log_dir / (activity_db.DB_FILENAME + suffix)).unlink(missing_ok=True)
+    (log_dir / activity_db.DB_FILENAME).write_bytes(b"non sono un database" * 300)
+    assert [r.job_id for r in activity_log.month_rows(_ym(now))] == ["J1"]
+    assert activity_log.delivered_ids(months=1)["complete"] == {"J1"}
+    assert activity_log.fingerprint(_ym(now)) is not None
+
+
+@_db_only
+def test_fingerprint_del_db_distinto_da_quello_del_file(log_dir):
+    activity_log.log("J1", "a.epub", "GENERATE")
+    fp = activity_log.fingerprint(_ym(datetime.now()))
+    assert fp[0] == "db"
+
+
+def test_famiglie_sovraccariche_andata_e_ritorno(log_dir):
+    activity_log.log("J1", "Saga # 2.epub", "M4B_PROGRESS", voice="size_mb=1.0 pct=50")
+    activity_log.log("", "", "ADMIN_VOUCHER_CREATE:gift", ip="9.9.9.9",
+                     voice="AB12...", lang="a@b.it")
+    activity_log.log("", "", "VOUCHER_ATTEMPT_BLOCKED:rate", ip="9.9.9.9")
+    activity_log.log("J2", "b.epub", "PAYMENT_AMOUNT_MISMATCH", lang="atteso 5.00")
+    activity_log.log("vc1", "speed=1.1", "VOICE_CLONE_SPEED", client_id="c1")
+    activity_log.log("acct-1234abcd", "", "ACCOUNT_LOGIN", client_id="c1")
+    got = [r[:1] + r[2:] for r in activity_log.month_rows(_ym(datetime.now()))]
+    assert got == [
+        ("J1", "Saga # 2.epub", "M4B_PROGRESS", "", "", "size_mb=1.0 pct=50", "", ""),
+        ("", "", "ADMIN_VOUCHER_CREATE:gift", "", "9.9.9.9", "AB12...", "a@b.it", ""),
+        ("", "", "VOUCHER_ATTEMPT_BLOCKED:rate", "", "9.9.9.9", "", "", ""),
+        ("J2", "b.epub", "PAYMENT_AMOUNT_MISMATCH", "", "", "", "atteso 5.00", ""),
+        ("vc1", "speed=1.1", "VOICE_CLONE_SPEED", "c1", "", "", "", ""),
+        ("acct-1234abcd", "", "ACCOUNT_LOGIN", "c1", "", "", "", ""),
+    ]
+
+
+# --------------------------------------------------------- fix round 1 (db)
+
+@_db_only
+def test_c1_errore_a_meta_lotto_ripiega_sul_file_completo(log_dir, monkeypatch):
+    """select_rows pesca a lotti da 2000: un errore dopo il primo lotto non
+    deve ne' sollevare ne' consegnare un mese incompleto (issue C1)."""
+    now = datetime.now()
+    ts = now.strftime("%Y-%m-%d %H:%M:%S")
+    ym = _ym(now)
+    lines = [_line(f"J{i}", ts, "COMPLETE") for i in range(5000)] + [
+        _line("JDONE", ts, "COMPLETE")]
+    _write(log_dir, ym, lines)     # 5001 righe: piu' di un lotto di select_rows
+    attesi = [f"J{i}" for i in range(5000)] + ["JDONE"]
+
+    real_select_rows = activity_db.select_rows
+
+    def _boom_a_meta(conn, *a, **kw):
+        for i, row in enumerate(real_select_rows(conn, *a, **kw)):
+            if i >= 2000:
+                raise sqlite3.DatabaseError("boom a meta' lotto")
+            yield row
+    monkeypatch.setattr(activity_db, "select_rows", _boom_a_meta)
+
+    assert [r.job_id for r in activity_log.month_rows(ym)] == attesi
+    assert activity_log.delivered_ids(months=1)["complete"] == set(attesi)
+
+
+@_db_only
+def test_i1_lettura_fallita_toglie_db_ready_e_non_ritenta(log_dir, monkeypatch):
+    """Un fallimento di lettura spegne `_db_ready`: la lettura successiva va
+    dritta al file, senza ritoccare il DB (issue I1)."""
+    now = datetime.now()
+    ts = now.strftime("%Y-%m-%d %H:%M:%S")
+    ym = _ym(now)
+    _write(log_dir, ym, [_line("J1", ts, "COMPLETE")])
+    assert activity_log._db_ready.is_set()
+
+    chiamate = []
+
+    def _boom(conn, *a, **kw):
+        chiamate.append(1)
+        raise sqlite3.DatabaseError("boom")
+    monkeypatch.setattr(activity_db, "select_rows", _boom)
+
+    assert [r.job_id for r in activity_log.month_rows(ym)] == ["J1"]
+    assert not activity_log._db_ready.is_set()
+    assert len(chiamate) == 1
+
+    assert [r.job_id for r in activity_log.month_rows(ym)] == ["J1"]
+    assert len(chiamate) == 1          # la seconda lettura non ha toccato il DB

@@ -20,12 +20,18 @@ def _write_by_month(d, lines_with_ts):
     for ym, lines in by_month.items():
         with open(d / f"activity_{ym}.log", "a", encoding="utf-8") as f:
             f.write("".join(l + "\n" for l in lines))
+    if activity_log.mode() != "off":
+        activity_log.sync_all()
 
 
-@pytest.fixture
-def logs(tmp_path, monkeypatch):
+@pytest.fixture(params=["off", "db"])
+def logs(request, tmp_path, monkeypatch):
+    """I lettori dell'app devono dare lo stesso risultato sul file e sul DB."""
+    monkeypatch.setenv("ABM_ACTIVITY_DB", request.param)
+    monkeypatch.delenv("ABM_ACTIVITY_LOG_DIR", raising=False)
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", tmp_path)
     activity_log.reset()
+    activity_log.sync_all()
     for c in (audiobook_app._stats_today_cache, audiobook_app._stats_month_cache):
         c["value"] = None
         c["expires"] = 0.0

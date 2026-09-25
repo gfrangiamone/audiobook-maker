@@ -1765,3 +1765,23 @@ prima di questo modulo.
 | Account e storico (`accounts.py`) | 6 |
 | Giudizi semantici (`semantic_judge.py`, moderazione, traduzioni, anti-abuso, sezioni del libro, output LLM, lingua libro/voce, trascrizione campione, traduzione a campione) | 37 |
 | **Totale** | **185** |
+
+## Activity log su SQLite (`ABM_ACTIVITY_DB`, `ABM_ACTIVITY_LOG_DIR`)
+
+| Variabile | Default | Effetto |
+|---|---|---|
+| `ABM_ACTIVITY_LOG_DIR` | `SCRIPT_DIR` | Cartella di `activity_YYYY-MM.log` e di `activity.db`. In prod `/opt/audiobook-maker/data` dopo lo spostamento (a servizio fermo, vedi l'addendum della spec `docs/superpowers/specs/2026-09-24-activity-log-db-design.md`). |
+| `ABM_ACTIVITY_DB` | `off` | `off`: solo file. `dual`: file piu' copia in `activity.db`, letture dal file. `db`: dedup e letture su `activity.db`, file sempre scritto. Valore ignoto = `off`. Letta a ogni scrittura; il cambio passa dall'unit systemd e da un restart. |
+
+Il file resta il registro completo fino alla fase 4: all'avvio, con `dual` o `db`, un thread
+(`activity_log.sync_all`) ricostruisce dal file i mesi del DB che non tornano; finche' non ha
+finito, e se il DB non si legge, il modo `db` legge dal file. Ogni scrittura sul DB oltre 50 ms
+lascia `[activity_log] scrittura DB lenta` nel log di servizio. Attrezzi:
+`python3 scripts/activity_db.py parity|sync|bench --dir <cartella>` (in ssh le ABM_* dell'unit
+non ci sono: `--dir` esplicito).
+
+`sync` della CLI ricostruisce i mesi chiusi con una transazione di scrittura su activity.db; se
+lo si lancia con l'app accesa e un mese va davvero ricostruito, una scrittura dell'app puo'
+superare il busy_timeout (2 s): l'app smette di usare il DB (letture dal file) fino al prossimo
+restart. Nessuna perdita di dati; meglio lanciarlo a servizio fermo, oppure riavviare dopo.
+`parity` e `bench` sono solo lettura sul DB vivo / su una cartella temporanea.

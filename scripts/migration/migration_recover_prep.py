@@ -31,7 +31,7 @@ Default: DRY-RUN. Serve `--apply` per scrivere. La scrittura e' atomica
 (tmp+rename) e lascia una copia in `_pending_jobs.json.premigration.bak`.
 
 Uso:
-    python3 migration_recover_prep.py [--data-dir DIR] [--script-dir DIR]
+    python3 migration_recover_prep.py [--data-dir DIR] [--log-dir DIR] [--script-dir DIR]
                                       [--max-attempts N] [--apply]
 """
 import argparse
@@ -58,11 +58,13 @@ def service_is_running():
         return True
 
 
-def delivered_job_ids(script_dir):
-    """job_id che hanno un evento di consegna negli activity log.
+def delivered_job_ids(*log_dirs):
+    """job_id che hanno un evento di consegna negli activity log di `log_dirs`.
 
-    Gli activity log stanno in SCRIPT_DIR (non nella data dir), un file per mese
-    `activity_YYYY-MM.log`. Formato di riga scritto da `_log_activity`:
+    Gli activity log stavano in SCRIPT_DIR; dallo spostamento della fase 2
+    (ABM_ACTIVITY_LOG_DIR) stanno nella data dir: si leggono tutte le
+    cartelle date, una assente si salta. Un file per mese
+    `activity_YYYY-MM.log`, formato di riga scritto da activity_log.log():
 
         {job_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip}
                  # {voice} # {browser_lang} # {platform}
@@ -73,26 +75,30 @@ def delivered_job_ids(script_dir):
     esatta: un match parziale marcherebbe come 'gia' consegnato' un job che
     invece va ripreso, cioe' lo perderebbe."""
     ids = set()
-    try:
-        names = [n for n in os.listdir(script_dir)
-                 if n.startswith("activity_") and n.endswith(".log")]
-    except OSError as e:
-        print("ATTENZIONE: activity log non leggibili in %s (%s): il controllo "
-              "'gia' consegnato' viene saltato." % (script_dir, e),
-              file=sys.stderr)
-        return ids
-    for name in sorted(names):
-        path = os.path.join(script_dir, name)
+    readable = 0
+    for log_dir in log_dirs:
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    fields = [p.strip() for p in line.rstrip("\n").split(" # ")]
-                    if len(fields) < 4:
-                        continue
-                    if any(fld in DELIVERED_EVENTS for fld in fields[3:]):
-                        ids.add(fields[0])
+            names = [n for n in os.listdir(log_dir)
+                     if n.startswith("activity_") and n.endswith(".log")]
         except OSError:
             continue
+        readable += 1
+        for name in sorted(names):
+            path = os.path.join(log_dir, name)
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        fields = [p.strip() for p in line.rstrip("\n").split(" # ")]
+                        if len(fields) < 4:
+                            continue
+                        if any(fld in DELIVERED_EVENTS for fld in fields[3:]):
+                            ids.add(fields[0])
+            except OSError:
+                continue
+    if not readable:
+        print("ATTENZIONE: activity log non leggibili in %s: il controllo "
+              "'gia' consegnato' viene saltato." % ", ".join(log_dirs),
+              file=sys.stderr)
     return ids
 
 
@@ -122,6 +128,10 @@ def main():
     ap.add_argument("--data-dir", default="/opt/audiobook-maker/data")
     ap.add_argument("--script-dir", default="/opt/audiobook-maker",
                     help="dove stanno gli activity_*.log (default: /opt/audiobook-maker)")
+    ap.add_argument("--log-dir", default="/opt/audiobook-maker/data",
+                    help="ABM_ACTIVITY_LOG_DIR: dove stanno gli activity_*.log dopo "
+                         "lo spostamento (default: /opt/audiobook-maker/data); "
+                         "--script-dir resta letta per i mesi rimasti li'")
     ap.add_argument("--max-attempts", type=int,
                     default=int(os.environ.get("ABM_RECOVER_MAX_ATTEMPTS", "2")))
     ap.add_argument("--apply", action="store_true",
@@ -145,7 +155,7 @@ def main():
               file=sys.stderr)
         return 1
 
-    delivered = delivered_job_ids(args.script_dir)
+    delivered = delivered_job_ids(args.log_dir, args.script_dir)
     print("activity log: %d job con evento di consegna" % len(delivered))
 
     actions = {"delivered": [], "reset": [], "no_input": [], "keep": []}

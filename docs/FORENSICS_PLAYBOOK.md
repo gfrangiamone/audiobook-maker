@@ -16,7 +16,7 @@ Playbook to diagnose a job incident (lost file, "link scaduto in anticipo", miss
 
 ## Log sources — ranked by retention (use in this order)
 
-1. **`activity_YYYY-MM.log` in the APP dir** (`/opt/audiobook-maker/`, = `SCRIPT_DIR`, **NOT** the data dir). Persistent per-month business log, never rotated aggressively. Format: `job_id # ts # "file" # OPERATION # client_id # ip # voice # lang`. Ops: `ANALYZE, PAYMENT_CAPTURED, OPTIMIZE, EMAIL_REGISTERED, OPT_COMPLETE, GENERATE, COMPLETE, EMAIL_SENT, DOWNLOAD_*`. → gives the clean lifecycle.
+1. **`activity_YYYY-MM.log` in `ABM_ACTIVITY_LOG_DIR`** — the data dir `/opt/audiobook-maker/data/` after the phase-2 move; before it (and whenever the variable is unset) the APP dir `/opt/audiobook-maker/` (= `SCRIPT_DIR`). Check `/proc/<pid>/environ` for `ABM_ACTIVITY_LOG_DIR`; old months may still sit in the app dir. With `ABM_ACTIVITY_DB=dual|db` the same rows are in `activity.db` next to the files: `sqlite3 -readonly /opt/audiobook-maker/data/activity.db "SELECT ts, op, op_arg, filename, client_id, ip, voice, detail, lang FROM events WHERE job_id='<jid>' ORDER BY id"` (`op_arg` = the `:suffix`, `detail` = payload of `M4B_*`/`ADMIN_VOUCHER_*`/`VOUCHER_ATTEMPT*`/`PAYMENT_*`/`VOICE_CLONE_*`/`ACCOUNT_*`). The files stay the complete record until phase 4. Persistent per-month business log, never rotated aggressively. Format: `job_id # ts # "file" # OPERATION # client_id # ip # voice # lang`. Ops: `ANALYZE, PAYMENT_CAPTURED, OPTIMIZE, EMAIL_REGISTERED, OPT_COMPLETE, GENERATE, COMPLETE, EMAIL_SENT, DOWNLOAD_*`. → gives the clean lifecycle.
 2. **`/var/log/syslog*` (rsyslog)** — **the long forensic source (~3–4 weeks, daily-rotated, `.gz`)**. rsyslog duplicates the app stdout. Use `zgrep -h <jid> /var/log/syslog* | sort`. This is the authoritative trace of every `print()` (progress, completion, **cleanup/eviction**).
 3. **journald** (`journalctl -u audiobook-maker`) — **SHORT & unreliable**: was ~1 day; raised 2026-06-02 to `4G / 14day / persistent` via `/etc/systemd/journald.conf.d/retention.conf`. Also **rate-limited** (drops bursts → "Suppressed N messages"). Do NOT rely on it for events >a few days old.
 
@@ -32,7 +32,7 @@ Playbook to diagnose a job incident (lost file, "link scaduto in anticipo", miss
 
 ## Fast diagnostic sequence
 
-1. `grep <jid> /opt/audiobook-maker/activity_*.log` → lifecycle + whether ever downloaded.
+1. `grep -h <jid> /opt/audiobook-maker/data/activity_*.log /opt/audiobook-maker/activity_*.log 2>/dev/null` → lifecycle + whether ever downloaded.
 2. `zgrep -h <jid> /var/log/syslog* | sort | tail -30` → last logged action + any deletion line.
 3. `ls -la data/<jid>/`; `cat data/<jid>/.email_sent`; check `.forensic_retain.json` / `.cloud_uploaded`.
 4. Parse the token in `_download_tokens.json` (created_at vs now, `downloaded_at`, `is_gemini`).

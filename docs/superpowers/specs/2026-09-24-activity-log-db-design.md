@@ -256,3 +256,56 @@ Script temporaneo nello scratchpad, non nel repo.
 | Deriva fra file e DB in modo `dual` | Script di parita' per `op` e mese |
 | Perdita del `grep` nelle indagini | File mantenuto fino alla fase 4; poi CLI di query e playbook aggiornato |
 | Import circolari | `activity_log.py` foglia, configurato via `configure()` |
+
+## Addendum fasi 2–3 (24/09/2026)
+
+Piano: `docs/superpowers/plans/2026-09-24-activity-log-sqlite.md`. Decisioni prese scrivendo il
+piano, dove la direzione sopra era incompleta o va corretta:
+
+1. **`ts TEXT`** nel formato del file (`%Y-%m-%d %H:%M:%S`, ora locale), non `INTEGER`: i lettori
+   confrontano stringhe e l'ora locale nel passaggio all'epoca e' ambigua al cambio d'ora. Colonna
+   **`ym`** = mese del file che contiene la riga: `month_rows` filtra per `ym`, come oggi per file,
+   anche se il `ts` di una riga e' storto.
+2. **Chiave di dedup** `UNIQUE (ym, job_id, op, IFNULL(op_arg,''), IFNULL(epoch,-1), seq) WHERE
+   job_id <> ''`. `ym` conserva il reset mensile del set in RAM; `seq` fa entrare le chiavi
+   ripetute dei file storici (riavvii che hanno perso l'epoca), senza le quali i conteggi file/DB
+   non tornerebbero mai. Le scritture nuove del modo `db` usano `seq = 0`.
+3. **`op_arg`** e' NULL senza `':'`. **`detail`** raccoglie i payload di sei famiglie, non solo
+   `M4B_*`: `M4B_*` (da `voice`), `ADMIN_VOUCHER_*` e `VOUCHER_ATTEMPT*` e `PAYMENT_*` (da `lang`),
+   `VOICE_CLONE_*` e `ACCOUNT_*` (da `filename`). La mappatura e' invertibile: i lettori vedono
+   le stesse `Row` del file.
+4. **Il file resta il registro completo fino alla fase 4, il DB e' un indice ricostruibile.**
+   `dual`: file poi DB (copia fedele). `db`: prima il DB decide il dedup, poi il file riceve solo
+   le righe nuove; se il DB non risponde la riga va comunque nel file. All'avvio un thread
+   (`sync_all`) confronta i conteggi e ricostruisce dal file i mesi che non tornano; finche' non
+   ha finito, e ogni volta che il DB non si legge, il modo `db` legge dal file. Rollback da `db`
+   a `dual`/`off` senza perdite. Per questo il rollout passa sempre da `dual`: al primo avvio in
+   `db` il DB ha gia' le chiavi del mese e il dedup non riscrive righe gia' presenti nel file
+   (se il DB fosse vuoto, le chiavi di prima del riavvio non ci sarebbero fino alla fine di
+   `sync_all`).
+5. **`months()` resta sui file** (elenco economico, include i mesi appena creati).
+6. **Spostamento dei file via `ABM_ACTIVITY_LOG_DIR`** (default invariato `SCRIPT_DIR`), non
+   cambiando il default nel codice: col deploy automatico su push un cambio di default
+   spezzerebbe il mese corrente fra due cartelle. `activity.db` sta accanto ai file.
+7. **Scrittura sincrona** sotto il lock di `log()`, senza coda. Misura: `scripts/activity_db.py
+   bench` (percentili di `log()` in `off` e `dual`) e un avviso in log per ogni scrittura DB oltre
+   50 ms. Coda in memoria solo se in prod il p99 di `dual` supera 5 ms.
+8. **Fase 4:** `docs/STORAGE_TIERING.md` non esiste; il copy-before-delete di riferimento e'
+   `generation_engine._offload_to_cloud`. Retention decisa: 12 mesi. Pseudonimizzazione di IP ed
+   email: rinviata.
+
+### Rollout in prod
+
+1. Deploy con `ABM_ACTIVITY_DB` assente (= `off`): nessun cambiamento.
+2. Spostamento dei file, a servizio fermo: `systemctl stop audiobook-maker`;
+   `mv /opt/audiobook-maker/activity_*.log /opt/audiobook-maker/data/`; in `override.conf`
+   `Environment="ABM_ACTIVITY_LOG_DIR=/opt/audiobook-maker/data"`; `systemctl daemon-reload`;
+   `systemctl start audiobook-maker`. Verifica: una riga nuova in `data/activity_<mese>.log`.
+3. Misura: `python3 scripts/activity_db.py bench --dir /opt/audiobook-maker/data -n 2000`.
+4. `Environment="ABM_ACTIVITY_DB=dual"`, restart. In syslog `[activity_log] sync: N mesi
+   ricostruiti, 0 falliti`. Dopo un giorno `python3 scripts/activity_db.py parity --dir
+   /opt/audiobook-maker/data` deve uscire con 0; nessun `scrittura DB lenta` ricorrente.
+5. `ABM_ACTIVITY_DB=db`, restart. Controllo del pannello `/admin/log-activity`, delle statistiche
+   community e del digest power user. Rollback: `dual` o `off` + restart.
+
+Le ABM_* dell'unit non sono nella shell ssh: agli script si passa `--dir` esplicito.

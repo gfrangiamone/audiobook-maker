@@ -34,7 +34,7 @@ import uuid
 import hmac
 import secrets
 import html as html_mod
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from copy import copy
 from pathlib import Path
@@ -158,9 +158,15 @@ import tts_backend_state
 import user_stats
 import activity_log
 
-# Il business log vive in SCRIPT_DIR (fase 1). La callable e' risolta a ogni
-# scrittura/lettura: patchare SCRIPT_DIR nei test basta a spostarlo.
-activity_log.configure(log_dir=lambda: SCRIPT_DIR)
+# Il business log vive in ABM_ACTIVITY_LOG_DIR se impostata (in prod la data
+# dir, dopo lo spostamento della fase 2), altrimenti in SCRIPT_DIR. La
+# callable e' risolta a ogni scrittura/lettura: patchare SCRIPT_DIR nei test
+# basta a spostarlo. activity.db (ABM_ACTIVITY_DB=dual|db) sta accanto ai file.
+def _activity_log_dir():
+    return Path(os.environ.get("ABM_ACTIVITY_LOG_DIR") or SCRIPT_DIR)
+
+
+activity_log.configure(log_dir=_activity_log_dir)
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -4222,8 +4228,14 @@ def _parse_log_sessions(ym):
         if operation.startswith("VOUCHER_ATTEMPT"):
             continue
 
+        # fromisoformat e' in C: strptime su ~85k righe/mese era meta' del
+        # tempo della pagina. Il controllo di forma tiene fuori quello che
+        # strptime("%Y-%m-%d %H:%M:%S") rifiutava e fromisoformat accetterebbe
+        # (solo data, "T", fuso, frazioni di secondo).
+        if len(dt_str) != 19 or dt_str[10] != " ":
+            continue
         try:
-            dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+            dt = datetime.fromisoformat(dt_str)
         except ValueError:
             continue
 
@@ -4289,6 +4301,38 @@ def _parse_log_sessions(ym):
             client_session_count[cid] = client_session_count.get(cid, 0) + 1
 
     return sessions, client_session_count
+
+
+# Sessioni gia' costruite per mese, chiave = (ym, impronta del mese in
+# activity_log): un log che cresce cambia l'impronta e si ricostruisce da
+# solo, un mese chiuso si costruisce una volta sola. I risultati sono
+# condivisi fra richieste: chi li usa li legge e basta.
+_LOG_SESSIONS_CACHE = {}
+_LOG_SESSIONS_CACHE_MAX = 4
+_LOG_SESSIONS_LOCK = threading.Lock()
+
+
+def _log_sessions_cached(ym):
+    fp = activity_log.fingerprint(ym)
+    if fp is None:
+        return _parse_log_sessions(ym)
+    # La cartella nella chiave: la firma del modo db (ultimo id, righe) non
+    # distingue due activity.db diversi con lo stesso numero di righe.
+    key = (ym, str(_activity_log_dir()), fp)
+    with _LOG_SESSIONS_LOCK:
+        hit = _LOG_SESSIONS_CACHE.get(key)
+    if hit is not None:
+        return hit
+    result = _parse_log_sessions(ym)
+    with _LOG_SESSIONS_LOCK:
+        # Una sola voce per mese: la versione precedente del mese corrente
+        # non servira' piu'.
+        for k in [k for k in _LOG_SESSIONS_CACHE if k[0] == ym]:
+            del _LOG_SESSIONS_CACHE[k]
+        while len(_LOG_SESSIONS_CACHE) >= _LOG_SESSIONS_CACHE_MAX:
+            _LOG_SESSIONS_CACHE.pop(next(iter(_LOG_SESSIONS_CACHE)))
+        _LOG_SESSIONS_CACHE[key] = result
+    return result
 
 
 def _m4b_subbar_html(job):
@@ -4533,6 +4577,291 @@ except Exception:
     pass
 
 
+_LOG_EVENT_ICONS: dict[str, str] = {
+    "ANALYZE": "🔍", "GENERATE": "⚙️", "COMPLETE": "✅",
+    "DOWNLOAD": "📥", "DOWNLOAD_EMAIL": "📧📥",
+    "DOWNLOAD_EMAIL_PODCAST": "🎙️📥", "DOWNLOAD_PODCAST": "🎙️📥",
+    "EMAIL_REGISTERED": "📧", "EMAIL_SENT": "📨",
+    "EMAIL_FAILED": "❌", "CANCEL": "🚫",
+    "ADMIN_CANCEL": "⛔",
+    "RESET_CHAPTERS": "🔄", "EXPORT_ABM": "📦",
+    "OPTIMIZE": "✨", "OPT_COMPLETE": "✨✅", "OPT_CANCEL": "✨🚫",
+    "TRANSLATE": "🌍", "TR_COMPLETE": "🌍✅", "TR_CANCEL": "🌍🚫",
+    "TRANSLATE_ADOPT": "🌍📖", "DOWNLOAD_TRANSLATION": "🌍📥",
+    "TR_EMAIL_SENT": "🌍📨",
+}
+_LOG_OP_COLORS = {
+    "ANALYZE": ("#6b7280", "#f3f4f6"), "GENERATE": ("#2563eb", "#eff6ff"),
+    "COMPLETE": ("#16a34a", "#f0fdf4"), "DOWNLOAD": ("#7c3aed", "#f5f3ff"),
+    "DOWNLOAD_EMAIL": ("#7c3aed", "#f5f3ff"),
+    "DOWNLOAD_EMAIL_PODCAST": ("#7c3aed", "#f5f3ff"),
+    "DOWNLOAD_PODCAST": ("#7c3aed", "#f5f3ff"),
+    "EMAIL_REGISTERED": ("#0891b2", "#ecfeff"),
+    "EMAIL_SENT": ("#0d9488", "#f0fdfa"),
+    "EMAIL_FAILED": ("#dc2626", "#fef2f2"),
+    "CANCEL": ("#dc2626", "#fef2f2"),
+    "ADMIN_CANCEL": ("#b91c1c", "#fee2e2"),
+    "RESET_CHAPTERS": ("#f59e0b", "#fffbeb"),
+    "EXPORT_ABM": ("#6366f1", "#eef2ff"),
+    "OPTIMIZE": ("#d97706", "#fffbeb"), "OPT_COMPLETE": ("#16a34a", "#f0fdf4"),
+    "OPT_CANCEL": ("#dc2626", "#fef2f2"),
+    "TRANSLATE": ("#0ea5e9", "#e0f2fe"), "TR_COMPLETE": ("#0284c7", "#e0f2fe"),
+    "TR_CANCEL": ("#dc2626", "#fef2f2"),
+    "TRANSLATE_ADOPT": ("#0284c7", "#e0f2fe"),
+    "DOWNLOAD_TRANSLATION": ("#0369a1", "#e0f2fe"),
+    "TR_EMAIL_SENT": ("#0d9488", "#f0fdfa"),
+}
+
+
+_LOG_EAGER_DAYS = 2   # giorni piu recenti renderizzati subito in /admin/log-activity
+
+_LOG_TR_OPS = frozenset({"TRANSLATE", "TR_COMPLETE", "TR_CANCEL",
+                         "TRANSLATE_ADOPT", "DOWNLOAD_TRANSLATION",
+                         "TR_EMAIL_SENT", "TR_EMAIL_FAILED"})
+
+
+def _log_session_filters(sid, s, client_session_count):
+    """Attributi di filtro di una sessione: i data-* della scheda e, per i
+    giorni non ancora caricati, i conteggi per filtro dell'intestazione."""
+    if _session_in_progress(s, sid):
+        status = "in_progress"
+    elif _session_completed(s):
+        status = "completed"
+    else:
+        status = "cancelled"
+    cid = s.get("client_id", "")
+    return {
+        "status": status,
+        "email": "EMAIL_SENT" in s["events"],
+        "recurring": bool(cid) and client_session_count.get(cid, 0) >= 2,
+        "identified": bool(cid),
+        "gemini": bool(s.get("premium_started")),
+        "translation": bool(set(s["events"]) & _LOG_TR_OPS),
+        "platform": s.get("platform", "") or "",
+        "transferred": bool(s.get("transferred", False)),
+    }
+
+
+def _log_filter_names(f):
+    """Filtri di filterCards() che mostrano una scheda con attributi `f`
+    (stessa logica del JS, vedi filterCards)."""
+    names = ["all", f["status"]]
+    names += [k for k in ("identified", "recurring", "translation",
+                          "gemini", "transferred") if f[k]]
+    if f["platform"] in ("android", "ios"):
+        names.append("mobile")
+    return names
+
+
+def _log_client_color_map(client_session_count):
+    """Colore per client ricorrente, nell'ordine di prima apparizione nel mese
+    (lo stesso per la pagina e per i giorni caricati dopo)."""
+    colors = ["#38bdf8", "#a78bfa", "#f472b6", "#34d399", "#fbbf24",
+              "#fb923c", "#22d3ee", "#c084fc", "#f87171", "#4ade80"]
+    recurring = [cid for cid, n in client_session_count.items() if n >= 2]
+    return {cid: colors[i % len(colors)] for i, cid in enumerate(recurring)}
+
+
+def _log_card_html(sid, s, client_session_count, client_color_map, now):
+    """Scheda HTML di una sessione di /admin/log-activity (pagina e
+    caricamento del singolo giorno)."""
+    job = None
+    f = _log_session_filters(sid, s, client_session_count)
+    card_status = f["status"]
+    is_progress = card_status == "in_progress"
+    cid = s.get("client_id", "")
+    cid_count = client_session_count.get(cid, 0) if cid else 0
+
+    first = s["first_dt"].strftime("%H:%M")
+    last = s["last_dt"].strftime("%H:%M")
+
+    is_paid = False
+    if is_progress:
+        job = jobs.get(sid)
+        # Job con pagamento (PayPal o voucher, indifferente): la card
+        # in corso viene evidenziata in giallo acceso invece del rosso.
+        _paym = (job or {}).get("payment") or {}
+        try:
+            is_paid = float(_paym.get("total_eur", 0) or 0) > 0
+        except (TypeError, ValueError):
+            is_paid = bool(_paym)
+        pct_html = ""
+        if job:
+            st = job.get("status", "")
+            if st == "optimizing":
+                total_chars = job.get("opt_total_chars", 1)
+                done_chars = job.get("opt_processed_chars", 0)
+                cur_ch_chars = job.get("opt_current_chapter_chars", 0)
+                streamed = min(job.get("opt_streamed_chars", 0), cur_ch_chars)
+                worked = done_chars + streamed
+                pct = min(99, int(worked / total_chars * 100))
+                pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+            elif st == "generating":
+                cur = job.get("progress_current", 0)
+                tot = job.get("progress_total", 0)
+                if tot > 0:
+                    pct = int(cur / tot * 100)
+                    pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+            elif st == "translating":
+                cur = job.get("tr_progress_current", 0)
+                tot = job.get("tr_progress_total", 0)
+                if tot > 0:
+                    pct = int(cur / tot * 100)
+                    pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+
+        delta = now - s["first_dt"]
+        total_sec = int(delta.total_seconds())
+        elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}:{total_sec % 60:02d}"
+        start_iso = s["first_dt"].strftime("%Y-%m-%dT%H:%M:%S")
+        elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span>{pct_html} ⏱️'
+        last = " - "
+    else:
+        delta = s["last_dt"] - s["first_dt"]
+        total_sec = int(delta.total_seconds())
+        elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}"
+        elapsed_html = elapsed
+
+    title = s["filename"]
+    for ext in (".epub", ".txt", ".pdf"):
+        if title.lower().endswith(ext):
+            title = title[:-len(ext)]
+    display_title = html_mod.escape(title[:80] + ("..." if len(title) > 80 else ""))
+
+    op = s["last_op"]
+    fg, bg = _LOG_OP_COLORS.get(op, ("#6b7280", "#f3f4f6"))
+    timeline = "  →  ".join(_LOG_EVENT_ICONS.get(e, e) or "" for e in s["events"])
+
+    cip = s.get("client_ip", "")
+    cid_short = cid[:8] if cid else " - "
+    cid_color = client_color_map.get(cid, "var(--text-dim)")
+    cid_badge = f' <span class="cid-count" style="color:{cid_color}">({cid_count})</span>' if cid_count >= 2 else ""
+    cid_style = f'color:{cid_color};font-weight:600' if cid in client_color_map else 'color:var(--text-dim)'
+
+    voice_raw = s.get("voice", "")
+    voice_short = ""
+    if voice_raw:
+        parts_v = voice_raw.split("-")
+        if len(parts_v) >= 3:
+            # Escape OBBLIGATORIO: voice_raw arriva dal parametro
+            # `voice` della richiesta utente via Activity Log; senza
+            # escape un id voce forgiato (es. "x-y-<img onerror=...>")
+            # diventa stored XSS nel browser admin.
+            voice_short = html_mod.escape(
+                parts_v[-1].replace("Neural", "").replace("Multilingual", ""))
+            voice_lang = html_mod.escape("-".join(parts_v[:2]))
+            voice_short = f'{voice_short} <span class="voice-lang">{voice_lang}</span>'
+        else:
+            voice_short = html_mod.escape(voice_raw)
+
+    # Sessioni di traduzione: il campo `voice` del log porta
+    # "src>dst [+AI]" (vedi _log_activity TRANSLATE/TR_COMPLETE). Per
+    # queste card sostituiamo la riga voce TTS con lingue + evidenza
+    # della scelta ottimizzazione AI.
+    is_translation = f["translation"]
+    tr_lang_html = " - "
+    tr_ai_html = ""
+    if is_translation:
+        _vr = voice_raw or ""
+        _ai_chosen = "+AI" in _vr
+        _langs = _vr.replace("+AI", "").strip()
+        if ">" in _langs:
+            _a, _b = _langs.split(">", 1)
+            tr_lang_html = (f'{html_mod.escape(_a.strip().upper())} → '
+                            f'{html_mod.escape(_b.strip().upper())}')
+        if not _vr:
+            # Log storici (prima del descrittore lingue/AI): scelta ignota.
+            tr_ai_html = '<span style="color:var(--text-dim)">✨ AI ?</span>'
+        elif _ai_chosen:
+            tr_ai_html = '<span style="color:#16a34a">✨ AI ✓</span>'
+        else:
+            tr_ai_html = '<span style="color:var(--text-dim)">✨ AI ✗</span>'
+
+    if is_translation:
+        tr_meta_html = (
+            f'<div class="meta-row"><span class="meta-label">🌍</span>'
+            f'<span class="card-voice">{tr_lang_html}</span></div>\n'
+            f'<div class="meta-row"><span class="meta-label">✨</span>'
+            f'<span class="card-voice">{tr_ai_html}</span></div>'
+        )
+    else:
+        tr_meta_html = (
+            f'<div class="meta-row"><span class="meta-label">🎙️</span>'
+            f'<span class="card-voice" title="{html_mod.escape(voice_raw)}">'
+            f'{voice_short or " - "}</span></div>'
+        )
+
+    blang = html_mod.escape(s.get("browser_lang", "") or "")
+    blang_display = f'<span class="card-blang">{blang}</span>' if blang else " - "
+
+    if is_progress and is_paid:
+        card_cls = "card card-in-progress card-paid"
+    elif is_progress:
+        card_cls = "card card-in-progress"
+    else:
+        card_cls = "card"
+    data_attrs = (
+        f'data-status="{card_status}" '
+        f'data-email="{int(f["email"])}" '
+        f'data-recurring="{int(f["recurring"])}" '
+        f'data-identified="{int(f["identified"])}" '
+        f'data-gemini="{int(f["gemini"])}" '
+        f'data-translation="{int(f["translation"])}" '
+        f'data-platform="{html_mod.escape(f["platform"])}" '
+        f'data-transferred="{int(f["transferred"])}"'
+    )
+    m4b_subbar = _m4b_subbar_html(job) if is_progress and job and job.get("m4b_progress_total", 0) > 0 else ""
+
+    kill_btn = (
+        f'<button class="kill-btn" data-sid="{sid}" '
+        f'data-title="{html_mod.escape(s["filename"])}" '
+        f'title="Interrompi job (admin)">⛔</button>'
+    ) if is_progress else ""
+    return f"""<div class="{card_cls}" {data_attrs}>
+<div class="card-top">
+<span class="card-title" title="{html_mod.escape(s['filename'])}">{display_title}</span>
+<span class="badge" style="color:{fg};background:{bg}">{op}</span>{kill_btn}
+</div>
+<div class="card-timeline">{timeline}</div>
+<div class="card-meta">
+<div class="meta-row"><span class="meta-label">⌚</span><span>{first}  →  {last} ({elapsed_html})</span></div>
+<div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
+<div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
+{tr_meta_html}
+<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}<button class="qr-btn" data-sid="{sid}" title="Copia il job sull'app (QR) a scopo di indagine — non altera il flusso dell'utente"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-6 2h2v2h-2v-2zm2 2h2v2h-2v-2zm2 0h2v2h-2v-2zm2 0h2v2h-2v-2z"/></svg>QR</button></div>
+</div>
+{m4b_subbar}
+</div>
+"""
+
+
+@app.route("/admin/log-activity/day")
+def admin_logs_day():
+    """Schede di un giorno di /admin/log-activity (frammento HTML), chieste
+    dalla pagina quando si apre un giorno non renderizzato in apertura."""
+    if not ADMIN_TOKEN:
+        return "Logs UI disabled.", 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return "Unauthorized", 403
+    ym = request.args.get("ym", "")
+    day = request.args.get("day", "")
+    if (not re.fullmatch(r"\d{4}-\d{2}", ym)
+            or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day)
+            or not day.startswith(ym + "-")):
+        return "Bad request", 400
+    try:
+        sessions, client_session_count = _log_sessions_cached(ym)
+    except Exception as e:
+        return f"Errore lettura log: {e}", 500
+    color_map = _log_client_color_map(client_session_count)
+    now = datetime.now()
+    # Stesso ordine della pagina: sessioni piu' recenti per prime.
+    parts = [_log_card_html(sid, s, client_session_count, color_map, now)
+             for sid, s in reversed(list(sessions.items()))
+             if s["first_dt"].strftime("%Y-%m-%d") == day]
+    return "".join(parts), 200, {"Content-Type": "text/html; charset=utf-8",
+                                 "Cache-Control": "no-store"}
+
+
 @app.route("/admin/log-activity")
 def admin_logs():
     if not ADMIN_TOKEN: return "Logs UI disabled.", 404
@@ -4622,24 +4951,19 @@ def admin_logs():
         ym = datetime.now().strftime("%Y-%m")
 
     try:
-        sessions, client_session_count = _parse_log_sessions(ym)
+        sessions, client_session_count = _log_sessions_cached(ym)
     except Exception as e:
         return f"Errore lettura log: {e}", 500
 
-    _client_colors = [
-        "#38bdf8", "#a78bfa", "#f472b6", "#34d399", "#fbbf24",
-        "#fb923c", "#22d3ee", "#c084fc", "#f87171", "#4ade80",
-    ]
-    _client_color_map = {}
-    _color_idx = 0
-    for cid, count in client_session_count.items():
-        if count >= 2:
-            _client_color_map[cid] = _client_colors[_color_idx % len(_client_colors)]
-            _color_idx += 1
+    _client_color_map = _log_client_color_map(client_session_count)
 
     total_sessions = len(sessions)
     gen_completed = sum(1 for s in sessions.values() if _session_completed(s))
-    gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
+    # Giorni con sessioni in corso: sempre renderizzati (timer, ETA e polling
+    # dell'avanzamento lavorano sulle schede presenti nel DOM).
+    live = [s for sid, s in sessions.items() if _session_in_progress(s, sid)]
+    live_days = {s["first_dt"].strftime("%Y-%m-%d") for s in live}
+    gen_in_progress = len(live)
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
     # Sessioni che hanno realmente avviato il libro con voci PREMIUM (Gemini,
     # Speechify/Simba o VoxCPM: stessa tasca di pagamento/rimborso) — esclude
@@ -4647,10 +4971,8 @@ def admin_logs():
     # su OPTIMIZE con voce (wizard combinato, ancora in ottimizzazione AI).
     gemini_started = sum(1 for s in sessions.values() if s.get("premium_started"))
     # Sessioni di traduzione: qualunque evento del flusso traduzione.
-    _TR_OPS_STAT = {"TRANSLATE", "TR_COMPLETE", "TR_CANCEL", "TRANSLATE_ADOPT",
-                    "DOWNLOAD_TRANSLATION", "TR_EMAIL_SENT", "TR_EMAIL_FAILED"}
     tr_count = sum(1 for s in sessions.values()
-                   if set(s["events"]) & _TR_OPS_STAT)
+                   if set(s["events"]) & _LOG_TR_OPS)
     # Sessioni originatesi da piattaforma mobile (android/ios).
     mobile_count = sum(
         1 for s in sessions.values()
@@ -4666,47 +4988,18 @@ def admin_logs():
         day_key = s["first_dt"].strftime("%Y-%m-%d")
         days[day_key].append((sid, s))
 
-    event_icons = {
-        "ANALYZE": "🔍", "GENERATE": "⚙️", "COMPLETE": "✅",
-        "DOWNLOAD": "📥", "DOWNLOAD_EMAIL": "📧📥",
-        "DOWNLOAD_EMAIL_PODCAST": "🎙️📥", "DOWNLOAD_PODCAST": "🎙️📥",
-        "EMAIL_REGISTERED": "📧", "EMAIL_SENT": "📨",
-        "EMAIL_FAILED": "❌", "CANCEL": "🚫",
-        "ADMIN_CANCEL": "⛔",
-        "RESET_CHAPTERS": "🔄", "EXPORT_ABM": "📦",
-        "OPTIMIZE": "✨", "OPT_COMPLETE": "✨✅", "OPT_CANCEL": "✨🚫",
-        "TRANSLATE": "🌍", "TR_COMPLETE": "🌍✅", "TR_CANCEL": "🌍🚫",
-        "TRANSLATE_ADOPT": "🌍📖", "DOWNLOAD_TRANSLATION": "🌍📥",
-        "TR_EMAIL_SENT": "🌍📨",
-    }
-    op_colors = {
-        "ANALYZE": ("#6b7280", "#f3f4f6"), "GENERATE": ("#2563eb", "#eff6ff"),
-        "COMPLETE": ("#16a34a", "#f0fdf4"), "DOWNLOAD": ("#7c3aed", "#f5f3ff"),
-        "DOWNLOAD_EMAIL": ("#7c3aed", "#f5f3ff"),
-        "DOWNLOAD_EMAIL_PODCAST": ("#7c3aed", "#f5f3ff"),
-        "DOWNLOAD_PODCAST": ("#7c3aed", "#f5f3ff"),
-        "EMAIL_REGISTERED": ("#0891b2", "#ecfeff"),
-        "EMAIL_SENT": ("#0d9488", "#f0fdfa"),
-        "EMAIL_FAILED": ("#dc2626", "#fef2f2"),
-        "CANCEL": ("#dc2626", "#fef2f2"),
-        "ADMIN_CANCEL": ("#b91c1c", "#fee2e2"),
-        "RESET_CHAPTERS": ("#f59e0b", "#fffbeb"),
-        "EXPORT_ABM": ("#6366f1", "#eef2ff"),
-        "OPTIMIZE": ("#d97706", "#fffbeb"), "OPT_COMPLETE": ("#16a34a", "#f0fdf4"),
-        "OPT_CANCEL": ("#dc2626", "#fef2f2"),
-        "TRANSLATE": ("#0ea5e9", "#e0f2fe"), "TR_COMPLETE": ("#0284c7", "#e0f2fe"),
-        "TR_CANCEL": ("#dc2626", "#fef2f2"),
-        "TRANSLATE_ADOPT": ("#0284c7", "#e0f2fe"),
-        "DOWNLOAD_TRANSLATION": ("#0369a1", "#e0f2fe"),
-        "TR_EMAIL_SENT": ("#0d9488", "#f0fdfa"),
-    }
-
     # Pezzi in lista e un solo join finale: con += su una stringa da decine di
     # MB (agosto 2026: 17k sessioni) ogni aggiunta ricopiava tutto, costo
     # quadratico che su Windows bloccava la pagina per minuti.
     cards_parts = []
     now = datetime.now()
-    for day_key in sorted(days.keys(), reverse=True):
+    day_keys = sorted(days.keys(), reverse=True)
+    # Solo gli ultimi _LOG_EAGER_DAYS giorni (piu' quelli con sessioni in
+    # corso) arrivano con le schede: gli altri le chiedono a
+    # /admin/log-activity/day quando vengono aperti. Un mese intero sono
+    # decine di MB di HTML che quasi mai si guardano.
+    eager = set(day_keys[:_LOG_EAGER_DAYS]) | live_days
+    for day_key in day_keys:
         day_sessions = days[day_key]
         day_count = len(day_sessions)
         day_completed = sum(1 for sid, s in day_sessions if _session_completed(s))
@@ -4716,197 +5009,30 @@ def admin_logs():
         except ValueError:
             day_label = day_key
 
-        cards_parts.append(f"""<div class="day-group collapsed" data-day="{day_key}">
-<div class="day-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        if day_key in eager:
+            lazy_attrs = ""
+        else:
+            # Conteggi per filtro: filterCards() nasconde e numera il giorno
+            # senza avere le schede.
+            counts = Counter()
+            for sid, s in day_sessions:
+                counts.update(_log_filter_names(
+                    _log_session_filters(sid, s, client_session_count)))
+            lazy_attrs = (' data-lazy="1" data-counts="'
+                          + html_mod.escape(json.dumps(counts, sort_keys=True))
+                          + '"')
+        cards_parts.append(f"""<div class="day-group collapsed" data-day="{day_key}"{lazy_attrs}>
+<div class="day-header" onclick="toggleDay(this.parentElement)">
 <span class="day-label">{day_label}</span>
 <span class="day-count">{day_count}<span class="day-sep">/</span><span class="day-completed">{day_completed}</span></span>
 <span class="day-chevron">›</span>
 </div>
 <div class="day-cards">
 """)
-        for sid, s in day_sessions:
-            is_progress = _session_in_progress(s, sid)
-            is_completed = _session_completed(s)
-            has_email = "EMAIL_SENT" in s["events"]
-            cid = s.get("client_id", "")
-            cid_count = client_session_count.get(cid, 0) if cid else 0
-            is_recurring = cid_count >= 2
-            is_identified = bool(cid)
-
-            # Determine card status for filtering
-            if is_progress:
-                card_status = "in_progress"
-            elif is_completed:
-                card_status = "completed"
-            else:
-                card_status = "cancelled"
-
-            first = s["first_dt"].strftime("%H:%M")
-            last = s["last_dt"].strftime("%H:%M")
-
-            is_paid = False
-            if is_progress:
-                job = jobs.get(sid)
-                # Job con pagamento (PayPal o voucher, indifferente): la card
-                # in corso viene evidenziata in giallo acceso invece del rosso.
-                _paym = (job or {}).get("payment") or {}
-                try:
-                    is_paid = float(_paym.get("total_eur", 0) or 0) > 0
-                except (TypeError, ValueError):
-                    is_paid = bool(_paym)
-                pct_html = ""
-                if job:
-                    st = job.get("status", "")
-                    if st == "optimizing":
-                        total_chars = job.get("opt_total_chars", 1)
-                        done_chars = job.get("opt_processed_chars", 0)
-                        cur_ch_chars = job.get("opt_current_chapter_chars", 0)
-                        streamed = min(job.get("opt_streamed_chars", 0), cur_ch_chars)
-                        worked = done_chars + streamed
-                        pct = min(99, int(worked / total_chars * 100))
-                        pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
-                    elif st == "generating":
-                        cur = job.get("progress_current", 0)
-                        tot = job.get("progress_total", 0)
-                        if tot > 0:
-                            pct = int(cur / tot * 100)
-                            pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
-                    elif st == "translating":
-                        cur = job.get("tr_progress_current", 0)
-                        tot = job.get("tr_progress_total", 0)
-                        if tot > 0:
-                            pct = int(cur / tot * 100)
-                            pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
-
-                delta = now - s["first_dt"]
-                total_sec = int(delta.total_seconds())
-                elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}:{total_sec % 60:02d}"
-                start_iso = s["first_dt"].strftime("%Y-%m-%dT%H:%M:%S")
-                elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span>{pct_html} ⏱️'
-                last = " - "
-            else:
-                delta = s["last_dt"] - s["first_dt"]
-                total_sec = int(delta.total_seconds())
-                elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}"
-                elapsed_html = elapsed
-
-            title = s["filename"]
-            for ext in (".epub", ".txt", ".pdf"):
-                if title.lower().endswith(ext):
-                    title = title[:-len(ext)]
-            display_title = html_mod.escape(title[:80] + ("..." if len(title) > 80 else ""))
-
-            op = s["last_op"]
-            fg, bg = op_colors.get(op, ("#6b7280", "#f3f4f6"))
-            timeline = "  →  ".join(event_icons.get(e, e) for e in s["events"])
-
-            cip = s.get("client_ip", "")
-            cid_short = cid[:8] if cid else " - "
-            cid_color = _client_color_map.get(cid, "var(--text-dim)")
-            cid_badge = f' <span class="cid-count" style="color:{cid_color}">({cid_count})</span>' if cid_count >= 2 else ""
-            cid_style = f'color:{cid_color};font-weight:600' if cid in _client_color_map else 'color:var(--text-dim)'
-
-            voice_raw = s.get("voice", "")
-            voice_short = ""
-            if voice_raw:
-                parts_v = voice_raw.split("-")
-                if len(parts_v) >= 3:
-                    # Escape OBBLIGATORIO: voice_raw arriva dal parametro
-                    # `voice` della richiesta utente via Activity Log; senza
-                    # escape un id voce forgiato (es. "x-y-<img onerror=...>")
-                    # diventa stored XSS nel browser admin.
-                    voice_short = html_mod.escape(
-                        parts_v[-1].replace("Neural", "").replace("Multilingual", ""))
-                    voice_lang = html_mod.escape("-".join(parts_v[:2]))
-                    voice_short = f'{voice_short} <span class="voice-lang">{voice_lang}</span>'
-                else:
-                    voice_short = html_mod.escape(voice_raw)
-
-            # Sessioni di traduzione: il campo `voice` del log porta
-            # "src>dst [+AI]" (vedi _log_activity TRANSLATE/TR_COMPLETE). Per
-            # queste card sostituiamo la riga voce TTS con lingue + evidenza
-            # della scelta ottimizzazione AI.
-            _TR_OPS = {"TRANSLATE", "TR_COMPLETE", "TR_CANCEL",
-                       "TRANSLATE_ADOPT", "DOWNLOAD_TRANSLATION",
-                       "TR_EMAIL_SENT", "TR_EMAIL_FAILED"}
-            is_translation = bool(set(s["events"]) & _TR_OPS)
-            tr_lang_html = " - "
-            tr_ai_html = ""
-            if is_translation:
-                _vr = voice_raw or ""
-                _ai_chosen = "+AI" in _vr
-                _langs = _vr.replace("+AI", "").strip()
-                if ">" in _langs:
-                    _a, _b = _langs.split(">", 1)
-                    tr_lang_html = (f'{html_mod.escape(_a.strip().upper())} → '
-                                    f'{html_mod.escape(_b.strip().upper())}')
-                if not _vr:
-                    # Log storici (prima del descrittore lingue/AI): scelta ignota.
-                    tr_ai_html = '<span style="color:var(--text-dim)">✨ AI ?</span>'
-                elif _ai_chosen:
-                    tr_ai_html = '<span style="color:#16a34a">✨ AI ✓</span>'
-                else:
-                    tr_ai_html = '<span style="color:var(--text-dim)">✨ AI ✗</span>'
-
-            if is_translation:
-                tr_meta_html = (
-                    f'<div class="meta-row"><span class="meta-label">🌍</span>'
-                    f'<span class="card-voice">{tr_lang_html}</span></div>\n'
-                    f'<div class="meta-row"><span class="meta-label">✨</span>'
-                    f'<span class="card-voice">{tr_ai_html}</span></div>'
-                )
-            else:
-                tr_meta_html = (
-                    f'<div class="meta-row"><span class="meta-label">🎙️</span>'
-                    f'<span class="card-voice" title="{html_mod.escape(voice_raw)}">'
-                    f'{voice_short or " - "}</span></div>'
-                )
-
-            blang = html_mod.escape(s.get("browser_lang", "") or "")
-            blang_display = f'<span class="card-blang">{blang}</span>' if blang else " - "
-
-            if is_progress and is_paid:
-                card_cls = "card card-in-progress card-paid"
-            elif is_progress:
-                card_cls = "card card-in-progress"
-            else:
-                card_cls = "card"
-            is_gemini_run = bool(s.get("premium_started"))
-            session_platform = html_mod.escape(s.get("platform", "") or "")
-            session_transferred = s.get("transferred", False)
-            data_attrs = (
-                f'data-status="{card_status}" '
-                f'data-email="{1 if has_email else 0}" '
-                f'data-recurring="{1 if is_recurring else 0}" '
-                f'data-identified="{1 if is_identified else 0}" '
-                f'data-gemini="{1 if is_gemini_run else 0}" '
-                f'data-translation="{1 if is_translation else 0}" '
-                f'data-platform="{session_platform}" '
-                f'data-transferred="{1 if session_transferred else 0}"'
-            )
-            m4b_subbar = _m4b_subbar_html(job) if is_progress and job and job.get("m4b_progress_total", 0) > 0 else ""
-
-            kill_btn = (
-                f'<button class="kill-btn" data-sid="{sid}" '
-                f'data-title="{html_mod.escape(s["filename"])}" '
-                f'title="Interrompi job (admin)">⛔</button>'
-            ) if is_progress else ""
-            cards_parts.append(f"""<div class="{card_cls}" {data_attrs}>
-<div class="card-top">
-<span class="card-title" title="{html_mod.escape(s['filename'])}">{display_title}</span>
-<span class="badge" style="color:{fg};background:{bg}">{op}</span>{kill_btn}
-</div>
-<div class="card-timeline">{timeline}</div>
-<div class="card-meta">
-<div class="meta-row"><span class="meta-label">⌚</span><span>{first}  →  {last} ({elapsed_html})</span></div>
-<div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
-<div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
-{tr_meta_html}
-<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}<button class="qr-btn" data-sid="{sid}" title="Copia il job sull'app (QR) a scopo di indagine — non altera il flusso dell'utente"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-6 2h2v2h-2v-2zm2 2h2v2h-2v-2zm2 0h2v2h-2v-2zm2 0h2v2h-2v-2z"/></svg>QR</button></div>
-</div>
-{m4b_subbar}
-</div>
-""")
+        if day_key in eager:
+            for sid, s in day_sessions:
+                cards_parts.append(_log_card_html(
+                    sid, s, client_session_count, _client_color_map, now))
         cards_parts.append("</div></div>\n")
     cards_html = "".join(cards_parts)
 
@@ -5714,39 +5840,84 @@ window.onclick = function(event) {{
     if (event.target == document.getElementById('usersModal')) hideUserStats();
 }};
 
-function toggleAllDays() {{
-    const groups = document.querySelectorAll('.day-group');
+// Giorni pigri (data-lazy="1"): le schede arrivano da /admin/log-activity/day
+// alla prima apertura; fino ad allora filtri e contatori usano data-counts.
+const LOG_YM = '{ym}';
+let currentFilter = 'all';
+
+async function loadDay(group) {{
+    if (group.dataset.lazy !== '1') return;
+    if (!group._loading) {{
+        const box = group.querySelector('.day-cards');
+        box.innerHTML = '<div class="ls-empty">Caricamento...</div>';
+        group._loading = fetch('/admin/log-activity/day?ym=' + encodeURIComponent(LOG_YM)
+                               + '&day=' + encodeURIComponent(group.dataset.day),
+                               {{credentials: 'same-origin'}})
+            .then(r => r.ok ? r.text() : Promise.reject(r.status))
+            .then(html => {{
+                box.innerHTML = html;
+                delete group.dataset.lazy;
+                applyFilter(group);
+            }})
+            .catch(e => {{
+                box.innerHTML = '<div class="ls-empty">Errore nel caricamento (' + e + ').</div>';
+                group._loading = null;
+            }});
+    }}
+    return group._loading;
+}}
+
+function toggleDay(group) {{
+    group.classList.toggle('collapsed');
+    if (!group.classList.contains('collapsed')) loadDay(group);
+}}
+
+async function toggleAllDays() {{
+    const groups = [...document.querySelectorAll('.day-group')];
     const btn = document.getElementById('btnToggleDays');
-    const allCollapsed = [...groups].every(g => g.classList.contains('collapsed'));
-    groups.forEach(g => {{
-        if (allCollapsed) g.classList.remove('collapsed');
-        else g.classList.add('collapsed');
-    }});
+    const allCollapsed = groups.every(g => g.classList.contains('collapsed'));
+    groups.forEach(g => g.classList.toggle('collapsed', !allCollapsed));
     btn.textContent = allCollapsed ? '{t["collapse"]}' : '{t["expand"]}';
+    // Uno alla volta: in parallelo supererebbero il limit_req di nginx.
+    if (allCollapsed) for (const g of groups) await loadDay(g);
+}}
+
+function cardMatches(card, filter) {{
+    if (filter === 'all') return true;
+    if (filter === 'completed' || filter === 'in_progress' || filter === 'cancelled') return card.dataset.status === filter;
+    if (filter === 'mobile') return card.dataset.platform === 'android' || card.dataset.platform === 'ios';
+    if (filter === 'identified') return card.dataset.identified === '1';
+    if (filter === 'recurring') return card.dataset.recurring === '1';
+    if (filter === 'translation') return card.dataset.translation === '1';
+    if (filter === 'gemini') return card.dataset.gemini === '1';
+    if (filter === 'transferred') return card.dataset.transferred === '1';
+    return false;
+}}
+
+function applyFilter(group) {{
+    let visible;
+    if (group.dataset.lazy === '1') {{
+        let counts = {{}};
+        try {{ counts = JSON.parse(group.dataset.counts || '{{}}'); }} catch(e) {{}}
+        visible = counts[currentFilter] || 0;
+    }} else {{
+        visible = 0;
+        group.querySelectorAll('.card').forEach(card => {{
+            const show = cardMatches(card, currentFilter);
+            card.classList.toggle('card-hidden', !show);
+            if (show) visible++;
+        }});
+    }}
+    group.classList.toggle('day-hidden', visible === 0);
+    const countBadge = group.querySelector('.day-count');
+    if (countBadge) countBadge.firstChild.textContent = visible;
 }}
 
 function filterCards(filter, el) {{
     document.querySelectorAll('.stat').forEach(s => s.classList.remove('active'));
     el.classList.add('active');
-    const cards = document.querySelectorAll('.card');
-    cards.forEach(card => {{
-        let show = false;
-        if (filter === 'all') {{ show = true; }} 
-        else if (filter === 'completed' || filter === 'in_progress' || filter === 'cancelled') {{ show = card.dataset.status === filter; }}
-        else if (filter === 'identified') {{ show = card.dataset.identified === '1'; }}
-        else if (filter === 'recurring') {{ show = card.dataset.recurring === '1'; }}
-        else if (filter === 'translation') {{ show = card.dataset.translation === '1'; }}
-        else if (filter === 'gemini') {{ show = card.dataset.gemini === '1'; }}
-        else if (filter === 'mobile') {{ show = (card.dataset.platform === 'android' || card.dataset.platform === 'ios'); }}
-        else if (filter === 'transferred') {{ show = card.dataset.transferred === '1'; }}
-        card.classList.toggle('card-hidden', !show);
-    }});
-    document.querySelectorAll('.day-group').forEach(group => {{
-        const visibleCards = group.querySelectorAll('.card:not(.card-hidden)');
-        group.classList.toggle('day-hidden', visibleCards.length === 0);
-        const countBadge = group.querySelector('.day-count');
-        if (countBadge) countBadge.firstChild.textContent = visibleCards.length;
-    }});
+    currentFilter = filter;
+    document.querySelectorAll('.day-group').forEach(applyFilter);
 }}
 
 function updateLiveTimers() {{
@@ -6167,7 +6338,7 @@ def admin_logs_export():
         ym = datetime.now().strftime("%Y-%m")
 
     try:
-        sessions, client_session_count = _parse_log_sessions(ym)
+        sessions, client_session_count = _log_sessions_cached(ym)
     except Exception as e:
         return f"Errore lettura log: {e}", 500
 
@@ -21603,6 +21774,46 @@ def _cf_probe_supervisor():
                   f"{type(e).__name__}: {e}", flush=True)
 
 
+def _start_activity_sync():
+    """Allinea activity.db ai file in un thread, solo con ABM_ACTIVITY_DB
+    dual|db. Finche' non ha finito il modo db legge dal file."""
+    if activity_log.mode() == "off":
+        return None
+    t = threading.Thread(target=activity_log.sync_all, daemon=True,
+                         name="activity-sync")
+    t.start()
+    return t
+
+
+def _warn_stale_activity_logs(script_dir, log_dir, today=None):
+    """ABM_ACTIVITY_LOG_DIR sposta i log fuori da SCRIPT_DIR (fase 2): se
+    SCRIPT_DIR contiene ancora file degli ultimi 3 mesi (corrente + 2
+    precedenti) nessuno li legge piu' ne' li scrive - restano li' morti.
+    Avvisa una volta all'avvio; ritorna i nomi trovati (anche se log_dir
+    coincide con script_dir, nel qual caso e' sempre vuoto)."""
+    script_dir = Path(script_dir).resolve()
+    log_dir = Path(log_dir).resolve()
+    if log_dir == script_dir:
+        return []
+    when = today or datetime.now()
+    months = set()
+    y, m = when.year, when.month
+    for _ in range(3):
+        months.add(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    try:
+        names = [p.name for p in script_dir.glob("activity_*.log")]
+    except OSError:
+        return []
+    stale = sorted(n for n in names if n[len("activity_"):-len(".log")] in months)
+    if stale:
+        print(f"[activity_log] ATTENZIONE: log in SCRIPT_DIR non letti: "
+              f"{', '.join(stale)}")
+    return stale
+
+
 def _ensure_background_threads():
     global _cleanup_started
     if _cleanup_started:
@@ -21615,6 +21826,8 @@ def _ensure_background_threads():
         threading.Thread(target=_load_metrics_supervisor, daemon=True).start()
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
+    _start_activity_sync()
+    _warn_stale_activity_logs(SCRIPT_DIR, activity_log._dir())
     if db.is_ready():
         threading.Thread(target=_account_maintenance_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).

@@ -1,7 +1,20 @@
 from datetime import datetime
 from unittest.mock import patch
 
+import sys
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _reset_log_sessions_cache():
+    """Sessioni di /admin/log-activity in cache per (mese, cartella, firma):
+    i test che sostituiscono _parse_log_sessions o scrivono log diversi non
+    devono vedere il risultato di un test precedente."""
+    app = sys.modules.get("audiobook_app")
+    if app is not None:
+        app._LOG_SESSIONS_CACHE.clear()
+    yield
 
 
 @pytest.fixture

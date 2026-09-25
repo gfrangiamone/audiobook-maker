@@ -136,6 +136,7 @@ cat > /etc/systemd/system/audiobook-maker.service.d/override.conf << ENVEOF
 [Service]
 Environment="ABM_BASE_URL=https://audiobook-maker.com"
 Environment="ABM_DATA_DIR=/opt/audiobook-maker/data"
+Environment="ABM_ACTIVITY_LOG_DIR=/opt/audiobook-maker/data"
 Environment="ABM_SMTP_HOST=${SMTP_HOST}"
 Environment="ABM_SMTP_PORT=${SMTP_PORT}"
 Environment="ABM_SMTP_USER=${SMTP_USER}"

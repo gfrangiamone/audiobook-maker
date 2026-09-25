@@ -123,13 +123,19 @@ mkdir -p /opt/audiobook-maker/data
 if [ -d "$BACKUP_DIR/data" ]; then
     cp "$BACKUP_DIR/data/"*.json /opt/audiobook-maker/data/ 2>/dev/null || true
     cp "$BACKUP_DIR/data/abm.db" /opt/audiobook-maker/data/ 2>/dev/null || true
+    cp "$BACKUP_DIR/data/activity.db" /opt/audiobook-maker/data/ 2>/dev/null || true
     echo "  File dati ripristinati:"
     ls -lh /opt/audiobook-maker/data/*.json 2>/dev/null || true
 fi
 if [ -d "$BACKUP_DIR/logs" ]; then
-    cp "$BACKUP_DIR/logs/activity_"*.log /opt/audiobook-maker/ 2>/dev/null || true
+    # I log vanno dove li cerca l'app: ABM_ACTIVITY_LOG_DIR dell'override
+    # appena ripristinato, altrimenti la cartella dell'app (SCRIPT_DIR).
+    ACT_DIR=$(grep -E '^[[:space:]]*Environment=.*ABM_ACTIVITY_LOG_DIR=' /etc/systemd/system/audiobook-maker.service.d/override.conf 2>/dev/null | tail -n1 | sed 's/.*ABM_ACTIVITY_LOG_DIR=//; s/"//g; s/[[:space:]].*$//')
+    ACT_DIR=${ACT_DIR:-/opt/audiobook-maker}
+    mkdir -p "$ACT_DIR"
+    cp "$BACKUP_DIR/logs/activity_"*.log "$ACT_DIR/" 2>/dev/null || true
     cp "$BACKUP_DIR/logs/voucher_admin.log" /opt/audiobook-maker/data/ 2>/dev/null || true
-    echo "  Log attivita' ripristinati."
+    echo "  Log attivita' ripristinati in $ACT_DIR."
 fi
 
 # ── 8. Ripristina deploy script ──
