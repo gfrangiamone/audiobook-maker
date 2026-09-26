@@ -1186,6 +1186,10 @@ def _check_job_owner(job_id):
     owner = job.get("client_id", "")
     if owner:
         caller = _get_client_id()
+        # `prior_client_ids`: owner precedenti a un transfer verso l'app mobile
+        # (api_transfer_claim), che restano autorizzati sul job.
+        if caller and caller in (job.get("prior_client_ids") or ()):
+            return job, None, 0
         if not caller or caller != owner:
             # Admin bypass: l'admin puo' osservare lo stato di qualunque job.
             if _admin_auth_ok(_admin_auth_from_request()):
@@ -15802,6 +15806,15 @@ def api_transfer_claim(token):
             # riassegnarlo libererebbe lo slot del client web a metà lavoro e
             # basterebbe trasferire ogni job all'app per annullare il tetto di
             # generazioni contemporanee.
+            # Il cid precedente (browser da cui è partito il job) resta
+            # autorizzato: senza, il bottone di download del sito risponde 403
+            # appena l'app reclama il job e l'utente ricompra il libro
+            # (ticket 26/09/2026, job LE42lL_KTu5EnYr0A8k80A).
+            _prev_cid = job.get("client_id", "")
+            if _prev_cid and _prev_cid != cid:
+                _prior = job.setdefault("prior_client_ids", [])
+                if _prev_cid not in _prior:
+                    _prior.append(_prev_cid)
             job["client_id"] = cid
             # Il job è ora dell'app: marcalo email_registered così (a) il cleanup
             # non lo tratta come download diretto usa-e-getta (rimozione 5 min dopo

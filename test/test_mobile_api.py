@@ -484,6 +484,40 @@ def test_transfer_claim_reowns_job_and_token(monkeypatch, tmp_path):
         audiobook_app._download_tokens.pop("WTOK", None)
 
 
+def test_transfer_claim_keeps_web_owner_authorized(monkeypatch, tmp_path):
+    """Dopo il transfer all'app il browser d'origine deve poter ancora
+    scaricare: prima riceveva 403 e l'utente ricomprava il libro."""
+    import audiobook_app
+    jid = "trf-job-web"
+    out = tmp_path / "book.zip"; out.write_bytes(b"PK")
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "done", "client_id": "web-cid-own", "info": None,
+            "output_zip": str(out), "output_format": "zip",
+            "start_time": __import__("time").time(),
+        }
+    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app.generation_engine, "_create_download_token",
+                        lambda _jid: None)
+    try:
+        ttok = audiobook_app._ensure_transfer_token(jid)
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{ttok}", headers={"X-ABM-Cid": "app-cid-777"})
+        assert r.status_code == 200
+        assert audiobook_app.jobs[jid]["client_id"] == "app-cid-777"
+        assert audiobook_app.jobs[jid]["prior_client_ids"] == ["web-cid-own"]
+        with audiobook_app.app.test_request_context(headers={"Cookie": "abm_cid=web-cid-own"}):
+            job, err, sc = audiobook_app._check_job_owner(jid)
+            assert err is None and job is not None
+        with audiobook_app.app.test_request_context(headers={"Cookie": "abm_cid=stranger-cid"}):
+            job, err, sc = audiobook_app._check_job_owner(jid)
+            assert sc == 403
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+
+
 def test_transfer_claim_invalid_token(monkeypatch):
     import audiobook_app
     c = audiobook_app.app.test_client()
