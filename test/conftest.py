@@ -17,6 +17,15 @@ def _reset_log_sessions_cache():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_live_typesafe(monkeypatch):
+    """Nessuna chiamata reale ai giudizi tipizzati: con ABM_TYPESAFE_API_KEY
+    nella shell di sviluppo, `semantic_judge.ask` interrogava il servizio vero
+    e il verdetto live scavalcava il client LLM finto dei test. Chi prova il
+    motore tipizzato imposta la sua chiave finta e stubba il client."""
+    monkeypatch.delenv("ABM_TYPESAFE_API_KEY", raising=False)
+
+
 @pytest.fixture
 def reset_backend_cache():
     """Reset cache backend Gemini tra test (module-level state)."""
