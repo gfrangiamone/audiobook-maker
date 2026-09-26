@@ -11644,6 +11644,10 @@ def _acct_send_code(email, purpose, lang):
         if out is None:
             return
         token, code = out
+        if accounts.is_review_login(email, purpose):
+            # Account demo dei revisori store: codice fisso, niente email.
+            _acct_log("ACCOUNT_REVIEW_CODE", email)
+            return
         link = f"{BASE_URL}/auth/{token}" + ("?p=delete" if purpose == "delete" else "")
         email_service.send_account_code(
             email, lang, code=code, link_url=link,

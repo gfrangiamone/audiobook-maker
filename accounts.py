@@ -29,6 +29,12 @@ CODE_MAX_ATTEMPTS = _env_int("ABM_ACCOUNT_CODE_MAX_ATTEMPTS", 5)
 HISTORY_MONTHS = _env_int("ABM_ACCOUNT_HISTORY_MONTHS", 24)
 GRACE_DAYS = _env_int("ABM_ACCOUNT_GRACE_DAYS", 90)
 
+# Account demo per la revisione degli store (Play Console / App Review): per
+# questa email il codice di login e' fisso e non parte nessuna email. Spento
+# se una delle due variabili manca o il codice non e' di 6 cifre.
+REVIEW_EMAIL = os.environ.get("ABM_REVIEW_EMAIL", "").strip().lower()
+REVIEW_CODE = os.environ.get("ABM_REVIEW_CODE", "").strip()
+
 PURPOSES = ("login", "delete")
 EMAIL_RATE_MAX = 3            # richieste di codice per email ...
 EMAIL_RATE_WINDOW_SEC = 600   # ... in questa finestra
@@ -151,6 +157,14 @@ def _norm(email):
     return (email or "").strip().lower()
 
 
+def is_review_login(email, purpose="login"):
+    """True per il login dell'account demo di revisione (codice fisso, nessuna
+    email). Solo `login`: la cancellazione account resta col codice casuale."""
+    return (purpose == "login" and bool(REVIEW_EMAIL)
+            and len(REVIEW_CODE) == 6 and REVIEW_CODE.isdigit()
+            and _norm(email) == REVIEW_EMAIL)
+
+
 def email_hash(email):
     return _sha(_norm(email))
 
@@ -189,7 +203,8 @@ def request_code(email, purpose="login", lang="en", ip_hash="", ua="", now=None)
             (now, email, purpose),
         )
         token = secrets.token_urlsafe(32)
-        code = f"{secrets.randbelow(10**6):06d}"
+        code = (REVIEW_CODE if is_review_login(email, purpose)
+                else f"{secrets.randbelow(10**6):06d}")
         c.execute(
             "INSERT INTO auth_codes(email, purpose, token_hash, code_hash, lang, "
             "created_at, expires_at, attempts, ip_hash, ua) "

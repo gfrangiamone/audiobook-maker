@@ -73,6 +73,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_ACCOUNT_CODE_MAX_ATTEMPTS` | `5` (tentativi sul codice a 6 cifre prima del blocco: serve un nuovo codice) | `accounts.py` | 28 |
 | `ABM_ACCOUNT_HISTORY_MONTHS` | `24` (retention dello storico per account free e per account a pagamento dopo la grace) | `accounts.py` | 29 |
 | `ABM_ACCOUNT_GRACE_DAYS` | `90` (grace dopo la disdetta di un piano a pagamento prima che scatti la retention free) | `accounts.py` | 30 |
+| `ABM_REVIEW_EMAIL` | `""` (email dell'account demo per i revisori di Play Console / App Review: per il login di questa email il codice è `ABM_REVIEW_CODE` e non parte nessuna email; la cancellazione account resta col codice casuale) | `accounts.py` | 35 |
+| `ABM_REVIEW_CODE` | `""` (codice fisso a 6 cifre dell'account demo; vuoto o non di 6 cifre = funzione spenta) | `accounts.py` | 36 |
 | `ABM_TYPESAFE_API_KEY` | `""` (vuoto; chiave del servizio di giudizi semantici tipizzati. Assente = `semantic_judge.is_available()` False e ogni chiamante ripiega sull'euristica/LLM che aveva prima) | `semantic_judge.py` | 75–76 |
 | `ABM_TYPESAFE_ENABLE` | `1` (kill-switch: `0\|false\|no\|off` spegne tutti i giudizi semantici **anche con la chiave presente**, senza deploy) | `semantic_judge.py` | 79–82 |
 | `ABM_TYPESAFE_MODEL` | `""` (vuoto = modello di default dell'SDK) | `semantic_judge.py` | 113 |
