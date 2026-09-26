@@ -127,9 +127,18 @@ JOBS_PLAN_MIGRATION = [
 ]
 
 
+# Storico: righe eliminate dall'utente dall'area personale. Nascoste, non
+# cancellate: il pannello admin conta job e incassi da questa tabella, e
+# adopt_history (INSERT OR IGNORE) resusciterebbe una riga cancellata.
+JOBS_HIDDEN_MIGRATION = [
+    "ALTER TABLE account_jobs ADD COLUMN hidden_at INTEGER",
+]
+
+
 def init_schema():
     db.migrate("accounts_v1", SCHEMA)
     db.migrate("account_jobs_plan_v1", JOBS_PLAN_MIGRATION)
+    db.migrate("account_jobs_hidden_v1", JOBS_HIDDEN_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -450,7 +459,9 @@ def record_job(account_id, job_id, *, kind, book_title="", output_format="", voi
             "paid_eur=MAX(account_jobs.paid_eur, excluded.paid_eur), "
             "engine=CASE WHEN excluded.engine<>'' THEN excluded.engine ELSE account_jobs.engine END, "
             "model=CASE WHEN excluded.model<>'' THEN excluded.model ELSE account_jobs.model END, "
-            "status=excluded.status, source=excluded.source, updated_at=excluded.updated_at",
+            "status=excluded.status, source=excluded.source, updated_at=excluded.updated_at, "
+            # Un job rilanciato torna visibile: e' di nuovo attivita' dell'utente.
+            "hidden_at=CASE WHEN excluded.status='running' THEN NULL ELSE account_jobs.hidden_at END",
             (str(job_id), account_id, created, kind or "generate", (book_title or "")[:200],
              output_format or "", voice or "", (lang or "")[:8], float(paid_eur or 0),
              status or "running", source or "forced", now, (engine or "")[:16],
@@ -492,6 +503,26 @@ def settle_running(job_id, status):
             (status, int(time.time()), str(job_id)),
         )
         return cur.rowcount > 0
+
+
+def hide_job(account_id, job_id, now=None):
+    """Toglie un job dall'area personale dell'account. Solo righe proprie e
+    concluse: un job "running" sta ancora lavorando. Ritorna "ok",
+    "not_found" o "running". File e link di download non vengono toccati."""
+    if not enabled():
+        return "not_found"
+    with db.tx() as c:
+        row = c.execute(
+            "SELECT status FROM account_jobs WHERE job_id=? AND account_id=? AND hidden_at IS NULL",
+            (str(job_id), account_id),
+        ).fetchone()
+        if row is None:
+            return "not_found"
+        if row["status"] == "running":
+            return "running"
+        c.execute("UPDATE account_jobs SET hidden_at=? WHERE job_id=?",
+                  (int(_now(now)), str(job_id)))
+        return "ok"
 
 
 def set_download_token(job_id, token):
@@ -564,10 +595,12 @@ def list_jobs(account_id, page=1, per_page=50):
     per_page = max(1, min(200, int(per_page or 50)))
     with db.tx() as c:
         total = c.execute(
-            "SELECT COUNT(*) FROM account_jobs WHERE account_id=?", (account_id,)
+            "SELECT COUNT(*) FROM account_jobs WHERE account_id=? AND hidden_at IS NULL",
+            (account_id,),
         ).fetchone()[0]
         rows = c.execute(
-            "SELECT * FROM account_jobs WHERE account_id=? ORDER BY created_at DESC, job_id DESC "
+            "SELECT * FROM account_jobs WHERE account_id=? AND hidden_at IS NULL "
+            "ORDER BY created_at DESC, job_id DESC "
             "LIMIT ? OFFSET ?",
             (account_id, per_page, (page - 1) * per_page),
         ).fetchall()

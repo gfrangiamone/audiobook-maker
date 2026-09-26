@@ -35,6 +35,10 @@ _CSS = page_brand.BASE_CSS + (
     ".prog{display:block;height:4px;border-radius:2px;background:var(--srf2);margin-top:.4em;overflow:hidden;max-width:8em}"
     ".prog i{display:block;height:100%;width:0;background:var(--ac);transition:width .6s}"
     ".dl a{margin-right:.6em;white-space:nowrap;color:var(--ac)}"
+    "td.act{text-align:right;width:1%}"
+    "button.del{padding:.25em;line-height:0;background:transparent;border:1px solid transparent;"
+    "color:var(--txm);border-radius:6px}button.del:hover{color:var(--err);border-color:var(--brd)}"
+    "button.del svg{width:16px;height:16px}"
     ".voices{list-style:none;padding:0}.voices li{display:flex;align-items:center;gap:.8em;flex-wrap:wrap;"
     "border-top:1px solid var(--brd);padding:.8em 0}.voices li b{flex:1 1 10em}"
     "dialog{border:1px solid var(--brd);border-radius:12px;padding:1.2em 1.4em;max-width:min(92vw,680px);"
@@ -199,6 +203,23 @@ def _logout_dialog(t):
     )
 
 
+_TRASH_SVG = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+              'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+              '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>')
+
+
+def _job_delete_dialog(t):
+    """Conferma dell'eliminazione di un job che ha ancora link vivi: il file
+    non sparisce, resta scaricabile dall'email. Senza link si elimina subito."""
+    return (
+        f"<dialog id=\"acctJobDelDlg\"><h2>{_e(t['job_delete_title'])}</h2>"
+        f"<p>{_e(t['job_delete_p'])}</p>"
+        f"<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"acctJobDelConfirm\">"
+        f"{_e(t['job_delete'])}</button>"
+        f"<button type=\"button\" class=\"primary\" data-close autofocus>{_e(t['cancel_btn'])}</button></div></dialog>"
+    )
+
+
 def _delete_dialog(t):
     return (
         f"<dialog id=\"acctDeleteDlg\"><h2>{_e(t['delete_popup_title'])}</h2>"
@@ -243,6 +264,13 @@ _HISTORY_JS = (
     "if(del)del.onclick=function(){openDlg(ddl);};"
     "if(dc)dc.onclick=function(){dc.disabled=true;post('/api/account/delete_request').then(function(){"
     "closeDlg(ddl);del.disabled=true;document.getElementById('acctDeleteSent').hidden=false;});};"
+    "var jd=document.getElementById('acctJobDelDlg'),jc=document.getElementById('acctJobDelConfirm'),jb=null;"
+    "function delJob(b){b.disabled=true;post('/api/account/jobs/delete',{job_id:b.getAttribute('data-del')})"
+    ".then(function(r){if(r.ok||r.status===404){var tr=b.closest('tr');if(tr)tr.remove();}else{b.disabled=false;}})"
+    ".catch(function(){b.disabled=false;});}"
+    "document.querySelectorAll('[data-del]').forEach(function(b){b.addEventListener('click',function(){"
+    "if(b.getAttribute('data-dl')==='1'){jb=b;openDlg(jd);}else{delJob(b);}});});"
+    "if(jc)jc.onclick=function(){closeDlg(jd);if(jb)delJob(jb);jb=null;};"
     "var live=document.querySelectorAll('[data-job]');"
     "var ids=[];live.forEach(function(el){ids.push(el.getAttribute('data-job'));});"
     "var ENDED={done:1,partial:1,error:1,cancelled:1,interrupted:1};"
@@ -294,7 +322,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         parts.append("<table><thead><tr>"
                      f"<th>{_e(t['history_col_date'])}</th><th>{_e(t['history_col_book'])}</th>"
                      f"<th>{_e(t['history_col_plan'])}</th><th>{_e(t['history_col_status'])}</th>"
-                     f"<th>{_e(t['history_col_downloads'])}</th></tr></thead><tbody>")
+                     f"<th>{_e(t['history_col_downloads'])}</th><th></th></tr></thead><tbody>")
         for r in rows:
             status = r.get("status") or "running"
             kind = r.get("kind") or "generate"
@@ -335,10 +363,17 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
                            f"<span class=\"prog\"><i></i></span></td>")
             else:
                 st_cell = f"<td>{st_cell}</span></td>"
+            # Eliminazione dall'elenco: non per i job che stanno lavorando.
+            # data-dl=1 (link ancora vivi) chiede conferma prima.
+            act = ""
+            if status != "running":
+                act = (f"<button type=\"button\" class=\"del\" data-del=\"{_e(job_id)}\" "
+                       f"data-dl=\"{'1' if dls else '0'}\" title=\"{_e(t['job_delete'])}\" "
+                       f"aria-label=\"{_e(t['job_delete'])}\">{_TRASH_SVG}</button>")
             parts.append(
                 f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td class=\"bk\">{book}</td>"
                 f"<td class=\"plan\">{_plan_cell(t, r, kind)}</td>{st_cell}"
-                f"<td class=\"dl\">{cell}</td></tr>")
+                f"<td class=\"dl\">{cell}</td><td class=\"act\">{act}</td></tr>")
         parts.append("</tbody></table>")
         pages = max(1, (int(total) + per_page - 1) // per_page)
         if pages > 1:
@@ -381,7 +416,8 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         f"<button type=\"button\" class=\"primary end\" id=\"acctClose\" autofocus>{_e(t['close_btn_app'])}</button>"
         "</div>"
         f"<p class=\"meta\" id=\"acctDeleteSent\" hidden>{_e(t['delete_sent'])}</p>"
-        + _logout_dialog(t) + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t) + _HISTORY_JS
+        + _logout_dialog(t) + _devices_dialog(t, sessions, current_sid) + _delete_dialog(t)
+        + _job_delete_dialog(t) + _HISTORY_JS
     )
     # «X» a destra del marchio: torna all'app (la sessione resta).
     chiudi = (f"<button type=\"button\" class=\"icon-x\" id=\"acctCloseX\" title=\"{_e(t['close_btn_app'])}\" "

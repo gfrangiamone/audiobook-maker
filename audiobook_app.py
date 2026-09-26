@@ -12047,6 +12047,30 @@ def api_account_jobs():
     return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE})
 
 
+@app.route("/api/account/jobs/delete", methods=["POST"])
+def api_account_job_delete():
+    """Elimina un job dall'area personale (web e app). Nasconde solo la riga
+    di storico: file hot/cold e token restano, cosi' il link dell'email di
+    notifica continua a funzionare fino alla scadenza."""
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    data = request.get_json(silent=True) or {}
+    job_id = str(data.get("job_id") or "").strip()
+    if not job_id:
+        return _acct_err("bad_request", "job_id required", 400)
+    res = accounts.hide_job(acct["id"], job_id)
+    if res == "not_found":
+        return _acct_err("not_found", "Job not found", 404)
+    if res == "running":
+        return _acct_err("job_running", "Job still in progress", 409)
+    _acct_log("ACCOUNT_JOB_DELETE", acct["email"], job_id)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/account/delete_request", methods=["POST"])
 def api_account_delete_request():
     gate = _acct_gate()
