@@ -2894,6 +2894,20 @@ _suspend_new_jobs = False
 _suspend_lock = threading.Lock()
 
 
+def _maintenance_gate():
+    """Risposta 503 se l'admin ha sospeso i nuovi processi, altrimenti None.
+
+    Va controllata anche su creazione ordine e capture PayPal: con la sola
+    guardia su generate/optimize l'utente pagava (upload fatto prima della
+    sospensione) e solo dopo trovava il 503 -> capture orfana rimborsata a
+    voucher 30 minuti dopo invece del servizio.
+    """
+    if _suspend_new_jobs:
+        return jsonify({"error": "System under maintenance. Please try again in a few minutes.",
+                        "error_code": "maintenance"}), 503
+    return None
+
+
 #  -  -  Admin activity digest  -  - 
 
 # (Functions imported from email_service)
@@ -10396,6 +10410,9 @@ def api_paypal_create_order_voice_clone():
     gate = _vc_gate()
     if gate:
         return gate
+    gate = _maintenance_gate()
+    if gate:
+        return gate
     if not _paypal_available():
         return jsonify({"error": "PayPal not configured"}), 503
     data = request.get_json(silent=True) or {}
@@ -16362,6 +16379,9 @@ def api_optimize_estimate(job_id):
 @app.route("/api/paypal_create_order", methods=["POST"])
 def api_paypal_create_order():
     if not _paypal_available(): return jsonify({"error": "PayPal not configured"}), 503
+    _maint = _maintenance_gate()
+    if _maint is not None:
+        return _maint
     data = request.json or {}; job_id = data.get("job_id", "")
     if job_id not in jobs: return jsonify({"error": "Job not found"}), 404
     job = jobs[job_id]; info = job.get("info")
@@ -16440,6 +16460,11 @@ def api_paypal_capture_order():
     job_id = (data.get("job_id") or "").strip()
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
+    # Manutenzione attivata tra creazione ordine e approvazione: l'ordine
+    # approvato non viene catturato (PayPal lo lascia scadere, nessun addebito).
+    _maint = _maintenance_gate()
+    if _maint is not None:
+        return _maint
 
     # Atomic flow: idempotency + capture + amount reconciliation + store
     # serializzato da payment._capture_lock per prevenire double-capture race.
@@ -16915,6 +16940,9 @@ def api_paypal_create_order_gemini():
     import payment as _payment_mod
     import gemini_tts as _gemini_tts_mod
 
+    _maint = _maintenance_gate()
+    if _maint is not None:
+        return _maint
     data = request.get_json(silent=True) or {}
     job_id = (data.get("job_id") or "").strip()
     voice_id = (data.get("voice_id") or "").strip()
@@ -17105,6 +17133,9 @@ def api_paypal_create_order_translate():
     """
     if not _paypal_available():
         return jsonify({"error": "PayPal not configured"}), 503
+    _maint = _maintenance_gate()
+    if _maint is not None:
+        return _maint
     data = request.json or {}
     job_id = data.get("job_id", "")
     if job_id not in jobs:
@@ -18095,6 +18126,10 @@ def api_translate():
 
     if not translation_core.is_available():
         return jsonify({"error": "Translation not configured on this server"}), 503
+    # Prima del preflight di pagamento: in manutenzione il token non si consuma.
+    _maint = _maintenance_gate()
+    if _maint is not None:
+        return _maint
 
     source = (data.get("source_lang") or "").strip().lower().split("-")[0]
     target = (data.get("target_lang") or "").strip().lower().split("-")[0]

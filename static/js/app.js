@@ -2546,6 +2546,12 @@ async function renderPaypalGeminiButtons(){
       const _body=(_payCtx&&_payCtx.paypal&&typeof _payCtx.paypal.buildBody==='function')?_payCtx.paypal.buildBody():{job_id:jobId};
       const r=await fetch(_ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_body)});
       const d=await r.json();
+      if(d&&d.error_code==='maintenance'){
+        // Servizio sospeso dall'admin: nessun ordine creato, nessun addebito.
+        _payBusyNotice=true;
+        _payPaypalErr((typeof t==='function'&&t('pay_maintenance'))||d.error);
+        throw new Error('maintenance');
+      }
       if(d&&d.error_code==='server_busy'){
         // Capacita` esaurita mentre il modale era aperto: nessun ordine creato.
         _payBusyNotice=true;
@@ -2578,6 +2584,11 @@ async function renderPaypalGeminiButtons(){
             // immediata) e riapertura del checkout quando possibile.
             _payPaypalErr((typeof t==='function'&&t('pay_paypal_unfunded'))||'This payment method (bank debit / eCheck) is not accepted: it takes days to clear and can be reversed by the bank. Please pay by card or with your PayPal balance.');
             if(d.retryable&&actions&&typeof actions.restart==='function')return actions.restart();
+            return;
+          }
+          if(d.error_code==='maintenance'){
+            // Ordine approvato ma NON catturato: PayPal lo lascia scadere.
+            _payPaypalErr((typeof t==='function'&&t('pay_maintenance'))||d.error);
             return;
           }
           if(d.paypal_issue==='ALREADY_PAID'||d.error==='already_paid_for_job'){

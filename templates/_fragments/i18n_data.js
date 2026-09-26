@@ -181,3 +181,12 @@ Object.assign(L.es,{vc_speed:"Velocidad de la voz",vc_speed_hint:"Se aplica a to
 Object.assign(L.de,{vc_speed:"Sprechtempo der Stimme",vc_speed_hint:"Gilt für alle Geräte, die diese Stimme nutzen; wer ein Buch erzeugt, kann es noch schneller oder langsamer machen.",vc_speed_saved:"Tempo gespeichert."});
 Object.assign(L.zh,{vc_speed:"声音语速",vc_speed_hint:"适用于所有使用此声音的设备；生成书籍的人仍可加快或放慢。",vc_speed_saved:"语速已保存。"});
 Object.assign(L.hi,{vc_speed:"आवाज़ की गति",vc_speed_hint:"यह इस आवाज़ का उपयोग करने वाले सभी डिवाइस पर लागू होती है; किताब बनाने वाला इसे अब भी तेज़ या धीमा कर सकता है।",vc_speed_saved:"गति सहेज ली गई।"});
+
+// Checkout bloccato durante la manutenzione (error_code 'maintenance')
+Object.assign(L.it,{pay_maintenance:"Servizio in manutenzione: il pagamento non è stato addebitato. Riprova tra qualche minuto."});
+Object.assign(L.en,{pay_maintenance:"The service is under maintenance: you have not been charged. Please try again in a few minutes."});
+Object.assign(L.fr,{pay_maintenance:"Service en maintenance : aucun montant n'a été débité. Veuillez réessayer dans quelques minutes."});
+Object.assign(L.es,{pay_maintenance:"Servicio en mantenimiento: no se ha realizado ningún cargo. Inténtalo de nuevo en unos minutos."});
+Object.assign(L.de,{pay_maintenance:"Der Dienst wird gerade gewartet: Es wurde nichts abgebucht. Bitte versuchen Sie es in einigen Minuten erneut."});
+Object.assign(L.zh,{pay_maintenance:"服务正在维护：您未被扣款。请几分钟后再试。"});
+Object.assign(L.hi,{pay_maintenance:"सेवा रखरखाव में है: आपसे कोई शुल्क नहीं लिया गया है. कृपया कुछ मिनटों बाद पुनः प्रयास करें."});
