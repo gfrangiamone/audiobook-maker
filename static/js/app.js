@@ -2522,6 +2522,9 @@ async function renderPaypalGeminiButtons(){
   const container=document.getElementById('paypalGeminiContainer');
   if(!container)return;
   container.innerHTML='';_payPaypalErr('');
+  // Ingressi che non passano da estimate/generate (es. voce campionata da
+  // /?vc=new) arrivano qui con llmConfig ai default: caricare la config.
+  if(!llmConfig.paypalAvailable||!llmConfig.paypalClientId)await _loadLlmPaymentConfig();
   if(!llmConfig.paypalAvailable||!llmConfig.paypalClientId){_payPaypalErr((typeof t==='function'&&t('pay_paypal_unavailable'))||'PayPal non disponibile');return}
   try{await _loadPaypalSdk(llmConfig.paypalClientId)}catch(e){_payPaypalErr((typeof t==='function'&&t('pay_paypal_load_failed'))||'Caricamento PayPal fallito');return}
   if(typeof paypal==='undefined'||!window.paypal||!window.paypal.Buttons){_payPaypalErr((typeof t==='function'&&t('pay_paypal_unavailable'))||'PayPal non disponibile');return}
