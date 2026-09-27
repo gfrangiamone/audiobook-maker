@@ -25,6 +25,10 @@ def catalogo_di_prova(monkeypatch):
     # catalogo di produzione.
     monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", FIXTURE)
     voxcpm_catalog.invalidate_cache()
+    # I capitoli dei piani qui sotto sono di pochi caratteri: col tetto di
+    # produzione finirebbero tutti in un lotto. I test di questo file
+    # provano l'unita' capitolo; i lotti hanno i loro, in fondo.
+    monkeypatch.setenv("ABM_VOXCPM_BATCH_CHARS", "0")
 
 
 def blocco(testo, capitolo):
@@ -860,3 +864,125 @@ def test_il_passo_della_voce_si_congela_sul_job(tmp_path, sintesi_finta, monkeyp
     monkeypatch.setattr(voxcpm_tts, "passo_di_voce", lambda v: pytest.fail("non va riletto"))
     generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+10%", tmp_path, "job-2", set(), job=job)
     assert {c["speed"] for c in sintesi_finta.chiamate} == {1.21}
+
+
+# --- Lotti: piu' capitoli corti in un job RunPod ----------------------------
+
+
+class FintaSintesiLotto:
+    """Come il worker: un PCM unico e `chunk_samples` per ritagliarlo.
+
+    Il chunk k-esimo del job vale `k + 1` ripetuto, lungo `10 * (k + 1)`
+    campioni: ogni pezzo si riconosce nel file ritagliato.
+    """
+
+    def __init__(self, con_campioni=True, dettaglio=None):
+        self.chiamate = []
+        self.con_campioni = con_campioni
+        self.dettaglio = dettaglio or []
+
+    def __call__(self, chunks, voice_id, dest_path, **kw):
+        self.chiamate.append({"chunks": list(chunks), "dest": dest_path,
+                              "key": kw.get("key", "")})
+        campioni = [10 * (k + 1) for k in range(len(chunks))]
+        with open(dest_path, "wb") as f:
+            for k, n in enumerate(campioni):
+                f.write(bytes([k + 1]) * (2 * n))
+        out = {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+               "audio_seconds": 1.0, "tts_seconds": 0.5, "jobs": 1,
+               "redone": 0, "bounced": 0, "failed_chunks": 0,
+               "bytes": 2 * sum(campioni),
+               "code_tagliate": len(self.dettaglio),
+               "code_tagliate_dettaglio": [dict(r) for r in self.dettaglio],
+               "runpod": [{"exec_s": 30.0, "queue_s": 1.0, "worker": "w1"}]}
+        if self.con_campioni:
+            out["chunk_samples"] = campioni
+        return out
+
+
+def test_i_lotti_sono_consecutivi_e_sotto_il_tetto():
+    piano = [blocco("x" * 400, 0), blocco("x" * 400, 1), blocco("x" * 300, 2),
+             blocco("x" * 2000, 3), blocco("x" * 100, 4)]
+    gruppi = generation_engine._voxcpm_chapter_groups(piano, set())
+    lotti = generation_engine._voxcpm_lotti(gruppi, piano, 1000)
+    # Il capitolo piu' lungo del tetto va da solo, gli altri si accostano
+    # finche' ci stanno, senza scavalcare l'ordine del libro.
+    assert [[ci for ci, _ in l] for l in lotti] == [[0, 1], [2], [3], [4]]
+    # Tetto 0: un capitolo per lotto, come prima dei lotti.
+    assert [[ci for ci, _ in l] for l in generation_engine._voxcpm_lotti(
+        gruppi, piano, 0)] == [[0], [1], [2], [3], [4]]
+
+
+def test_capitoli_corti_in_un_job_solo_ritagliati_per_capitolo(tmp_path,
+                                                              monkeypatch):
+    f = FintaSintesiLotto()
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    monkeypatch.setenv("ABM_VOXCPM_BATCH_CHARS", "1000")
+    job = {}
+    esiti = generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job)
+
+    # Un job per tutto il libro, con la chiave del primo capitolo.
+    assert [c["chunks"] for c in f.chiamate] == [["a", "b", "c", "d", "e", "f"]]
+    assert f.chiamate[0]["key"] == "voxcpm/job-1/ch000000.pcm"
+
+    def pezzo(k):
+        return bytes([k + 1]) * (2 * 10 * (k + 1))
+    leggi = lambda i: (tmp_path / f"chunk_{i:06d}.pcm").read_bytes()
+    # Ogni capitolo sul suo primo chunk, le code vuote: lo stesso layout di
+    # un job per capitolo, quindi assemblaggio e marcatori non cambiano.
+    assert leggi(0) == pezzo(0) + pezzo(1)
+    assert leggi(1) == b""
+    assert leggi(2) == pezzo(2)
+    assert leggi(3) == pezzo(3) + pezzo(4) + pezzo(5)
+    assert leggi(4) == b"" and leggi(5) == b""
+    assert not list(tmp_path.glob("lotto_*"))
+    assert esiti[3]["bytes"] == len(leggi(3))
+
+    # Il job e' uno: costo e fatture contati una volta sola.
+    va = job["voxcpm_actual"]
+    assert va["jobs"] == 1
+    assert len(va["runpod"]) == 1
+    assert va["tts_seconds"] == 0.5
+
+
+def test_le_code_tagliate_di_un_lotto_tornano_al_loro_capitolo(tmp_path,
+                                                              monkeypatch):
+    # Chunk 4 del job = secondo chunk del capitolo 2, che comincia al
+    # campione 10+20+30+40 = 100 del PCM del lotto.
+    riga = {"chunk": 4, "coda_attesa": "nel 1967.", "detto": "nel mille",
+            "inizio_s": (100 + 40) / 48000.0}
+    f = FintaSintesiLotto(dettaglio=[riga])
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    monkeypatch.setenv("ABM_VOXCPM_BATCH_CHARS", "1000")
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    righe = job["voxcpm_actual"]["code_tagliate_dettaglio"]
+    assert [(r["capitolo"], r["testa"], r["chunk"]) for r in righe] == [(2, 3, 1)]
+    assert righe[0]["inizio_s"] == round(40 / 48000.0, 2)
+    assert job["voxcpm_actual"]["code_tagliate"] == 1
+
+
+def test_senza_chunk_samples_si_torna_a_un_job_per_capitolo(tmp_path,
+                                                            monkeypatch):
+    # Un worker che non manda le lunghezze: il lotto non si ritaglia a
+    # occhio. Si rifanno i suoi capitoli uno per job, e i lotti successivi
+    # non pagano piu' il tentativo.
+    f = FintaSintesiLotto(con_campioni=False)
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    monkeypatch.setenv("ABM_VOXCPM_BATCH_CHARS", "3")
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert [c["chunks"] for c in f.chiamate] == [
+        ["a", "b", "c"], ["a", "b"], ["c"], ["d", "e", "f"]]
+    assert (tmp_path / "chunk_000002.pcm").read_bytes() == b"\x01" * 20
+    assert not list(tmp_path.glob("lotto_*"))
+    # Il job buttato e' stato fatturato: resta nell'audit.
+    va = job["voxcpm_actual"]
+    assert va["jobs"] == 4
+    assert len(va["runpod"]) == 4

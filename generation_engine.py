@@ -3845,6 +3845,125 @@ def _voxcpm_chapter_groups(plan, reusable):
             if not set(per_capitolo[ci]) <= set(reusable)]
 
 
+def _voxcpm_lotto_chars():
+    """Tetto di caratteri per un job che porta piu' capitoli. 0 = spento.
+
+    Ogni job RunPod paga un costo fisso (accensione del job, voce, verifica)
+    che su un capitolo da mille caratteri vale piu' della sintesi. Il
+    27/09/2026 un libro da 402 capitoli di ~980 caratteri e' costato 3,88
+    $/Mchar contro 0,9-1,7 dei libri normali. Sotto questo tetto i capitoli
+    consecutivi viaggiano insieme; un capitolo piu' lungo va da solo, come
+    prima.
+    """
+    try:
+        return max(0, int(os.environ.get("ABM_VOXCPM_BATCH_CHARS", "12000")))
+    except (TypeError, ValueError):
+        return 12000
+
+
+def _voxcpm_lotti(gruppi, plan, tetto):
+    """I gruppi-capitolo impacchettati in lotti consecutivi da <= `tetto`.
+
+    Ritorna `[[(ci, indici), ...], ...]`. Con `tetto` 0 ogni capitolo e' un
+    lotto a se' (il comportamento di prima). Consecutivi e non a incastro:
+    l'ordine dei capitoli dentro un job e' quello del libro, e un lotto che
+    fallisce perde capitoli vicini, non sparsi.
+    """
+    lotti, corrente, somma = [], [], 0
+    for gruppo in gruppi:
+        n = sum(len(plan[i]["text"]) for i in gruppo[1])
+        if corrente and (not tetto or somma + n > tetto):
+            lotti.append(corrente)
+            corrente, somma = [], 0
+        corrente.append(gruppo)
+        somma += n
+    if corrente:
+        lotti.append(corrente)
+    return lotti
+
+
+class _LottoNonDivisibile(Exception):
+    """Il PCM di un lotto non si puo' ritagliare nei suoi capitoli."""
+
+
+def _voxcpm_ritaglia_lotto(lotto, stats, sorgente, work_dir):
+    """Divide il PCM di un lotto nei file-parte dei suoi capitoli.
+
+    Ritorna `[(ci, indici, stats_capitolo), ...]` nell'ordine del lotto. Le
+    misure del job (GPU, caratteri, fatture) restano tutte sul primo
+    capitolo: il job e' uno, e sommarle due volte gonfierebbe il costo. Le
+    code tagliate vanno invece al capitolo a cui appartengono, con indice e
+    `inizio_s` riportati al suo inizio.
+
+    Solleva `_LottoNonDivisibile` se `chunk_samples` manca o non torna coi
+    byte ricevuti: un taglio a occhio sposterebbe i marcatori M4B.
+    """
+    campioni = stats.get("chunk_samples") or []
+    n_chunk = sum(len(indici) for _, indici in lotto)
+    if len(campioni) != n_chunk:
+        raise _LottoNonDivisibile(
+            f"{len(campioni)} lunghezze di chunk per {n_chunk} chunk")
+    dimensione = os.path.getsize(sorgente)
+    if sum(campioni) * 2 != dimensione:
+        raise _LottoNonDivisibile(
+            f"{sum(campioni)} campioni non tornano con {dimensione} byte")
+    sr = int(stats.get("sample_rate") or 48000)
+
+    # Dove comincia ogni capitolo, in chunk e in campioni.
+    confini, k, s = [], 0, 0
+    for ci, indici in lotto:
+        n = len(indici)
+        confini.append((k, n, s, sum(campioni[k:k + n])))
+        k += n
+        s += confini[-1][3]
+
+    dettaglio = [[] for _ in lotto]
+    for riga in stats.get("code_tagliate_dettaglio") or []:
+        try:
+            idx = int(riga.get("chunk"))
+        except (TypeError, ValueError):
+            continue
+        for posto, (k0, n, s0, _) in enumerate(confini):
+            if k0 <= idx < k0 + n:
+                riga = dict(riga)
+                riga["chunk"] = idx - k0
+                if riga.get("inizio_s") is not None:
+                    riga["inizio_s"] = round(
+                        float(riga["inizio_s"]) - s0 / float(sr), 2)
+                dettaglio[posto].append(riga)
+                break
+
+    fuori = []
+    with open(sorgente, "rb") as src:
+        for posto, ((ci, indici), (_, _, s0, lung)) in enumerate(
+                zip(lotto, confini)):
+            dest = work_dir / f"chunk_{indici[0]:06d}.pcm"
+            tmp = str(dest) + ".part"
+            src.seek(s0 * 2)
+            resto = lung * 2
+            with open(tmp, "wb") as out:
+                while resto:
+                    blocco = src.read(min(resto, 1 << 20))
+                    if not blocco:
+                        raise _LottoNonDivisibile("PCM del lotto corto")
+                    out.write(blocco)
+                    resto -= len(blocco)
+            os.replace(tmp, dest)
+            if posto == 0:
+                st = dict(stats)
+            else:
+                st = {"sample_rate": sr, "chars": 0, "audio_seconds": 0.0,
+                      "tts_seconds": 0.0, "jobs": 0, "redone": 0,
+                      "bounced": 0, "failed_chunks": 0, "code_tagliate": 0,
+                      "runpod": []}
+            st["code_tagliate_dettaglio"] = dettaglio[posto]
+            st["bytes"] = lung * 2
+            st["chunk_samples"] = campioni[confini[posto][0]:
+                                           confini[posto][0] + confini[posto][1]]
+            fuori.append((ci, indici, st))
+    return fuori
+
+
 # Quanto vale la sintesi VoxCPM sulla barra, rispetto all'assemblaggio: 9 a
 # 1, cioe' 90% e 10%. Non e' una stima del tempo — e' un ordine di grandezza
 # onesto. La sintesi e' un job GPU per capitolo (minuti); l'assemblaggio
@@ -3856,6 +3975,11 @@ _VOXCPM_PESO_BARRA = 9
 def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                      cancelled=None, job=None, peso_barra=0):
     """Sintetizza il libro un capitolo per job. Ritorna {indice_chunk: esito}.
+
+    I capitoli corti viaggiano a lotti (`_voxcpm_lotti`): un job per lotto,
+    il cui PCM si ritaglia nei capitoli con i `chunk_samples` del worker.
+    Dopo il ritaglio tutto procede come se ogni capitolo avesse avuto il suo
+    job.
 
     Gemella della pre-sintesi Speechify poco piu' sotto, con un'unita' diversa:
     li' un chunk per chiamata, qui un capitolo per job (§7.3). L'assemblaggio
@@ -3895,6 +4019,14 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     import concurrent.futures as _cf
 
     gruppi = _voxcpm_chapter_groups(plan, reusable)
+    # I capitoli corti viaggiano a lotti: un job RunPod per lotto, non per
+    # capitolo (vedi `_voxcpm_lotto_chars`).
+    lotti = _voxcpm_lotti(gruppi, plan, _voxcpm_lotto_chars())
+    # Si spegne al primo lotto che non si lascia ritagliare (worker senza
+    # `chunk_samples`): i lotti successivi vanno subito a capitoli singoli
+    # invece di pagare ognuno un job da buttare.
+    lotti_ok = threading.Event()
+    lotti_ok.set()
     esiti = {}
     if job is not None:
         # Prima del `setdefault`: il riporto si somma solo se i contatori
@@ -4033,24 +4165,68 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                       flush=True)
     passo = voxcpm_tts.speed_effettiva(passo_voce, rate)
 
-    def _uno(gruppo):
-        ci, indici = gruppo
+    def _uno(lotto):
+        """Sintetizza un lotto. Ritorna `[(ci, indici, stats), ...]`."""
+        if len(lotto) == 1 or not lotti_ok.is_set():
+            return [_sintetizza(ci, indici, indici, str(
+                work_dir / f"chunk_{indici[0]:06d}.pcm"))
+                for ci, indici in lotto]
+        primo = lotto[0][0]
+        tutti = [i for _, indici in lotto for i in indici]
+        # Il PCM del lotto in un file suo: i file-parte dei capitoli li
+        # scrive il ritaglio, e un lotto a meta' non deve lasciarne uno
+        # che il riuso scambierebbe per buono.
+        sorgente = str(work_dir / f"lotto_{tutti[0]:06d}.pcm")
+        try:
+            _, _, stats = _sintetizza(primo, tutti, tutti, sorgente)
+            try:
+                return _voxcpm_ritaglia_lotto(lotto, stats, sorgente, work_dir)
+            except _LottoNonDivisibile as e:
+                lotti_ok.clear()
+                print(f"[{job_id}] VoxCPM: lotto di {len(lotto)} capitoli "
+                      f"non ritagliabile ({e}): da qui un job per capitolo",
+                      flush=True)
+        finally:
+            try:
+                os.remove(sorgente)
+            except OSError:
+                pass
+        # Il job del lotto e' stato fatturato comunque: il suo costo resta
+        # sul primo capitolo rifatto, o l'audit lo perderebbe.
+        if job is not None and peso_barra:
+            with barra:
+                parziali.pop(primo, None)
+        fuori = [_sintetizza(ci, indici, indici, str(
+            work_dir / f"chunk_{indici[0]:06d}.pcm")) for ci, indici in lotto]
+        st0 = fuori[0][2]
+        for k in ("tts_seconds", "jobs", "redone", "bounced"):
+            st0[k] = st0.get(k, 0) + stats.get(k, 0)
+        st0["runpod"] = list(stats.get("runpod") or []) + list(
+            st0.get("runpod") or [])
+        return fuori
+
+    def _sintetizza(ci, indici, barra_indici, dest):
+        """Un job RunPod sui chunk `indici`, audio in `dest`.
+
+        `ci` e' il capitolo che dà la chiave su R2 e riceve l'avanzamento
+        (il primo del lotto); `barra_indici` i chunk che quell'avanzamento
+        copre.
+        """
         if cancelled is not None and cancelled():
             raise _CancelledError("Job cancelled")
-        testa = indici[0]
-        dest = str(work_dir / f"chunk_{testa:06d}.pcm")
         try:
             stats = voxcpm_tts.synthesize_chapter(
                 [plan[i]["text"] for i in indici], voice, dest,
-                # Un job = un capitolo: la chiave e' univoca e permette di
-                # risalire dal file su R2 al job che l'ha prodotto.
+                # Un job = un capitolo (o un lotto, col suo primo capitolo):
+                # la chiave e' univoca e permette di risalire dal file su R2
+                # al job che l'ha prodotto.
                 key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
                 cancelled=cancelled,
                 speed=passo,
                 # Il payload del worker non porta l'indice di capitolo, e non
                 # deve: il capitolo e' un concetto di ABM. La callback lo sa
                 # perche' e' stata costruita per quello.
-                on_progress=((lambda riga: _avanza(ci, len(indici), riga))
+                on_progress=((lambda riga: _avanza(ci, len(barra_indici), riga))
                              if job is not None and peso_barra else None))
         except voxcpm_tts.VoxcpmJobError:
             # Se il fallimento coincide con un annullamento gia' richiesto,
@@ -4078,13 +4254,13 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     # determinismo del messaggio) si rilancia solo dopo aver drenato tutte le
     # future.
     with _cf.ThreadPoolExecutor(max_workers=voxcpm_tts.jobs_in_flight()) as _ex:
-        future_a_posizione = {_ex.submit(_uno, gruppo): posizione
-                              for posizione, gruppo in enumerate(gruppi)}
+        future_a_posizione = {_ex.submit(_uno, lotto): posizione
+                              for posizione, lotto in enumerate(lotti)}
         errori = {}
         for fut in _cf.as_completed(future_a_posizione):
             posizione = future_a_posizione[fut]
             try:
-                ci, indici, stats = fut.result()
+                risultati = fut.result()
             except BaseException as e:
                 errori[posizione] = e
                 # Questo capitolo non arrivera' mai a `consegnati`: se la
@@ -4096,98 +4272,101 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 # anche quello sottrarrebbe un credito gia' mostrato
                 # all'utente, facendo arretrare la barra.
                 if job is not None and peso_barra:
-                    ci_fallito = gruppi[posizione][0]
                     with barra:
-                        fasi.pop(ci_fallito, None)
+                        for ci_fallito, _ in lotti[posizione]:
+                            fasi.pop(ci_fallito, None)
                         _scrivi_barra()
                 continue
-            for posto, i in enumerate(indici):
-                if posto == 0:
-                    esiti[i] = stats
-                    if job is not None:
-                        _va = job["voxcpm_actual"]
-                        _va["chars"] += int(stats.get("chars", 0) or 0)
-                        _va["audio_seconds"] += float(stats.get("audio_seconds", 0) or 0)
-                        _va["tts_seconds"] += float(stats.get("tts_seconds", 0) or 0)
-                        _va["jobs"] += int(stats.get("jobs", 0) or 0)
-                        _va["redone"] += int(stats.get("redone", 0) or 0)
-                        _va["bounced"] += int(stats.get("bounced", 0) or 0)
-                        _va["failed_chunks"] += int(stats.get("failed_chunks", 0) or 0)
-                        # `.get`, come per `runpod`: un job aperto da una
-                        # versione precedente non ha questa chiave.
-                        _va["code_tagliate"] = int(
-                            _va.get("code_tagliate", 0) or 0) + int(
-                                stats.get("code_tagliate", 0) or 0)
-                        # Stesso `.get` difensivo: un job aperto prima di
-                        # queste chiavi le trova assenti, non a zero.
-                        for _k in ("verifica_chunk", "verifica_sospetti",
-                                   "verifica_rinunciati", "verifica_giri",
-                                   "verifica_numerali",
-                                   "verifica_falsi_numerali",
-                                   "verifica_falsi_grafia"):
-                            _va[_k] = int(_va.get(_k, 0) or 0) + int(
-                                stats.get(_k, 0) or 0)
-                        # I rientri si sommano posizione per posizione, non si
-                        # concatenano: il secondo giro di un capitolo e il
-                        # secondo giro di un altro sono lo stesso giro. La
-                        # lista si allunga fino al capitolo che ne ha spesi di
-                        # piu', e resta vuota se nessuno ha misurato niente.
-                        _rientri = stats.get("verifica_rientri") or []
-                        if _rientri:
-                            _acc = list(_va.get("verifica_rientri") or [])
-                            if len(_acc) < len(_rientri):
-                                _acc += [0] * (len(_rientri) - len(_acc))
-                            for _giro, _quanti in enumerate(_rientri):
-                                _acc[_giro] += int(_quanti or 0)
-                            _va["verifica_rientri"] = _acc
-                        # Il dettaglio delle code tagliate si concatena
-                        # invece di sommarsi: ogni riga e' un difetto a se'.
-                        # L'indice del capitolo lo si attacca qui, che e'
-                        # l'unico punto in cui si sa quale capitolo fosse.
-                        _dett = stats.get("code_tagliate_dettaglio") or []
-                        if _dett:
-                            _acc_d = _va.setdefault(
-                                "code_tagliate_dettaglio", [])
-                            for _riga in _dett:
-                                _riga = dict(_riga)
-                                _riga["capitolo"] = ci
-                                # Il primo chunk del capitolo nel piano: e'
-                                # la chiave con cui l'assemblaggio sa dove
-                                # comincia il suo PCM nel libro.
-                                _riga["testa"] = indici[0]
-                                _riga["titolo"] = str(
-                                    plan[indici[0]].get("chapter_title") or "")
-                                _acc_d.append(_riga)
-                        # `setdefault`: un job aperto da una versione
-                        # precedente ha un `voxcpm_actual` senza la chiave.
-                        _va.setdefault("runpod", []).extend(
-                            stats.get("runpod") or [])
-                        # Il costo del capitolo su disco subito: un riavvio
-                        # fra un capitolo e il successivo non deve perderlo.
-                        cost_carry.write(work_dir, "voxcpm", _va)
-                    continue
-                # Coda del capitolo: file vuoto, e un esito a zero perche' le
-                # misure del capitolo sono gia' contate sul primo chunk.
-                parte = work_dir / f"chunk_{i:06d}.pcm"
-                with open(parte, "wb"):
-                    pass
-                esiti[i] = {"sample_rate": stats.get("sample_rate") or 48000,
-                            "chars": 0, "audio_seconds": 0.0,
-                            "tts_seconds": 0.0, "jobs": 0, "redone": 0,
-                            "bounced": 0, "failed_chunks": 0,
-                            "code_tagliate": 0,
-                            "code_tagliate_dettaglio": [], "bytes": 0,
-                            "runpod": []}
+            for ci, indici, stats in risultati:
+                for posto, i in enumerate(indici):
+                    if posto == 0:
+                        esiti[i] = stats
+                        if job is not None:
+                            _va = job["voxcpm_actual"]
+                            _va["chars"] += int(stats.get("chars", 0) or 0)
+                            _va["audio_seconds"] += float(stats.get("audio_seconds", 0) or 0)
+                            _va["tts_seconds"] += float(stats.get("tts_seconds", 0) or 0)
+                            _va["jobs"] += int(stats.get("jobs", 0) or 0)
+                            _va["redone"] += int(stats.get("redone", 0) or 0)
+                            _va["bounced"] += int(stats.get("bounced", 0) or 0)
+                            _va["failed_chunks"] += int(stats.get("failed_chunks", 0) or 0)
+                            # `.get`, come per `runpod`: un job aperto da una
+                            # versione precedente non ha questa chiave.
+                            _va["code_tagliate"] = int(
+                                _va.get("code_tagliate", 0) or 0) + int(
+                                    stats.get("code_tagliate", 0) or 0)
+                            # Stesso `.get` difensivo: un job aperto prima di
+                            # queste chiavi le trova assenti, non a zero.
+                            for _k in ("verifica_chunk", "verifica_sospetti",
+                                       "verifica_rinunciati", "verifica_giri",
+                                       "verifica_numerali",
+                                       "verifica_falsi_numerali",
+                                       "verifica_falsi_grafia"):
+                                _va[_k] = int(_va.get(_k, 0) or 0) + int(
+                                    stats.get(_k, 0) or 0)
+                            # I rientri si sommano posizione per posizione, non si
+                            # concatenano: il secondo giro di un capitolo e il
+                            # secondo giro di un altro sono lo stesso giro. La
+                            # lista si allunga fino al capitolo che ne ha spesi di
+                            # piu', e resta vuota se nessuno ha misurato niente.
+                            _rientri = stats.get("verifica_rientri") or []
+                            if _rientri:
+                                _acc = list(_va.get("verifica_rientri") or [])
+                                if len(_acc) < len(_rientri):
+                                    _acc += [0] * (len(_rientri) - len(_acc))
+                                for _giro, _quanti in enumerate(_rientri):
+                                    _acc[_giro] += int(_quanti or 0)
+                                _va["verifica_rientri"] = _acc
+                            # Il dettaglio delle code tagliate si concatena
+                            # invece di sommarsi: ogni riga e' un difetto a se'.
+                            # L'indice del capitolo lo si attacca qui, che e'
+                            # l'unico punto in cui si sa quale capitolo fosse.
+                            _dett = stats.get("code_tagliate_dettaglio") or []
+                            if _dett:
+                                _acc_d = _va.setdefault(
+                                    "code_tagliate_dettaglio", [])
+                                for _riga in _dett:
+                                    _riga = dict(_riga)
+                                    _riga["capitolo"] = ci
+                                    # Il primo chunk del capitolo nel piano: e'
+                                    # la chiave con cui l'assemblaggio sa dove
+                                    # comincia il suo PCM nel libro.
+                                    _riga["testa"] = indici[0]
+                                    _riga["titolo"] = str(
+                                        plan[indici[0]].get("chapter_title") or "")
+                                    _acc_d.append(_riga)
+                            # `setdefault`: un job aperto da una versione
+                            # precedente ha un `voxcpm_actual` senza la chiave.
+                            _va.setdefault("runpod", []).extend(
+                                stats.get("runpod") or [])
+                            # Il costo del capitolo su disco subito: un riavvio
+                            # fra un capitolo e il successivo non deve perderlo.
+                            cost_carry.write(work_dir, "voxcpm", _va)
+                        continue
+                    # Coda del capitolo: file vuoto, e un esito a zero perche' le
+                    # misure del capitolo sono gia' contate sul primo chunk.
+                    parte = work_dir / f"chunk_{i:06d}.pcm"
+                    with open(parte, "wb"):
+                        pass
+                    esiti[i] = {"sample_rate": stats.get("sample_rate") or 48000,
+                                "chars": 0, "audio_seconds": 0.0,
+                                "tts_seconds": 0.0, "jobs": 0, "redone": 0,
+                                "bounced": 0, "failed_chunks": 0,
+                                "code_tagliate": 0,
+                                "code_tagliate_dettaglio": [], "bytes": 0,
+                                "runpod": []}
             # I capitoli tornano in ordine di completamento, non di indice: il
             # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
-            # lettura, che a job paralleli sarebbe una mezza verita'.
+            # lettura, che a job paralleli sarebbe una mezza verita'. I
+            # capitoli di un lotto si consegnano insieme, sotto un lock solo.
             if job is not None and peso_barra:
                 with barra:
                     # Il 10% che i chunk non coprivano scatta adesso: il PCM
                     # e' davvero su disco.
-                    consegnati[ci] = len(indici)
-                    parziali.pop(ci, None)
-                    fasi.pop(ci, None)
+                    for ci, indici, _ in risultati:
+                        consegnati[ci] = len(indici)
+                        parziali.pop(ci, None)
+                        fasi.pop(ci, None)
                     _scrivi_barra()
         if errori:
             prima_posizione = min(errori)

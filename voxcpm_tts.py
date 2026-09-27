@@ -1386,6 +1386,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # non arriva mai al `return` sotto (si rifa' o solleva), quindi
              # la consegna che esce da questo ciclo non ne ha mai.
              "failed_chunks": 0, "bytes": 0,
+             # Campioni di ogni chunk dentro il PCM consegnato, in ordine:
+             # servono a chi manda piu' capitoli in un job solo per
+             # ritagliarli. Vuota se il worker non li manda.
+             "chunk_samples": [],
              # Le code che il worker ha verificato e consegnato lo stesso,
              # ancora tagliate dopo i suoi ritentativi. Non fanno fallire
              # niente: sono l'unica traccia che resta di una frase finita a
@@ -1540,6 +1544,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # somma davvero.
             stats["chars"] = int(out.get("chars") or 0)
             stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
+            try:
+                stats["chunk_samples"] = [
+                    int(n) for n in (out.get("chunk_samples") or [])]
+            except (TypeError, ValueError):
+                stats["chunk_samples"] = []
             # L'eco del passo applicato dal worker: e' la prova, nelle
             # statistiche del job, che il PCM consegnato e' gia' stirato.
             if "speed" in out:
