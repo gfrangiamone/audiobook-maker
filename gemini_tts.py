@@ -1069,6 +1069,25 @@ def _pricing_uses_cloudflare(model_key):
     return bool(m.get("id_cloudflare")) and m.get("cf_output_usd_per_mtok") is not None
 
 
+# IVA 22% come costo non detraibile: la fatturano Vertex e l'API key (Google
+# Ireland), non Cloudflare. Fino al 27/09/2026 era dentro le env di costo
+# Vertex gonfiate a mano; ora le env sono il listino netto e l'IVA si somma
+# qui. Mai mostrata all'utente: entra nel prezzo come qualunque altro costo.
+_VAT_BACKENDS = ("vertex", "apikey")
+
+
+def vat_percent():
+    return max(0.0, _f("ABM_GEMINI_VAT_PERCENT", 22.0))
+
+
+def _vat_factor(backend):
+    """Moltiplicatore IVA del backend. None = backend non risolto: si assume
+    un backend Google (caso peggiore per il costo)."""
+    if backend is None or backend in _VAT_BACKENDS:
+        return 1.0 + vat_percent() / 100.0
+    return 1.0
+
+
 def pricing_rates(model_key):
     """(input, output) USD/Mtok da usare per il PREZZO all'utente.
 
@@ -1081,7 +1100,9 @@ def pricing_rates(model_key):
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
     m = GEMINI_MODELS[model_key]
-    g_in, g_out = m["input_usd_per_mtok"], m["output_usd_per_mtok"]
+    # Tariffa Google LORDA IVA: sia Vertex sia l'API key la applicano, quindi
+    # il listino non dipende da quale dei due esegue.
+    g_in, g_out = actual_rates(model_key, "vertex")
     if not _pricing_uses_cloudflare(model_key):
         return g_in, g_out
     share = cf_saving_share()
@@ -1091,11 +1112,12 @@ def pricing_rates(model_key):
             g_out - (g_out - c_out) * share)
 
 
-def actual_rates(model_key, backend):
+def _net_rates(model_key, backend):
     """(input, output) USD/Mtok REALMENTE sostenute dal backend che ha eseguito.
 
-    Serve alla contabilita', non al listino: e' l'unico numero con cui ha senso
-    riconciliare la spesa e misurare il margine vero.
+    Tariffe nette, senza IVA. Serve alla contabilita', non al listino: e'
+    l'unico numero con cui ha senso riconciliare la spesa e misurare il
+    margine vero.
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
@@ -1104,6 +1126,17 @@ def actual_rates(model_key, backend):
         return (_cf_effective(m["cf_input_usd_per_mtok"]),
                 _cf_effective(m["cf_output_usd_per_mtok"]))
     return m["input_usd_per_mtok"], m["output_usd_per_mtok"]
+
+
+def actual_rates(model_key, backend):
+    """(input, output) USD/Mtok REALMENTE sostenute, IVA inclusa dove dovuta.
+
+    Serve alla contabilita', non al listino: e' l'unico numero con cui ha senso
+    riconciliare la spesa e misurare il margine vero.
+    """
+    n_in, n_out = _net_rates(model_key, backend)
+    f = _vat_factor(backend)
+    return n_in * f, n_out * f
 
 
 def parse_voice_id(voice_id):
@@ -1415,15 +1448,19 @@ def pricing_cost_breakdown(input_tokens, output_tokens, model_key):
 
 
 def actual_cost_breakdown(input_tokens, output_tokens, model_key, backend):
-    """Costo REALMENTE sostenuto dal backend che ha eseguito.
+    """Costo REALMENTE sostenuto dal backend che ha eseguito, IVA inclusa.
 
-    E' l'ingresso della contabilita': con questo si misura il margine vero e si
-    riconcilia la spesa. Non usarlo mai per il prezzo.
+    `total_eur` e' lordo; `net_eur` e `vat_eur` lo scompongono per l'audit
+    admin. Non usarlo mai per il prezzo, e non esporre mai `vat_eur` agli utenti.
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
     in_rate, out_rate = actual_rates(model_key, backend)
-    return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
+    bd = _breakdown(input_tokens, output_tokens, in_rate, out_rate)
+    f = _vat_factor(backend)
+    bd["net_eur"] = bd["total_eur"] / f
+    bd["vat_eur"] = bd["total_eur"] - bd["net_eur"]
+    return bd
 
 
 def _budget_uses_cloudflare(model_key):

@@ -7,6 +7,9 @@ import gemini_tts
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     gemini_tts._BACKEND = {}
+    # Questo file fissa i numeri della formula di blend/backend sulle tariffe
+    # nette: l'IVA (task 4) e' testata a parte in test_gemini_vat.py.
+    monkeypatch.setenv("ABM_GEMINI_VAT_PERCENT", "0")
     yield
     gemini_tts._BACKEND = {}
 

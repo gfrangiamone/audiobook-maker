@@ -89,3 +89,13 @@ def test_gemini_estimate_empty_selection_uses_all(client, job_with_text):
     assert r.status_code == 200
     data = r.get_json()
     assert data["chars_total"] > 0
+
+
+def test_stima_non_espone_iva(client, job_with_text):
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "testjob1", "voice_id": "gemini:flash31:Zephyr",
+        "selected_chapters": [0]})
+    assert r.status_code == 200
+    testo = r.get_data(as_text=True).lower()
+    assert "vat" not in testo
+    assert "iva" not in testo

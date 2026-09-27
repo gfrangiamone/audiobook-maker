@@ -12,6 +12,9 @@ def _cf(monkeypatch):
     monkeypatch.setenv("ABM_CF_API_TOKEN", "tok")
     monkeypatch.setenv("ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT", "50")
     monkeypatch.setenv("ABM_CF_CREDIT_TOPUP_FEE", "0.05")
+    # Questo file fissa i numeri prezzo-vs-costo sulle tariffe nette: l'IVA
+    # (task 4) e' testata a parte in test_gemini_vat.py.
+    monkeypatch.setenv("ABM_GEMINI_VAT_PERCENT", "0")
     yield
     gemini_tts._BACKEND = {}
 
