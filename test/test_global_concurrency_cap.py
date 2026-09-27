@@ -100,14 +100,19 @@ def test_global_cap_zero_disables_the_limit(client, clean_jobs):
 # capture orfano). Il gate anticipato risponde 429/server_busy prima che il
 # preflight di pagamento venga anche solo raggiunto.
 
-_GEMINI_VOICE = "gemini:gemini-2.5-flash-preview-tts:Zephyr"
+# Voce di un modello presente nel catalogo (gemini_tts.GEMINI_MODELS): dal gate
+# "modello ritirato" (Task 2) in poi una voce con model_key sconosciuto viene
+# rifiutata 400 prima ancora di arrivare al controllo di saturazione che questi
+# test vogliono esercitare.
+_GEMINI_VOICE = "gemini:flash31:Zephyr"
 
 
 def test_server_busy_before_payment_preflight(client, clean_jobs):
     """Server saturo + voce PREMIUM: 429 server_busy, preflight mai eseguito."""
     _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
     job = _seed_candidate()
-    gem = type("G", (), {"is_available": staticmethod(lambda: True)})
+    gem = type("G", (), {"is_available": staticmethod(lambda: True),
+                          "GEMINI_MODELS": {"flash31": {}}})
     with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
          patch("audiobook_app.gemini_tts", gem), \
          patch("audiobook_app._effective_max_text_chars") as preflight, \
@@ -125,7 +130,8 @@ def test_payment_preflight_runs_when_server_has_capacity(client, clean_jobs):
     """Sotto il tetto il preflight premium viene raggiunto normalmente."""
     _seed_generating(max(0, audiobook_app.MAX_CONCURRENT_GLOBAL - 1))
     job = _seed_candidate()
-    gem = type("G", (), {"is_available": staticmethod(lambda: True)})
+    gem = type("G", (), {"is_available": staticmethod(lambda: True),
+                          "GEMINI_MODELS": {"flash31": {}}})
     with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
          patch("audiobook_app.gemini_tts", gem), \
          patch("audiobook_app._effective_max_text_chars",

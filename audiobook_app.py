@@ -215,7 +215,7 @@ def _estimate_chapter_seconds(ch, language):
             secs = gemini_tts.estimate_audio_seconds(
                 getattr(ch, "text", "") or "",
                 language=language,
-                model_key="flash25",
+                model_key="flash31",
                 rate_pct=0,
             )
             if secs and secs > 0:
@@ -572,7 +572,7 @@ MAX_VOXCPM_TEXT_CHARS = int(os.environ.get("ABM_MAX_VOXCPM_TEXT_CHARS",
 
 # Whitelist charset per gli id voce ricevuti dal client (edge
 # "it-IT-IsabellaNeural", google "it-IT-Chirp3-HD-Zephyr", gemini
-# "gemini:flash25:Zephyr", voxcpm "voxcpm:v2:it-IT/Stefano" — "/" separa
+# "gemini:flash31:Zephyr", voxcpm "voxcpm:v2:it-IT/Stefano" — "/" separa
 # locale e nome nel catalogo di voci inventate). Difesa in profondita' contro
 # stored XSS nelle pagine admin e injection nel formato "#"-separato
 # dell'Activity Log.
@@ -614,12 +614,21 @@ def _premium_model_gate(voice):
     """Risposta 400 se la voce appartiene a un modello PREMIUM disattivato.
 
     Il modello si spegne con `ABM_<MODELLO>_ENABLE=false` (default abilitato):
-    ABM_FLASH25_ENABLE, ABM_FLASH31_ENABLE, ABM_SIMBA32_ENABLE. Il gate copre
+    ABM_FLASH31_ENABLE, ABM_FLASH38_ENABLE, ABM_SIMBA32_ENABLE. Il gate copre
     solo gli ingressi HTTP (anteprima, stime, ordine PayPal, generazione,
     ottimizzazione con auto-generate): i job gia' registrati o pagati
     proseguono, cosi' spegnere un modello non trasforma un lavoro in corso in
     un rimborso. Ritorna None quando la voce e' ammessa.
     """
+    # Voce Gemini di un modello non piu' in catalogo (flash25 ritirato il
+    # 27/09/2026): stesso esito di un modello spento, mai un 500 da
+    # parse_voice_id piu' a valle.
+    if _is_gemini_voice(voice) and gemini_tts is not None:
+        mk = _voice_model_key(voice)
+        if mk and mk not in gemini_tts.GEMINI_MODELS:
+            return jsonify({"error": "voice_model_disabled",
+                            "error_code": "voice_model_disabled",
+                            "model_key": mk}), 400
     if _voice_model_enabled(voice):
         return None
     return jsonify({"error": "voice_model_disabled",
@@ -1726,6 +1735,13 @@ def _recovery_generate_gate(job_id, rec, info):
     is_gem = _is_gemini_voice(voice)
     is_spx = _is_speechify_voice(voice)
     is_vox = _is_voxcpm_voice(voice)
+    # Modello ritirato dal catalogo: rigenerare con un altro modello
+    # cambierebbe la voce a meta' libro. Il reject porta il job pagato al
+    # rimborso standard (_orphan_fallback), quello non pagato a _orphan_reject.
+    if is_gem and gemini_tts is not None:
+        _mk = _voice_model_key(voice)
+        if _mk not in gemini_tts.GEMINI_MODELS:
+            raise _RecoveryRejected(f"modello ritirato: {_mk}")
     if not (is_gem or is_spx or is_vox):
         return out
     total_chars = sum(getattr(ch, "char_count", 0) or 0 for ch in chs)
@@ -3131,7 +3147,7 @@ def _voice_for_log(voice):
 
 def _voice_public_label(voice):
     """Nome voce presentabile all'utente (mai il nome del provider AI/TTS,
-    regola UI): 'it-IT-IsabellaNeural' -> 'Isabella', 'gemini:flash25:Zephyr'
+    regola UI): 'it-IT-IsabellaNeural' -> 'Isabella', 'gemini:flash31:Zephyr'
     -> 'Zephyr', 'voxcpm:v2:it-IT/Stefano' -> 'Stefano', 'speechify:...:harper_32'
     -> 'harper_32'. Una voce campionata (voxcpm:mine:<token>) diventa la
     generica 'your voice': il token e' un segreto, non un nome da mostrare.
@@ -3171,7 +3187,7 @@ def _voice_public_label(voice):
 def _voice_plan_info(voice):
     """(engine, model_key) per lo storico account: `engine` e' il piano
     ('standard' = voci gratuite, 'premium' = voci a pagamento), `model_key` e'
-    la chiave del modello premium ('flash25', 'flash31', 'simba-3.2',
+    la chiave del modello premium ('flash31', 'simba-3.2',
     'voxcpm'), vuota per le voci standard. E' un identificatore interno: la
     pagina account lo traduce nella stessa etichetta che il selettore voci
     mostra all'utente. Non solleva: su voce ignota torna ('', '')."""
@@ -7274,7 +7290,6 @@ def admin_audit_premium_page():
         <label for="tts_auditModelFilter">Modello</label>
         <select id="tts_auditModelFilter">
           <option value="all">Tutti</option>
-          <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
           <option value="v2">VoxCPM2 (PREMIUM)</option>
@@ -13616,11 +13631,11 @@ def api_preview_audio(job_id):
         # Preflight RPD: se il modello non ha quota per anche solo 1 chunk,
         # falliamo immediatamente con 503 invece di lasciare la call al
         # synthesize() che andrebbe in errore dopo aver consumato tempo.
-        # Senza questo check, su flash25 con RPD esaurito l'utente vedeva
+        # Senza questo check, su flash31 con RPD esaurito l'utente vedeva
         # solo lo spinner per ~30s prima di un 504 generico.
         try:
             parts = voice.split(":")
-            _model_key_pf = parts[1] if len(parts) >= 3 else "flash25"
+            _model_key_pf = parts[1] if len(parts) >= 3 else "flash31"
             _pf = gemini_tts.preflight_can_run(_model_key_pf, 1)
             if not _pf.get("ok"):
                 return jsonify({
@@ -13655,7 +13670,7 @@ def api_preview_audio(job_id):
                 # max_attempts=1: il path preview ha timeout client 30s. Se
                 # Gemini restituisce EMPTY-RESPONSE con finish_reason=OTHER
                 # (modello fermato per ragioni non specificate, tipico su
-                # combo voce/rate/lingua poco stabili come flash25), i 3
+                # combo voce/rate/lingua poco stabili come flash31), i 3
                 # retry default + backoff saturano il timeout → 504 lato
                 # browser. Falliamo veloce: il caller (preview_audio)
                 # converte l'errore in 502 con messaggio utile e l'utente
@@ -13672,7 +13687,7 @@ def api_preview_audio(job_id):
                     _bd = gemini_tts.actual_cost_breakdown(
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
-                        result.get("model_key", "flash25"),
+                        result.get("model_key", "flash31"),
                         result.get("backend"),
                     )
                     _preview_cost_eur = float(_bd.get("total_eur", 0.0) or 0.0)
@@ -13680,7 +13695,7 @@ def api_preview_audio(job_id):
                     print(f"[preview] actual_cost_breakdown failed (non-fatal): {e}")
                 try:
                     gemini_tts.record_usage(
-                        result.get("model_key", "flash25"),
+                        result.get("model_key", "flash31"),
                         len(preview_text),
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
@@ -13708,7 +13723,7 @@ def api_preview_audio(job_id):
                         _norm_chars,
                         result.get("audio_seconds_real", 0.0),
                         _preview_lang,
-                        result.get("model_key", "flash25"),
+                        result.get("model_key", "flash31"),
                         rate_pct=rate,
                         voice=(voice or "").split(":")[-1],
                         job_id=job_id,
@@ -13755,18 +13770,15 @@ def api_preview_audio(job_id):
             finally:
                 loop.close()
 
-    # Wrapper timeout model-aware: flash31 (gemini-3.1-flash-tts-preview) e`
-    # strutturalmente piu` lento di flash25 (RPM cap 3/300 vs 10/750 + audio
-    # gen piu` lenta lato Google). Senza maggiorazione, il wrapper a 30s
-    # strozza prima del timeout HTTP Google (60s per flash31) e produce
-    # 504 spuri anche su preview legittime. flash25 resta a 30s.
+    # Wrapper timeout per modello dal catalogo (gemini_tts.preview_timeout_sec):
+    # deve superare il timeout HTTP del modello, altrimenti strozza anteprime
+    # che il provider sta completando (504 spuri). Il client aspetta +5 s.
     _wrapper_timeout = 30
     if use_gemini_preview:
         try:
             _mk = voice.split(":")[1] if _is_gemini_voice(voice) else ""
-            if _mk == "flash31":
-                _wrapper_timeout = int(os.environ.get(
-                    "ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31", "65"))
+            if _mk in gemini_tts.GEMINI_MODELS:
+                _wrapper_timeout = gemini_tts.preview_timeout_sec(_mk)
         except Exception:
             pass
     try:
@@ -13777,7 +13789,7 @@ def api_preview_audio(job_id):
     except Exception as e:
         # EMPTY-RESPONSE: Gemini ha risposto senza audio (finish_reason=OTHER
         # o simili). Tipicamente combo voce/rate/lingua poco stabile su un
-        # modello specifico (es. flash25). Restituiamo 502 con messaggio
+        # modello specifico (es. flash31). Restituiamo 502 con messaggio
         # actionable invece di 500 generico.
         if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiEmptyResponse", ())):
             _fr = getattr(e, "finish_reason", None) or "unknown"
@@ -14326,7 +14338,7 @@ def api_generate():
                                         strip_square=not read_square_brackets)
             _total_chunks_pf = len(_plan_for_pf)
             _parts_v_pf = (voice or "").split(":")
-            _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash25"
+            _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash31"
             _pf_sync = gemini_tts.preflight_can_run(_model_key_pf, _total_chunks_pf)
             # Log RPD status (richiesta utente) — sempre, anche se OK.
             _cap_v_pf = _pf_sync.get("cap", 0)
@@ -16888,7 +16900,7 @@ def api_combined_estimate():
                                     strip_square=not read_square_brackets)
             _total_chunks_cb = len(_plan_cb)
             _parts_cb = voice_id.split(":")
-            _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash25"
+            _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash31"
             _pf_cb = _gemini_tts_mod.preflight_can_run(_model_key_cb, _total_chunks_cb)
             if not _pf_cb.get("ok"):
                 overload_info = {

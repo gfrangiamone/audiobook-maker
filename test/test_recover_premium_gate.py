@@ -77,6 +77,12 @@ def _rec(tmp_path, voice, **extra):
 
 def _fake_gemini(monkeypatch, list_price=8.99, google_cost=3.0):
     class _G:
+        # Il gate "modello ritirato" (Task 2) legge GEMINI_MODELS dal modulo
+        # reale: un double completo deve esporlo, altrimenti PREMIUM
+        # ("gemini:flash31:...") verrebbe rigettato prima del cap/quota che
+        # questi test vogliono esercitare.
+        GEMINI_MODELS = {"flash31": {}}
+
         @staticmethod
         def estimate_book_cost(chs, voice, language="it", rate_pct="+0%"):
             return {"chars_total": sum(len(c.text) for c in chs),

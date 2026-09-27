@@ -123,11 +123,10 @@ def _fmt_date(epoch):
 
 
 # Chiave modello -> chiave i18n dell'etichetta mostrata. Le chiavi grezze
-# ('flash25', 'voxcpm', ...) non si mostrano mai: sono identificatori interni.
+# ('flash31', 'voxcpm', ...) non si mostrano mai: sono identificatori interni.
 # Le etichette sono le stesse del selettore voci della SPA (`_modelLabel`):
 # chi rilegge lo storico deve ritrovare il nome che ha scelto.
 _MODEL_LABEL_KEYS = {
-    "flash25": "model_flash25",
     "flash31": "model_flash31",
     "simba-3.2": "model_simba",
     "voxcpm": "model_voxcpm",

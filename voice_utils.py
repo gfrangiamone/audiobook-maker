@@ -46,8 +46,8 @@ def is_voxcpm_voice(voice):
     return bool(voice) and isinstance(voice, str) and voice.startswith(VOXCPM_VOICE_PREFIX)
 # === Interruttori per modello PREMIUM ======================================
 # Ogni modello premium ha una propria env `ABM_<MODELLO>_ENABLE`:
-#   flash25    -> ABM_FLASH25_ENABLE
 #   flash31    -> ABM_FLASH31_ENABLE
+#   flash38    -> ABM_FLASH38_ENABLE
 #   simba-3.2  -> ABM_SIMBA32_ENABLE
 # Default ABILITATO: serve un valore esplicitamente falso ("0", "false",
 # "no", "off") per togliere il modello dal catalogo voci e rifiutarlo sugli
@@ -59,7 +59,7 @@ _MODEL_DISABLE_VALUES = ("0", "false", "no", "off")
 
 
 def premium_model_env_name(model_key):
-    """Nome della env che governa il modello premium (es. 'ABM_FLASH25_ENABLE').
+    """Nome della env che governa il modello premium (es. 'ABM_FLASH31_ENABLE').
 
     Il model_key viene normalizzato togliendo ogni carattere non alfanumerico:
     'simba-3.2' -> 'SIMBA32'.
@@ -82,7 +82,7 @@ def premium_model_enabled(model_key):
 
 
 def voice_model_key(voice):
-    """model_key di una voce premium ('gemini:flash25:Zephyr' -> 'flash25').
+    """model_key di una voce premium ('gemini:flash31:Zephyr' -> 'flash31').
 
     Ritorna "" per voci non premium o con id malformato.
     """

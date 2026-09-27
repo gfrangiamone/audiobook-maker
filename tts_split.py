@@ -1279,7 +1279,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
     Args:
         text: testo da sintetizzare.
-        voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash25:Zephyr').
+        voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash31:Zephyr').
         output_path: percorso file PCM in output.
         max_retries: numero di tentativi (default 1; il backoff vero è in synthesize).
         style_instruction: optional style/tone hint prepended to the prompt.

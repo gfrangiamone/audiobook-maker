@@ -352,7 +352,7 @@ def _resolve_location(model_key):
     quando _resolve_backend() == "vertex" (per il backend apikey la region non
     si applica).
 
-    Override env per-modello: ABM_VERTEX_LOCATION_FLASH25 / _FLASH31.
+    Override env per-modello: ABM_VERTEX_LOCATION_FLASH31.
     Default: vedi GEMINI_MODELS[...]['location_vertex'].
     """
     if model_key not in GEMINI_MODELS:
