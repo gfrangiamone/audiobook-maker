@@ -311,16 +311,25 @@ def compute_user_price_eur(chars):
 
 
 def estimate_book_cost(chapters, language="it"):
-    """Stima end-to-end sui caratteri di input, capitolo per capitolo.
+    """Stima end-to-end sui caratteri letti, capitolo per capitolo.
+
+    Corpo del capitolo piu' il titolo che il piano gli antepone: il worker
+    legge (e fattura GPU su) entrambi, e un libro a centinaia di capitoli
+    corti perdeva qualche punto di prezzo sui soli titoli.
 
     Args:
-        chapters: lista di oggetti con attributo `.text`.
+        chapters: lista di oggetti con attributo `.text` (e `.title`).
         language: ISO 639-1 della voce scelta (informativo).
     """
+    from tts_split import spoken_title_prefix
+
     chars_per_chapter = []
     chars_total = 0
     for ch in chapters:
-        n = len(getattr(ch, "text", "") or "")
+        testo = getattr(ch, "text", "") or ""
+        n = len(testo)
+        if testo:
+            n += len(spoken_title_prefix(ch, testo))
         chars_per_chapter.append(n)
         chars_total += n
     price = compute_user_price_eur(chars_total)

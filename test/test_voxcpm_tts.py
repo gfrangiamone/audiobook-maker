@@ -111,6 +111,43 @@ def test_stima_libro_somma_i_capitoli(configurato):
     assert s["model_key"] == "v2"
 
 
+def test_stima_conta_i_titoli_che_il_piano_legge(configurato):
+    """Il titolo anteposto dal piano si paga: il worker lo legge davvero."""
+    import tts_split
+
+    class Cap:
+        def __init__(self, index, title, text, synthetic=False):
+            self.index = index
+            self.title = title
+            self.text = text
+            self.synthetic_title = synthetic
+    corpo = "Era una notte buia e tempestosa. " * 20
+    capitoli = [
+        Cap(0, "Il ritorno", corpo),                     # letto: +13
+        Cap(1, "Section 2", corpo, synthetic=True),      # sintetico: 0
+        Cap(2, "La partenza", "La partenza. " + corpo),  # gia' nel testo: 0
+        Cap(3, "Perché?", corpo),                        # niente punto: +9
+    ]
+    s = voxcpm_tts.estimate_book_cost(capitoli, language="it")
+    assert s["chars_per_chapter"] == [
+        len(corpo) + len("Il ritorno.\n\n"),
+        len(corpo),
+        len("La partenza. " + corpo),
+        len(corpo) + len("Perché?\n\n"),
+    ]
+
+    # Stessa regola del piano: i caratteri stimati sono quelli che il
+    # piano manda al motore (a meno degli spazi che la spezzatura toglie).
+    class Info:
+        chapters = capitoli
+    piano = tts_split._plan_chunks(Info(), max_chars=10_000)
+    letti = {}
+    for b in piano:
+        letti[b["chapter_index"]] = letti.get(b["chapter_index"], 0) + b["chars"]
+    for i, n in enumerate(s["chars_per_chapter"]):
+        assert abs(letti[i] - n) <= 3
+
+
 def test_jobs_in_flight_ha_un_floor(monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_JOBS", "0")
     assert voxcpm_tts.jobs_in_flight() == 1

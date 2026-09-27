@@ -768,6 +768,34 @@ def _sanitize_tts_text(text: str):
     return clean
 
 
+def spoken_title_prefix(ch, text):
+    """Il titolo che il TTS legge in testa al capitolo, separatore compreso.
+
+    "" quando il titolo non si legge. E' la sola fonte di questa regola: la
+    usa il piano e la usa la stima VoxCPM, cosi' il prezzo conta le stesse
+    parole che la voce pronuncera'. Il 27/09/2026 un libro da 402 capitoli
+    ha letto ~15 mila caratteri di titoli non fatturati.
+
+    `text` e' il corpo con cui confrontare il titolo: nel piano quello gia'
+    preparato per il TTS, nella stima quello grezzo (il confronto normalizza
+    diacritici e punteggiatura, la differenza non sposta il verdetto).
+    """
+    title = _normalize_shouting((getattr(ch, "title", "") or "").strip())
+    # Titolo sintetico (placeholder "Section N" generato dal parser per uno
+    # spine item senza titolo reale, es. front-matter): NON leggerlo, non e'
+    # un titolo del libro. Altrimenti dedup heading: se il titolo compare
+    # gia` in testa al testo (a meno di diacritici/punteggiatura/quote/
+    # prefissi numerici), evita di prependerlo per non farlo leggere due volte.
+    if (not title
+            or getattr(ch, "synthetic_title", False)
+            or _title_already_in_text(title, text)):
+        return ""
+    # Il punto serve a dare la pausa prima del corpo, ma solo se il
+    # titolo non ha gia` una punteggiatura sua («Perche'?» -> «Perche'?.»).
+    sep = "" if re.search(r'[.!?…:;]$', title) else "."
+    return f"{title}{sep}\n\n"
+
+
 def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                  strip_round=True, strip_square=True, pre_split=None,
                  sentence_slack=0.0):
@@ -790,21 +818,7 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                                       strip_square=strip_square)
         # Solo il testo letto dal TTS viene normalizzato: ch.title resta intatto
         # nel piano, e` il titolo che finisce nei metadati/capitoli del file.
-        title = _normalize_shouting((ch.title or "").strip())
-        # Titolo sintetico (placeholder "Section N" generato dal parser per uno
-        # spine item senza titolo reale, es. front-matter): NON leggerlo, non e'
-        # un titolo del libro. Altrimenti dedup heading: se il titolo compare
-        # gia` in testa al testo (a meno di diacritici/punteggiatura/quote/
-        # prefissi numerici), evita di prependerlo per non farlo leggere due volte.
-        if (not title
-                or getattr(ch, "synthetic_title", False)
-                or _title_already_in_text(title, clean_text)):
-            full_text = clean_text
-        else:
-            # Il punto serve a dare la pausa prima del corpo, ma solo se il
-            # titolo non ha gia` una punteggiatura sua («Perche'?» -> «Perche'?.»).
-            sep = "" if re.search(r'[.!?…:;]$', title) else "."
-            full_text = f"{title}{sep}\n\n{clean_text}"
+        full_text = spoken_title_prefix(ch, clean_text) + clean_text
         # Ultimo ritocco a testo ancora intero: dopo la spezzatura la fine del
         # chunk e` un confine finto e le regole di punteggiatura che guardano
         # il seguito sbaglierebbero verdetto (vedi _pick_pre_split).
