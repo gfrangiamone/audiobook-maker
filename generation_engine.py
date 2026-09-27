@@ -4818,6 +4818,8 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
             "google_cost_eur_est": float(est.get("google_cost_eur", 0) or 0),
             "google_cost_eur_actual": round(google_cost_actual, 4),
+            # Parte IVA gia' compresa in google_cost_eur_actual (netto = differenza).
+            "vat_eur_actual": round(float(actual.get("vat_eur", 0.0) or 0.0), 4),
             # Costo di listino sugli stessi token reali: base di
             # `user_price_eur_should_have_been`/`delta_eur`/`delta_pct` sopra.
             # Coincide con google_cost_eur_actual quando Cloudflare non e'
@@ -6395,6 +6397,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # divergono su Cloudflare per costruzione). Non e' contabilita':
             # per quella resta google_cost_eur.
             "pricing_cost_eur": 0.0,
+            # Quota IVA gia' compresa in google_cost_eur (0 su Cloudflare):
+            # solo audit admin, mai esposta all'utente.
+            "vat_eur": 0.0,
             "model_key": None,
         }
         # Riporto dal tentativo precedente: se il processo e' stato riavviato a
@@ -6777,6 +6782,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         )
                         chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
                         ga["google_cost_eur"] += chunk_google_cost_eur
+                        # Quota IVA del costo reale (0 su Cloudflare): solo
+                        # audit admin, mai esposta all'utente.
+                        ga["vat_eur"] = float(ga.get("vat_eur", 0.0) or 0.0) + float(
+                            bd.get("vat_eur", 0.0) or 0.0)
                     except Exception as e:
                         print(f"[{job_id}] actual_cost_breakdown failed (non-fatal): {e}")
                     # Stesso chunk, tariffa di LISTINO (D1, non oscilla col

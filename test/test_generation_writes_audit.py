@@ -1,4 +1,6 @@
 """Test that run_generation writes audit records at end (success/cancel/error)."""
+import pytest
+
 import generation_engine
 import gemini_cost_audit
 
@@ -34,6 +36,27 @@ def test_write_gemini_audit_success_appends_record(monkeypatch):
     assert abs(rec["delta_eur"] - (rec["user_price_eur_should_have_been"] - 1.50)) < 0.01
     # margin_eur_actual = charged - google_cost
     assert abs(rec["margin_eur_actual"] - (1.50 - 0.0012)) < 0.01
+
+
+def test_audit_gemini_riporta_iva(monkeypatch):
+    captured = []
+    monkeypatch.setattr(gemini_cost_audit, "append_record", lambda r: captured.append(r))
+    job = {
+        "gemini_actual": {
+            "input_tokens": 100, "output_tokens": 500, "chars": 50,
+            "audio_seconds": 12.5, "google_cost_eur": 0.0012, "model_key": "flash31",
+        },
+        "payment": {"total_eur": 1.50},
+    }
+    job["gemini_actual"]["vat_eur"] = 0.22
+    job["gemini_actual"]["google_cost_eur"] = 1.22
+    generation_engine._write_gemini_audit(
+        "job-abc", job, "gemini:flash31:Zephyr", "it", "completed"
+    )
+    assert len(captured) == 1
+    rec = captured[0]
+    assert rec["vat_eur_actual"] == pytest.approx(0.22)
+    assert rec["google_cost_eur_actual"] == pytest.approx(1.22)
 
 
 def test_write_gemini_audit_skips_non_gemini(monkeypatch):

@@ -7815,6 +7815,8 @@ def admin_audit_premium_page():
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
       const gCost = Number(r.google_cost_eur_actual || 0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(gCost - vat)} + IVA ${fmtEur(vat)}` : "";
       const margEur = revenue - gCost;
       const fee = Number(r._paypal_fee_eur || 0);
       const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur)
@@ -7843,7 +7845,7 @@ def admin_audit_premium_page():
         <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
-        <td>${fmtEur(gCost)}</td>
+        <td title="${esc(costTip)}">${fmtEur(gCost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td${cancelTip}>${fmtEur(revenue)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
@@ -8211,6 +8213,8 @@ def admin_audit_premium_page():
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
       const cost = Number(r.google_cost_eur_actual || 0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(cost - vat)} + IVA ${fmtEur(vat)}` : "";
       const margEur = revenue - cost;
       const fee = Number(r._paypal_fee_eur || 0);
       const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur) : (margEur - fee);
@@ -8239,7 +8243,7 @@ def admin_audit_premium_page():
         <td>${esc(langLabel(r.target_lang))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td${tokTip}>${(tokIn + tokOut).toLocaleString()}${tokStar}</td>
-        <td>${fmtEur(cost)}</td>
+        <td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td>${fmtEur(revenue)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
@@ -8307,6 +8311,8 @@ def admin_audit_premium_page():
       const ts = esc(fmtIso(r.ts));
       const revenue = (r._eff_revenue_eur!=null)?Number(r._eff_revenue_eur):Number(r.user_price_eur_charged||0);
       const cost = Number(r.google_cost_eur_actual||0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(cost - vat)} + IVA ${fmtEur(vat)}` : "";
       const marg = revenue - cost;
       const fee = Number(r._paypal_fee_eur||0);
       const net = (r._net_margin_eur!=null)?Number(r._net_margin_eur):(marg-fee);
@@ -8326,7 +8332,7 @@ def admin_audit_premium_page():
         <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total)||0).toLocaleString()}</td>
         <td${tokTip}>${tok.toLocaleString()}</td>
-        <td>${fmtEur(revenue)}</td><td>${fmtEur(cost)}</td>
+        <td>${fmtEur(revenue)}</td><td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td class="${dCls}">${fmtEur(marg)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
         <td class="${dCls}">${pct.toFixed(2)}%</td>
@@ -8677,6 +8683,7 @@ def _synth_running_gemini_audit_records():
                 chars_total = int(ga.get("chars", 0) or 0)
                 audio_seconds = float(ga.get("audio_seconds", 0) or 0)
                 pricing_cost_field = pricing_cost_actual
+                vat_actual = float(ga.get("vat_eur", 0) or 0)
             elif is_vox:
                 # Mirror di _write_voxcpm_audit: costo = tempo di GPU stimato
                 # dai caratteri col tariffario VoxCPM, mai quello di Speechify
@@ -8699,6 +8706,7 @@ def _synth_running_gemini_audit_records():
                 chars_total = chars_metered
                 audio_seconds = float(va.get("audio_seconds", 0) or 0)
                 pricing_cost_field = provider_cost_actual
+                vat_actual = 0.0
             else:  # Speechify / Simba
                 sa = job.get("speechify_actual") or {}
                 metered = int(sa.get("billable_chars", 0) or 0) or int(sa.get("chars", 0) or 0)
@@ -8715,6 +8723,7 @@ def _synth_running_gemini_audit_records():
                 # Speechify non ha una separazione listino/costo reale (un
                 # solo backend): coincide col costo, come nel record persistito.
                 pricing_cost_field = provider_cost_actual
+                vat_actual = 0.0
             delta_eur = round(should_have_been - charged, 4)
             _llm_quota = (job.get("payment") or {}).get("llm_eur")
             combined_total = (round(charged + float(_llm_quota or 0), 4)
@@ -8728,6 +8737,7 @@ def _synth_running_gemini_audit_records():
                 "chars_total": chars_total,
                 "audio_seconds_actual": round(audio_seconds, 2),
                 "google_cost_eur_actual": round(provider_cost_actual, 4),
+                "vat_eur_actual": round(vat_actual, 4),
                 "pricing_cost_eur_actual": round(pricing_cost_field, 4),
                 "user_price_eur_charged": round(charged, 4),
                 "user_price_eur_should_have_been": round(should_have_been, 2),
