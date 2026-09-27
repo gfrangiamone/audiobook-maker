@@ -21,7 +21,7 @@ import payment
 import voxcpm_tts
 from epub_to_tts import BookInfo, Chapter
 
-GEMINI_VOICE = "gemini:flash25:Zephyr"
+GEMINI_VOICE = "gemini:flash31:Zephyr"
 VOXCPM_VOICE = "voxcpm:v2:it-IT/Stefano"
 
 # NB: accesso a app/jobs/_jobs_lock SEMPRE via attributo a runtime, mai

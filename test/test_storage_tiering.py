@@ -26,8 +26,8 @@ def test_key_for_path_outside_datadir_returns_none(monkeypatch, tmp_path):
 def test_hot_window_standard_vs_gemini(monkeypatch, tmp_path):
     st = _reload(monkeypatch, tmp_path)
     assert st.hot_window_sec({"voice": "it-IT-IsabellaNeural"}) == 7200
-    assert st.hot_window_sec({"voice": "gemini:flash25:Zephyr"}) == 14400
-    assert st.hot_window_sec({"opt_voice": "gemini:flash25:Zephyr"}) == 14400
+    assert st.hot_window_sec({"voice": "gemini:flash31:Zephyr"}) == 14400
+    assert st.hot_window_sec({"opt_voice": "gemini:flash31:Zephyr"}) == 14400
 
 
 def test_marker_write_and_read(monkeypatch, tmp_path):
@@ -63,4 +63,4 @@ def test_hot_window_defaults_match_today(monkeypatch, tmp_path):
     import storage_tiering
     importlib.reload(storage_tiering)
     assert storage_tiering.hot_window_sec({"voice": "it-IT-IsabellaNeural"}) == 64800
-    assert storage_tiering.hot_window_sec({"voice": "gemini:flash25:Zephyr"}) == 172800
+    assert storage_tiering.hot_window_sec({"voice": "gemini:flash31:Zephyr"}) == 172800

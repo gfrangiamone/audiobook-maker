@@ -28,7 +28,7 @@ from epub_to_tts import BookInfo, Chapter
 # legato al dict jobs pre-reload).
 
 CID = "cid_quota_optimize_test"
-GEMINI_VOICE = "gemini:flash25:Zephyr"
+GEMINI_VOICE = "gemini:flash31:Zephyr"
 SPEECHIFY_VOICE = "speechify:simba-3.2:harper_32"
 
 

@@ -21,7 +21,7 @@ import gemini_tts
 import payment
 from epub_to_tts import BookInfo, Chapter
 
-GEMINI_VOICE = "gemini:flash25:Zephyr"
+GEMINI_VOICE = "gemini:flash31:Zephyr"
 
 # NB: accesso a app/jobs/_jobs_lock SEMPRE via attributo a runtime, mai
 # from-import: i test test_cold_*.py fanno importlib.reload(audiobook_app).

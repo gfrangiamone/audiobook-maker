@@ -39,7 +39,7 @@ def test_audio_tokens_per_second_default_e_25_per_entrambi_i_modelli(monkeypatch
     monkeypatch.delenv("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND", raising=False)
     monkeypatch.delenv("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31", raising=False)
     monkeypatch.delenv("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25", raising=False)
-    assert gemini_tts._audio_tokens_per_second("flash25") == 25.0
+    assert gemini_tts._audio_tokens_per_second("flash31") == 25.0
     assert gemini_tts._audio_tokens_per_second("flash31") == 25.0
 
 
@@ -103,7 +103,7 @@ def test_voci_diverse_hanno_rate_diversi(rate_log):
 
 
 def test_modello_non_partiziona_i_campioni(rate_log):
-    _feed(300, 420, 30.0, model="flash25", voice="Algenib", job="a")
+    _feed(300, 420, 30.0, model="flash31", voice="Algenib", job="a")
     # nessun campione flash31, ma il rate deve esserci lo stesso: il modello
     # non entra nella chiave
     assert gemini_tts.get_empirical_rate("en", "flash31", voice="Algenib") == pytest.approx(14.0, rel=0.02)

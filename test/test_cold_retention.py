@@ -18,7 +18,7 @@ def test_retention_same_when_s3_off(monkeypatch, tmp_path):
     import storage_backend
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     assert aa._retention_for_job({"voice": "it-IT-IsabellaNeural"}) == aa.EMAIL_FILE_RETENTION_SEC
-    assert aa._retention_for_job({"voice": "gemini:flash25:Zephyr"}) == aa.GEMINI_FILE_RETENTION_SEC
+    assert aa._retention_for_job({"voice": "gemini:flash31:Zephyr"}) == aa.GEMINI_FILE_RETENTION_SEC
     assert aa._retention_for_token_info({"is_gemini": True}) == aa.GEMINI_FILE_RETENTION_SEC
 
 
@@ -28,7 +28,7 @@ def test_retention_unchanged_when_s3_on(monkeypatch, tmp_path):
     import storage_backend
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     assert aa._retention_for_job({"voice": "it-IT-IsabellaNeural"}) == aa.EMAIL_FILE_RETENTION_SEC
-    assert aa._retention_for_job({"voice": "gemini:flash25:Zephyr"}) == aa.GEMINI_FILE_RETENTION_SEC
+    assert aa._retention_for_job({"voice": "gemini:flash31:Zephyr"}) == aa.GEMINI_FILE_RETENTION_SEC
     assert aa._retention_for_token_info({"is_gemini": True}) == aa.GEMINI_FILE_RETENTION_SEC
     assert aa._retention_for_token_info({"is_gemini": False}) == aa.EMAIL_FILE_RETENTION_SEC
 
@@ -41,11 +41,11 @@ def test_premium_never_downloaded_doubles(monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     M = aa.GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER
     # PREMIUM mai scaricato -> ×2
-    assert aa._effective_retention_for_job({"voice": "gemini:flash25:Zephyr"}) == aa.GEMINI_FILE_RETENTION_SEC * M
+    assert aa._effective_retention_for_job({"voice": "gemini:flash31:Zephyr"}) == aa.GEMINI_FILE_RETENTION_SEC * M
     assert aa._effective_retention_for_token_info({"is_gemini": True}) == aa.GEMINI_FILE_RETENTION_SEC * M
     # PREMIUM gia' scaricato -> base
     assert aa._effective_retention_for_job(
-        {"voice": "gemini:flash25:Zephyr", "downloaded_at": 1.0}) == aa.GEMINI_FILE_RETENTION_SEC
+        {"voice": "gemini:flash31:Zephyr", "downloaded_at": 1.0}) == aa.GEMINI_FILE_RETENTION_SEC
     assert aa._effective_retention_for_token_info(
         {"is_gemini": True, "downloaded_at": 1.0}) == aa.GEMINI_FILE_RETENTION_SEC
     # Standard -> base, scaricato o no
@@ -59,6 +59,6 @@ def test_engine_email_retention_independent_of_s3(monkeypatch, tmp_path):
     base_gem = generation_engine._gemini_retention_sec
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     assert generation_engine._retention_for_job({"voice": "it-IT-IsabellaNeural"}) == base_std
-    assert generation_engine._retention_for_job({"voice": "gemini:flash25:Zephyr"}) == base_gem
+    assert generation_engine._retention_for_job({"voice": "gemini:flash31:Zephyr"}) == base_gem
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     assert generation_engine._retention_for_job({"voice": "it-IT-IsabellaNeural"}) == base_std

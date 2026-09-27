@@ -73,7 +73,7 @@ def _ok_synth(recorder):
         with open(output_path, "wb") as f:
             f.write(bytes(100))
         return {"success": True, "bytes_written": 100, "audio_seconds_real": 1.0,
-                "input_tokens": 5, "output_tokens": 25, "model_key": "flash25",
+                "input_tokens": 5, "output_tokens": 25, "model_key": "flash31",
                 "voice_name": "Kore", "attempts_used": 1}
     return _synth
 
@@ -93,7 +93,7 @@ def test_every_chunk_reaches_the_api(text, tmp_path, monkeypatch):
     monkeypatch.setattr("gemini_tts.synthesize", _ok_synth(called))
 
     res = tts_split.generate_chunk_pcm_gemini(
-        text, "gemini:flash25:Kore", str(tmp_path / "chunk.pcm"))
+        text, "gemini:flash31:Kore", str(tmp_path / "chunk.pcm"))
 
     assert called == [text]
     assert res["success"] is True
@@ -114,7 +114,7 @@ def test_a_rejected_fragment_is_narrated_by_the_edge_fallback(tmp_path, monkeypa
         with open(output_path, "wb") as f:
             f.write(bytes(100))
         return {"success": True, "bytes_written": 100, "audio_seconds_real": 1.0,
-                "input_tokens": 0, "output_tokens": 0, "model_key": "flash25",
+                "input_tokens": 0, "output_tokens": 0, "model_key": "flash31",
                 "voice_name": "edge", "attempts_used": 1,
                 "fallback_engine": "edge"}
 
@@ -123,7 +123,7 @@ def test_a_rejected_fragment_is_narrated_by_the_edge_fallback(tmp_path, monkeypa
     info = {}
 
     res = tts_split.generate_chunk_pcm_gemini(
-        "XIV.", "gemini:flash25:Kore", str(tmp_path / "chunk.pcm"),
+        "XIV.", "gemini:flash31:Kore", str(tmp_path / "chunk.pcm"),
         max_retries=1, failure_info=info, fallback_lang="it")
 
     assert recovered == ["XIV."], "il frammento va narrato, non silenziato"

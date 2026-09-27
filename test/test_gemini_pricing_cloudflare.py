@@ -23,12 +23,6 @@ def test_flash31_carries_the_cloudflare_rates():
     assert m["cf_output_usd_per_mtok"] == pytest.approx(12.00)
 
 
-def test_flash25_has_no_cloudflare_rates():
-    m = gemini_tts.GEMINI_MODELS["flash25"]
-    assert m["cf_input_usd_per_mtok"] is None
-    assert m["cf_output_usd_per_mtok"] is None
-
-
 def test_saving_share_defaults_to_half(monkeypatch):
     monkeypatch.delenv("ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT", raising=False)
     assert gemini_tts.cf_saving_share() == pytest.approx(0.5)
@@ -79,12 +73,6 @@ def test_without_cloudflare_configured_pricing_is_pure_google(monkeypatch):
     assert (inp, out) == pytest.approx((1.00, 20.00))
 
 
-def test_a_model_not_on_cloudflare_is_priced_on_google(monkeypatch):
-    _cf_configured(monkeypatch)
-    inp, out = gemini_tts.pricing_rates("flash25")
-    assert (inp, out) == pytest.approx((0.50, 10.00))
-
-
 def test_actual_rates_follow_the_executing_backend(monkeypatch):
     monkeypatch.setenv("ABM_CF_CREDIT_TOPUP_FEE", "0.05")
     assert gemini_tts.actual_rates("flash31", "cloudflare") == \
@@ -95,6 +83,3 @@ def test_actual_rates_follow_the_executing_backend(monkeypatch):
         pytest.approx((1.00, 20.00))
 
 
-def test_actual_rates_on_a_model_without_cloudflare_fall_back_to_google():
-    assert gemini_tts.actual_rates("flash25", "cloudflare") == \
-        pytest.approx((0.50, 10.00))

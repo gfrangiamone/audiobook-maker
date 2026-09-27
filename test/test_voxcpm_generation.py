@@ -43,7 +43,7 @@ def test_il_motore_si_riconosce_dal_prefisso():
     assert generation_engine._engine_for_voice(VOCE) == "voxcpm"
     assert generation_engine._engine_for_voice("voxcpm:mine:abc") == "voxcpm"
     # Gli altri tre non si spostano.
-    assert generation_engine._engine_for_voice("gemini:flash25:Zephyr") == "gemini"
+    assert generation_engine._engine_for_voice("gemini:flash31:Zephyr") == "gemini"
     assert generation_engine._engine_for_voice("speechify:simba-3.2:harper_32") == "speechify"
     assert generation_engine._engine_for_voice("it-IT-IsabellaNeural") == "edge"
     assert generation_engine._engine_for_voice("") == "edge"

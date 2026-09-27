@@ -48,7 +48,7 @@ def test_panel3_premium_tab_has_model_selector():
     assert "of esito.premium.models" in corpo, "le option non vengono dalla cascata"
     assert "_modelLabel" in corpo, "le option non passano dalle etichette i18n"
     modelli = _estrai_funzione(CASCATA, "modelliPer")
-    assert "flash25" in modelli
+    assert "flash31" in modelli
     assert "flash31" in modelli
 
 def test_panel3_premium_tab_has_style_textarea():

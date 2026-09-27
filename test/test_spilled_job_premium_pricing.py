@@ -26,7 +26,7 @@ import payment
 from epub_to_tts import BookInfo, Chapter
 
 CID = "cid_spill_pricing_test"
-GEMINI_VOICE = "gemini:flash25:Zephyr"
+GEMINI_VOICE = "gemini:flash31:Zephyr"
 # ~50k char: listino ben sopra la soglia gratuita (0.50 €) e sopra la quota
 # mensile di test, quindi il job DEVE richiedere pagamento in ogni caso.
 BOOK_CHARS = 50000

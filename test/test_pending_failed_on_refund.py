@@ -88,7 +88,7 @@ def test_quota_failure_marks_pending_failed(setup_engine, mark_failed_calls,
 
     generation_engine.run_generation(
         job_id, _Info(),
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",
@@ -119,7 +119,7 @@ def test_unavailable_aborts_job_no_mass_silence(setup_engine, mark_failed_calls,
 
     generation_engine.run_generation(
         job_id, _Info(),
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",
@@ -152,7 +152,7 @@ def test_generate_chunk_pcm_reraises_unavailable(monkeypatch, tmp_path):
     with pytest.raises(gemini_tts.GeminiUnavailable):
         tts_split.generate_chunk_pcm_gemini(
             "Frase di prova sufficientemente lunga per la sintesi.",
-            "gemini:flash25:Zephyr", str(out))
+            "gemini:flash31:Zephyr", str(out))
 
 
 @pytest.mark.skipif(ffmpeg_missing, reason="ffmpeg not in PATH")
@@ -180,7 +180,7 @@ def test_quality_failure_marks_pending_failed(setup_engine, mark_failed_calls,
 
     generation_engine.run_generation(
         job_id, _Info(),
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",

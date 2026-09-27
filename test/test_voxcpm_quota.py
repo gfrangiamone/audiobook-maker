@@ -25,7 +25,7 @@ def test_soglia_voxcpm_e_la_sua(quota_pulita, monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.80")
     monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
     assert free_quota._premium_threshold_eur(VOCE) == 0.80
-    assert free_quota._premium_threshold_eur("gemini:flash25:Zephyr") == 0.50
+    assert free_quota._premium_threshold_eur("gemini:flash31:Zephyr") == 0.50
 
 
 def test_floor_voxcpm_e_il_suo(quota_pulita, monkeypatch):
@@ -33,7 +33,7 @@ def test_floor_voxcpm_e_il_suo(quota_pulita, monkeypatch):
     monkeypatch.setenv("ABM_PREMIUM_MIN_COST_EUR", "0.50")
     assert free_quota._premium_floor_eur(VOCE) == 1.20
     # Gli altri due motori restano sulla costante di prima: nulla cambia.
-    assert free_quota._premium_floor_eur("gemini:flash25:Zephyr") == 0.50
+    assert free_quota._premium_floor_eur("gemini:flash31:Zephyr") == 0.50
     assert free_quota._premium_floor_eur("speechify:simba-3.2:harper_32") == 0.50
 
 
@@ -85,7 +85,7 @@ def test_cap_libro_voxcpm_default_100k(quota_pulita, monkeypatch):
     monkeypatch.delenv("ABM_VOXCPM_FREE_MAX_CHARS", raising=False)
     assert free_quota._premium_free_max_chars(VOCE) == 100000
     # Gli altri motori non hanno cap: 0.
-    assert free_quota._premium_free_max_chars("gemini:flash25:Zephyr") == 0
+    assert free_quota._premium_free_max_chars("gemini:flash31:Zephyr") == 0
     assert free_quota._premium_free_max_chars("speechify:simba-3.2:harper_32") == 0
 
 
@@ -106,7 +106,7 @@ def test_libro_sotto_cap_resta_gratis(quota_pulita):
 
 
 def test_cap_non_tocca_gemini(quota_pulita):
-    d = free_quota.decision(quota_pulita, "gemini:flash25:Zephyr", 0.10, "j", book_chars=900_000)
+    d = free_quota.decision(quota_pulita, "gemini:flash31:Zephyr", 0.10, "j", book_chars=900_000)
     assert d["is_free"] is True
 
 

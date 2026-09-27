@@ -161,7 +161,7 @@ def test_voxcpm_e_il_primo_modello_proposto():
     # un secondo popolatore in app.js, con un default DIVERSO: cancellato.
     corpo = _estrai_funzione(CASCATA, "modelliPer")
     i_vox = corpo.find("'voxcpm'")
-    i_gem = corpo.find("'flash25'")
+    i_gem = corpo.find("'flash31'")
     assert i_vox != -1 and i_gem != -1 and i_vox < i_gem, \
         "VOXCPM2 non e' piu' il primo modello della lista"
     scelta = _estrai_funzione(CASCATA, "resolveAudioSelection")

@@ -110,7 +110,7 @@ def test_campione_di_una_voce_inesistente(client):
 
 
 def test_campione_con_id_malformato(client):
-    for cattivo in ("", "gemini:flash25:Zephyr", "voxcpm:v2"):
+    for cattivo in ("", "gemini:flash31:Zephyr", "voxcpm:v2"):
         r = client.get(f"/api/voice_sample?voice={cattivo}")
         assert r.status_code == 400
 
@@ -152,7 +152,7 @@ def test_clip_di_voce_senza_demo_404(client):
 
 
 def test_clip_con_voce_malformata_400(client):
-    for cattivo in ("", "gemini:flash25:Zephyr", "voxcpm:v2"):
+    for cattivo in ("", "gemini:flash31:Zephyr", "voxcpm:v2"):
         r = client.get(f"/api/voice_demo?voice={cattivo}&clip=opening")
         assert r.status_code == 400, cattivo
 

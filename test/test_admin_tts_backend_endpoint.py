@@ -167,7 +167,7 @@ def test_reset_invalidates_the_cache_of_every_known_model_not_only_the_target(cl
 # `reset()` MATERIALIZZA la voce di stato su disco e il vecchio endpoint
 # chiamava poi `_set_backend(model_key, "cloudflare")` senza validare nulla.
 # Le conseguenze, entrambe verificate in esecuzione prima del fix:
-#  - un reset su un modello che Cloudflare non ospita (flash25,
+#  - un reset su un modello che Cloudflare non ospita (flash31,
 #    id_cloudflare=None) lo inchiodava su Cloudflare: da li' in poi ogni job
 #    PREMIUM su quel modello finiva in TransportError(fatal) ->
 #    GeminiUnavailable -> errore + rimborso integrale, fino al riavvio;
@@ -213,26 +213,14 @@ def test_reset_is_refused_when_the_environment_does_not_select_cloudflare(
 
 def test_a_refused_reset_does_not_pin_any_model_on_cloudflare(client, monkeypatch):
     # Il difetto vero: con configurazione "auto" il vecchio endpoint fissava
-    # su Cloudflare il model_key passato, flash25 compreso — che su
+    # su Cloudflare il model_key passato, flash31 compreso — che su
     # Cloudflare non esiste (id_cloudflare=None).
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
     r = client.post("/admin/api/tts_backend", headers=AUTH,
-                    json={"action": "reset", "model_key": "flash25"})
+                    json={"action": "reset", "model_key": "flash31"})
     assert r.status_code == 409
-    assert gemini_tts._BACKEND.get("flash25") != "cloudflare"
-    assert gemini_tts._resolve_backend("flash25") != "cloudflare"
-
-
-def test_reset_never_pins_a_model_cloudflare_does_not_host(client):
-    # Anche con l'ambiente su "cloudflare" (reset legittimo), il rientro non
-    # deve mai forzare su Cloudflare un modello privo di id_cloudflare: dopo
-    # il pop, _resolve_backend lo rimanda su Vertex da solo.
-    assert gemini_tts.GEMINI_MODELS["flash25"].get("id_cloudflare") is None
-    r = client.post("/admin/api/tts_backend", headers=AUTH,
-                    json={"action": "reset", "model_key": "flash25"})
-    assert r.status_code == 200
-    assert gemini_tts._BACKEND.get("flash25") != "cloudflare"
-    assert gemini_tts._resolve_backend("flash25") != "cloudflare"
+    assert gemini_tts._BACKEND.get("flash31") != "cloudflare"
+    assert gemini_tts._resolve_backend("flash31") != "cloudflare"
 
 
 def test_a_clean_install_does_not_report_a_self_contradictory_state(

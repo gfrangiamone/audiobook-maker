@@ -97,13 +97,13 @@ def test_engine_edge_non_copre_le_voci_a_pagamento():
         "_premium_status": {"capability_ok": True, "admin_disabled": False},
         "it": {"name": "Italian", "voices": [
             {"id": "it-IT-IsabellaNeural", "engine": "edge"},
-            {"id": "gemini:flash25:Achernar", "engine": "edge"},
+            {"id": "gemini:flash31:Achernar", "engine": "edge"},
             {"id": "voxcpm:v2:it-IT/Bianca", "engine": "edge"},
             {"id": "speechify:simba-3.2:beatrice_32", "engine": "edge"},
         ]},
     }
     assert sorted(_travestite_da_gratuite(travestito)) == [
-        "gemini:flash25:Achernar",
+        "gemini:flash31:Achernar",
         "speechify:simba-3.2:beatrice_32",
         "voxcpm:v2:it-IT/Bianca",
     ], "il controllo non riconosce tutte e tre le famiglie a pagamento"
@@ -112,7 +112,7 @@ def test_engine_edge_non_copre_le_voci_a_pagamento():
         "_premium_status": {"capability_ok": True, "admin_disabled": False},
         "it": {"name": "Italian", "voices": [
             {"id": "it-IT-IsabellaNeural", "engine": "edge"},
-            {"id": "gemini:flash25:Achernar", "engine": "gemini"},
+            {"id": "gemini:flash31:Achernar", "engine": "gemini"},
             {"id": "voxcpm:v2:it-IT/Bianca", "engine": "voxcpm"},
             {"id": "speechify:simba-3.2:beatrice_32", "engine": "speechify"},
         ]},
@@ -176,7 +176,7 @@ def test_il_cancello_del_pagamento_non_guarda_il_catalogo():
     """
     import voice_utils
 
-    assert voice_utils.is_gemini_voice("gemini:flash25:Achernar")
+    assert voice_utils.is_gemini_voice("gemini:flash31:Achernar")
     assert voice_utils.is_speechify_voice("speechify:simba-3.2:beatrice_32")
     assert voice_utils.is_voxcpm_voice("voxcpm:v2:it-IT/Bianca")
     assert not voice_utils.is_gemini_voice("it-IT-IsabellaNeural")

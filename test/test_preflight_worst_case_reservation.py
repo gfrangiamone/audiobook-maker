@@ -5,7 +5,7 @@ reale no). Se il modello e' configurato su Cloudflare e il circuit breaker
 devia a meta' job su Vertex, il costo reale puo' superare il listino misto:
 una riserva sul listino sforerebbe il cap interno in silenzio.
 
-flash31 e' l'unico modello con `id_cloudflare` configurato (flash25 resta
+flash31 e' l'unico modello con `id_cloudflare` configurato (flash31 resta
 sempre su Vertex): serve a far divergere listino e caso-peggiore.
 """
 import time

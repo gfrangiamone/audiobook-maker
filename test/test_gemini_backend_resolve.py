@@ -23,12 +23,6 @@ def test_flash31_has_a_cloudflare_id():
         "google/gemini-3.1-flash-tts"
 
 
-def test_flash25_has_no_cloudflare_id_until_verified():
-    # Nessuna verifica che Cloudflare ospiti flash25: finche' non c'e',
-    # il modello resta su Vertex.
-    assert gemini_tts.GEMINI_MODELS["flash25"]["id_cloudflare"] is None
-
-
 def test_auto_never_selects_cloudflare(monkeypatch, tmp_path):
     _vertex_env(monkeypatch, tmp_path)
     monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
@@ -49,15 +43,6 @@ def test_cloudflare_without_credentials_is_disabled(monkeypatch):
     monkeypatch.delenv("ABM_CF_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("ABM_CF_API_TOKEN", raising=False)
     assert gemini_tts._resolve_backend("flash31") is None
-
-
-def test_a_model_without_cloudflare_id_falls_back_to_vertex(monkeypatch, tmp_path):
-    _vertex_env(monkeypatch, tmp_path)
-    monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
-    monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
-    monkeypatch.setenv("ABM_CF_API_TOKEN", "tok")
-    # flash25 non e' su Cloudflare: non deve finirci per errore.
-    assert gemini_tts._resolve_backend("flash25") == "vertex"
 
 
 def test_resolution_is_cached_per_model(monkeypatch, tmp_path):

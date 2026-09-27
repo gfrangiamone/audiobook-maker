@@ -48,7 +48,7 @@ def mock_gemini_synth(monkeypatch):
             "audio_seconds": 0.5,
             "input_tokens": max(1, len(text) // 4),
             "output_tokens": 12,
-            "model_key": "flash25",
+            "model_key": "flash31",
         }
 
     monkeypatch.setattr("gemini_tts.synthesize", fake_synth)
@@ -86,7 +86,7 @@ def test_pipeline_gemini_m4b(setup_engine, mock_gemini_synth):
     info = _Info()
     generation_engine.run_generation(
         job_id, info,
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",
@@ -108,7 +108,7 @@ def test_pipeline_gemini_mp3(setup_engine, mock_gemini_synth):
     info = _Info()
     generation_engine.run_generation(
         job_id, info,
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="mp3",
@@ -130,7 +130,7 @@ def test_pipeline_gemini_zip(setup_engine, mock_gemini_synth):
     info = _Info()
     generation_engine.run_generation(
         job_id, info,
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=False,
         output_format="zip",
@@ -153,7 +153,7 @@ def test_pipeline_gemini_zip_rss(setup_engine, mock_gemini_synth):
     info = _Info()
     generation_engine.run_generation(
         job_id, info,
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=False,
         output_format="zip_rss",
@@ -232,7 +232,7 @@ def test_m4b_progress_estimate_uses_pcm_bytes(setup_engine, mock_gemini_synth, m
 
     generation_engine.run_generation(
         job_id, _Info(),
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",

@@ -27,7 +27,7 @@ def test_spend_accumulates():
 def test_spend_is_global_not_per_model():
     # Il credito AI Gateway e' uno solo: la spesa di ogni modello lo intacca.
     st.add_spend("flash31", 10.0)
-    st.add_spend("flash25", 10.0)
+    st.add_spend("other", 10.0)
     assert st.credit_left_usd() == pytest.approx(30.0)
 
 
@@ -351,16 +351,16 @@ def test_old_format_model_literally_named_models_survives_migration(tmp_path):
     # sola lettura): un trip su un terzo modello forza _save() a riscrivere
     # il file nel formato nuovo, e i due modelli originali devono restare
     # intatti sia in memoria sia sul file appena riscritto.
-    assert st.trip("flash25", reason="r3", detail="d3", job_id="j3") is True
+    assert st.trip("other", reason="r3", detail="d3", job_id="j3") is True
     on_disk = _read_raw(tmp_path)
     assert on_disk["version"] == 2
-    assert set(on_disk["models"].keys()) == {"flash31", "models", "flash25"}
+    assert set(on_disk["models"].keys()) == {"flash31", "models", "other"}
     assert "_credit" not in on_disk["models"]
 
     st.init(str(tmp_path))  # riavvio simulato, ora leggendo il formato nuovo
     assert st.is_tripped("flash31") is True
     assert st.is_tripped("models") is True
-    assert st.is_tripped("flash25") is True
+    assert st.is_tripped("other") is True
 
 
 def test_old_format_model_literally_named_version(tmp_path, capsys):

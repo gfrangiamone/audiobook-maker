@@ -11,6 +11,7 @@ Integration with tts_split / generation_engine / audiobook_app is Plan B.
 import os
 import re
 import json
+import math
 import time
 import threading
 from datetime import datetime, timezone
@@ -37,8 +38,8 @@ import tts_backend_state as _backend_state
 #   2. ancora per il clamp di `get_empirical_rate` (vedi RATE_CLAMP_*).
 # La velocita` di lettura dipende molto dalla lingua (zh ~4 char/sec contro
 # ~14 delle lingue latine): un unico numero globale sbagliava di 3.5x sul
-# cinese. Il modello (flash25/flash31) invece e` irrilevante: sui 256 job
-# spiega lo 0.4% della varianza del rate, quindi non entra in nessuna chiave.
+# cinese. Il modello invece e` irrilevante: sui 256 job spiega lo 0.4% della
+# varianza del rate, quindi non entra in nessuna chiave.
 LANG_BASELINE_RATE = {
     "it": 14.6,   # n=54
     "de": 14.4,   # n=75
@@ -71,8 +72,8 @@ def _audio_tokens_per_second(model_key=None):
     """Token audio output per secondo, per modello.
 
     Cerca ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>; fallback a
-    ABM_GEMINI_AUDIO_TOKENS_PER_SECOND; default hardcoded per modello.
-    Default flash25=25 (conservativo, da verificare), flash31=29 (calibrato).
+    ABM_GEMINI_AUDIO_TOKENS_PER_SECOND; default per modello dal campo
+    audio_tokens_per_second del catalogo.
     """
     if model_key and model_key in GEMINI_MODELS:
         suffix = model_key.upper().replace("-", "")
@@ -89,13 +90,13 @@ def _audio_tokens_per_second(model_key=None):
         except (ValueError, TypeError):
             pass
     # Misurati sull'audit reale (giu-ago 2026, 256 job): output_tokens_actual /
-    # audio_seconds_actual vale esattamente 25.0 per entrambi i modelli
-    # (flash25: 92 job, cv 0.0%; flash31: 122 job su 168 esattamente a 25.0,
-    # gli altri sopra solo per token bruciati dai chunk ritentati).
-    # Il vecchio default flash31=29 sovrastimava il costo Google del 16%: e`
-    # la causa principale del margine realizzato al 37% contro il 15% a target.
-    defaults = {"flash25": 25.0, "flash31": 25.0}
-    return defaults.get(model_key, 25.0) if model_key else 25.0
+    # audio_seconds_actual vale esattamente 25.0 per flash31 (122 job su 168
+    # esattamente a 25.0, gli altri sopra solo per token bruciati dai chunk
+    # ritentati). Il vecchio default flash31=29 sovrastimava il costo Google
+    # del 16%: e` la causa principale del margine realizzato al 37% contro
+    # il 15% a target.
+    m = GEMINI_MODELS.get(model_key) if model_key else None
+    return float(m["audio_tokens_per_second"]) if m else 25.0
 AUDIO_SAMPLE_RATE = 24000
 AUDIO_CHANNELS = 1
 AUDIO_SAMPLE_WIDTH_BYTES = 2
@@ -140,29 +141,24 @@ def _f(env, default):
         return float(default)
 
 
-# Default region Vertex per modello (override via env in _resolve_location).
-# flash25 GA disponibile su global con latenza inferiore.
+def _model_env_suffix(model_key):
+    return "".join(c for c in str(model_key or "") if c.isalnum()).upper()
+
+
+# Default region Vertex (override via env in _resolve_location).
 # flash31 preview solo su us-central1.
-_DEFAULT_VERTEX_LOCATION_FLASH25 = "global"
 _DEFAULT_VERTEX_LOCATION_FLASH31 = "us-central1"
 
+# Ogni ramo "per modello" legge da qui: aggiungere un modello significa
+# aggiungere una voce, non cercare gli `if model_key == ...` sparsi.
+#   env_prefix               -> ABM_GEMINI_<prefix>_{INPUT,OUTPUT}_USD_PER_MTOK / _MARGIN_PERCENT
+#   audio_tokens_per_second  -> default di _audio_tokens_per_second
+#   default_rpm / default_rpd-> 0 = nessun limite locale
+#   http_timeout_ms          -> timeout HTTP della singola chiamata
+#   preview_timeout_sec      -> wrapper server dell'anteprima (client = +5 s)
+#   backends_allowed         -> None = qualunque; tupla = solo questi backend
+#   mark_unavailable_on_fatal-> un errore fatale nasconde il modello (cooldown)
 GEMINI_MODELS = {
-    "flash25": {
-        "id": "gemini-2.5-flash-preview-tts",
-        "id_vertex": "gemini-2.5-flash-tts",
-        # Nessuna verifica che Cloudflare ospiti questo modello: finche' non
-        # c'e', flash25 resta su Vertex anche con backend=cloudflare.
-        # Cloudflare non ospita alcuna variante TTS di Gemini 2.5
-        # (verificato 26/08/2026): questo modello vive su Vertex.
-        "id_cloudflare": None,
-        "cf_input_usd_per_mtok": None,
-        "cf_output_usd_per_mtok": None,
-        "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH25,
-        "label": "Gemini 2.5 Flash TTS",
-        "input_usd_per_mtok": _f("ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK", 0.50),
-        "output_usd_per_mtok": _f("ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK", 10.00),
-        "default_margin_percent": _f("ABM_GEMINI_25FLASH_MARGIN_PERCENT", 35.0),
-    },
     "flash31": {
         "id": "gemini-3.1-flash-tts-preview",
         "id_vertex": "gemini-3.1-flash-tts-preview",
@@ -175,9 +171,18 @@ GEMINI_MODELS = {
         "cf_output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_CF_OUTPUT_USD_PER_MTOK", 12.00),
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.1 Flash TTS",
+        "env_prefix": "31FLASH",
         "input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK", 1.00),
         "output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK", 20.00),
+        "margin_default": 25.0,
         "default_margin_percent": _f("ABM_GEMINI_31FLASH_MARGIN_PERCENT", 25.0),
+        "audio_tokens_per_second": 25.0,
+        "default_rpm": 0,
+        "default_rpd": 0,
+        "http_timeout_ms": 60000,
+        "preview_timeout_sec": 65,
+        "backends_allowed": None,
+        "mark_unavailable_on_fatal": False,
     },
 }
 
@@ -831,21 +836,25 @@ def _b(env, default):
 # Max attempts e backoff
 SYNTH_MAX_ATTEMPTS_DEFAULT = 3
 
-# Throttle RPM (millisecondi minimi tra due chiamate consecutive per modello).
-# 0 = nessun throttle. Free tier: 6500 (flash25, 10 RPM) / 21000 (flash31, 3 RPM).
-# Tier 1: 80 (flash25, ~750 RPM) / 200 (flash31, ~300 RPM).
+# Throttle RPM (millisecondi minimi fra due chiamate consecutive per modello).
+# Precedenza: ABM_GEMINI_RPM_<KEY> (>0) -> ABM_GEMINI_MIN_INTERVAL_<KEY>_MS
+# (alias storico) -> default_rpm del catalogo. 0 = nessun throttle.
 def _min_interval_ms(model_key):
-    if model_key == "flash25":
-        return _i("ABM_GEMINI_MIN_INTERVAL_FLASH25_MS", 0)
-    return _i("ABM_GEMINI_MIN_INTERVAL_FLASH31_MS", 0)
+    sfx = _model_env_suffix(model_key)
+    rpm = _i(f"ABM_GEMINI_RPM_{sfx}", 0)
+    if rpm > 0:
+        return int(math.ceil(60000.0 / rpm))
+    legacy = os.environ.get(f"ABM_GEMINI_MIN_INTERVAL_{sfx}_MS")
+    if legacy is not None and legacy.strip():
+        return _i(f"ABM_GEMINI_MIN_INTERVAL_{sfx}_MS", 0)
+    default_rpm = int((GEMINI_MODELS.get(model_key) or {}).get("default_rpm", 0) or 0)
+    return int(math.ceil(60000.0 / default_rpm)) if default_rpm > 0 else 0
 
 
-# RPD safety cap per modello (numero massimo di richieste/giorno).
-# 0 = nessun cap locale (l'API Google fa da unica barriera).
+# RPD safety cap per modello. 0 = nessun cap locale.
 def _rpd_cap(model_key):
-    if model_key == "flash25":
-        return _i("ABM_GEMINI_RPD_FLASH25", 0)
-    return _i("ABM_GEMINI_RPD_FLASH31", 0)
+    default = int((GEMINI_MODELS.get(model_key) or {}).get("default_rpd", 0) or 0)
+    return _i(f"ABM_GEMINI_RPD_{_model_env_suffix(model_key)}", default)
 
 
 def _rpd_safety_reserve():
@@ -1019,11 +1028,10 @@ def _gender_icon(gender):
 
 def get_margin_percent(model_key):
     """Margine corrente per il modello (legge env var aggiornata)."""
-    if model_key == "flash25":
-        return _f("ABM_GEMINI_25FLASH_MARGIN_PERCENT", 35.0)
-    if model_key == "flash31":
-        return _f("ABM_GEMINI_31FLASH_MARGIN_PERCENT", 25.0)
-    raise ValueError(f"Unknown model_key: {model_key}")
+    m = GEMINI_MODELS.get(model_key)
+    if m is None:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    return _f(f"ABM_GEMINI_{m['env_prefix']}_MARGIN_PERCENT", m["margin_default"])
 
 
 def _cf_topup_fee():
@@ -1099,7 +1107,7 @@ def actual_rates(model_key, backend):
 
 
 def parse_voice_id(voice_id):
-    """Estrae (model_key, model_full_id, voice_name) da 'gemini:flash25:Zephyr'.
+    """Estrae (model_key, model_full_id, voice_name) da 'gemini:flash31:Zephyr'.
 
     Raises ValueError se formato non valido, modello sconosciuto o voce sconosciuta.
     """
@@ -1946,6 +1954,12 @@ def _current_month():
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
+def _empty_model_usage():
+    return {"chars": 0, "input_tok": 0, "output_tok": 0,
+            "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
+            "estimated_eur": 0.0, "actual_eur": 0.0}
+
+
 def _empty_usage():
     return {
         "month": _current_month(),
@@ -1966,14 +1980,7 @@ def _empty_usage():
         "actual_cost_eur_total": 0.0,
         "cost_delta_eur_total": 0.0,    # actual - estimated (positivo = sottostima)
         "cost_delta_pct_sum": 0.0,      # somma dei delta% per calcolo media
-        "by_model": {
-            "flash25": {"chars": 0, "input_tok": 0, "output_tok": 0,
-                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
-                        "estimated_eur": 0.0, "actual_eur": 0.0},
-            "flash31": {"chars": 0, "input_tok": 0, "output_tok": 0,
-                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
-                        "estimated_eur": 0.0, "actual_eur": 0.0},
-        },
+        "by_model": {mk: _empty_model_usage() for mk in GEMINI_MODELS},
     }
 
 
@@ -1989,7 +1996,7 @@ def _ensure_reconciliation_fields(data):
     data.setdefault("cost_delta_eur_total", 0.0)
     data.setdefault("cost_delta_pct_sum", 0.0)
     by_model = data.get("by_model") or {}
-    for mk in ("flash25", "flash31"):
+    for mk in GEMINI_MODELS:
         m = by_model.setdefault(mk, {})
         m.setdefault("chars", 0)
         m.setdefault("input_tok", 0)
@@ -2065,7 +2072,7 @@ def record_job_completion(model_key, estimated_eur, actual_eur, user_price_eur=0
     sistematico di estimate_book_cost rispetto ai token reali di usage_metadata.
 
     Args:
-        model_key: 'flash25' | 'flash31'
+        model_key: chiave del modello (es. 'flash31')
         estimated_eur: costo di LISTINO stimato pre-job sui token stimati
             (da estimate_book_cost, che usa pricing_cost_breakdown)
         actual_eur: costo di LISTINO sui token REALI (pricing_cost_breakdown
@@ -2375,10 +2382,10 @@ def get_empirical_rate(lang, model_key=None, rate_step=0, window=None,
     Due differenze sostanziali rispetto alla versione precedente:
 
     * **il modello non entra nella chiave**. Sui 256 job reali di giu-ago 2026
-      flash25 e flash31 hanno la stessa mediana (13.96 vs 14.03) e il modello
-      spiega lo 0.4% della varianza del rate: raggruppare per modello dimezzava
-      la numerosita` dei gruppi senza guadagno predittivo. Contano lingua (36%
-      della varianza), velocita` (24%) e voce (11%).
+      i due modelli allora attivi avevano la stessa mediana (13.96 vs 14.03) e
+      il modello spiega lo 0.4% della varianza del rate: raggruppare per
+      modello dimezzava la numerosita` dei gruppi senza guadagno predittivo.
+      Contano lingua (36% della varianza), velocita` (24%) e voce (11%).
     * **campioni con rate_step diverso non vengono mai mescolati**. Il vecchio
       tier 2 ignorava rate_step, quindi un preventivo a velocita` normale poteva
       finire calcolato su campioni presi a +10% (15.8 char/sec contro 13.8).
@@ -2491,16 +2498,23 @@ def is_available():
 def _http_timeout_ms(model_key=None):
     """Timeout HTTP per le call al Gemini API (millisecondi).
 
-    `flash31` (gemini-3.1-flash-tts-preview) e` strutturalmente piu` lento
-    di `flash25`: RPM cap inferiore (3/300 vs 10/750) + audio gen piu`
-    lenta lato Google. Con il default 25s i chunk normali finiscono in
-    504 DEADLINE_EXCEEDED, saturano i 3 retry e producono silenzio. Per
-    flash31 il default sale a 60s; flash25 resta a 25s per preservare il
-    fast-fail su stall reali. Override via env per-modello.
+    Default dal campo `http_timeout_ms` del catalogo (flash31 60 s: con 25 s i
+    chunk normali finivano in 504 DEADLINE_EXCEEDED). Override per modello
+    con ABM_GEMINI_HTTP_TIMEOUT_MS_<KEY>; ABM_GEMINI_HTTP_TIMEOUT_MS vale
+    per le chiamate senza modello.
     """
-    if model_key == "flash31":
-        return _i("ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31", 60000)
-    return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
+    m = GEMINI_MODELS.get(model_key) if model_key else None
+    if m is None:
+        return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
+    return _i(f"ABM_GEMINI_HTTP_TIMEOUT_MS_{_model_env_suffix(model_key)}",
+              int(m["http_timeout_ms"]))
+
+
+def preview_timeout_sec(model_key):
+    """Timeout (s) del wrapper server dell'anteprima; il client aspetta +5 s."""
+    m = GEMINI_MODELS.get(model_key)
+    default = int(m["preview_timeout_sec"]) if m else 30
+    return _i(f"ABM_GEMINI_PREVIEW_TIMEOUT_SEC_{_model_env_suffix(model_key)}", default)
 
 
 def _cf_timeout_ms():
@@ -2569,7 +2583,7 @@ def _make_genai_client(**kwargs):
 def _get_client(model_key=None):
     """Lazy init del client google-genai, cached per location.
 
-    Vertex: il client e' tied a (project, location); flash25 e flash31
+    Vertex: il client e' tied a (project, location); modelli diversi
     possono finire su region diverse, quindi servono client distinti.
     API key: location e' ignorato, una sola entry "_apikey" nella cache.
     """
@@ -2622,11 +2636,17 @@ _throttle_lock = threading.Lock()
 
 _rpd_file_path = None
 _rpd_lock = threading.Lock()
-_rpd_cache = None  # {"date": "YYYY-MM-DD", "flash25": N, "flash31": M}
+_rpd_cache = None  # {"date": ..., "<model_key>": N}
 
 
 def _today_utc_str():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _rpd_fresh():
+    d = {"date": _today_utc_str()}
+    d.update({mk: 0 for mk in GEMINI_MODELS})
+    return d
 
 
 def _rpd_load():
@@ -2636,19 +2656,19 @@ def _rpd_load():
         return _rpd_cache
     if _rpd_file_path is None:
         # Fallback in-memory only
-        _rpd_cache = {"date": _today_utc_str(), "flash25": 0, "flash31": 0}
+        _rpd_cache = _rpd_fresh()
         return _rpd_cache
     if _rpd_file_path.exists():
         try:
             data = json.loads(_rpd_file_path.read_text(encoding="utf-8"))
             if data.get("date") == _today_utc_str():
-                data.setdefault("flash25", 0)
-                data.setdefault("flash31", 0)
+                for mk in GEMINI_MODELS:
+                    data.setdefault(mk, 0)
                 _rpd_cache = data
                 return data
         except Exception as e:
             print(f"[gemini-tts] RPD load failed: {e}")
-    _rpd_cache = {"date": _today_utc_str(), "flash25": 0, "flash31": 0}
+    _rpd_cache = _rpd_fresh()
     return _rpd_cache
 
 
@@ -3165,9 +3185,9 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         # valore resta quello di Cloudflare (m["id"], nome legacy) invece di
         # m["id_vertex"] (nome GA): oggi e' inerte solo perche' flash31 ha gli
         # id coincidenti sui due backend, ma diverge appena un modello con
-        # id_cloudflare != id_vertex viene abilitato (es. un futuro flash25 su
-        # Cloudflare). _resolve_model_id rifa' la stessa risoluzione backend
-        # (cache, quindi a costo zero) e resta corretta per vertex/apikey.
+        # id_cloudflare != id_vertex viene abilitato. _resolve_model_id rifa'
+        # la stessa risoluzione backend (cache, quindi a costo zero) e resta
+        # corretta per vertex/apikey.
         call_model_id = (GEMINI_MODELS[model_key].get("id_cloudflare")
                          if backend == "cloudflare" else _resolve_model_id(model_key))
         try:

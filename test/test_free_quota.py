@@ -136,7 +136,7 @@ def test_gemini_estimate_exposes_list_price(monkeypatch):
             self.text = text
 
     est = gemini_tts.estimate_book_cost([_Ch("Buongiorno a tutti. " * 200)],
-                                        "gemini:flash25:Achernar", language="it")
+                                        "gemini:flash31:Achernar", language="it")
     assert est["is_free"] is True
     assert est["user_price_eur"] == 0.0
     assert est["list_price_eur"] > 0.0

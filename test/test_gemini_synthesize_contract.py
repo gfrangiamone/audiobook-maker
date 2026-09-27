@@ -38,7 +38,7 @@ def _env(tmp_path, monkeypatch):
     gemini_tts._BACKEND = {}
     gemini_tts.set_backend_switch_notifier(None)
     st.reset("flash31")
-    st.reset("flash25")
+    st.reset("flash31")
 
 
 def _no_quota_guards(monkeypatch):

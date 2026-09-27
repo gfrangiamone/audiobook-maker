@@ -23,7 +23,7 @@ def _seed_job(job_id, voice, progress_current, progress_total):
 
 
 def test_cancel_gemini_below_threshold_allowed(client):
-    _seed_job("J1", "gemini:flash25:Zephyr", 30, 100)
+    _seed_job("J1", "gemini:flash31:Zephyr", 30, 100)
     with patch("audiobook_app._check_job_owner",
                return_value=(audiobook_app.jobs["J1"], None, None)):
         r = client.post("/api/cancel/J1")
@@ -34,7 +34,7 @@ def test_cancel_gemini_below_threshold_allowed(client):
 
 def test_cancel_gemini_above_threshold_blocked(client, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_CANCEL_LOCK_PCT", "70")
-    _seed_job("J2", "gemini:flash25:Zephyr", 80, 100)
+    _seed_job("J2", "gemini:flash31:Zephyr", 80, 100)
     with patch("audiobook_app._check_job_owner",
                return_value=(audiobook_app.jobs["J2"], None, None)):
         r = client.post("/api/cancel/J2")
@@ -60,7 +60,7 @@ def test_cancel_non_gemini_above_threshold_allowed(client, monkeypatch):
 
 def test_cancel_lock_disabled_by_env_100(client, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_CANCEL_LOCK_PCT", "100")
-    _seed_job("J4", "gemini:flash25:Zephyr", 99, 100)
+    _seed_job("J4", "gemini:flash31:Zephyr", 99, 100)
     with patch("audiobook_app._check_job_owner",
                return_value=(audiobook_app.jobs["J4"], None, None)):
         r = client.post("/api/cancel/J4")
@@ -71,7 +71,7 @@ def test_cancel_lock_disabled_by_env_100(client, monkeypatch):
 def test_cancel_gemini_above_threshold_admin_force_bypasses_lock(client, monkeypatch):
     """Kill amministrativo (force=1 + admin auth) bypassa il lock Gemini."""
     monkeypatch.setenv("ABM_GEMINI_CANCEL_LOCK_PCT", "70")
-    _seed_job("J6", "gemini:flash25:Zephyr", 80, 100)
+    _seed_job("J6", "gemini:flash31:Zephyr", 80, 100)
     with patch("audiobook_app._check_job_owner",
                return_value=(audiobook_app.jobs["J6"], None, None)), \
          patch("audiobook_app._admin_auth_ok", return_value=True):
@@ -84,7 +84,7 @@ def test_cancel_gemini_above_threshold_admin_force_bypasses_lock(client, monkeyp
 def test_cancel_gemini_above_threshold_force_without_admin_still_blocked(client, monkeypatch):
     """force=1 senza auth admin NON bypassa il lock (anti-abuso utente)."""
     monkeypatch.setenv("ABM_GEMINI_CANCEL_LOCK_PCT", "70")
-    _seed_job("J7", "gemini:flash25:Zephyr", 80, 100)
+    _seed_job("J7", "gemini:flash31:Zephyr", 80, 100)
     with patch("audiobook_app._check_job_owner",
                return_value=(audiobook_app.jobs["J7"], None, None)), \
          patch("audiobook_app._admin_auth_ok", return_value=False):
@@ -96,7 +96,7 @@ def test_cancel_gemini_above_threshold_force_without_admin_still_blocked(client,
 
 def test_cancel_lock_disabled_by_env_0(client, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_CANCEL_LOCK_PCT", "0")
-    _seed_job("J5", "gemini:flash25:Zephyr", 99, 100)
+    _seed_job("J5", "gemini:flash31:Zephyr", 99, 100)
     with patch("audiobook_app._check_job_owner",
                return_value=(audiobook_app.jobs["J5"], None, None)):
         r = client.post("/api/cancel/J5")

@@ -70,7 +70,7 @@ def test_failure_info_empty_after_sanitize(tmp_path):
     fi = {}
     out = str(tmp_path / "c.pcm")
     # testo che si sanitizza a vuoto -> False + reason, senza toccare Gemini
-    res = tts_split.generate_chunk_pcm_gemini("   ", "gemini:flash25:Charon", out,
+    res = tts_split.generate_chunk_pcm_gemini("   ", "gemini:flash31:Charon", out,
                                               failure_info=fi)
     assert res is False
     assert fi.get("reason") == "empty_after_sanitize"
@@ -94,7 +94,7 @@ def test_quality_refund_unico_path(monkeypatch):
 
     # Job PAGATO: l'esito e' `failed_quality_refunded` e il refund viene eseguito.
     job = {"payment": {"token": "tok1", "total_eur": 2.0, "method": "paypal"}}
-    ge._gemini_quality_refund("jobQ", job, "gemini:flash25:Charon", None,
+    ge._gemini_quality_refund("jobQ", job, "gemini:flash31:Charon", None,
                               failed_chunks=10, total_chunks=20, early=True)
     assert job["status"] == "error"
     assert abs(job["failed_chunks_ratio"] - 0.5) < 1e-9

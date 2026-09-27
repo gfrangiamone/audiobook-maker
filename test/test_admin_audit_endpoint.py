@@ -25,13 +25,13 @@ def test_admin_audit_endpoint_returns_records(client, admin_headers, monkeypatch
     monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
     for i in range(3):
         gemini_cost_audit.append_record({
-            "job_id": f"j{i}", "model_key": "flash25",
+            "job_id": f"j{i}", "model_key": "flash31",
             "language": "it", "outcome": "completed",
             "user_price_eur_charged": 1.0,
             "google_cost_eur_actual": 0.5,
             "delta_pct": 2.0,
         })
-    r = client.get("/admin/api/gemini_cost_audit?model=flash25&limit=10",
+    r = client.get("/admin/api/gemini_cost_audit?model=flash31&limit=10",
                    headers=admin_headers)
     assert r.status_code == 200, r.get_data(as_text=True)
     d = r.get_json()
@@ -48,9 +48,9 @@ def test_admin_audit_requires_auth(client):
 
 def test_admin_audit_filter_by_outcome(client, admin_headers, monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
-    gemini_cost_audit.append_record({"job_id": "g1", "model_key": "flash25",
+    gemini_cost_audit.append_record({"job_id": "g1", "model_key": "flash31",
                                       "outcome": "completed", "language": "it"})
-    gemini_cost_audit.append_record({"job_id": "g2", "model_key": "flash25",
+    gemini_cost_audit.append_record({"job_id": "g2", "model_key": "flash31",
                                       "outcome": "failed_refunded", "language": "it"})
     r = client.get("/admin/api/gemini_cost_audit?outcome=completed",
                    headers=admin_headers)
@@ -62,7 +62,7 @@ def test_admin_audit_filter_by_outcome(client, admin_headers, monkeypatch, tmp_p
 def test_admin_audit_pagination(client, admin_headers, monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
     for i in range(5):
-        gemini_cost_audit.append_record({"job_id": f"p{i}", "model_key": "flash25",
+        gemini_cost_audit.append_record({"job_id": f"p{i}", "model_key": "flash31",
                                           "outcome": "completed", "language": "it"})
     r = client.get("/admin/api/gemini_cost_audit?limit=2&offset=1",
                    headers=admin_headers)
@@ -78,13 +78,13 @@ def test_admin_audit_live_rerun_row_visible(client, admin_headers, monkeypatch, 
     import audiobook_app
     monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
     gemini_cost_audit.append_record({
-        "job_id": "rr1", "model_key": "flash25",
+        "job_id": "rr1", "model_key": "flash31",
         "outcome": "failed_quality_refunded", "language": "it",
         "user_price_eur_charged": 2.0, "google_cost_eur_actual": 0.4,
     })
     audiobook_app.jobs["rr1"] = {
         "status": "generating",
-        "voice": "gemini:flash25:Puck",
+        "voice": "gemini:flash31:Puck",
         "rate": "+0%",
         "gemini_actual": {"chars": 100, "google_cost_eur": 0.01,
                           "audio_seconds": 5.0},
@@ -129,11 +129,11 @@ def test_running_gemini_row_uses_pricing_cost_not_real_cost_for_drift(monkeypatc
     monkeypatch.setattr(audiobook_app.gemini_tts, "compute_user_price_eur", _fake_price)
     audiobook_app.jobs["Jliveposit"] = {
         "status": "generating",
-        "voice": "gemini:flash25:Puck",
+        "voice": "gemini:flash31:Puck",
         "rate": "+0%",
         "gemini_actual": {"chars": 100, "google_cost_eur": 0.30,
                           "pricing_cost_eur": 1.80, "audio_seconds": 5.0,
-                          "model_key": "flash25"},
+                          "model_key": "flash31"},
         "payment": {"total_eur": 5.0},
     }
     try:
@@ -165,12 +165,12 @@ def test_running_gemini_row_language_is_tts_language_not_book_metadata(monkeypat
 
     audiobook_app.jobs["Jlivelang"] = {
         "status": "generating",
-        "voice": "gemini:flash25:Puck",
+        "voice": "gemini:flash31:Puck",
         "rate": "+0%",
         "gen_lang": "de",
         "info": _Info(),
         "gemini_actual": {"chars": 10, "google_cost_eur": 0.1,
-                          "audio_seconds": 1.0, "model_key": "flash25"},
+                          "audio_seconds": 1.0, "model_key": "flash31"},
     }
     try:
         recs = audiobook_app._synth_running_gemini_audit_records()
@@ -191,20 +191,20 @@ def test_admin_audit_aggregate_delta_pct_uses_pricing_cost_not_real_cost(
     # (0.20 totali) invece del listino (2.0 totali), delta_pct_avg
     # risulterebbe 100.0 invece di 10.0.
     gemini_cost_audit.append_record({
-        "job_id": "cf1", "model_key": "flash25", "language": "it",
+        "job_id": "cf1", "model_key": "flash31", "language": "it",
         "outcome": "completed", "user_price_eur_charged": 1.0,
         "user_price_eur_should_have_been": 1.10,
         "google_cost_eur_actual": 0.10, "pricing_cost_eur_actual": 1.0,
         "delta_eur": 0.10,
     })
     gemini_cost_audit.append_record({
-        "job_id": "cf2", "model_key": "flash25", "language": "it",
+        "job_id": "cf2", "model_key": "flash31", "language": "it",
         "outcome": "completed", "user_price_eur_charged": 2.0,
         "user_price_eur_should_have_been": 2.10,
         "google_cost_eur_actual": 0.10, "pricing_cost_eur_actual": 1.0,
         "delta_eur": 0.10,
     })
-    r = client.get("/admin/api/gemini_cost_audit?model=flash25", headers=admin_headers)
+    r = client.get("/admin/api/gemini_cost_audit?model=flash31", headers=admin_headers)
     assert r.status_code == 200, r.get_data(as_text=True)
     agg = r.get_json()["aggregates"]
     assert agg["count"] == 2

@@ -21,7 +21,7 @@ from epub_to_tts import BookInfo, Chapter
 
 CID = "cid_gen_cap_test"
 OTHER_CID = "cid_gen_cap_other"
-PREMIUM_VOICE = "gemini:flash25:Zephyr"
+PREMIUM_VOICE = "gemini:flash31:Zephyr"
 FREE_VOICE = "en-US-AriaNeural"
 
 

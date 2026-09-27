@@ -51,7 +51,7 @@ def _run_cancel_after_first_chunk(monkeypatch, tmp_path, job_id, backend_first_c
         return {
             "success": True, "bytes_written": 1000,
             "input_tokens": 100, "output_tokens": 500,
-            "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1,
+            "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1,
             "backend": backend_first_chunk,
         }
     monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
@@ -92,7 +92,7 @@ def _run_cancel_after_first_chunk(monkeypatch, tmp_path, job_id, backend_first_c
     monkeypatch.setattr(generation_engine, "_upload_dir", tmp_path)
     monkeypatch.setattr(generation_engine, "_jobs_lock", None, raising=False)
 
-    generation_engine.run_generation(job_id, _Info(), "gemini:flash25:Zephyr", "+0%",
+    generation_engine.run_generation(job_id, _Info(), "gemini:flash31:Zephyr", "+0%",
                                      single_file=True, output_format="mp3")
     return job
 
@@ -119,7 +119,7 @@ def test_cancel_retention_identical_across_backends_same_listino(monkeypatch, tm
 
     # Prova positiva: il trattenuto e' quello che darebbe cancel_policy sul
     # LISTINO (0.30), non sul costo reale di nessuno dei due scenari.
-    margin_pct = gemini_tts.get_margin_percent("flash25")
+    margin_pct = gemini_tts.get_margin_percent("flash31")
     expected = cancel_policy.compute_cancel_retention(
         0.30, "paypal", 5.0, margin_percent=margin_pct)
     assert cm_cf["retained_eur"] == expected["retained_eur"]

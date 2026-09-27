@@ -9,17 +9,17 @@ def test_write_gemini_audit_success_appends_record(monkeypatch):
     job = {
         "gemini_actual": {
             "input_tokens": 100, "output_tokens": 500, "chars": 50,
-            "audio_seconds": 12.5, "google_cost_eur": 0.0012, "model_key": "flash25",
+            "audio_seconds": 12.5, "google_cost_eur": 0.0012, "model_key": "flash31",
         },
         "payment": {"total_eur": 1.50},
     }
     generation_engine._write_gemini_audit(
-        "job-abc", job, "gemini:flash25:Zephyr", "it", "completed"
+        "job-abc", job, "gemini:flash31:Zephyr", "it", "completed"
     )
     assert len(captured) == 1
     rec = captured[0]
     assert rec["job_id"] == "job-abc"
-    assert rec["model_key"] == "flash25"
+    assert rec["model_key"] == "flash31"
     assert rec["language"] == "it"
     assert rec["chars_total"] == 50
     assert rec["input_tokens_actual"] == 100
@@ -47,9 +47,9 @@ def test_write_gemini_audit_skips_non_gemini(monkeypatch):
 def test_write_gemini_audit_missing_payment_uses_zero_charged(monkeypatch):
     captured = []
     monkeypatch.setattr(gemini_cost_audit, "append_record", lambda r: captured.append(r))
-    job = {"gemini_actual": {"google_cost_eur": 0.001, "model_key": "flash25"}}
+    job = {"gemini_actual": {"google_cost_eur": 0.001, "model_key": "flash31"}}
     generation_engine._write_gemini_audit(
-        "j", job, "gemini:flash25:Zephyr", "it", "failed_refunded"
+        "j", job, "gemini:flash31:Zephyr", "it", "failed_refunded"
     )
     assert len(captured) == 1
     assert captured[0]["user_price_eur_charged"] == 0.0
@@ -64,7 +64,7 @@ def test_write_gemini_audit_swallows_internal_errors(monkeypatch, capsys):
     monkeypatch.setattr(gemini_cost_audit, "append_record", bad_append)
     job = {"gemini_actual": {"google_cost_eur": 0.001}, "payment": {"total_eur": 1.0}}
     # Must not raise
-    generation_engine._write_gemini_audit("j", job, "gemini:flash25:Zephyr", "it", "completed")
+    generation_engine._write_gemini_audit("j", job, "gemini:flash31:Zephyr", "it", "completed")
 
 
 def test_write_gemini_audit_drift_uses_pricing_cost_not_actual_cost(monkeypatch):
@@ -98,12 +98,12 @@ def test_write_gemini_audit_drift_uses_pricing_cost_not_actual_cost(monkeypatch)
             "audio_seconds": 12.5,
             "google_cost_eur": 0.30,       # costo reale (Cloudflare, piu' economico)
             "pricing_cost_eur": 1.80,      # costo di listino sugli stessi token
-            "model_key": "flash25",
+            "model_key": "flash31",
         },
         "payment": {"total_eur": 5.0},
     }
     generation_engine._write_gemini_audit(
-        "job-cf", job, "gemini:flash25:Zephyr", "it", "completed"
+        "job-cf", job, "gemini:flash31:Zephyr", "it", "completed"
     )
     assert len(captured) == 1
     rec = captured[0]
@@ -135,13 +135,13 @@ def test_write_gemini_audit_pricing_cost_eur_defaults_to_actual_when_absent(monk
     monkeypatch.setattr(generation_engine.gemini_tts, "compute_user_price_eur", _fake_price)
     job = {
         "gemini_actual": {
-            "chars": 50, "google_cost_eur": 1.0, "model_key": "flash25",
+            "chars": 50, "google_cost_eur": 1.0, "model_key": "flash31",
             # niente pricing_cost_eur
         },
         "payment": {"total_eur": 2.0},
     }
     generation_engine._write_gemini_audit(
-        "job-legacy", job, "gemini:flash25:Zephyr", "it", "completed"
+        "job-legacy", job, "gemini:flash31:Zephyr", "it", "completed"
     )
     assert len(captured) == 1
     rec = captured[0]
@@ -171,13 +171,13 @@ def test_write_gemini_audit_reconciles_listino_not_real_cost(monkeypatch):
             "audio_seconds": 12.5,
             "google_cost_eur": 0.30,       # costo reale (Cloudflare)
             "pricing_cost_eur": 1.80,      # listino sugli stessi token
-            "model_key": "flash25",
+            "model_key": "flash31",
         },
         "gemini_estimate": {"google_cost_eur": 1.75},  # listino ex-ante
         "payment": {"total_eur": 5.0},
     }
     generation_engine._write_gemini_audit(
-        "job-cf", job, "gemini:flash25:Zephyr", "it", "completed"
+        "job-cf", job, "gemini:flash31:Zephyr", "it", "completed"
     )
     assert len(rjc_calls) == 1
     call = rjc_calls[0]

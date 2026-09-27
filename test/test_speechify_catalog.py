@@ -8,7 +8,7 @@ def test_is_speechify_voice_true():
 
 
 def test_is_speechify_voice_false_on_gemini():
-    assert voice_utils.is_speechify_voice("gemini:flash25:Zephyr") is False
+    assert voice_utils.is_speechify_voice("gemini:flash31:Zephyr") is False
 
 
 def test_is_speechify_voice_safe_on_none_and_empty():
@@ -52,7 +52,7 @@ def test_parse_voice_id_ok():
 
 def test_parse_voice_id_invalid():
     with pytest.raises(ValueError):
-        speechify_tts.parse_voice_id("gemini:flash25:Zephyr")
+        speechify_tts.parse_voice_id("gemini:flash31:Zephyr")
     with pytest.raises(ValueError):
         speechify_tts.parse_voice_id("speechify:simba-3.2:unknown_voice")
 
