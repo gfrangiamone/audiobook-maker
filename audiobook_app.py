@@ -9981,6 +9981,14 @@ def api_voices():
                 }
             except Exception:
                 pass
+            try:
+                voices["_gemini"] = {
+                    "preview_timeout_ms": {
+                        mk: (gemini_tts.preview_timeout_sec(mk) + 5) * 1000
+                        for mk in gemini_tts.GEMINI_MODELS},
+                }
+            except Exception:
+                pass
         # Stato VoxCPM per il tab premium: se il motore non e' disponibile la
         # UI non mostra il modello, invece di mostrarlo con la combo vuota.
         # `personas` e' l'elenco dei CARATTERI presenti nel catalogo di oggi:

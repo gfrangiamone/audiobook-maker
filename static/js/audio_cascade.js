@@ -47,7 +47,7 @@ function _ePremium(id) {
 
 /* Modelli premium disponibili per la lingua. L'ordine e' quello mostrato
    nel selettore, e il primo e' anche il predefinito: VOXCPM2, Simba, poi i
-   due Gemini. */
+   Gemini (3.1, 3.8 PREMIUM+). */
 function modelliPer(catalog, lang) {
   var voci = _voci(catalog, lang);
   var out = [];
@@ -55,9 +55,10 @@ function modelliPer(catalog, lang) {
   if (voxAttivo && _haPrefisso(voci, 'voxcpm:')) out.push('voxcpm');
   if (lang === 'en' && _haPrefisso(voci, 'speechify:simba-3.2:')) out.push('simba-3.2');
   /* Un modello Gemini per volta: il server puo' spegnerne uno (interruttore
-     ABM_<MODELLO>_ENABLE) e allora le sue voci non arrivano nel catalogo. */
-  if (_haPrefisso(voci, 'gemini:flash25:')) out.push('flash25');
+     ABM_<MODELLO>_ENABLE o canale non disponibile) e allora le sue voci non
+     arrivano nel catalogo. */
   if (_haPrefisso(voci, 'gemini:flash31:')) out.push('flash31');
+  if (_haPrefisso(voci, 'gemini:flash38:')) out.push('flash38');
   return out;
 }
 

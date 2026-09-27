@@ -79,6 +79,7 @@
     "plan_free": "Free",
     "plan_premium": "PREMIUM",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -162,6 +163,7 @@
     "plan_free": "Gratis",
     "plan_premium": "PREMIUM",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -245,6 +247,7 @@
     "plan_free": "Gratuit",
     "plan_premium": "PREMIUM",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -328,6 +331,7 @@
     "plan_free": "Gratis",
     "plan_premium": "PREMIUM",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -411,6 +415,7 @@
     "plan_free": "Kostenlos",
     "plan_premium": "PREMIUM",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -494,6 +499,7 @@
     "plan_free": "免费",
     "plan_premium": "PREMIUM",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -577,6 +583,7 @@
     "plan_free": "मुफ़्त",
     "plan_premium": "PREMIUM",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   }

@@ -128,6 +128,7 @@ def _fmt_date(epoch):
 # chi rilegge lo storico deve ritrovare il nome che ha scelto.
 _MODEL_LABEL_KEYS = {
     "flash31": "model_flash31",
+    "flash38": "model_flash38",
     "simba-3.2": "model_simba",
     "voxcpm": "model_voxcpm",
 }

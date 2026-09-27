@@ -1793,6 +1793,7 @@ def _generate_optimized_abm(job_id):
 # del selettore UI (lbl_model_flash31/38) — deroga naming confermata 2026-06-06.
 _EMAIL_MODEL_LABELS = {
     "flash31": "Gemini 3.1 Flash TTS",
+    "flash38": "Gemini 3.8 (PREMIUM+)",
     "simba-3.2": "Simba (English)",
 }
 

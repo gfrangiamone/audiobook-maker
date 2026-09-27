@@ -532,23 +532,23 @@ _GUIDE_BODY_EN = {
 </section>
 
 <section>
-<h2>PREMIUM Voices: Gemini TTS Model Comparison (Flash 2.5 vs 3.1)</h2>
+<h2>PREMIUM Voices: Gemini TTS Model Comparison (Flash 3.1 vs 3.8)</h2>
 <p>For those seeking the highest audio quality, Audiobook Maker offers <strong>PREMIUM Voices</strong> powered by two state-of-the-art Google Gemini Text-to-Speech models. Both models produce audio with highly expressive neural voices, support <strong>30 multilingual voices</strong> (each voice speaks 24 languages fluently), and allow customization of <strong>narration style</strong> and <strong>reading speed</strong> (±30%).</p>
 
 <table>
-<thead><tr><th>Feature</th><th>Gemini 2.5 Flash</th><th>Gemini 3.1 Flash</th></tr></thead>
+<thead><tr><th>Feature</th><th>Gemini 3.1 Flash</th><th>Gemini 3.8 Flash (PREMIUM+)</th></tr></thead>
 <tbody>
-<tr><td><strong>Generation</strong></td><td>Second generation</td><td>Third generation (newer)</td></tr>
-<tr><td><strong>Audio quality</strong></td><td>Very good — natural, clean narration</td><td>Excellent — richer expressiveness, superior intonation and prosody</td></tr>
+<tr><td><strong>Generation</strong></td><td>Third generation</td><td>Fourth generation (newer)</td></tr>
+<tr><td><strong>Audio quality</strong></td><td>Excellent — rich expressiveness, superior intonation and prosody</td><td>Highest — most natural prosody, most expressive narration available</td></tr>
 <tr><td><strong>Synthesis speed</strong></td><td>Faster — suitable for long books</td><td>Slower — prioritizes quality over speed</td></tr>
-<tr><td><strong>Approximate cost per minute</strong></td><td>~€0.025/min (more affordable)</td><td>~€0.036/min (premium quality)</td></tr>
+<tr><td><strong>Approximate cost per minute</strong></td><td>More affordable</td><td>Higher</td></tr>
 <tr><td><strong>Narration style</strong></td><td>Customizable with text instructions (up to 200 characters)</td><td>Customizable with text instructions (up to 200 characters)</td></tr>
 <tr><td><strong>Reading speed</strong></td><td>Adjustable from -30% to +30%</td><td>Adjustable from -30% to +30%</td></tr>
-<tr><td><strong>Best for</strong></td><td>Non-fiction, manuals, simple fiction, very long books, tight budget</td><td>Complex fiction, dialogue-heavy books, audiobooks requiring maximum emotional expressiveness</td></tr>
+<tr><td><strong>Best for</strong></td><td>Complex fiction, dialogue-heavy books, best quality/price ratio</td><td>Audiobooks requiring the absolute maximum in emotional expressiveness</td></tr>
 </tbody>
 </table>
 
-<p><strong>Which one to choose?</strong> If budget or book length is your priority, <strong>Gemini 2.5 Flash</strong> offers excellent value with faster generation times. If you want the highest possible audio quality, with richer intonation and more engaging narration — especially for novels with dialogue and characters — <strong>Gemini 3.1 Flash</strong> represents the state of the art in neural speech synthesis.</p>
+<p><strong>Which one to choose?</strong> If you want the best balance between quality and price, <strong>Gemini 3.1 Flash</strong> remains the recommended choice for most audiobooks, with faster generation times. If you want the highest possible audio quality, with the most natural prosody and the most engaging narration — especially for novels with dialogue and characters — <strong>Gemini 3.8 Flash (PREMIUM+)</strong> represents the state of the art in neural speech synthesis.</p>
 
 <p>Both models are available in the <strong>"PREMIUM Voices"</strong> tab of the generation panel. The exact cost, calculated based on your book's character count and the selected model, is shown in real time before payment. You can pay via PayPal or use a voucher code.</p>
 </section>
@@ -988,23 +988,23 @@ _GUIDE_BODY_IT = {
 </section>
 
 <section>
-<h2>Voci PREMIUM: Confronto tra i Modelli Gemini TTS (Flash 2.5 vs 3.1)</h2>
+<h2>Voci PREMIUM: Confronto tra i Modelli Gemini TTS (Flash 3.1 vs 3.8)</h2>
 <p>Per chi desidera la massima qualità audio, Audiobook Maker offre <strong>Voci PREMIUM</strong> basate su due modelli Google Gemini Text-to-Speech di ultima generazione. Entrambi i modelli producono audio con voci neurali altamente espressive, supportano <strong>30 voci multilingue</strong> (ogni voce è in grado di parlare fluentemente 24 lingue) e permettono di personalizzare lo <strong>stile narrativo</strong> e la <strong>velocità di lettura</strong> (±30%).</p>
 
 <table>
-<thead><tr><th>Caratteristica</th><th>Gemini 2.5 Flash</th><th>Gemini 3.1 Flash</th></tr></thead>
+<thead><tr><th>Caratteristica</th><th>Gemini 3.1 Flash</th><th>Gemini 3.8 Flash (PREMIUM+)</th></tr></thead>
 <tbody>
-<tr><td><strong>Generazione</strong></td><td>Seconda generazione</td><td>Terza generazione (più recente)</td></tr>
-<tr><td><strong>Qualità audio</strong></td><td>Molto buona — narrazione naturale e pulita</td><td>Eccellente — maggiore espressività, intonazione più ricca, prosodia superiore</td></tr>
+<tr><td><strong>Generazione</strong></td><td>Terza generazione</td><td>Quarta generazione (più recente)</td></tr>
+<tr><td><strong>Qualità audio</strong></td><td>Eccellente — maggiore espressività, intonazione più ricca, prosodia superiore</td><td>Massima, prosodia più naturale</td></tr>
 <tr><td><strong>Velocità di sintesi</strong></td><td>Più rapida — adatta a libri lunghi</td><td>Più lenta — privilegia la qualità sulla velocità</td></tr>
-<tr><td><strong>Costo indicativo al minuto</strong></td><td>~€0,025/min (più economico)</td><td>~€0,036/min (qualità premium)</td></tr>
+<tr><td><strong>Costo indicativo al minuto</strong></td><td>Più contenuto</td><td>Più alto</td></tr>
 <tr><td><strong>Stile narrativo</strong></td><td>Personalizzabile con istruzioni testuali (fino a 200 caratteri)</td><td>Personalizzabile con istruzioni testuali (fino a 200 caratteri)</td></tr>
 <tr><td><strong>Velocità lettura</strong></td><td>Regolabile da -30% a +30%</td><td>Regolabile da -30% a +30%</td></tr>
-<tr><td><strong>Ideale per</strong></td><td>Saggistica, manuali, narrativa semplice, libri molto lunghi, budget contenuto</td><td>Narrativa complessa, dialoghi, audiolibri che richiedono massima espressività emotiva</td></tr>
+<tr><td><strong>Ideale per</strong></td><td>Narrativa complessa, dialoghi, miglior rapporto qualità/prezzo</td><td>Audiolibri che richiedono la massima espressività emotiva possibile</td></tr>
 </tbody>
 </table>
 
-<p><strong>Quale scegliere?</strong> Se il budget o la lunghezza del libro sono la tua priorità, <strong>Gemini 2.5 Flash</strong> offre un ottimo rapporto qualità/prezzo con tempi di generazione più rapidi. Se cerchi la massima qualità audio possibile, con intonazioni più ricche e una narrazione più coinvolgente — specialmente per romanzi con dialoghi e personaggi — <strong>Gemini 3.1 Flash</strong> rappresenta lo stato dell'arte della sintesi vocale neurale.</p>
+<p><strong>Quale scegliere?</strong> Se cerchi il miglior rapporto qualità/prezzo, <strong>Gemini 3.1 Flash</strong> resta la scelta consigliata per la maggior parte degli audiolibri, con tempi di generazione più rapidi. Se cerchi la qualità audio più alta in assoluto, con la prosodia più naturale e una narrazione ancora più coinvolgente — specialmente per romanzi con dialoghi e personaggi — <strong>Gemini 3.8 Flash (PREMIUM+)</strong> rappresenta lo stato dell'arte della sintesi vocale neurale.</p>
 
 <p>Entrambi i modelli sono disponibili nella scheda <strong>"Voci PREMIUM"</strong> del pannello di generazione. Il costo esatto, calcolato in base al numero di caratteri del tuo libro e al modello selezionato, viene mostrato in tempo reale prima di procedere al pagamento. È possibile utilizzare PayPal o un codice voucher per l'acquisto.</p>
 </section>
