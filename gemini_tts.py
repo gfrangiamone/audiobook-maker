@@ -184,6 +184,35 @@ GEMINI_MODELS = {
         "backends_allowed": None,
         "mark_unavailable_on_fatal": False,
     },
+    # Verificato il 27/09/2026 via API key (AI Studio, Tier 3): Vertex
+    # risponde 404 al progetto, Cloudflare non lo ospita. Unico canale: API
+    # key. Output WAV (RIFF) invece di PCM grezzo: vedi _extract_audio_pcm.
+    # Limiti Tier 3: 1K RPM, 1M TPM, RPD illimitato; a ~1.200 token per chunk
+    # da 450 caratteri il TPM morde a ~830 RPM, da cui 800.
+    "flash38": {
+        "id": "gemini-3.8-flash-tts",
+        "id_vertex": "gemini-3.8-flash-tts",
+        "id_cloudflare": None,
+        "cf_input_usd_per_mtok": None,
+        "cf_output_usd_per_mtok": None,
+        "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
+        "label": "Gemini 3.8 (PREMIUM+)",
+        "env_prefix": "38FLASH",
+        # Listino 2027 (non quello promozionale 2026): il prezzo utente non
+        # deve cambiare quando scade la promozione.
+        "input_usd_per_mtok": _f("ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK", 1.00),
+        "output_usd_per_mtok": _f("ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK", 18.00),
+        "margin_default": 25.0,
+        "default_margin_percent": _f("ABM_GEMINI_38FLASH_MARGIN_PERCENT", 25.0),
+        # Misurato sul test Beren (27/09/2026); da riverificare in fattura.
+        "audio_tokens_per_second": 31.9,
+        "default_rpm": 800,
+        "default_rpd": 0,
+        "http_timeout_ms": 40000,
+        "preview_timeout_sec": 45,
+        "backends_allowed": ("apikey",),
+        "mark_unavailable_on_fatal": True,
+    },
 }
 
 # === Backend resolver (Vertex vs API key vs Cloudflare) ======================
@@ -260,7 +289,14 @@ def _resolve_backend(model_key=None):
         if cached is not None:
             return cached if cached else None
 
-        choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+        # Override per modello (es. ABM_GEMINI_BACKEND_FLASH38=apikey) prima
+        # del selettore globale: flash31 resta su Cloudflare mentre flash38
+        # vive sull'API key.
+        per_model = ""
+        if model_key is not None:
+            per_model = (os.environ.get(
+                f"ABM_GEMINI_BACKEND_{_model_env_suffix(model_key)}", "") or "").strip().lower()
+        choice = per_model or (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
         api_key = os.environ.get("ABM_GEMINI_API_KEY", "").strip()
         cf_account = os.environ.get("ABM_CF_ACCOUNT_ID", "").strip()
         cf_token = os.environ.get("ABM_CF_API_TOKEN", "").strip()
@@ -312,6 +348,15 @@ def _resolve_backend(model_key=None):
             if vertex_ready:
                 resolved = "vertex"
             elif apikey_ready:
+                resolved = "apikey"
+            else:
+                resolved = False
+
+        # Canali ammessi dal catalogo: un modello che esiste solo sull'API key
+        # non deve mai finire su Vertex per un "auto" (404 a ogni chunk).
+        allowed = (GEMINI_MODELS.get(key) or {}).get("backends_allowed")
+        if resolved and allowed and resolved not in allowed:
+            if "apikey" in allowed and apikey_ready:
                 resolved = "apikey"
             else:
                 resolved = False

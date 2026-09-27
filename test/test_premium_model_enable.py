@@ -57,13 +57,12 @@ def test_solo_il_modello_spento_e_bloccato(monkeypatch):
 # --- cataloghi voci -------------------------------------------------------
 
 def test_catalogo_gemini_esclude_il_modello_spento(monkeypatch):
-    # Con un solo modello in catalogo non e' possibile spegnerne uno e
-    # vederne un altro sopravvivere (quello scenario e' coperto sotto da
-    # test_catalogo_gemini_vuoto_con_tutti_i_modelli_spenti): qui si verifica
-    # solo che il flag del modello disabilitato lo tolga davvero dal
-    # catalogo, non che gli altri restino.
+    # Verifica solo che il flag del modello disabilitato lo tolga dal
+    # catalogo, indipendentemente da quanti altri modelli esistano in
+    # GEMINI_MODELS (flash38 e' un secondo modello, spento di default: non
+    # deve influenzare questa asserzione, che riguarda solo flash31).
     monkeypatch.setenv("ABM_FLASH31_ENABLE", "false")
-    assert gemini_tts.enabled_model_keys() == []
+    assert "flash31" not in gemini_tts.enabled_model_keys()
     voices = gemini_tts.get_voices()
     keys = {v["model_key"] for lst in voices.values() for v in lst}
     assert "flash31" not in keys
@@ -72,8 +71,12 @@ def test_catalogo_gemini_esclude_il_modello_spento(monkeypatch):
 def test_catalogo_gemini_completo_di_default(monkeypatch):
     monkeypatch.delenv("ABM_FLASH25_ENABLE", raising=False)
     monkeypatch.delenv("ABM_FLASH31_ENABLE", raising=False)
+    monkeypatch.delenv("ABM_FLASH38_ENABLE", raising=False)
+    # flash38 nasce spento (_MODEL_DEFAULT_OFF): il catalogo "completo di
+    # default" e' quello dei soli modelli abilitati, non tutto GEMINI_MODELS.
     keys = {v["model_key"] for lst in gemini_tts.get_voices().values() for v in lst}
-    assert keys == set(gemini_tts.GEMINI_MODELS)
+    assert keys == set(gemini_tts.enabled_model_keys())
+    assert keys == {"flash31"}
 
 
 def test_catalogo_gemini_vuoto_con_tutti_i_modelli_spenti(monkeypatch):
@@ -182,3 +185,19 @@ def test_generate_rifiuta_modello_spento(client, monkeypatch):
     # non "Session expired".
     assert r.status_code == 400
     assert r.get_json().get("error_code") == "voice_model_disabled"
+
+
+def test_gemini_estimate_rifiuta_flash38_spento_di_default(client, job_with_text, monkeypatch):
+    # flash38 nasce spento (_MODEL_DEFAULT_OFF): senza ABM_FLASH38_ENABLE
+    # esplicito il gate deve rifiutarlo anche con l'API key configurata.
+    monkeypatch.delenv("ABM_FLASH38_ENABLE", raising=False)
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+    })
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body["error_code"] == "voice_model_disabled"
+    assert body["model_key"] == "flash38"

@@ -56,6 +56,10 @@ def is_voxcpm_voice(voice):
 # gia' registrato o pagato prosegue anche se il modello viene spento dopo.
 
 _MODEL_DISABLE_VALUES = ("0", "false", "no", "off")
+# Modelli rilasciati spenti: servono un valore esplicitamente vero per
+# comparire (flash38 si accende dopo il collaudo dell'utente).
+_MODEL_DEFAULT_OFF = ("flash38",)
+_MODEL_ENABLE_VALUES = ("1", "true", "yes", "on")
 
 
 def premium_model_env_name(model_key):
@@ -69,13 +73,14 @@ def premium_model_env_name(model_key):
 
 
 def premium_model_enabled(model_key):
-    """True se il modello premium e' abilitato (default in assenza di env)."""
+    """True se il modello premium e' abilitato: default abilitato, salvo i
+    modelli in `_MODEL_DEFAULT_OFF` (default spento, serve un valore
+    esplicitamente vero)."""
     if not model_key:
         return True
-    raw = os.environ.get(premium_model_env_name(model_key))
-    if raw is None:
-        return True
-    raw = raw.strip()
+    raw = (os.environ.get(premium_model_env_name(model_key)) or "").strip()
+    if model_key in _MODEL_DEFAULT_OFF:
+        return raw.lower() in _MODEL_ENABLE_VALUES
     if not raw:
         return True
     return raw.lower() not in _MODEL_DISABLE_VALUES
