@@ -57,11 +57,16 @@ def test_solo_il_modello_spento_e_bloccato(monkeypatch):
 # --- cataloghi voci -------------------------------------------------------
 
 def test_catalogo_gemini_esclude_il_modello_spento(monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
-    assert gemini_tts.enabled_model_keys() == ["flash31"]
+    # Con un solo modello in catalogo non e' possibile spegnerne uno e
+    # vederne un altro sopravvivere (quello scenario e' coperto sotto da
+    # test_catalogo_gemini_vuoto_con_tutti_i_modelli_spenti): qui si verifica
+    # solo che il flag del modello disabilitato lo tolga davvero dal
+    # catalogo, non che gli altri restino.
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "false")
+    assert gemini_tts.enabled_model_keys() == []
     voices = gemini_tts.get_voices()
     keys = {v["model_key"] for lst in voices.values() for v in lst}
-    assert keys == {"flash31"}
+    assert "flash31" not in keys
 
 
 def test_catalogo_gemini_completo_di_default(monkeypatch):
@@ -134,7 +139,7 @@ def test_gemini_estimate_rifiuta_modello_spento(client, job_with_text, monkeypat
 
 
 def test_gemini_estimate_accetta_modello_acceso(client, job_with_text, monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "true")
     r = client.post("/api/gemini_estimate", json={
         "job_id": "pmjob1",
         "voice_id": "gemini:flash31:Zephyr",

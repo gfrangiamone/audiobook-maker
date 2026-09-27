@@ -48,7 +48,10 @@ def test_panel3_premium_tab_has_model_selector():
     assert "of esito.premium.models" in corpo, "le option non vengono dalla cascata"
     assert "_modelLabel" in corpo, "le option non passano dalle etichette i18n"
     modelli = _estrai_funzione(CASCATA, "modelliPer")
-    assert "flash31" in modelli
+    # audio_cascade.js elenca ancora entrambi i modelli Gemini letteralmente
+    # (la migrazione UI e' materiale di un task successivo): la funzione deve
+    # continuare a gestirli entrambi finche' non viene aggiornata.
+    assert "flash25" in modelli
     assert "flash31" in modelli
 
 def test_panel3_premium_tab_has_style_textarea():

@@ -35,11 +35,10 @@ def _feed(n, chars, secs, lang="en", model="flash31", voice="Algenib",
 
 # ── tok/s: il difetto piu` costoso ──────────────────────────────────────────
 
-def test_audio_tokens_per_second_default_e_25_per_entrambi_i_modelli(monkeypatch):
+def test_audio_tokens_per_second_default_e_25(monkeypatch):
     monkeypatch.delenv("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND", raising=False)
     monkeypatch.delenv("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31", raising=False)
     monkeypatch.delenv("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25", raising=False)
-    assert gemini_tts._audio_tokens_per_second("flash31") == 25.0
     assert gemini_tts._audio_tokens_per_second("flash31") == 25.0
 
 

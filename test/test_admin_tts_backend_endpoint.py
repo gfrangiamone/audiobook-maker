@@ -167,10 +167,11 @@ def test_reset_invalidates_the_cache_of_every_known_model_not_only_the_target(cl
 # `reset()` MATERIALIZZA la voce di stato su disco e il vecchio endpoint
 # chiamava poi `_set_backend(model_key, "cloudflare")` senza validare nulla.
 # Le conseguenze, entrambe verificate in esecuzione prima del fix:
-#  - un reset su un modello che Cloudflare non ospita (flash31,
-#    id_cloudflare=None) lo inchiodava su Cloudflare: da li' in poi ogni job
-#    PREMIUM su quel modello finiva in TransportError(fatal) ->
-#    GeminiUnavailable -> errore + rimborso integrale, fino al riavvio;
+#  - un reset su un modello che Cloudflare non ospita (nessun
+#    `id_cloudflare` nel catalogo) lo inchiodava comunque su Cloudflare: da
+#    li' in poi ogni job PREMIUM su quel modello finiva in
+#    TransportError(fatal) -> GeminiUnavailable -> errore + rimborso
+#    integrale, fino al riavvio;
 #  - con ABM_GEMINI_BACKEND diverso da "cloudflare" la console rispondeva
 #    200 e accendeva Cloudflare in-process, cosa che l'ambiente non
 #    autorizza. La guardia lato client (bottone disabilitato) e' scavalcata
@@ -213,8 +214,8 @@ def test_reset_is_refused_when_the_environment_does_not_select_cloudflare(
 
 def test_a_refused_reset_does_not_pin_any_model_on_cloudflare(client, monkeypatch):
     # Il difetto vero: con configurazione "auto" il vecchio endpoint fissava
-    # su Cloudflare il model_key passato, flash31 compreso — che su
-    # Cloudflare non esiste (id_cloudflare=None).
+    # su Cloudflare il model_key passato, anche quando quel modello non ha
+    # un `id_cloudflare` nel catalogo e su Cloudflare non esiste affatto.
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
     r = client.post("/admin/api/tts_backend", headers=AUTH,
                     json={"action": "reset", "model_key": "flash31"})

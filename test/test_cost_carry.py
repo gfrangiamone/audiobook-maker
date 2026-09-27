@@ -58,7 +58,7 @@ def test_the_current_run_adds_on_top_of_the_carry(tmp_path):
 
 def test_the_model_key_of_the_current_run_wins_over_the_carried_one():
     actual = {"model_key": "flash31"}
-    cost_carry.merge(actual, {"model_key": "flash31"})
+    cost_carry.merge(actual, {"model_key": "other"})
     assert actual["model_key"] == "flash31"
 
 
