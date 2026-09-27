@@ -529,6 +529,27 @@ def test_chunk_a_silenzio_buttano_il_capitolo(tmp_path, monkeypatch):
     assert stats["failed_chunks"] == 0
 
 
+def test_rimbalzi_e_rifacimenti_lasciano_il_motivo_nel_log(
+        tmp_path, monkeypatch, caplog):
+    # 27/09/2026: 57 capitoli rifatti e 60 rimbalzi su un libro, e nel log
+    # dell'app nessuna riga che dicesse perche'.
+    finto = FintoRunJob(
+        voxcpm_tts.VoxcpmRimbalzato("worker in spegnimento", "jR"),
+        voxcpm_tts.VoxcpmMotoreCompromesso("engine_dead OOM", "jM"),
+        esito_ok(failed_indices=[1]),
+        esito_ok())
+    with caplog.at_level("WARNING", logger="voxcpm_tts"):
+        monkeypatch.setattr(voxcpm_tts, "SILENCE_RETRIES", 3)
+        sintetizza(finto, tmp_path, monkeypatch)
+    righe = [r.getMessage() for r in caplog.records]
+    assert any("cap.pcm respinto" in r and "jR" in r
+               and "spegnimento" in r for r in righe)
+    assert any("cap.pcm da rifare" in r and "VoxcpmMotoreCompromesso" in r
+               and "jM" in r and "32 -> 8" in r for r in righe)
+    assert any("cap.pcm da rifare" in r and "a silenzio (chunk 1)" in r
+               and "8 -> 4" in r for r in righe)
+
+
 def test_silenzio_ostinato_e_un_fallimento(tmp_path, monkeypatch):
     finto = FintoRunJob(*[esito_ok(failed_indices=[1])
                           for _ in range(voxcpm_tts.SILENCE_RETRIES + 1)])

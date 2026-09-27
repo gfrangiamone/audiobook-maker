@@ -1046,6 +1046,11 @@ def _riassunto(out):
     return json.dumps(ridotto)[:300]
 
 
+def _breve(errore):
+    """Messaggio di un errore su una riga sola, tagliato per il log."""
+    return " ".join(str(errore).split())[:300]
+
+
 # Ritentativi del download dell'intermedio da R2. Il capitolo e' gia'
 # sintetizzato e sta su R2: rifare la GET costa secondi, rifare il capitolo
 # costa minuti di GPU, e perdere il job costa il libro intero. Il 2026-09-08
@@ -1421,6 +1426,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              "runpod": []}
 
     conc = concurrency()
+    # La chiave porta job ABM e capitolo (`voxcpm/<job>/ch000001.pcm`): nel
+    # log e' quella che lega la riga al libro. Senza, il nome del file.
+    capitolo = key or os.path.basename(str(dest_path))
+    motivo_rifaccio = ""
     tentativo, rimbalzi, riconsegne, risottomissioni = 0, 0, 0, 0
     while True:
         if cancelled is not None and cancelled():
@@ -1457,7 +1466,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                           on_billing=stats["runpod"].append,
                           on_progress=(on_progress if progress_enabled()
                                        else None))
-        except VoxcpmRimbalzato:
+        except VoxcpmRimbalzato as e:
             # Respinto senza essere partito: si rifa' uguale. La concorrenza
             # resta quella e il contatore dei tentativi veri non si muove,
             # perche' questo non e' un sintomo di carico ma di instradamento.
@@ -1465,6 +1474,12 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             stats["bounced"] += 1
             if rimbalzi > BOUNCE_RETRIES:
                 raise
+            # Senza questa riga un libro con decine di rimbalzi (27/09/2026,
+            # 60 su 57 capitoli) lascia nel log solo il totale dell'audit.
+            _LOG.warning(
+                "capitolo %s respinto dal worker (job %s): %s; riprovo, "
+                "rimbalzo %d di %d", capitolo, e.job_id, _breve(e),
+                rimbalzi, BOUNCE_RETRIES)
             # Una pausa che cresce, non un ritentativo immediato: il worker
             # guasto impiega ancora una decina di secondi a uscire, e finche'
             # e' li' respinge tutto.
@@ -1489,11 +1504,13 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 SUBMIT_CHAPTER_RETRIES)
             riposa(60 * risottomissioni)
             continue
-        except (VoxcpmBloccato, VoxcpmMotoreCompromesso):
+        except (VoxcpmBloccato, VoxcpmMotoreCompromesso) as e:
             # Stesso rimedio, due sintomi: il worker che si e' fermato e la
             # GPU che non ha retto vogliono entrambi un batch piu' stretto.
             if ultimo:
                 raise
+            motivo_rifaccio = "%s (job %s): %s" % (
+                type(e).__name__, e.job_id, _breve(e))
         else:
             if "failed_indices" not in out:
                 # Assente e' un worker che non rispetta il protocollo, non un
@@ -1579,6 +1596,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                         f"{len(bad)} chunk su {len(chunks)} a silenzio anche a "
                         f"concorrenza {conc}: il capitolo sarebbe bucato, non "
                         f"lo si tiene")
+                motivo_rifaccio = "%d chunk su %d a silenzio (chunk %s)" % (
+                    len(bad), len(chunks),
+                    ", ".join(str(i) for i in bad[:10]))
             else:
                 try:
                     scritti = _consegna(out, dest_path, key, su_r2, conc,
@@ -1602,7 +1622,14 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 stats["bytes"] = scritti
                 return stats
 
-        conc = max(_CONCURRENCY_FLOOR, conc // 4)
+        nuova_conc = max(_CONCURRENCY_FLOOR, conc // 4)
+        # Il rifacimento costa GPU gia' pagata e rallenta il capitolo: il
+        # motivo va nel log, non solo il contatore `redone` dell'audit.
+        _LOG.warning(
+            "capitolo %s da rifare: %s; concorrenza %d -> %d, tentativo %d "
+            "di %d", capitolo, motivo_rifaccio, conc, nuova_conc,
+            tentativo + 1, SILENCE_RETRIES)
+        conc = nuova_conc
         tentativo += 1
         stats["redone"] += 1
 
