@@ -106,6 +106,17 @@ def test_sintesi_non_gated_dal_flag(monkeypatch):
 
 # --- ingressi HTTP --------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _reset_gemini_availability():
+    # gemini_availability._state e' un dict di modulo globale, condiviso con
+    # ogni altro file di test nello stesso processo pytest: un modello
+    # marcato non disponibile qui non deve restare "aperto" (900s di default)
+    # per i test successivi che riabilitano lo stesso modello.
+    import gemini_availability
+    yield
+    gemini_availability._state = {}
+
+
 @pytest.fixture
 def client():
     audiobook_app.app.config["TESTING"] = True
@@ -201,3 +212,34 @@ def test_gemini_estimate_rifiuta_flash38_spento_di_default(client, job_with_text
     body = r.get_json()
     assert body["error_code"] == "voice_model_disabled"
     assert body["model_key"] == "flash38"
+
+
+def test_ordine_paypal_flash38_indisponibile_503(client, job_with_text, monkeypatch, tmp_path):
+    import gemini_availability
+    monkeypatch.setenv("ABM_FLASH38_ENABLE", "true")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    gemini_availability.init(str(tmp_path))
+    gemini_availability.mark_unavailable("flash38", "403")
+    r = client.post("/api/paypal_create_order_gemini", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+        "amount_eur": 1.0,
+    })
+    assert r.status_code == 503
+    assert r.get_json()["error_code"] == "voice_model_unavailable"
+
+
+def test_gemini_estimate_flash38_indisponibile_503(client, job_with_text, monkeypatch, tmp_path):
+    import gemini_availability
+    monkeypatch.setenv("ABM_FLASH38_ENABLE", "true")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    gemini_availability.init(str(tmp_path))
+    gemini_availability.mark_unavailable("flash38", "403")
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+    })
+    assert r.status_code == 503
+    assert r.get_json()["error_code"] == "voice_model_unavailable"

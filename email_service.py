@@ -1579,6 +1579,46 @@ def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
         print(f"[admin] Invio pre-allarme credito Cloudflare fallito: {e}")
 
 
+def admin_notify_gemini_model_unavailable(model_key, detail, job_id, cooldown_sec):
+    """Notifica IMMEDIATA: un modello Gemini senza failover e' fuori servizio.
+
+    Il job che ha visto l'errore e' fallito con rimborso standard; il modello
+    e' nascosto dal catalogo per `cooldown_sec` o fino al reset dal pannello
+    «Backend TTS». Sec: `detail` e' solo HTML-escapato, mai interpretato.
+    Un guasto SMTP non propaga.
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+    model_safe = _esc_html(_sanitize_header(model_key or "", max_len=80))
+    detail_safe = _esc_html(_sanitize_header(detail or "", max_len=300))
+    job_safe = _esc_html(_sanitize_header(job_id or "", max_len=120))
+    minutes = int(cooldown_sec or 0) // 60
+    subject = _sanitize_header(
+        f"[ABM-ADMIN] TTS {model_key}: modello non disponibile", max_len=200)
+    html_body = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
+      <div style="background:#b91c1c;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">Modello TTS non disponibile</h2>
+      </div>
+      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
+        <p>Errore permanente sul canale del modello: il job e' stato fermato con
+           rimborso standard e il modello e' nascosto agli utenti.</p>
+        <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
+          <tr><td><strong>Modello</strong></td><td><code>{model_safe}</code></td></tr>
+          <tr><td><strong>Job</strong></td><td><code>{job_safe}</code></td></tr>
+          <tr><td><strong>Errore</strong></td><td><code>{detail_safe}</code></td></tr>
+        </table>
+        <p>Rientro automatico fra {minutes} minuti, oppure con «Riattiva» nel
+           pannello «Backend TTS» della console admin dopo aver risolto la causa
+           (chiave API, credito, abilitazione del modello).</p>
+      </div>
+    </div>"""
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+    except Exception as e:
+        print(f"[email] admin_notify_gemini_model_unavailable fallita: {e}")
+
+
 def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
                                           refund_eur, voucher_code,
                                           book_title, download_url, lang="it",

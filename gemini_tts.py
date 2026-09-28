@@ -30,6 +30,7 @@ from community_store import atomic_write_json as _atomic_write_json
 from gemini_transport import TransportError
 import gemini_transport as _transport
 import tts_backend_state as _backend_state
+import gemini_availability as _availability
 
 # Audio output constants
 #
@@ -452,6 +453,32 @@ def set_backend_switch_notifier(fn):
     """Registra la callback di trip: fn(model_key, reason, detail, job_id)."""
     global _backend_switch_notifier
     _backend_switch_notifier = fn
+
+
+# === Stato "modello non disponibile" (canale unico senza failover) =========
+
+_model_unavailable_notifier = None
+
+
+def set_model_unavailable_notifier(fn):
+    """fn(model_key, detail, job_id): chiamata una volta per apertura dello
+    stato non disponibile (non a ogni chunk fallito)."""
+    global _model_unavailable_notifier
+    _model_unavailable_notifier = fn
+
+
+def model_unavailable(model_key):
+    return _availability.is_unavailable(model_key)
+
+
+def offered_model_keys():
+    """Modelli da mostrare ORA: abilitati, con un canale risolto, non indisponibili.
+
+    Distinto da enabled_model_keys (solo interruttore env): il catalogo voci
+    e' in cache per tutto il processo e si filtra qui a ogni richiesta.
+    """
+    return [k for k in enabled_model_keys()
+            if _resolve_backend(k) is not None and not _availability.is_unavailable(k)]
 
 
 # Callback del RIENTRO: invocata quando una sonda riesce e il modello torna
@@ -1919,6 +1946,7 @@ def init(data_dir):
     _rpd_cache = None
     _admin_state_path = _data_dir / "gemini_admin_state.json"
     _load_admin_state()
+    _availability.init(data_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -3449,6 +3477,17 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                 # prima usciva la causa grezza — un KeyError che il chiamante
                 # scambiava per un guasto di chunk (spec §4.4 p.4).
                 # `from te`: str(te) e' il messaggio gia' redatto dall'adapter.
+                if (backend == "apikey"
+                        and (GEMINI_MODELS.get(model_key) or {}).get("mark_unavailable_on_fatal")):
+                    # Canale unico senza failover: il modello sparisce dal
+                    # catalogo finche' non rientra (cooldown o reset admin),
+                    # cosi' nessun nuovo utente paga un libro che non parte.
+                    if _availability.mark_unavailable(model_key, str(te)):
+                        if _model_unavailable_notifier is not None:
+                            try:
+                                _model_unavailable_notifier(model_key, str(te)[:300], job_id)
+                            except Exception as ne:
+                                print(f"[gemini-tts] notifier non disponibilita' fallito: {ne}")
                 raise GeminiUnavailable(str(te)) from te
 
             # Quota giornaliera: sospendere invece di dormire per ore.

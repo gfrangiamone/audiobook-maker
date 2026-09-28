@@ -634,3 +634,20 @@ def test_the_refusal_explains_the_probe_in_its_own_words(client, monkeypatch):
 def test_the_get_payload_reports_no_probe_running_when_none_is(client):
     assert client.get("/admin/api/tts_backend",
                       headers=AUTH).get_json()["probe_running"] is False
+
+
+def test_disponibilita_modelli_get_e_reset(client, tmp_path):
+    import gemini_availability
+    gemini_availability.init(str(tmp_path))
+    gemini_availability.mark_unavailable("flash38", "403")
+    h = {"X-Admin-Token": "segreto"}
+    r = client.get("/admin/api/gemini_model_availability", headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["models"]["flash38"]["unavailable"] is True
+    r = client.post("/admin/api/gemini_model_availability", headers=h,
+                    json={"action": "reset", "model_key": "flash38"})
+    assert r.status_code == 200
+    assert not gemini_availability.is_unavailable("flash38")
+    r = client.post("/admin/api/gemini_model_availability", headers=h,
+                    json={"action": "reset", "model_key": "boh"})
+    assert r.status_code == 400

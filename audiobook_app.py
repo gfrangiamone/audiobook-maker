@@ -532,9 +532,17 @@ if gemini_tts is not None:
                       f"sonda riuscita dopo {probe_attempts} tentativi",
                       epoch=time.time())
 
+    def _on_gemini_model_unavailable(model_key, detail, job_id):
+        import gemini_availability
+        email_service.admin_notify_gemini_model_unavailable(
+            model_key, detail, job_id, gemini_availability.cooldown_sec())
+        _log_activity("", "", "TTS_MODEL_UNAVAILABLE", "", "",
+                      model_key, str(detail)[:80], epoch=time.time())
+
     gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
     gemini_tts.set_credit_alert_notifier(_on_cf_credit_alert)
     gemini_tts.set_backend_return_notifier(_on_tts_backend_return)
+    gemini_tts.set_model_unavailable_notifier(_on_gemini_model_unavailable)
 
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
@@ -629,6 +637,10 @@ def _premium_model_gate(voice):
             return jsonify({"error": "voice_model_disabled",
                             "error_code": "voice_model_disabled",
                             "model_key": mk}), 400
+        if mk and gemini_tts.model_unavailable(mk):
+            return jsonify({"error": "voice_model_unavailable",
+                            "error_code": "voice_model_unavailable",
+                            "model_key": mk}), 503
     if _voice_model_enabled(voice):
         return None
     return jsonify({"error": "voice_model_disabled",
@@ -7272,6 +7284,7 @@ def admin_audit_premium_page():
     <button type="button" id="tbProbeBtn" disabled title="Esegue subito una sonda di rientro invece di aspettare l'appuntamento automatico: sintetizza una parola su Cloudflare e butta l'audio. Se Cloudflare risponde, il rientro avviene da solo; se fallisce, l'appuntamento automatico resta dov'e'.">Sonda ora</button>
     <button type="button" id="tbTopupBtn" disabled title="Da premere dopo aver ricaricato il credito Cloudflare e aggiornato ABM_CF_CREDIT_BALANCE_USD: azzera la spesa accumulata e riarma il pre-allarme per il ciclo successivo.">Ho ricaricato il credito</button>
   </div>
+  <div id="gaBox" style="margin-top:12px;font-size:.9rem"></div>
 </div>
 
 <div class="tab-bar">
@@ -8129,6 +8142,28 @@ def admin_audit_premium_page():
   $("tbProbeBtn").addEventListener("click", tbProbe);
   $("tbTopupBtn").addEventListener("click", tbTopup);
 
+  // ---- Modelli Gemini senza failover: stato "non disponibile" e riattivazione ----
+  async function gaRefresh(){
+    try {
+      const r = await fetch("/admin/api/gemini_model_availability",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) return;
+      const s = await r.json();
+      const rows = Object.entries(s.models || {}).filter(([, v]) => v.unavailable);
+      const box = $("gaBox");
+      if (!rows.length) { box.textContent = ""; return; }
+      box.innerHTML = rows.map(([mk, v]) =>
+        `<div><strong>${esc(mk)}</strong> non disponibile (rientro fra ${Math.ceil(v.retry_in_sec/60)} min): `
+        + `<code>${esc(v.reason)}</code> <button type="button" data-ga-reset="${esc(mk)}">Riattiva</button></div>`).join("");
+      box.querySelectorAll("[data-ga-reset]").forEach(b => b.addEventListener("click", async () => {
+        await fetch("/admin/api/gemini_model_availability", {method: "POST",
+          headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+          body: JSON.stringify({action: "reset", model_key: b.dataset.gaReset})});
+        gaRefresh();
+      }));
+    } catch (e) { /* pannello informativo: nessun alert */ }
+  }
+
   // ===================== Tab Traduzioni =====================
   const TR_OUTCOME_BADGE = {
     "running":            ["badge-live",  "In corso"],
@@ -8575,6 +8610,7 @@ def admin_audit_premium_page():
   ttsLoadLanguages().finally(ttsFetch);
   ksRefresh();
   tbRefresh();
+  gaRefresh();
   // Traduzioni e Optimization vengono caricate anche in background all'avvio,
   // cosi' il "Margine netto totale" in alto somma tutti e tre i servizi senza
   // dover aprire le rispettive tab. Le marchiamo come gia' caricate per non
@@ -9523,6 +9559,29 @@ def admin_api_tts_backend():
     return jsonify(_tts_backend_payload(model_key, configured_backend))
 
 
+@app.route("/admin/api/gemini_model_availability", methods=["GET", "POST"])
+def admin_api_gemini_model_availability():
+    """Stato "non disponibile" dei modelli Gemini senza failover e reset manuale."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+    if gemini_tts is None:
+        return jsonify({"error": "Gemini TTS module not loaded"}), 503
+    import gemini_availability
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        mk = str(data.get("model_key", "") or "")
+        if data.get("action") != "reset" or mk not in gemini_tts.GEMINI_MODELS:
+            return jsonify({"error": "bad request"}), 400
+        gemini_availability.clear(mk)
+        _invalidate_voices_cache()
+        _log_activity("", "", "ADMIN_TTS_MODEL_RESET", "", _get_client_ip(), mk, "")
+    return jsonify({"models": gemini_availability.snapshot(),
+                    "cooldown_sec": gemini_availability.cooldown_sec()})
+
+
 def _gemini_capability_ok():
     """True se Gemini TTS e' tecnicamente configurato (a prescindere dal
     kill-switch). Usato dal pannello admin per distinguere 'spento per scelta'
@@ -9977,6 +10036,23 @@ def admin_api_gemini_recalc_params():
 def api_voices():
     try:
         voices = get_voices()
+        # La cache voci vive per tutto il processo: un modello Gemini spento,
+        # senza canale o indisponibile si toglie qui, a ogni richiesta, su una
+        # copia (mai sulla cache condivisa).
+        if gemini_tts is not None:
+            try:
+                offerti = set(gemini_tts.offered_model_keys())
+                filtrate = {}
+                for k, v in voices.items():
+                    if isinstance(v, dict) and isinstance(v.get("voices"), list):
+                        v = dict(v)
+                        v["voices"] = [x for x in v["voices"]
+                                       if not (isinstance(x, dict) and x.get("engine") == "gemini"
+                                               and x.get("model_key") not in offerti)]
+                    filtrate[k] = v
+                voices = filtrate
+            except Exception:
+                pass
         # Stato voci PREMIUM: distingue "non configurato" (capability_ok=False)
         # da "spento per scelta admin" (admin_disabled=True). Serve alla UI per
         # mostrare il tab Premium con popup di manutenzione invece di nasconderlo,
