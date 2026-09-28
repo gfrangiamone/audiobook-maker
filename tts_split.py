@@ -1252,6 +1252,7 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                     snippet = piece_text[:60].replace('\n', ' ')
                     print(f"[gemini-tts] Split-piece {idx+1}/{len(pieces)} failed "
                           f"({len(piece_text)} chars: \"{snippet}...\"): {last_error}")
+                    _raise_if_single_channel_exhausted(_gemini, voice_id, last_error)
                     return False
                 with open(tmp_path, "rb") as fpart:
                     fout.write(fpart.read())
@@ -1262,6 +1263,38 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                 os.remove(p)
             except OSError:
                 pass
+
+
+def _gemini_single_channel(_gemini, voice_id):
+    """True per i modelli Gemini a canale unico (`mark_unavailable_on_fatal`).
+
+    Per questi modelli un chunk non si sostituisce mai con un'altra voce (la
+    spec vieta il cambio di modello a meta' libro) e un chunk con i retry
+    esauriti ferma il job invece di lasciare un buco.
+    """
+    try:
+        mk = str(voice_id).split(":")[1]
+        return bool((_gemini.GEMINI_MODELS.get(mk) or {}).get("mark_unavailable_on_fatal"))
+    except Exception:
+        return False
+
+
+def _raise_if_single_channel_exhausted(_gemini, voice_id, last_error):
+    """Modello a canale unico + retry esauriti per guasto del servizio -> job-fatale.
+
+    GeminiUnavailable e' l'unica eccezione che generation_engine tratta come
+    job-fatale con rimborso integrale (voucher riaccreditato, PayPal -> voucher
+    via email). Un contenuto rifiutato (GeminiEmptyResponse non ritentabile)
+    non e' un guasto del servizio: resta un chunk fallito, che conta per
+    l'early-abort e per il rimborso a fine generazione.
+    """
+    if last_error is None or not _gemini_single_channel(_gemini, voice_id):
+        return
+    if isinstance(last_error, _gemini.GeminiEmptyResponse):
+        return
+    raise _gemini.GeminiUnavailable(
+        f"Chunk failed after all retries on single-channel model "
+        f"({voice_id}): {last_error}") from last_error
 
 
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
@@ -1360,11 +1393,16 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
     print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
           f"generating silence ({len(clean)} chars). Last error: {last_error}")
+    # Modello a canale unico (flash38): nessuna voce sostitutiva. Retry
+    # esauriti -> job-fatale; contenuto rifiutato -> chunk fallito (silenzio).
+    _single_channel = _gemini_single_channel(_gemini, voice_id)
+    if _single_channel:
+        _raise_if_single_channel_exhausted(_gemini, voice_id, last_error)
     # Prima del silenzio: tenta una voce edge-tts standard, cosi' un chunk
     # rifiutato da Gemini (tipicamente content policy / safety su testi
     # sensibili) non lascia un buco muto nell'audiolibro. Solo se conosciamo la
     # lingua di lettura. Su successo il chunk NON conta come failed.
-    if fallback_lang:
+    if fallback_lang and not _single_channel:
         # Genere della voce Gemini scelta (voice_id = 'gemini:<model>:<Voice>'):
         # serve a scegliere una voce edge dello stesso genere ed evitare il
         # salto maschile<->femminile percepito dall'utente.

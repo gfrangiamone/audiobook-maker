@@ -4,6 +4,7 @@ lettura. Incidente kd8XQj6WWdrZJt1_z0VMPQ (5 chunk silenziati su libro es per
 safety filter). Qui si testa il dispatch del fallback, non la sintesi reale
 (edge-tts + ffmpeg sono mockati)."""
 import os
+import pytest
 import gemini_tts
 import tts_split
 
@@ -173,3 +174,60 @@ def test_generate_chunk_passes_gender_from_voice_id(tmp_path, monkeypatch):
     assert isinstance(result, dict)
     assert calls["gender"] == "Male"
     assert calls["accent_code"] == "gb"
+
+
+
+# --- Modelli a canale unico (flash38): mai un'altra voce a meta' libro ---
+
+def _no_edge(*a, **k):
+    raise AssertionError("flash38: fallback edge vietato")
+
+
+def test_flash38_retry_esauriti_job_fatale_senza_edge(tmp_path, monkeypatch):
+    def _exhausted(*a, **k):
+        raise RuntimeError("Gemini TTS failed after 3 attempts: 503 UNAVAILABLE")
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _exhausted)
+    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _no_edge)
+    with pytest.raises(gemini_tts.GeminiUnavailable):
+        tts_split.generate_chunk_pcm_gemini(
+            "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+            failure_info={}, fallback_lang="it")
+
+
+def test_flash38_contenuto_rifiutato_chunk_fallito_senza_edge(tmp_path, monkeypatch):
+    def _rejected(*a, **k):
+        raise gemini_tts.GeminiEmptyResponse("blocked", block_reason="SAFETY",
+                                             retryable=False)
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _rejected)
+    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _no_edge)
+    out = str(tmp_path / "c.pcm")
+    fi = {}
+    result = tts_split.generate_chunk_pcm_gemini(
+        "Testo di prova.", "gemini:flash38:Zephyr", out,
+        failure_info=fi, fallback_lang="it")
+    assert result is False
+    assert fi.get("reason") == "synthesize_failed"
+    assert "fallback_engine" not in fi
+
+
+def test_flash38_byte_split_retry_esauriti_job_fatale(tmp_path, monkeypatch):
+    def _exhausted(*a, **k):
+        raise RuntimeError("Gemini TTS failed after 3 attempts: timeout")
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _exhausted)
+    with pytest.raises(gemini_tts.GeminiUnavailable):
+        tts_split._synthesize_pcm_pieces_and_concat(
+            ["Prima parte.", "Seconda parte."], "gemini:flash38:Zephyr",
+            str(tmp_path / "c.pcm"), None, 1)
+
+
+def test_flash31_byte_split_retry_esauriti_resta_chunk_fallito(tmp_path, monkeypatch):
+    def _exhausted(*a, **k):
+        raise RuntimeError("Gemini TTS failed after 3 attempts: timeout")
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _exhausted)
+    assert tts_split._synthesize_pcm_pieces_and_concat(
+        ["Prima parte.", "Seconda parte."], "gemini:flash31:Zephyr",
+        str(tmp_path / "c.pcm"), None, 1) is False
