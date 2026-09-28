@@ -8,11 +8,13 @@ Plan A scope: standalone module — synthesis + pricing + usage tracking + previ
 Integration with tts_split / generation_engine / audiobook_app is Plan B.
 """
 
+import io
 import os
 import re
 import json
 import math
 import time
+import wave
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2952,6 +2954,14 @@ class GeminiEmptyResponse(RuntimeError):
         self.retryable = retryable
 
 
+class GeminiAudioFormatError(RuntimeError):
+    """Audio in un formato diverso da PCM 24 kHz mono 16 bit.
+
+    Mai ritentabile: un chunk a sample rate diverso concatenato agli altri
+    produce un libro accelerato o rallentato, peggio di un job fallito.
+    """
+
+
 def _extract_audio_pcm(response, model_key):
     """Estrae il payload PCM da una response Gemini. Se mancano candidates,
     content, parts, o inline_data, solleva GeminiEmptyResponse con tutti i
@@ -3016,6 +3026,21 @@ def _extract_audio_pcm(response, model_key):
         raise GeminiEmptyResponse(
             msg, finish_reason=finish_label, retryable=True,
         )
+    mime = (getattr(inline, "mime_type", "") or "").lower()
+    # flash38 risponde audio/wav con header RIFF; flash31 PCM grezzo. Il
+    # controllo sui primi byte copre un mime_type assente o impreciso.
+    if mime.startswith("audio/wav") or mime.startswith("audio/x-wav") or data[:4] == b"RIFF":
+        try:
+            with wave.open(io.BytesIO(data)) as w:
+                fmt = (w.getframerate(), w.getnchannels(), w.getsampwidth())
+                frames = w.readframes(w.getnframes())
+        except (wave.Error, EOFError) as e:
+            raise GeminiAudioFormatError(f"WAV illeggibile (model={model_key}): {e}") from e
+        if fmt != (AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_SAMPLE_WIDTH_BYTES):
+            raise GeminiAudioFormatError(
+                f"WAV {fmt[0]} Hz / {fmt[1]} ch / {fmt[2] * 8} bit (model={model_key}): "
+                f"atteso {AUDIO_SAMPLE_RATE} Hz mono 16 bit")
+        return frames
     return data
 
 
@@ -3085,6 +3110,29 @@ def build_final_text(text, style_instruction=None, rate=None,
     return final_text
 
 
+_PERMANENT_HTTP = (401, 403, 404)
+_PERMANENT_MARKERS = ("API_KEY_INVALID", "PERMISSION_DENIED", "NOT_FOUND",
+                      "BILLING", "billing")
+
+
+def _is_permanent_apikey_error(err, model_key):
+    """Errore che ritentare non risolve (chiave, permessi, modello, credito).
+
+    Solo sull'API key: su Vertex un 403/404 transitorio durante il failover
+    Cloudflare e' gia' gestito dal retry e non deve fermare il libro.
+    """
+    if _resolve_backend(model_key) != "apikey":
+        return False
+    code = getattr(err, "code", None) or getattr(err, "status_code", None)
+    try:
+        if int(code) in _PERMANENT_HTTP:
+            return True
+    except (TypeError, ValueError):
+        pass
+    msg = str(err)
+    return any(m in msg for m in _PERMANENT_MARKERS)
+
+
 def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
                            timeout_ms, temperature):
     """Adapter di trasporto Vertex / API key.
@@ -3136,6 +3184,8 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
             ),
         )
         pcm_data = _extract_audio_pcm(response, model_key)
+    except GeminiAudioFormatError as e:
+        raise TransportError(str(e), kind="fatal") from e
     except GeminiEmptyResponse as e:
         # Il caller storico distingueva retryable da non-retryable: la
         # distinzione sopravvive nel kind.
@@ -3149,6 +3199,8 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
             kind = "quota_daily" if _is_daily_quota_error(e) else "rate_limited"
             raise TransportError(str(e), kind=kind,
                                  retry_after_sec=retry_after) from e
+        if _is_permanent_apikey_error(e, model_key):
+            raise TransportError(str(e), kind="fatal") from e
         raise TransportError(str(e), kind="retryable") from e
 
     um = getattr(response, "usage_metadata", None)
