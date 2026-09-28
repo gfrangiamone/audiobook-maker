@@ -1,11 +1,12 @@
 """
-gemini_tts.py — Gemini 2.5/3.1 Flash TTS integration.
+gemini_tts.py — Gemini Flash TTS integration (3.1 "PREMIUM", 3.8 "PREMIUM+").
 
-Uses google-genai SDK with separate API key (or Vertex AI service account).
-Native output is PCM 24kHz mono 16-bit.
+Backends: Vertex AI (service account), API key (AI Studio) and Cloudflare AI
+Gateway; the model catalogue in GEMINI_MODELS says which ones each model may
+use (flash38: API key only). Output is PCM 24kHz mono 16-bit (flash38 answers
+WAV, unwrapped by _extract_audio_pcm).
 
-Plan A scope: standalone module — synthesis + pricing + usage tracking + preview cap.
-Integration with tts_split / generation_engine / audiobook_app is Plan B.
+Scope: synthesis + pricing + usage tracking + preview cap + availability.
 """
 
 import io
@@ -3068,6 +3069,12 @@ def _extract_audio_pcm(response, model_key):
             raise GeminiAudioFormatError(
                 f"WAV {fmt[0]} Hz / {fmt[1]} ch / {fmt[2] * 8} bit (model={model_key}): "
                 f"atteso {AUDIO_SAMPLE_RATE} Hz mono 16 bit")
+        if not frames:
+            # Header RIFF valido ma nessun campione: e' una risposta vuota,
+            # non un chunk riuscito (sarebbe un buco muto mai contato).
+            msg = f"Gemini WAV with 0 frames (model={model_key}, finish_reason={finish_label})"
+            print(f"[gemini-tts] EMPTY-RESPONSE: {msg}")
+            raise GeminiEmptyResponse(msg, finish_reason=finish_label, retryable=True)
         return frames
     return data
 
@@ -3141,6 +3148,25 @@ def build_final_text(text, style_instruction=None, rate=None,
 _PERMANENT_HTTP = (401, 403, 404)
 _PERMANENT_MARKERS = ("API_KEY_INVALID", "PERMISSION_DENIED", "NOT_FOUND",
                       "BILLING", "billing")
+
+# Credito/fatturazione esauriti: AI Studio li segnala come 429
+# RESOURCE_EXHAUSTED, indistinguibili dal rate limit per codice. Solo marker
+# specifici: il 429 di rate limit ordinario dice "check your plan and billing
+# details" e deve restare ritentabile, quindi "billing" da solo NON basta.
+_BILLING_EXHAUSTED_MARKERS = (
+    "prepayment", "credits are depleted", "credit balance", "out of credit",
+    "spend cap", "spending cap", "spending limit", "billing_disabled",
+    "billing account", "billing is not enabled", "billing has not been enabled",
+    "billing is disabled",
+)
+
+
+def _is_billing_exhausted_apikey_error(err, model_key):
+    """Credito o spesa esauriti sull'API key: fatale anche se arriva come 429."""
+    if _resolve_backend(model_key) != "apikey":
+        return False
+    msg = str(err).lower()
+    return any(m in msg for m in _BILLING_EXHAUSTED_MARKERS)
 
 
 def _is_permanent_apikey_error(err, model_key):
@@ -3222,6 +3248,11 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
             kind="retryable" if e.retryable else "content_rejected",
         ) from e
     except Exception as e:
+        # Prima del 429: un credito esaurito arriva come 429 RESOURCE_EXHAUSTED
+        # ma ritentarlo non serve, va fermato il libro (fatal -> rimborso e,
+        # per i modelli a canale unico, modello nascosto).
+        if _is_billing_exhausted_apikey_error(e, model_key):
+            raise TransportError(str(e), kind="fatal") from e
         if _is_429(e):
             retry_after = _parse_retry_after(e)
             kind = "quota_daily" if _is_daily_quota_error(e) else "rate_limited"

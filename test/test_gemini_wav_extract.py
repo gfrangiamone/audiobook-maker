@@ -108,3 +108,46 @@ def test_formato_audio_errato_fatale(monkeypatch):
                                           model_key="flash38", model_id="gemini-3.8-flash-tts",
                                           timeout_ms=1000, temperature=None)
     assert ei.value.kind == "fatal"
+
+
+def test_wav_senza_frame_e_risposta_vuota_ritentabile():
+    with pytest.raises(gemini_tts.GeminiEmptyResponse) as ei:
+        gemini_tts._extract_audio_pcm(_resp(_wav(frames=b"")), "flash38")
+    assert ei.value.retryable is True
+
+
+def _transport_429(monkeypatch, backend, msg, model_key="flash38"):
+    monkeypatch.setattr(gemini_tts, "_resolve_backend", lambda mk=None: backend)
+
+    class _Models:
+        def generate_content(self, **kw):
+            raise _Err(429, msg)
+
+    monkeypatch.setattr(gemini_tts, "_get_client",
+                        lambda mk: types.SimpleNamespace(models=_Models()))
+    with pytest.raises(TransportError) as ei:
+        gemini_tts._vertex_transport_call(final_text="ciao", voice_name="Zephyr",
+                                          model_key=model_key, model_id="m",
+                                          timeout_ms=1000, temperature=None)
+    return ei.value
+
+
+@pytest.mark.parametrize("msg", [
+    "429 RESOURCE_EXHAUSTED. Your prepayment credits are depleted. Please go to AI Studio to manage your project and billing.",
+    "429 RESOURCE_EXHAUSTED. Your project has exceeded its monthly spending cap.",
+    "429 RESOURCE_EXHAUSTED. Spend cap reached for this project.",
+])
+def test_apikey_429_di_credito_esaurito_e_fatale(monkeypatch, msg):
+    assert _transport_429(monkeypatch, "apikey", msg).kind == "fatal"
+
+
+def test_apikey_429_di_rate_limit_resta_ritentabile(monkeypatch):
+    msg = ("429 RESOURCE_EXHAUSTED. You exceeded your current quota, please check "
+           "your plan and billing details. For more information on this error, "
+           "head to: https://ai.google.dev/gemini-api/docs/rate-limits.")
+    assert _transport_429(monkeypatch, "apikey", msg).kind == "rate_limited"
+
+
+def test_vertex_429_con_marker_credito_resta_rate_limited(monkeypatch):
+    msg = "429 RESOURCE_EXHAUSTED prepayment credits are depleted"
+    assert _transport_429(monkeypatch, "vertex", msg, "flash31").kind == "rate_limited"
