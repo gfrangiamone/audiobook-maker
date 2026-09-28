@@ -258,6 +258,26 @@ def _vertex_ready():
     return bool(project) and bool(creds) and os.path.isfile(creds)
 
 
+def _apply_backends_allowed(key, resolved, apikey_ready):
+    """Filtra `resolved` sui `backends_allowed` del catalogo.
+
+    Va applicato su OGNI percorso di ritorno di `_resolve_backend`, incluso
+    quello di precedenza del breaker (rilievo review task-6 Important #1):
+    con `tts_backend_state._FAIL_SAFE` attivo (stato su disco illeggibile al
+    boot), `is_tripped()` risulta True per qualunque model_key non ancora in
+    cache, anche uno nuovo come flash38, e forzerebbe "vertex" bypassando il
+    filtro se questo non venisse richiamato anche li'. Un modello con
+    `backends_allowed=("apikey",)` non deve MAI finire su Vertex per nessuna
+    via, ne' un "auto", ne' un breaker scattato in fail-safe.
+    """
+    allowed = (GEMINI_MODELS.get(key) or {}).get("backends_allowed")
+    if resolved and allowed and resolved not in allowed:
+        if "apikey" in allowed and apikey_ready:
+            return "apikey"
+        return False
+    return resolved
+
+
 def _resolve_backend(model_key=None):
     """Risolve quale backend Gemini usare per un modello.
 
@@ -279,6 +299,11 @@ def _resolve_backend(model_key=None):
     True, tutto quanto sopra viene bypassato e si forza "vertex" (None se
     Vertex non e' pronto) — anche subito dopo un riavvio del processo, quando
     `_BACKEND` e' vuoto ma lo stato del breaker e' sopravvissuto su disco.
+    Anche in fail-safe (`tts_backend_state._FAIL_SAFE`, stato su disco
+    illeggibile al boot) OGNI model_key non ancora in cache risulta scattato:
+    `_apply_backends_allowed` filtra anche questo esito, altrimenti un
+    modello apikey-only come flash38 finirebbe su Vertex proprio nel caso che
+    `backends_allowed` esiste per escludere (review task-6 Important #1).
     """
     key = model_key or _BACKEND_DEFAULT_KEY
     cached = _BACKEND.get(key)
@@ -321,10 +346,19 @@ def _resolve_backend(model_key=None):
         # esplicito (rientro manuale, mai automatico).
         if model_key is not None and _backend_state.is_tripped(model_key):
             resolved = "vertex" if vertex_ready else False
+            # Il filtro va applicato anche qui: senza, un modello apikey-only
+            # come flash38 potrebbe finire su Vertex quando is_tripped()
+            # risulta True in fail-safe (stato su disco illeggibile al boot),
+            # bypassando "no Vertex fallback" (review task-6 Important #1).
+            resolved = _apply_backends_allowed(key, resolved, apikey_ready)
             _BACKEND[key] = resolved
-            if resolved:
+            if resolved == "vertex":
                 print(f"[gemini-tts] Backend di {key} forzato su vertex "
                       f"(breaker gia' scattato, stato persistito)")
+            elif resolved:
+                print(f"[gemini-tts] Backend di {key} forzato su {resolved} "
+                      f"(breaker gia' scattato, stato persistito, vertex non "
+                      f"ammesso dal catalogo)")
             return resolved if resolved else None
 
         if choice == "vertex":
@@ -354,12 +388,7 @@ def _resolve_backend(model_key=None):
 
         # Canali ammessi dal catalogo: un modello che esiste solo sull'API key
         # non deve mai finire su Vertex per un "auto" (404 a ogni chunk).
-        allowed = (GEMINI_MODELS.get(key) or {}).get("backends_allowed")
-        if resolved and allowed and resolved not in allowed:
-            if "apikey" in allowed and apikey_ready:
-                resolved = "apikey"
-            else:
-                resolved = False
+        resolved = _apply_backends_allowed(key, resolved, apikey_ready)
 
         _BACKEND[key] = resolved
         if resolved:

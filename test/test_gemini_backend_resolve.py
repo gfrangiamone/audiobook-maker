@@ -2,6 +2,7 @@
 import pytest
 
 import gemini_tts
+import tts_backend_state as st
 
 
 @pytest.fixture(autouse=True)
@@ -74,3 +75,35 @@ def test_resolve_without_model_key_still_works(monkeypatch, tmp_path):
     _vertex_env(monkeypatch, tmp_path)
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
     assert gemini_tts._resolve_backend() == "vertex"
+
+
+# --- Regressione review task-6 Important #1 --------------------------------
+# tts_backend_state._FAIL_SAFE (stato su disco illeggibile al boot) fa
+# risultare is_tripped() True per QUALUNQUE model_key non ancora in cache,
+# anche uno nuovo come flash38. Prima del fix, il ramo di precedenza del
+# breaker in _resolve_backend forzava "vertex" senza passare dal filtro
+# backends_allowed: un modello apikey-only finiva su Vertex (404 ad ogni
+# chunk) proprio nel caso che backends_allowed esiste per escludere.
+
+@pytest.fixture
+def _fail_safe(monkeypatch):
+    monkeypatch.setattr(st, "_FAIL_SAFE", True)
+    st._CACHE.pop("flash38", None)
+    yield
+    st._CACHE.pop("flash38", None)
+
+
+def test_fail_safe_trip_non_forza_vertex_su_flash38_senza_api_key(
+        monkeypatch, tmp_path, _fail_safe):
+    _vertex_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("ABM_GEMINI_API_KEY", raising=False)
+    # Vertex e' pronto (credenziali complete): senza il fix, is_tripped()
+    # forzerebbe "vertex" qui, in violazione di backends_allowed=("apikey",).
+    assert gemini_tts._resolve_backend("flash38") is None
+
+
+def test_fail_safe_trip_su_flash38_con_api_key_usa_apikey(
+        monkeypatch, tmp_path, _fail_safe):
+    _vertex_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    assert gemini_tts._resolve_backend("flash38") == "apikey"
