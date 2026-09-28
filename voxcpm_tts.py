@@ -1197,6 +1197,51 @@ def normalizza_puntini(testo):
 # dopo, ma per il modello quello e' tutto il testo che c'e'.
 _CODA_SOSPESA = ",;:"
 
+# Terminatori che chiudono gia' un capitolo (i CJK compresi: un punto latino
+# dopo «。» il modello lo leggerebbe) e segni che invece lo lasciano appeso,
+# da sostituire col punto: i sospesi e il trattino di una parola spezzata
+# dal PDF a fine pagina («I dis-»).
+_CAPITOLO_CHIUSO = ".!?…。．！？｡"
+_CAPITOLO_APPESO = _CODA_SOSPESA + "-–—、，；："
+
+
+def chiudi_capitolo(testo):
+    """Il capitolo con un punto in fondo, se non finisce gia' una frase.
+
+    Il worker smussa ogni giunzione il cui chunk non finisce con un
+    terminatore: la tratta come un taglio a meta' frase e porta il silenzio
+    alla pausa breve. Dentro un lotto (piu' capitoli in un job RunPod, vedi
+    generation_engine._voxcpm_lotti) il confine fra due capitoli e' una
+    giunzione come le altre. `_ensure_heading_pause` chiude solo un'ultima
+    riga breve e isolata: un capitolo che finisce con un paragrafo lungo
+    spezzato a meta' frase arrivava appeso e perdeva la pausa di fine
+    capitolo.
+
+    Il punto va prima delle virgolette e delle parentesi di chiusura, e al
+    posto dei segni appesi: «FULFILL-ING' "» -> «FULFILL-ING.' "», «dis-» ->
+    «dis.». Lo spazio in coda resta com'era.
+    """
+    if not testo:
+        return testo
+    corpo = testo.rstrip()
+    t = corpo.rstrip(_VIRGOLETTE + " \t\r\n")
+    if not t or t[-1] in _CAPITOLO_CHIUSO:
+        return testo
+    base = t.rstrip(_CAPITOLO_APPESO + " \t\r\n")
+    if not base:
+        return testo
+    fine = "" if base[-1] in _CAPITOLO_CHIUSO else "."
+    return base + fine + corpo[len(t):] + testo[len(corpo):]
+
+
+def prepara_capitolo(testo):
+    """Il ritocco VoxCPM sul testo intero del capitolo, prima della spezzatura.
+
+    Prima i puntini (che guardano il seguito), poi la chiusura del capitolo:
+    i puntini in fondo diventano gia' un punto e la chiusura li trova chiusi.
+    """
+    return chiudi_capitolo(normalizza_puntini(testo))
+
 
 def pulisci_coda(testo):
     """Toglie la virgola (o il punto e virgola, o i due punti) rimasta in coda.

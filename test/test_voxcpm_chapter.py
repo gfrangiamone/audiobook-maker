@@ -182,31 +182,65 @@ def test_i_puntini_sul_confine_di_chunk_restano_una_virgola():
 
 
 def test_la_normalizzazione_a_monte_e_solo_di_voxcpm():
-    assert tts_split._pick_pre_split(VOCE) is voxcpm_tts.normalizza_puntini
+    assert tts_split._pick_pre_split(VOCE) is voxcpm_tts.prepara_capitolo
     assert tts_split._pick_pre_split("it-IT-ElsaNeural") is None
     assert tts_split._pick_pre_split("") is None
 
 
+# Un paragrafo finale lungo: `_ensure_heading_pause` chiude solo le righe
+# brevi e isolate, questo lo deve chiudere voxcpm_tts.chiudi_capitolo.
+_LUNGO = "Una frase lunga che supera di parecchio i centoventi caratteri " * 3
+
+
+@pytest.mark.parametrize("prima", ["E poi la coda ", _LUNGO],
+                         ids=["riga-breve", "paragrafo-lungo"])
 @pytest.mark.parametrize("coda", [
     "a meta' parola, I dis-", "sospeso,", "interrotto—",
     "«tra virgolette»", "FULFILL-ING' \"", "senza niente"])
-def test_ogni_capitolo_voxcpm_finisce_con_un_terminatore(coda):
+def test_ogni_capitolo_voxcpm_finisce_con_un_terminatore(prima, coda):
     """Invariante di cui vivono i lotti (generation_engine._voxcpm_lotti).
 
     Il worker smussa le giunzioni il cui chunk non finisce una frase
     (`_finisce_frase` in handler.py: `.!?…` a meno delle chiusure). Dentro un
     lotto la giunzione fra due capitoli e' una giunzione come le altre: se il
-    capitolo finisse appeso, perderebbe la pausa di fine capitolo. Oggi la
-    chiusura la mette _ensure_heading_pause, che tratta l'ultima riga come un
-    heading senza punto: se cambia, questo test lo dice.
+    capitolo finisse appeso, perderebbe la pausa di fine capitolo.
     """
     import re
     plan = tts_split._plan_chunks(
-        FintoLibro("Prima frase intera.\n\nE poi la coda " + coda),
+        FintoLibro("Prima frase intera.\n\n" + prima + coda),
         max_chars=280, pre_split=tts_split._pick_pre_split(VOCE),
         sentence_slack=tts_split._pick_sentence_slack(VOCE))
     ultimo = plan[-1]["text"].rstrip()
     assert re.search(r"[.!?…][\"'»”’)\]\s]*$", ultimo), ultimo
+
+
+@pytest.mark.parametrize("testo, atteso", [
+    ("Era una notte buia.", "Era una notte buia."),
+    ("Davvero?", "Davvero?"),
+    ("E poi…", "E poi…"),
+    ("In the summer of '79, I dis-", "In the summer of '79, I dis."),
+    ("the office of Principal Wil-\n\n", "the office of Principal Wil.\n\n"),
+    ("He said—", "He said."),
+    ("Primo, secondo,", "Primo, secondo."),
+    ("Lo disse: «andiamo»", "Lo disse: «andiamo.»"),
+    ("'INTELLECTUALLY FULFILL-ING' \"", "'INTELLECTUALLY FULFILL-ING.' \""),
+    ("«Finito!»", "«Finito!»"),
+    ("这是结尾。", "这是结尾。"),
+    ("这是结尾，", "这是结尾."),
+    ("Parola", "Parola."),
+    ("-", "-"),
+    ("", ""),
+])
+def test_chiudi_capitolo(testo, atteso):
+    assert voxcpm_tts.chiudi_capitolo(testo) == atteso
+
+
+def test_gli_altri_motori_non_chiudono_il_paragrafo_lungo():
+    plan = tts_split._plan_chunks(
+        FintoLibro("Prima frase intera.\n\n" + _LUNGO + "a me-"),
+        max_chars=2000,
+        pre_split=tts_split._pick_pre_split("it-IT-ElsaNeural"))
+    assert plan[-1]["text"].endswith("a me-")
 
 
 # -- Il taglio a meta' frase ---------------------------------------------

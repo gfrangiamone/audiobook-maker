@@ -181,12 +181,16 @@ def _pick_pre_split(voice_id):
     regola leggeva «fine testo» -> punto, mettendo una pausa lunga in mezzo
     alla frase («per un affare umano. Il paragone e...»).
 
+    Poi voxcpm_tts.chiudi_capitolo: un punto in fondo al capitolo che non
+    finisce una frase, cosi' il worker non smussa il confine fra due capitoli
+    sintetizzati nello stesso job (vedi generation_engine._voxcpm_lotti).
+
     Gli altri motori leggono «...» come pausa lunga e non vanno toccati: None.
     """
     if _is_voxcpm_voice(voice_id):
         try:
             import voxcpm_tts
-            return voxcpm_tts.normalizza_puntini
+            return voxcpm_tts.prepara_capitolo
         except Exception:
             return None
     return None
