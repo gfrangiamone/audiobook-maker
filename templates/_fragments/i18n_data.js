@@ -190,3 +190,12 @@ Object.assign(L.es,{pay_maintenance:"Servicio en mantenimiento: no se ha realiza
 Object.assign(L.de,{pay_maintenance:"Der Dienst wird gerade gewartet: Es wurde nichts abgebucht. Bitte versuchen Sie es in einigen Minuten erneut."});
 Object.assign(L.zh,{pay_maintenance:"服务正在维护：您未被扣款。请几分钟后再试。"});
 Object.assign(L.hi,{pay_maintenance:"सेवा रखरखाव में है: आपसे कोई शुल्क नहीं लिया गया है. कृपया कुछ मिनटों बाद पुनः प्रयास करें."});
+
+// Gate modelli PREMIUM: modello non disponibile (503) o spento/ritirato (400).
+Object.assign(L.it,{err_voice_model_unavailable:"Questo modello di voce non è al momento disponibile. Scegli un'altra voce o riprova più tardi.",err_voice_model_disabled:"Questo modello di voce non è più disponibile. Scegli un'altra voce."});
+Object.assign(L.en,{err_voice_model_unavailable:"This voice model is temporarily unavailable. Please choose another voice or try again later.",err_voice_model_disabled:"This voice model is no longer available. Please choose another voice."});
+Object.assign(L.fr,{err_voice_model_unavailable:"Ce modèle de voix est momentanément indisponible. Choisissez une autre voix ou réessayez plus tard.",err_voice_model_disabled:"Ce modèle de voix n'est plus disponible. Veuillez choisir une autre voix."});
+Object.assign(L.es,{err_voice_model_unavailable:"Este modelo de voz no está disponible en este momento. Elige otra voz o inténtalo más tarde.",err_voice_model_disabled:"Este modelo de voz ya no está disponible. Elige otra voz."});
+Object.assign(L.de,{err_voice_model_unavailable:"Dieses Stimmmodell ist vorübergehend nicht verfügbar. Wählen Sie eine andere Stimme oder versuchen Sie es später erneut.",err_voice_model_disabled:"Dieses Stimmmodell ist nicht mehr verfügbar. Bitte wählen Sie eine andere Stimme."});
+Object.assign(L.zh,{err_voice_model_unavailable:"该语音模型暂时不可用。请选择其他语音或稍后再试。",err_voice_model_disabled:"该语音模型已不再提供。请选择其他语音。"});
+Object.assign(L.hi,{err_voice_model_unavailable:"यह आवाज़ मॉडल अभी अस्थायी रूप से उपलब्ध नहीं है. कोई दूसरी आवाज़ चुनें या बाद में पुनः प्रयास करें.",err_voice_model_disabled:"यह आवाज़ मॉडल अब उपलब्ध नहीं है. कृपया कोई दूसरी आवाज़ चुनें."});

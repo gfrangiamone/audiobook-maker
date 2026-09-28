@@ -2562,6 +2562,12 @@ async function renderPaypalGeminiButtons(){
         _payPaypalErr((typeof t==='function'&&t('server_busy'))||d.error);
         throw new Error('server busy');
       }
+      if(d&&_VOICE_MODEL_ERR[d.error_code]){
+        // Modello spento o non disponibile: nessun ordine creato, nessun addebito.
+        _payBusyNotice=true;
+        _payPaypalErr(_localizeErrCode(d.error_code));
+        throw new Error(d.error_code);
+      }
       if(d&&d.error_code==='price_changed'){
         // Quotazione non piu' valida: nessun ordine creato, nessun addebito.
         // Riallinea il modale e lascia decidere l'utente sul nuovo importo.
@@ -6192,7 +6198,19 @@ function fmtDur(m){if(m<1)return'< 1 min';if(m<60)return Math.round(m)+' min';co
 function fmtTime(s){if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;if(m<60)return m+'m'+(r>0?' '+r+'s':'');return Math.floor(m/60)+'h '+(m%60>0?(m%60)+'m':'')}
 function fmtBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(0)+' KB';return(b/1048576).toFixed(1)+' MB'}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
-function showErr(id,m){document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
+// Codici d'errore del gate modelli PREMIUM (400 voice_model_disabled, 503
+// voice_model_unavailable): il server manda il codice nudo in `error`, qui
+// diventa un messaggio localizzato invece del codice grezzo.
+const _VOICE_MODEL_ERR={
+  voice_model_unavailable:['err_voice_model_unavailable','This voice model is temporarily unavailable. Please choose another voice or try again later.'],
+  voice_model_disabled:['err_voice_model_disabled','This voice model is no longer available. Please choose another voice.']
+};
+function _localizeErrCode(m){
+  const e=_VOICE_MODEL_ERR[m];
+  if(!e)return m;
+  return (typeof t==='function'&&t(e[0]))||e[1];
+}
+function showErr(id,m){m=_localizeErrCode(m);document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
 function _elVisible(el){ if(!el) return false; try{ return el.offsetParent!==null || el.getClientRects().length>0; }catch(_e){ return false } }
 // showPErr scriveva SOLO in #pra, che sta dentro un blocco display:none (residuo
 // del layout pre-wizard): in pratica nessun errore di generazione o di download
@@ -6210,6 +6228,7 @@ function _praErrSlot(){
   return slot;
 }
 function showPErr(m){
+  if(typeof _localizeErrCode==='function')m=_localizeErrCode(m);
   const html='<div class="al al-e fi">'+esc(m)+'</div>';
   const praSlot=_praErrSlot();if(praSlot)praSlot.innerHTML=html;
   let target=null;
