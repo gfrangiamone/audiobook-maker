@@ -81,14 +81,14 @@ def test_paypal_gemini_buttons_close_on_re_render():
     # Must close any previously-instantiated buttons before rendering new ones
     # (prevents zombie iframe leaks when tab toggled multiple times)
     func_start = APP.find("renderPaypalGeminiButtons")
-    snippet = APP[func_start:func_start + 4000]
+    snippet = APP[func_start:func_start + 6000]
     assert ".close()" in snippet or "buttonsInstance" in snippet
 
 
 def test_paypal_gemini_handles_sdk_unavailable():
     # if window.paypal is undefined after load attempt, show error not crash
     func_start = APP.find("renderPaypalGeminiButtons")
-    snippet = APP[func_start:func_start + 4000]
+    snippet = APP[func_start:func_start + 6000]
     assert "typeof paypal" in snippet or "window.paypal" in snippet
 
 
@@ -102,7 +102,7 @@ def test_paypal_capture_token_no_orderid_fallback():
     # Locate the function body and verify the assignment line does NOT contain '|| data.orderID'
     func_start = APP.find("renderPaypalGeminiButtons")
     assert func_start >= 0
-    snippet = APP[func_start:func_start + 4000]
+    snippet = APP[func_start:func_start + 6000]
     # The token assignment should NOT have the dead fallback
     assert "_payState.token = d.payment_token || data.orderID" not in snippet
     assert "_payState.token=d.payment_token||data.orderID" not in snippet

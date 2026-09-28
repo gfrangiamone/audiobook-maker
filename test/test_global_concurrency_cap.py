@@ -112,6 +112,7 @@ def test_server_busy_before_payment_preflight(client, clean_jobs):
     _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
     job = _seed_candidate()
     gem = type("G", (), {"is_available": staticmethod(lambda: True),
+                          "model_unavailable": staticmethod(lambda mk: False),
                           "GEMINI_MODELS": {"flash31": {}}})
     with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
          patch("audiobook_app.gemini_tts", gem), \
@@ -131,6 +132,7 @@ def test_payment_preflight_runs_when_server_has_capacity(client, clean_jobs):
     _seed_generating(max(0, audiobook_app.MAX_CONCURRENT_GLOBAL - 1))
     job = _seed_candidate()
     gem = type("G", (), {"is_available": staticmethod(lambda: True),
+                          "model_unavailable": staticmethod(lambda mk: False),
                           "GEMINI_MODELS": {"flash31": {}}})
     with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
          patch("audiobook_app.gemini_tts", gem), \
