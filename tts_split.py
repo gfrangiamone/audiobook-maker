@@ -643,12 +643,19 @@ def _normalize_shouting(text):
     return "\n".join(out)
 
 
+# Punteggiatura che chiude gia` una riga o un titolo: niente punto in coda.
+# Comprese le forme CJK (a larghezza piena, e «｡» a mezza): un punto latino
+# dopo «。» e` un segno in piu` che il motore puo` leggere.
+_CHIUSA_RE = re.compile(
+    r'[.!?…:;。．！？：；｡]\s*$')
+
+
 def _ensure_heading_pause(text):
     """Aggiunge un punto finale alle righe che sembrano heading nel testo,
     così il TTS inserisce una pausa naturale prima del corpo del paragrafo.
 
     Un heading è una riga breve (<=120 char) isolata da righe vuote che non
-    termina già con punteggiatura (.!?…:;).
+    termina già con punteggiatura (.!?…:; e le forme CJK, vedi _CHIUSA_RE).
     """
     lines = text.split("\n")
     result = []
@@ -656,7 +663,7 @@ def _ensure_heading_pause(text):
         stripped = line.strip()
         if (stripped
                 and len(stripped) <= 120
-                and not re.search(r'[.!?\u2026:;]\s*$', stripped)):
+                and not _CHIUSA_RE.search(stripped)):
             prev_empty = (idx == 0) or (not lines[idx - 1].strip())
             next_empty = (idx == len(lines) - 1) or (not lines[idx + 1].strip())
             if prev_empty and next_empty:
@@ -792,7 +799,7 @@ def spoken_title_prefix(ch, text):
         return ""
     # Il punto serve a dare la pausa prima del corpo, ma solo se il
     # titolo non ha gia` una punteggiatura sua («Perche'?» -> «Perche'?.»).
-    sep = "" if re.search(r'[.!?…:;]$', title) else "."
+    sep = "" if _CHIUSA_RE.search(title) else "."
     return f"{title}{sep}\n\n"
 
 

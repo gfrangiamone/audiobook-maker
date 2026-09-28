@@ -171,6 +171,29 @@ def test_ensure_heading_pause_handles_heading_as_last_line():
     assert _ensure_heading_pause(src) == "Era una notte buia.\n\nFine del capitolo."
 
 
+@pytest.mark.parametrize("riga", [
+    "这是结尾。",      # 这是结尾。
+    "真的吗？",            # 真的吗？
+    "太好了！",            # 太好了！
+    "如下：",                  # 如下：
+    "終わり｡",            # 終わり｡ (mezza larghezza)
+])
+def test_ensure_heading_pause_no_latin_period_after_cjk_punctuation(riga):
+    src = "正文。\n\n" + riga
+    assert _ensure_heading_pause(src) == src
+
+
+def test_ensure_heading_pause_still_closes_cjk_line_without_punctuation():
+    assert _ensure_heading_pause("第一章") == "第一章."
+
+
+def test_plan_chunks_does_not_double_punctuate_cjk_title():
+    info = _FakeInfo([_FakeCh(0, "开始。", "正文。")])
+    joined = _joined(_plan_chunks(info))
+    assert "开始。." not in joined
+    assert "开始。" in joined
+
+
 # ── _plan_chunks: integrazione ──
 
 def test_plan_chunks_normalizes_shouted_heading_and_adds_pause():
