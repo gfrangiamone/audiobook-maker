@@ -6756,6 +6756,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     print(f"[{job_id}] chunk {i} recuperato via edge-fallback "
                           f"(Gemini ha rifiutato il contenuto)", flush=True)
                     return result, part_path
+                if isinstance(result, dict) and result.get("fallback_model"):
+                    # Chunk rifatto sul modello di ripiego (flash38 -> flash31):
+                    # token e costo sotto, contabilizzati sul modello che li ha
+                    # prodotti (result["model_key"]).
+                    job["gemini_model_fallback_chunks"] = job.get("gemini_model_fallback_chunks", 0) + 1
+                    print(f"[{job_id}] chunk {i} recuperato via modello di ripiego "
+                          f"{result['fallback_model']}", flush=True)
                 gemini_usage["input_tokens"] += result.get("input_tokens", 0)
                 gemini_usage["output_tokens"] += result.get("output_tokens", 0)
                 if not gemini_usage["model_key"]:

@@ -177,17 +177,110 @@ def test_generate_chunk_passes_gender_from_voice_id(tmp_path, monkeypatch):
 
 
 
-# --- Modelli a canale unico (flash38): mai un'altra voce a meta' libro ---
+# --- flash38: ripiego sullo stesso nome voce di flash31, poi edge-tts ---
 
 def _no_edge(*a, **k):
-    raise AssertionError("flash38: fallback edge vietato")
+    raise AssertionError("edge non doveva essere chiamato")
 
 
-def test_flash38_retry_esauriti_job_fatale_senza_edge(tmp_path, monkeypatch):
-    def _exhausted(*a, **k):
-        raise RuntimeError("Gemini TTS failed after 3 attempts: 503 UNAVAILABLE")
+def _fake_edge_ok(text, fallback_lang, rate, output_path, gender=None, accent_code=None):
+    with open(output_path, "wb") as f:
+        f.write(b"\x00\x01" * 100)
+    return {"success": True, "bytes_written": 200, "fallback_engine": "edge"}
 
-    monkeypatch.setattr(gemini_tts, "synthesize", _exhausted)
+
+def _fallback_ready(monkeypatch, ok=True):
+    """flash31 risolto e disponibile; synthesize fallisce su flash38 e, se
+    ok, riesce su flash31. Ritorna la lista delle voci chiamate."""
+    calls = []
+
+    def _synth(text, voice_id, output_path="x.pcm", **kw):
+        calls.append((voice_id, kw.get("debug_prompt_path")))
+        if voice_id.startswith("gemini:flash38:") or not ok:
+            raise RuntimeError("Gemini TTS failed after 3 attempts: no audio parts")
+        with open(output_path, "wb") as f:
+            f.write(b"\x01\x00" * 50)
+        return {"success": True, "bytes_written": 100, "input_tokens": 7,
+                "output_tokens": 30, "model_key": "flash31", "backend": "vertex",
+                "tokens_measured": True}
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _synth)
+    monkeypatch.setattr(gemini_tts, "_resolve_backend", lambda mk=None: "vertex")
+    monkeypatch.setattr(gemini_tts, "model_unavailable", lambda mk: False)
+    return calls
+
+
+def test_flash38_retry_esauriti_ripiega_su_flash31_stessa_voce(tmp_path, monkeypatch):
+    calls = _fallback_ready(monkeypatch)
+    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _no_edge)
+    fi = {}
+    result = tts_split.generate_chunk_pcm_gemini(
+        "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info=fi, fallback_lang="it",
+        debug_prompt_path=str(tmp_path / "prompt5.txt"))
+    assert [c[0] for c in calls] == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]
+    assert calls[1][1].endswith("prompt5.fallback.txt")
+    assert result["fallback_model"] == "flash31"
+    assert result["model_key"] == "flash31"  # contabilizzato sul ripiego
+    assert fi["fallback_engine"] == "gemini:flash31"
+    assert fi["reason"] == "gemini_failed_model_fallback"
+
+
+def test_flash38_ripiego_fallito_passa_a_edge(tmp_path, monkeypatch):
+    calls = _fallback_ready(monkeypatch, ok=False)
+    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge_ok)
+    fi = {}
+    result = tts_split.generate_chunk_pcm_gemini(
+        "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info=fi, fallback_lang="it")
+    assert [c[0] for c in calls] == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]
+    assert result["fallback_engine"] == "edge"
+    assert fi["fallback_engine"] == "edge"
+
+
+def test_flash38_ripiego_errore_quota_non_sospende_il_job(tmp_path, monkeypatch):
+    def _synth(text, voice_id, output_path="x.pcm", **kw):
+        if voice_id.startswith("gemini:flash38:"):
+            raise RuntimeError("Gemini TTS failed after 3 attempts: 503")
+        raise gemini_tts.GeminiQuotaExhausted("flash31 rpd", reason="rpd")
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _synth)
+    monkeypatch.setattr(gemini_tts, "_resolve_backend", lambda mk=None: "vertex")
+    monkeypatch.setattr(gemini_tts, "model_unavailable", lambda mk: False)
+    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge_ok)
+    result = tts_split.generate_chunk_pcm_gemini(
+        "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info={}, fallback_lang="it")
+    assert result["fallback_engine"] == "edge"
+
+
+def test_flash38_senza_ripiego_disponibile_va_diretto_a_edge(tmp_path, monkeypatch):
+    calls = _fallback_ready(monkeypatch)
+    monkeypatch.setattr(gemini_tts, "model_unavailable", lambda mk: mk == "flash31")
+    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge_ok)
+    result = tts_split.generate_chunk_pcm_gemini(
+        "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info={}, fallback_lang="it")
+    assert [c[0] for c in calls] == ["gemini:flash38:Zephyr"]
+    assert result["fallback_engine"] == "edge"
+
+
+def test_flash38_tutto_fallito_chunk_fallito_non_job_fatale(tmp_path, monkeypatch):
+    _fallback_ready(monkeypatch, ok=False)
+    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", lambda *a, **k: False)
+    fi = {}
+    result = tts_split.generate_chunk_pcm_gemini(
+        "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info=fi, fallback_lang="it")
+    assert result is False
+    assert fi["reason"] == "synthesize_failed"
+
+
+def test_flash38_errore_fatale_resta_job_fatale(tmp_path, monkeypatch):
+    def _fatal(*a, **k):
+        raise gemini_tts.GeminiUnavailable("billing: credito esaurito")
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _fatal)
     monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _no_edge)
     with pytest.raises(gemini_tts.GeminiUnavailable):
         tts_split.generate_chunk_pcm_gemini(
@@ -195,32 +288,26 @@ def test_flash38_retry_esauriti_job_fatale_senza_edge(tmp_path, monkeypatch):
             failure_info={}, fallback_lang="it")
 
 
-def test_flash38_contenuto_rifiutato_chunk_fallito_senza_edge(tmp_path, monkeypatch):
-    def _rejected(*a, **k):
-        raise gemini_tts.GeminiEmptyResponse("blocked", block_reason="SAFETY",
-                                             retryable=False)
+def test_flash38_byte_split_rifatto_intero_su_flash31(tmp_path, monkeypatch):
+    calls = _fallback_ready(monkeypatch)
+    agg_calls = []
+    real = tts_split._synthesize_pcm_pieces_and_concat
 
-    monkeypatch.setattr(gemini_tts, "synthesize", _rejected)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _no_edge)
-    out = str(tmp_path / "c.pcm")
+    def _spy(pieces, voice_id, *a, **k):
+        agg_calls.append(voice_id)
+        return real(pieces, voice_id, *a, **k)
+
+    monkeypatch.setattr(tts_split, "_synthesize_pcm_pieces_and_concat", _spy)
+    monkeypatch.setattr(tts_split, "_pick_chunk_max_bytes", lambda v: 40)
     fi = {}
     result = tts_split.generate_chunk_pcm_gemini(
-        "Testo di prova.", "gemini:flash38:Zephyr", out,
-        failure_info=fi, fallback_lang="it")
-    assert result is False
-    assert fi.get("reason") == "synthesize_failed"
-    assert "fallback_engine" not in fi
-
-
-def test_flash38_byte_split_retry_esauriti_job_fatale(tmp_path, monkeypatch):
-    def _exhausted(*a, **k):
-        raise RuntimeError("Gemini TTS failed after 3 attempts: timeout")
-
-    monkeypatch.setattr(gemini_tts, "synthesize", _exhausted)
-    with pytest.raises(gemini_tts.GeminiUnavailable):
-        tts_split._synthesize_pcm_pieces_and_concat(
-            ["Prima parte.", "Seconda parte."], "gemini:flash38:Zephyr",
-            str(tmp_path / "c.pcm"), None, 1)
+        "Prima frase di prova. Seconda frase di prova. Terza frase.",
+        "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"), failure_info=fi)
+    assert agg_calls == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]
+    assert result["fallback_model"] == "flash31"
+    assert result["model_key"] == "flash31"
+    assert fi["fallback_engine"] == "gemini:flash31"
+    assert all(v.startswith("gemini:flash31:") for v, _ in calls[1:])
 
 
 def test_flash31_byte_split_retry_esauriti_resta_chunk_fallito(tmp_path, monkeypatch):

@@ -216,6 +216,10 @@ GEMINI_MODELS = {
         "preview_timeout_sec": 45,
         "backends_allowed": ("apikey",),
         "mark_unavailable_on_fatal": True,
+        # Chunk con i retry esauriti (risposta vuota, 5xx, timeout): stessa
+        # voce su questo modello, poi edge-tts (tts_split). Gli errori fatali
+        # (auth/billing/404) restano job-fatali con rimborso.
+        "chunk_fallback_model": "flash31",
     },
 }
 

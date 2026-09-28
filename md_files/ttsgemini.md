@@ -2,7 +2,7 @@
 
 Riferimento operativo per il motore TTS Premium basato su **Google Gemini 3.1 / 3.8 Flash TTS**. Documento parallelo a `CLAUDE.md`: copre architettura, pipeline di sintesi, pricing, throttling, retry, budget guard, audit, UI e variabili `ABM_GEMINI_*`. Il documento è **generico rispetto al tier Google** (Free / Tier 1 / Tier 2 / Tier 3): i numeri di esempio si riferiscono al tier corrente solo come illustrazione e sono interamente override-abili via env.
 
-> **`flash25` ritirato il 27/09/2026**: sostituito da `flash38` ("PREMIUM+", canale API key/Tier 3, senza failover Vertex/Cloudflare). Ogni riferimento a `flash25` in questo documento è storico.
+> **`flash25` ritirato il 27/09/2026**: sostituito da `flash38` ("PREMIUM+", canale API key/Tier 3, senza failover Vertex/Cloudflare; un chunk con i retry esauriti ripiega sulla stessa voce `flash31`, poi su edge-tts). Ogni riferimento a `flash25` in questo documento è storico.
 
 > **Convenzione UI**: nelle interfacce utente il provider non viene mai nominato. Etichette: "Voci PREMIUM", "Ottimizzazione testo AI". Il nome "Gemini" compare solo in log tecnici, audit file e codice. Vedi memoria `feedback_ui_provider_naming.md`.
 
