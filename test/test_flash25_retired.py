@@ -92,3 +92,67 @@ def test_recovery_job_pagato_con_modello_ritirato_va_a_refund(tmp_path, monkeypa
         audiobook_app.jobs.pop(rec["id"], None)
     assert fb_calls == ["Jflash25"], "job pagato non recuperabile -> refund standard"
     assert rg_calls == [], "mai avviare run_generation su un modello ritirato"
+
+
+
+def test_filtro_audit_admin_con_flash38():
+    import inspect
+    src = inspect.getsource(audiobook_app)
+    assert '<option value="flash38">Gemini 3.8 (PREMIUM+)</option>' in src
+
+
+# --- recovery dalla fase optimize senza .abm (review finale I1c) ----------
+
+class _NoThread:
+    started = []
+
+    def __init__(self, *a, **k):
+        self.k = k
+
+    def start(self):
+        _NoThread.started.append(self.k)
+
+
+def _run_optimize(tmp_path, monkeypatch, voice, payment):
+    _fresh(tmp_path, monkeypatch)
+    monkeypatch.setattr(audiobook_app, "_parse_book", lambda src: _info_minimo())
+    _NoThread.started = []
+    monkeypatch.setattr(audiobook_app.threading, "Thread", _NoThread)
+    fb_calls = []
+    monkeypatch.setattr(audiobook_app, "_orphan_fallback",
+                        lambda job_id, rec: fb_calls.append(job_id))
+    failed = []
+    monkeypatch.setattr(pending_jobs, "mark_failed", lambda jid: failed.append(jid))
+    rec = _rec(tmp_path, phase="optimize", voice=voice, payment=payment)
+    pending_jobs.register(rec["id"], rec["phase"], rec)
+    try:
+        ok = audiobook_app._reenqueue_orphan(rec["id"], rec)
+    finally:
+        audiobook_app.jobs.pop(rec["id"], None)
+    return ok, fb_calls, failed, list(_NoThread.started)
+
+
+def test_recovery_optimize_pagato_con_modello_ritirato_va_a_refund(tmp_path, monkeypatch):
+    ok, fb, failed, started = _run_optimize(
+        tmp_path, monkeypatch, "gemini:flash25:Zephyr",
+        {"token": "ORD2", "total_eur": 5.0, "method": "paypal"})
+    assert ok is False
+    assert fb == ["Jflash25"], "job pagato -> refund standard"
+    assert started == [], "mai avviare l'ottimizzazione con auto-generate"
+
+
+def test_recovery_optimize_non_pagato_con_modello_ritirato_chiuso(tmp_path, monkeypatch):
+    ok, fb, failed, started = _run_optimize(
+        tmp_path, monkeypatch, "gemini:flash25:Zephyr", None)
+    assert ok is False
+    assert fb == []
+    assert failed == ["Jflash25"]
+    assert started == []
+
+
+def test_recovery_optimize_flash31_riparte(tmp_path, monkeypatch):
+    ok, fb, failed, started = _run_optimize(
+        tmp_path, monkeypatch, "gemini:flash31:Zephyr", None)
+    assert ok is True
+    assert fb == [] and failed == []
+    assert len(started) == 1

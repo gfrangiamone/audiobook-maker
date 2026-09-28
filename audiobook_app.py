@@ -637,7 +637,17 @@ def _premium_model_gate(voice):
             return jsonify({"error": "voice_model_disabled",
                             "error_code": "voice_model_disabled",
                             "model_key": mk}), 400
-        if mk and gemini_tts.model_unavailable(mk):
+        # Modello a canale unico acceso ma senza backend risolvibile (es.
+        # ABM_FLASH38_ENABLE senza ABM_GEMINI_API_KEY): il catalogo lo
+        # nasconde gia', ma una pagina vecchia o una richiesta diretta farebbe
+        # pagare un job che fallisce al primo chunk. Stesso esito del modello
+        # non disponibile. Limitato ai modelli `mark_unavailable_on_fatal`:
+        # flash31 ha il suo percorso (is_available/kill-switch + failover).
+        _single = bool((gemini_tts.GEMINI_MODELS.get(mk) or {}).get(
+            "mark_unavailable_on_fatal")) if mk else False
+        if mk and (gemini_tts.model_unavailable(mk)
+                   or (_single and _voice_model_enabled(voice)
+                       and gemini_tts._resolve_backend(mk) is None)):
             return jsonify({"error": "voice_model_unavailable",
                             "error_code": "voice_model_unavailable",
                             "model_key": mk}), 503
@@ -1711,6 +1721,21 @@ def _orphan_reject(job_id, rec, reason):
         print(f"[recover] mark_failed {job_id} failed: {e}")
 
 
+def _recovery_reject_retired_model(voice):
+    """Solleva _RecoveryRejected se la voce e' di un modello Gemini ritirato.
+
+    Rigenerare con un altro modello cambierebbe la voce a meta' libro. Il
+    reject porta il job pagato al rimborso standard (_orphan_fallback), quello
+    non pagato a _orphan_reject. Vale anche per il ramo optimize senza .abm,
+    che non passa da _recovery_generate_gate.
+    """
+    voice = (voice or "").strip()
+    if _is_gemini_voice(voice) and gemini_tts is not None:
+        _mk = _voice_model_key(voice)
+        if _mk not in gemini_tts.GEMINI_MODELS:
+            raise _RecoveryRejected(f"modello ritirato: {_mk}")
+
+
 def _recovery_generate_gate(job_id, rec, info):
     """Gate PREZZO/QUOTA/CAP per un job che il recovery sta per mandare a
     run_generation. Replica i controlli di /api/generate che il recovery
@@ -1747,13 +1772,7 @@ def _recovery_generate_gate(job_id, rec, info):
     is_gem = _is_gemini_voice(voice)
     is_spx = _is_speechify_voice(voice)
     is_vox = _is_voxcpm_voice(voice)
-    # Modello ritirato dal catalogo: rigenerare con un altro modello
-    # cambierebbe la voce a meta' libro. Il reject porta il job pagato al
-    # rimborso standard (_orphan_fallback), quello non pagato a _orphan_reject.
-    if is_gem and gemini_tts is not None:
-        _mk = _voice_model_key(voice)
-        if _mk not in gemini_tts.GEMINI_MODELS:
-            raise _RecoveryRejected(f"modello ritirato: {_mk}")
+    _recovery_reject_retired_model(voice)
     if not (is_gem or is_spx or is_vox):
         return out
     total_chars = sum(getattr(ch, "char_count", 0) or 0 for ch in chs)
@@ -1836,19 +1855,24 @@ def _reenqueue_orphan(job_id, rec):
     # cap, stima, quota): il ramo optimize senza .abm ha i suoi controlli in
     # run_optimization e nell'auto-generazione post-LLM.
     _gate = None
-    if not (rec.get("phase") == "optimize" and not use_abm):
-        try:
+    try:
+        if rec.get("phase") == "optimize" and not use_abm:
+            # Niente gate completo qui, ma un modello ritirato va fermato
+            # ora: l'auto-generazione post-LLM lo leggerebbe con un'altra voce.
+            _recovery_reject_retired_model(rec.get("voice"))
+        else:
             _gate = _recovery_generate_gate(job_id, rec, info)
-        except _RecoveryRejected as e:
-            _pay = rec.get("payment") or {}
-            if isinstance(_pay, dict) and (_pay.get("token") or _pay.get("total_eur")):
-                # Pagato ma non eseguibile alle condizioni originali: policy
-                # "non recuperabile" (rimborso + email interrotto + failed).
-                print(f"[recover] {job_id}: {e} -> job pagato, fallback interrotto.")
-                _orphan_fallback(job_id, rec)
-            else:
-                _orphan_reject(job_id, rec, str(e))
-            return False
+    except _RecoveryRejected as e:
+        _pay = rec.get("payment") or {}
+        if isinstance(_pay, dict) and (_pay.get("token") or _pay.get("total_eur")):
+            # Pagato ma non eseguibile alle condizioni originali: policy
+            # "non recuperabile" (rimborso + email interrotto + failed).
+            print(f"[recover] {job_id}: {e} -> job pagato, fallback interrotto.")
+            _orphan_fallback(job_id, rec)
+        else:
+            _orphan_reject(job_id, rec, str(e))
+        return False
+    if _gate is not None:
         info = _gate["info"]
     job = {
         "status": "queued",
@@ -7304,6 +7328,7 @@ def admin_audit_premium_page():
         <select id="tts_auditModelFilter">
           <option value="all">Tutti</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
+          <option value="flash38">Gemini 3.8 (PREMIUM+)</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
           <option value="v2">VoxCPM2 (PREMIUM)</option>
         </select>

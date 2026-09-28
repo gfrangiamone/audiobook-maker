@@ -243,3 +243,24 @@ def test_gemini_estimate_flash38_indisponibile_503(client, job_with_text, monkey
     })
     assert r.status_code == 503
     assert r.get_json()["error_code"] == "voice_model_unavailable"
+
+
+
+def test_flash38_acceso_senza_backend_503(client, job_with_text, monkeypatch, tmp_path):
+    # Review finale M1: ABM_FLASH38_ENABLE=true ma nessuna API key -> il
+    # backend non si risolve; stesso 503 del modello indisponibile, mai un
+    # job pagato che fallisce al primo chunk.
+    import gemini_availability
+    monkeypatch.setenv("ABM_FLASH38_ENABLE", "true")
+    monkeypatch.delenv("ABM_GEMINI_API_KEY", raising=False)
+    gemini_availability.init(str(tmp_path))
+    monkeypatch.setattr(gemini_tts, "_resolve_backend", lambda mk=None: None)
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+    })
+    assert r.status_code == 503
+    body = r.get_json()
+    assert body["error_code"] == "voice_model_unavailable"
+    assert body["model_key"] == "flash38"
