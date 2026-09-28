@@ -187,6 +187,28 @@ def test_la_normalizzazione_a_monte_e_solo_di_voxcpm():
     assert tts_split._pick_pre_split("") is None
 
 
+@pytest.mark.parametrize("coda", [
+    "a meta' parola, I dis-", "sospeso,", "interrotto—",
+    "«tra virgolette»", "FULFILL-ING' \"", "senza niente"])
+def test_ogni_capitolo_voxcpm_finisce_con_un_terminatore(coda):
+    """Invariante di cui vivono i lotti (generation_engine._voxcpm_lotti).
+
+    Il worker smussa le giunzioni il cui chunk non finisce una frase
+    (`_finisce_frase` in handler.py: `.!?…` a meno delle chiusure). Dentro un
+    lotto la giunzione fra due capitoli e' una giunzione come le altre: se il
+    capitolo finisse appeso, perderebbe la pausa di fine capitolo. Oggi la
+    chiusura la mette _ensure_heading_pause, che tratta l'ultima riga come un
+    heading senza punto: se cambia, questo test lo dice.
+    """
+    import re
+    plan = tts_split._plan_chunks(
+        FintoLibro("Prima frase intera.\n\nE poi la coda " + coda),
+        max_chars=280, pre_split=tts_split._pick_pre_split(VOCE),
+        sentence_slack=tts_split._pick_sentence_slack(VOCE))
+    ultimo = plan[-1]["text"].rstrip()
+    assert re.search(r"[.!?…][\"'»”’)\]\s]*$", ultimo), ultimo
+
+
 # -- Il taglio a meta' frase ---------------------------------------------
 #
 # Collaudo dell'11/9/2026. La frase che supera il cap viene spezzata sulle
