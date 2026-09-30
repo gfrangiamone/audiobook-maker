@@ -405,7 +405,6 @@ def _clean_pdf_text(text: str) -> str:
 
     Rimuove:
     - Didascalie di figure e tabelle
-    - Testo tra parentesi tonde e quadre
     - Note a piè di pagina (pattern numerici)
     - Sillabazione da a-capo (ri- unisce parole spezzate)
     - URL, ISBN, DOI
@@ -460,18 +459,10 @@ def _clean_pdf_text(text: str) -> str:
 
     text = "\n".join(cleaned_lines)
 
-    # 4. Rimuovi testo tra parentesi tonde (note inline, riferimenti)
-    #    Iterativo per gestire annidamento
-    prev = None
-    while prev != text:
-        prev = text
-        text = re.sub(r"\([^()]*\)", "", text)
-
-    # 5. Rimuovi testo tra parentesi quadre [note], [riferimenti]
-    prev = None
-    while prev != text:
-        prev = text
-        text = re.sub(r"\[[^\[\]]*\]", "", text)
+    # 4-5. Il testo tra parentesi tonde e quadre NON si tocca qui: come per
+    #    EPUB e TXT lo decide l'opzione dell'utente (read_round_parens /
+    #    read_square_brackets) in _strip_parenthetical. Le note bibliografiche
+    #    ([12], [a], (see ...)) le toglie clean_text_for_tts, come per l'EPUB.
 
     # 6. Rimuovi URL
     text = re.sub(r"https?://\S+", "", text)
