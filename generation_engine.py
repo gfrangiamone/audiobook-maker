@@ -262,6 +262,7 @@ def _account_notify_token(job_id, token):
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
+from voice_utils import is_premium_voice as _is_premium_voice
 
 
 def _retention_for_job(job):
@@ -275,7 +276,7 @@ def _retention_for_job(job):
     if not isinstance(job, dict):
         return _retention_sec
     v = job.get("voice", "") or job.get("opt_voice", "")
-    return _gemini_retention_sec if _is_gemini_voice(v) else _retention_sec
+    return _gemini_retention_sec if _is_premium_voice(v) else _retention_sec
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -2039,7 +2040,7 @@ def _create_download_token(job_id):
         "optimized_abm_path": job.get("optimized_abm_path", ""),
         "optimized_abm_name": job.get("optimized_abm_name", ""),
         # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
-        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
+        "is_gemini": _is_premium_voice(job.get("voice", "") or job.get("opt_voice", "")),
         "client_id": job.get("client_id", ""),
     }
     _save_tokens()
@@ -2335,7 +2336,7 @@ def _send_completion_email(job_id):
     if _write_email_marker is not None:
         try:
             _write_email_marker(_upload_dir / job_id, _sent_at,
-                                is_gemini=_is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")))
+                                is_gemini=_is_premium_voice(job.get("voice", "") or job.get("opt_voice", "")))
         except Exception as e:
             print(f"[{job_id}] email-marker write failed: {e}", flush=True)
 
@@ -2417,7 +2418,7 @@ def _send_optimization_email(job_id):
         "ai_optimized": True,
         # Token .abm di sola ottimizzazione: la retention sarà comunque pilotata
         # dal flag voce se l'utente dopo procede a generazione PREMIUM.
-        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
+        "is_gemini": _is_premium_voice(job.get("voice", "") or job.get("opt_voice", "")),
         "client_id": job.get("client_id", ""),
     }
     _save_tokens()
@@ -2428,7 +2429,7 @@ def _send_optimization_email(job_id):
     if _write_email_marker is not None:
         try:
             _write_email_marker(_upload_dir / job_id, _sent_at,
-                                is_gemini=_is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")))
+                                is_gemini=_is_premium_voice(job.get("voice", "") or job.get("opt_voice", "")))
         except Exception as e:
             print(f"[{job_id}] email-marker write failed: {e}", flush=True)
 

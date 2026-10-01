@@ -612,6 +612,7 @@ LLM_OPT_GROWTH_TOLERANCE = max(0.0, LLM_OPT_GROWTH_TOLERANCE)
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_premium_voice as _is_premium_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
 # Interruttore per modello PREMIUM (ABM_<MODELLO>_ENABLE, default abilitato).
 from voice_utils import voice_model_enabled as _voice_model_enabled
@@ -689,7 +690,7 @@ def _effective_max_text_chars(voice, job=None):
 
 
 def _retention_for_job(job):
-    """Retention sec applicabile al job: GEMINI_FILE_RETENTION_SEC se voce Gemini, altrimenti EMAIL_FILE_RETENTION_SEC.
+    """Retention sec applicabile al job: GEMINI_FILE_RETENTION_SEC se voce PREMIUM (Gemini, Speechify, VoxCPM), altrimenti EMAIL_FILE_RETENTION_SEC.
     La finestra di disponibilità per l'utente NON dipende dal cold storage: il
     cold determina solo DOVE si serve il file (locale durante la finestra calda,
     presigned URL dopo), non QUANTO a lungo resta disponibile.
@@ -697,7 +698,7 @@ def _retention_for_job(job):
     if not isinstance(job, dict):
         return EMAIL_FILE_RETENTION_SEC
     v = job.get("voice", "") or job.get("opt_voice", "")
-    return GEMINI_FILE_RETENTION_SEC if _is_gemini_voice(v) else EMAIL_FILE_RETENTION_SEC
+    return GEMINI_FILE_RETENTION_SEC if _is_premium_voice(v) else EMAIL_FILE_RETENTION_SEC
 
 
 def _retention_for_token_info(info):
@@ -723,7 +724,7 @@ def _effective_retention_for_job(job):
     if not isinstance(job, dict):
         return base
     v = job.get("voice", "") or job.get("opt_voice", "")
-    if _is_gemini_voice(v) and not job.get("downloaded_at"):
+    if _is_premium_voice(v) and not job.get("downloaded_at"):
         return base * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER
     return base
 

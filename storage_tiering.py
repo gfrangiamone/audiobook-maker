@@ -25,7 +25,7 @@ _GEN_COMPLETE_NAME = ".generation_complete"
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia,
 # puro come questo: la regola "no Flask, no boto3" resta rispettata).
-from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_premium_voice as _is_premium_voice
 
 
 def key_for_path(local_path):
@@ -39,11 +39,11 @@ def key_for_path(local_path):
 
 
 def hot_window_sec(job):
-    """Durata finestra calda locale per il job. PREMIUM/Gemini -> finestra estesa."""
+    """Durata finestra calda locale per il job. PREMIUM (Gemini, Speechify, VoxCPM) -> finestra estesa."""
     v = ""
     if isinstance(job, dict):
         v = job.get("voice", "") or job.get("opt_voice", "")
-    return _HOT_GEMINI_SEC if _is_gemini_voice(v) else _HOT_SEC
+    return _HOT_GEMINI_SEC if _is_premium_voice(v) else _HOT_SEC
 
 
 def is_offloadable(filename):

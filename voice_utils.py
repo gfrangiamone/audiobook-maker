@@ -44,6 +44,17 @@ def is_voxcpm_voice(voice):
     Safe su input non-stringa/None/"": ritorna False senza sollevare.
     """
     return bool(voice) and isinstance(voice, str) and voice.startswith(VOXCPM_VOICE_PREFIX)
+
+
+def is_premium_voice(voice):
+    """True per qualunque voce PREMIUM a pagamento (Gemini, Speechify, VoxCPM).
+
+    Governa retention dei download, protezione no-download e finestra calda:
+    i tre motori premium hanno gli stessi criteri di disponibilita'.
+    """
+    return is_gemini_voice(voice) or is_speechify_voice(voice) or is_voxcpm_voice(voice)
+
+
 # === Interruttori per modello PREMIUM ======================================
 # Ogni modello premium ha una propria env `ABM_<MODELLO>_ENABLE`:
 #   flash31    -> ABM_FLASH31_ENABLE
