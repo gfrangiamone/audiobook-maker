@@ -123,3 +123,22 @@ def test_premium_errors_are_counted_and_exposed(tmp_path):
     assert q["errors_premium"] == 1
     # 2 errori su 10 job terminati
     assert q["error_pct"] == pytest.approx(20.0, abs=0.1)
+
+
+def test_voxcpm_busy_pct_is_weighted_by_samples(tmp_path):
+    now = lm._bucket_start(1756000000.0) + lm.BUCKET_SEC
+    # 10 campioni tutti con worker in running, poi 10 con 1 su 10.
+    _write(tmp_path, now - 600, g={"vx_busy": [1, 1, 1.0, 10], "vx_run": [1, 2, 1.5, 10]})
+    _write(tmp_path, now - 300, g={"vx_busy": [0, 1, 0.1, 10], "vx_run": [0, 1, 0.1, 10]})
+    vx = lm.query("24h", now=now)["voxcpm"]
+    assert vx["busy_pct"] == pytest.approx(55.0, abs=0.01)
+    assert vx["running_peak"] == 2
+    assert vx["samples"] == 20
+
+
+def test_voxcpm_busy_pct_without_samples_is_none(tmp_path):
+    now = lm._bucket_start(1756000000.0) + lm.BUCKET_SEC
+    _write(tmp_path, now - 300, g={"gen": [0, 1, 0.5, 10]})
+    vx = lm.query("24h", now=now)["voxcpm"]
+    assert vx["busy_pct"] is None
+    assert vx["samples"] == 0

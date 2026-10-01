@@ -1164,13 +1164,13 @@ Le durate (attesa in coda assembly, encode FFmpeg, durata job) sono in istogramm
 `purge(now=None)`, `reset_for_tests()`.
 
 `query()` accetta le finestre `24h`, `7d`, `28d`, `month` (default `24h` su valore non riconosciuto) e restituisce
-`{meta, job, ffmpeg, machine, quality, reliability, timeline}`.
+`{meta, job, ffmpeg, machine, quality, reliability, voxcpm, timeline}` (`voxcpm.busy_pct` è `null` senza campioni).
 
 ### 16.3 Punti di raccolta
 
 | Sorgente | Cosa registra |
 |----------|---------------|
-| `audiobook_app._load_metrics_sampler` | Thread di campionamento (con supervisore `_load_metrics_supervisor`): job in elaborazione free/premium, job in RAM, slot assembly occupati/in coda, RAM/swap/RSS/CPU/iowait/load/thread/disco letti da `/proc` e `shutil.disk_usage`, età dell'heartbeat del cleanup loop. Fuori da Linux le metriche di macchina mancano e le card corrispondenti leggono zero. |
+| `audiobook_app._load_metrics_sampler` | Thread di campionamento (con supervisore `_load_metrics_supervisor`): job in elaborazione free/premium, job in RAM, slot assembly occupati/in coda, RAM/swap/RSS/CPU/iowait/load/thread/disco letti da `/proc` e `shutil.disk_usage`, età dell'heartbeat del cleanup loop, worker RunPod VoxCPM2 in `running` (`vx_run`, e `vx_busy` 0/1 la cui media pesata sui campioni dà la quota di tempo con almeno un worker al lavoro: oltre il 90% stabile conviene un worker sempre attivo). La sonda è `voxcpm_tts.worker_health()` (GET `/health`, timeout `_HEALTH_TIMEOUT_S` = 5 s, `voxcpm_tts.py` riga 584); endpoint non configurato o sonda fallita = gauge assente, non zero. Fuori da Linux le metriche di macchina mancano e le card corrispondenti leggono zero. |
 | `audiobook_app._assembly_metrics_observer` | Osservatore iniettato in `assembly_queue.set_observer()`: attesa in coda (`asm_wait`), durata encode (`enc`), timeout di coda (`asm_timeout`). |
 | `audiobook_app._server_busy_response` | Contatori `rej_busy` / `rej_busy_p` (job rifiutati al raggiungimento di `ABM_MAX_CONCURRENT_GLOBAL`). |
 | `generation_engine._set_job_status` | Alla terminazione di una generazione: durata job (`job`), esiti `done`/`err`/`cancel` (varianti `_p` per i premium), chunk TTS falliti. Il premium è deciso da `generation_engine.is_premium_job()`. |

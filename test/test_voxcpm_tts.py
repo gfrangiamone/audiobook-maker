@@ -242,3 +242,48 @@ def test_apply_rate_ffmpeg_fallito_non_logga_il_path(tmp_path, monkeypatch, capl
     testo = "\n".join(r.getMessage() for r in caplog.records)
     assert str(p) not in testo
     assert str(tmp_path) not in testo
+
+
+class _HealthResp:
+    def __init__(self, code, body):
+        self.status_code, self._body = code, body
+
+    def json(self):
+        return self._body
+
+
+class _HealthSession:
+    def __init__(self, resp=None, exc=None):
+        self.resp, self.exc, self.urls = resp, exc, []
+
+    def get(self, url, headers=None, timeout=None):
+        self.urls.append((url, timeout))
+        if self.exc:
+            raise self.exc
+        return self.resp
+
+
+def test_worker_health_legge_i_contatori(monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_ENDPOINT_ID", "ep1")
+    monkeypatch.setenv("ABM_VOXCPM_API_KEY", "k")
+    ses = _HealthSession(_HealthResp(200, {"jobs": {"inQueue": 0},
+                                           "workers": {"running": 1, "idle": 2}}))
+    assert voxcpm_tts.worker_health(session=ses) == {"running": 1, "idle": 2}
+    assert ses.urls[0][0].endswith("/ep1/health")
+    assert ses.urls[0][1] <= 10
+
+
+def test_worker_health_none_senza_configurazione(monkeypatch):
+    monkeypatch.delenv("ABM_VOXCPM_ENDPOINT_ID", raising=False)
+    monkeypatch.delenv("ABM_VOXCPM_API_KEY", raising=False)
+    ses = _HealthSession(_HealthResp(200, {"workers": {"running": 1}}))
+    assert voxcpm_tts.worker_health(session=ses) is None
+    assert ses.urls == []
+
+
+def test_worker_health_none_su_errore(monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_ENDPOINT_ID", "ep1")
+    monkeypatch.setenv("ABM_VOXCPM_API_KEY", "k")
+    assert voxcpm_tts.worker_health(session=_HealthSession(_HealthResp(503, {}))) is None
+    assert voxcpm_tts.worker_health(session=_HealthSession(exc=OSError("rete"))) is None
+    assert voxcpm_tts.worker_health(session=_HealthSession(_HealthResp(200, {"x": 1}))) is None

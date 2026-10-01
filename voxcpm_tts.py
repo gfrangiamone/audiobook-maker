@@ -578,6 +578,37 @@ def _submit(payload, session, sleep):
         f"esauriti i tentativi di sottomissione ({ultimo})")
 
 
+# Tetto della GET /health chiamata dal campionatore di carico ogni 30 s: deve
+# restare ben sotto il periodo di campionamento, o una RunPod lenta
+# rallenterebbe tutta la telemetria di macchina.
+_HEALTH_TIMEOUT_S = 5.0
+
+
+def worker_health(*, session=None):
+    """Contatori dei worker dell'endpoint, da GET /health. Non solleva mai.
+
+    Ritorna il dict `workers` di RunPod (`running`, `idle`, `initializing`,
+    `ready`, `throttled`, `unhealthy`, ...) con valori interi, oppure None se
+    l'endpoint non e' configurato o la risposta non e' leggibile. None e non
+    zero: un campione mancato non deve contare come "nessun worker attivo".
+    """
+    if not endpoint_id() or not api_key():
+        return None
+    ses = session or requests
+    try:
+        r = ses.get(f"{_base()}/health", headers=_headers(),
+                    timeout=_HEALTH_TIMEOUT_S)
+        if not (200 <= getattr(r, "status_code", 0) < 300):
+            return None
+        workers = (r.json() or {}).get("workers")
+        if not isinstance(workers, dict):
+            return None
+        return {k: int(v) for k, v in workers.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    except Exception:      # noqa: BLE001 - telemetria, best effort
+        return None
+
+
 def cancel_job(job_id, *, session=None):
     """Cancella un job in volo. Non solleva mai.
 

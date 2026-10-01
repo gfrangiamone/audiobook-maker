@@ -312,6 +312,22 @@ def _avg(rows, name):
     return round(num / den, 2) if den else 0.0
 
 
+def _count(rows, name):
+    """Numero di campioni del gauge nella finestra."""
+    return sum(int(r["g"][name][3]) for r in rows if name in r.get("g", {}))
+
+
+def _sample_pct(rows, name):
+    """Quota percentuale di tempo di un gauge 0/1, o None senza campioni.
+
+    E' la media pesata sui campioni, non sui bucket: un bucket in cui il
+    gauge vale 1 per un solo campione su dieci pesa un decimo, non tutto.
+    """
+    if not _count(rows, name):
+        return None
+    return round(100.0 * _avg(rows, name), 1)
+
+
 def _sum(rows, name):
     return sum(int(r.get("c", {}).get(name, 0)) for r in rows)
 
@@ -489,13 +505,19 @@ def query(window, now=None, global_cap=0, assembly_slots=0):
                 "cleanup_hb_max_sec": _peak(rows, "hb"),
                 "memory_pressure": _sum(rows, "memp"),
             },
+            "voxcpm": {
+                "busy_pct": _sample_pct(rows, "vx_busy"),
+                "running_peak": _peak(rows, "vx_run"),
+                "running_avg": _avg(rows, "vx_run"),
+                "samples": _count(rows, "vx_busy"),
+            },
             "timeline": _timeline(rows, from_ts, to_ts, step),
         }
     except Exception:
         return {"meta": {"window": window, "buckets": 0, "coverage_pct": 0,
                          "first_sample_ts": None, "error": "aggregation failed"},
                 "job": {}, "ffmpeg": {}, "machine": {}, "quality": {},
-                "reliability": {}, "timeline": []}
+                "reliability": {}, "voxcpm": {}, "timeline": []}
 
 
 def purge(now=None):

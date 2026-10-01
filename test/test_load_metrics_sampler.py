@@ -92,3 +92,26 @@ def test_server_busy_does_not_count_when_not_at_capacity(monkeypatch):
     with app.app.test_request_context("/api/generate"):
         assert app._server_busy_response("j4", "/api/generate") is None
     assert seen == []
+
+
+def test_voxcpm_workers_in_running_are_sampled(monkeypatch):
+    monkeypatch.setattr(app.voxcpm_tts, "worker_health",
+                        lambda: {"running": 2, "idle": 1})
+    with patch.dict(app.jobs, {}, clear=True):
+        g = app._collect_load_sample()
+    assert g["vx_run"] == 2 and g["vx_busy"] == 1
+
+
+def test_voxcpm_idle_workers_do_not_count_as_busy(monkeypatch):
+    monkeypatch.setattr(app.voxcpm_tts, "worker_health",
+                        lambda: {"running": 0, "idle": 3})
+    with patch.dict(app.jobs, {}, clear=True):
+        g = app._collect_load_sample()
+    assert g["vx_run"] == 0 and g["vx_busy"] == 0
+
+
+def test_voxcpm_failed_probe_leaves_the_gauge_out(monkeypatch):
+    monkeypatch.setattr(app.voxcpm_tts, "worker_health", lambda: None)
+    with patch.dict(app.jobs, {}, clear=True):
+        g = app._collect_load_sample()
+    assert "vx_busy" not in g and "vx_run" not in g

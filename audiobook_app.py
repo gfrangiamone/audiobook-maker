@@ -5738,7 +5738,7 @@ function loadUserStats(ym, btn, force) {{
 
 function lsRender(d) {{
     const j = d.job || {{}}, f = d.ffmpeg || {{}}, m = d.machine || {{}},
-          q = d.quality || {{}}, r = d.reliability || {{}};
+          q = d.quality || {{}}, r = d.reliability || {{}}, vx = d.voxcpm || {{}};
     const rejTot = (j.rejected_free || 0) + (j.rejected_premium || 0);
 
     const paneJob = lsSec('Job', [
@@ -5763,6 +5763,15 @@ function lsRender(d) {{
         lsOne('Timeout coda', f.timeouts || 0, '', (f.timeouts || 0) > 0 ? 'crit' : 'ok'),
         lsOne('Slot tutti occupati', (f.slots_full_pct || 0) + '%',
               (d.meta.assembly_slots || 0) + ' slot', lsLevel(f.slots_full_pct || 0, 20, 50)),
+    ]) + lsSec('Worker GPU VoxCPM2', [
+        // >= 90% stabile: conviene tenere un worker sempre attivo
+        // (niente avviamento a freddo). 'warn' qui e' un segnale, non un guasto.
+        lsOne('Tempo con worker in running',
+              vx.busy_pct == null ? 'n/d' : vx.busy_pct + '%',
+              (vx.samples || 0) + ' campioni &middot; soglia 90% = worker fisso',
+              vx.busy_pct == null ? '' : lsLevel(vx.busy_pct, 70, 90)),
+        lsOne('Worker in running (picco)', vx.running_peak || 0,
+              'media ' + (vx.running_avg || 0)),
     ]);
 
     const paneMachine = lsSec('Macchina', [
@@ -21456,6 +21465,19 @@ def _collect_load_sample():
     except Exception:
         pass
     g["hb"] = round(max(0.0, time.time() - _cleanup_heartbeat[0]), 1)
+    # Worker RunPod di VoxCPM2 in `running`: vx_busy (0/1) mediato sui
+    # campioni da' la quota di tempo con almeno un worker al lavoro, il dato
+    # che dice quando conviene tenerne uno sempre attivo (niente avviamento a
+    # freddo). Sonda fallita = gauge assente, non zero.
+    if voxcpm_tts is not None:
+        try:
+            workers = voxcpm_tts.worker_health()
+        except Exception:
+            workers = None
+        if workers is not None:
+            running = max(0, int(workers.get("running", 0)))
+            g["vx_run"] = running
+            g["vx_busy"] = 1 if running > 0 else 0
     return g
 
 
