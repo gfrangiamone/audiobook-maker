@@ -216,6 +216,11 @@ GEMINI_MODELS = {
         "preview_timeout_sec": 45,
         "backends_allowed": ("apikey",),
         "mark_unavailable_on_fatal": True,
+        # Il 3.8 legge ad alta voce il blocco "[style: ...]" se arriva nella
+        # stessa parte del testo (job UGk7l5kB, 01/10/2026: 5 chunk su 24 con
+        # stile/velocita' letti); in una parte separata 0 su 24, velocita'
+        # rispettata. Vedi split_style_block.
+        "style_as_separate_part": True,
         # Chunk con i retry esauriti (risposta vuota, 5xx, timeout): stessa
         # voce su questo modello, poi edge-tts (tts_split). Gli errori fatali
         # (auth/billing/404) restano job-fatali con rimborso.
@@ -3116,7 +3121,9 @@ def build_final_text(text, style_instruction=None, rate=None,
         # Cap a 200 char (non 300): la directive rate piu` lunga e` ~95 char e
         # va a sommarsi nello stesso blocco [style: ...]. 200 + 95 + 1 (sep) =
         # 296, sotto il budget storico di 300 char "comprensibili" dal modello.
-        s = str(style_instruction).strip()[:200]
+        # "]" chiuderebbe il blocco in anticipo: split_style_block taglia alla
+        # prima "] " e il resto dello stile finirebbe letto come testo.
+        s = str(style_instruction).strip()[:200].replace("]", ")")
         if s:
             style_parts.append(s)
     # Iniezione della rate directive nel blocco [style:...]. Silenziosa su
@@ -3147,6 +3154,36 @@ def build_final_text(text, style_instruction=None, rate=None,
         final_text = text
 
     return final_text
+
+
+_STYLE_BLOCK_PREFIX = "[style: "
+
+
+def split_style_block(final_text):
+    """Separa il blocco "[style: ...]" di build_final_text dal testo da leggere.
+
+    Ritorna (blocco, testo), oppure (None, final_text) se il blocco manca. Il
+    blocco non contiene mai "]" prima della chiusura: le directive di accento e
+    velocita' sono costanti senza parentesi, lo stile utente e' sanificato.
+    """
+    if not final_text.startswith(_STYLE_BLOCK_PREFIX):
+        return None, final_text
+    end = final_text.find("] ")
+    if end < 0:
+        return None, final_text
+    return final_text[:end + 1], final_text[end + 2:]
+
+
+def _transport_contents(final_text, model_key):
+    """Contenuto della richiesta: stringa unica, o blocco stile in una parte a se'."""
+    if not GEMINI_MODELS.get(model_key, {}).get("style_as_separate_part"):
+        return final_text
+    block, text = split_style_block(final_text)
+    if block is None:
+        return final_text
+    from google.genai import types as genai_types
+    return [genai_types.Content(role="user", parts=[
+        genai_types.Part(text=block), genai_types.Part(text=text)])]
 
 
 _PERMANENT_HTTP = (401, 403, 404)
@@ -3235,7 +3272,7 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
 
         response = client.models.generate_content(
             model=model_id,
-            contents=final_text,
+            contents=_transport_contents(final_text, model_key),
             config=genai_types.GenerateContentConfig(
                 **config_kwargs,
                 http_options=genai_types.HttpOptions(timeout=timeout_ms),

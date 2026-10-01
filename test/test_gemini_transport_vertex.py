@@ -137,3 +137,42 @@ def test_every_raised_kind_is_in_the_closed_set(monkeypatch):
     with pytest.raises(TransportError) as ei:
         _call()
     assert ei.value.kind in TRANSPORT_KINDS
+
+
+# Il 3.8 legge ad alta voce il blocco "[style: ...]" se e' nella stessa parte
+# del testo (job UGk7l5kB, 01/10/2026): per lui va in una parte separata.
+
+def _sent_parts(monkeypatch, model_key, final_text):
+    class _Resp:
+        usage_metadata = _Usage()
+
+    client = _install(monkeypatch, lambda kw: _Resp())
+    _call(model_key=model_key, final_text=final_text)
+    return client.models.calls[0]["contents"]
+
+
+def test_flash38_sends_style_block_as_separate_part(monkeypatch):
+    ft = gemini_tts.build_final_text(
+        "Il giardino era silenzioso.", style_instruction="tono calmo", rate="+30%")
+    contents = _sent_parts(monkeypatch, "flash38", ft)
+    texts = [p.text for p in contents[0].parts]
+    assert texts[0].startswith("[style: tono calmo Read this text")
+    assert texts[0].endswith("]")
+    assert texts[1] == "Il giardino era silenzioso."
+
+
+def test_flash38_without_style_sends_plain_text(monkeypatch):
+    assert _sent_parts(monkeypatch, "flash38", "Solo testo.") == "Solo testo."
+
+
+def test_flash31_keeps_single_string_prompt(monkeypatch):
+    ft = gemini_tts.build_final_text("Testo.", style_instruction="tono calmo")
+    assert _sent_parts(monkeypatch, "flash31", ft) == ft
+
+
+def test_user_style_bracket_cannot_split_block_early():
+    ft = gemini_tts.build_final_text(
+        "Testo [1] con nota.", style_instruction="lento] veloce", rate="-30%")
+    block, text = gemini_tts.split_style_block(ft)
+    assert "lento) veloce" in block and "slowly" in block
+    assert text == "Testo [1] con nota."
