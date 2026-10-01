@@ -3033,7 +3033,7 @@ async def _fetch_voices():
             print(f"Error merging VoxCPM voices: {e}")
 
     # Sorting: Female prima di Male, poi per nome; fra le voci VoxCPM
-    # decidono prima i punti d'uso (mese corrente, poi assoluti).
+    # decidono prima i punti d'uso (ultimi 30 giorni, poi assoluti).
     voxcpm_ranking.ordina(languages)
 
     # Priority sorting for languages

@@ -103,6 +103,11 @@ def _db_path():
     return _dir() / activity_db.DB_FILENAME
 
 
+def db_path():
+    """Il file activity.db, per chi lo legge da fuori con activity_db.reader."""
+    return _db_path()
+
+
 def _writer():
     """Connessione di scrittura, da usare sotto `_lock`; riaperta se la
     cartella cambia (i test la spostano)."""

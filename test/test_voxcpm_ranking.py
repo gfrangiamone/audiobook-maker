@@ -1,8 +1,9 @@
-"""La classifica d'uso delle voci VoxCPM: punti per voce e mese, ordine.
+"""La classifica d'uso delle voci VoxCPM: punti per voce e giorno, ordine.
 
-Ogni generazione VoxCPM che parte davvero da' un punto alla voce, nel mese
-in corso. Il catalogo ordina, dentro i blocchi Female/Male, per punti del
-mese, poi per punti assoluti, poi per nome. Un job conta una volta sola.
+Ogni generazione VoxCPM che parte davvero da' un punto alla voce, nel giorno
+in corso. Il catalogo ordina, dentro i blocchi Female/Male, per punti degli
+ultimi 30 giorni, poi per punti assoluti, poi per nome. Un job conta una
+volta sola.
 """
 import json
 import os
@@ -13,6 +14,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import voxcpm_ranking  # noqa: E402
+
+# Il lettore vero del business log, prima che il fixture lo spenga.
+_RIGHE_VERE = voxcpm_ranking._righe_generate
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "voxcpm_catalog")
 
@@ -25,6 +29,8 @@ EDGE = "it-IT-ElsaNeural"
 @pytest.fixture(autouse=True)
 def _dati_isolati(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    # Nessun business log: i file senza `giorni` partono con la finestra vuota.
+    monkeypatch.setattr(voxcpm_ranking, "_righe_generate", lambda: [])
     voxcpm_ranking.invalidate_cache()
     yield tmp_path
     voxcpm_ranking.invalidate_cache()
@@ -32,6 +38,18 @@ def _dati_isolati(tmp_path, monkeypatch):
 
 def _mese():
     return voxcpm_ranking._month()
+
+
+def _fa(n):
+    return voxcpm_ranking._giorni_fa(n)
+
+
+def _scrivi(cartella, d):
+    (cartella / "_voxcpm_voice_points.json").write_text(json.dumps(d), "utf-8")
+
+
+def _leggi(cartella):
+    return json.loads((cartella / "_voxcpm_voice_points.json").read_text("utf-8"))
 
 
 def _catalogo():
@@ -73,47 +91,126 @@ def test_le_voci_degli_altri_motori_non_contano(_dati_isolati):
 
 def test_il_punto_finisce_su_disco(_dati_isolati):
     voxcpm_ranking.punto(STEFANO, "jobA")
-    d = json.loads((_dati_isolati / "_voxcpm_voice_points.json").read_text("utf-8"))
+    d = _leggi(_dati_isolati)
     assert d["mesi"][_mese()][STEFANO] == 1
-    assert d["jobs"]["jobA"] == _mese()
+    assert d["giorni"][_fa(0)][STEFANO] == 1
+    assert d["jobs"]["jobA"] == _fa(0)
     # Riletto da zero, il dato e' lo stesso e il job resta gia' contato.
     voxcpm_ranking.invalidate_cache()
     assert voxcpm_ranking.punti(STEFANO) == (1, 1)
     assert voxcpm_ranking.punto(STEFANO, "jobA") == 1
 
 
-def test_mese_e_totale_sono_due_numeri(_dati_isolati):
-    (_dati_isolati / "_voxcpm_voice_points.json").write_text(json.dumps({
-        "mesi": {"2024-01": {CHIARA: 7, STEFANO: 2},
-                 _mese(): {CHIARA: 1}},
+def test_finestra_e_totale_sono_due_numeri(_dati_isolati):
+    _scrivi(_dati_isolati, {
+        "mesi": {"2024-01": {CHIARA: 7, STEFANO: 2}, _mese(): {CHIARA: 1}},
+        "giorni": {_fa(0): {CHIARA: 1}},
         "jobs": {},
-    }), "utf-8")
+    })
     assert voxcpm_ranking.punti(CHIARA) == (1, 8)
     assert voxcpm_ranking.punti(STEFANO) == (0, 2)
     assert voxcpm_ranking.punti(FEDERICA) == (0, 0)
     assert voxcpm_ranking.classifica() == {
-        CHIARA: {"mese": 1, "totale": 8},
-        STEFANO: {"mese": 0, "totale": 2},
+        CHIARA: {"finestra": 1, "totale": 8},
+        STEFANO: {"finestra": 0, "totale": 2},
     }
 
 
-def test_i_job_vecchi_si_potano_i_mesi_no(_dati_isolati):
-    (_dati_isolati / "_voxcpm_voice_points.json").write_text(json.dumps({
-        "mesi": {"2024-01": {CHIARA: 7}, "2024-02": {CHIARA: 1}},
-        "jobs": {"antico": "2024-01", "vecchio": "2024-02"},
-    }), "utf-8")
+def test_la_finestra_e_di_trenta_giorni_non_il_mese(_dati_isolati):
+    # Oggi e i 29 giorni prima contano, il trentesimo no: il cambio di mese
+    # non azzera niente.
+    _scrivi(_dati_isolati, {
+        "mesi": {},
+        "giorni": {_fa(29): {CHIARA: 2}, _fa(30): {STEFANO: 5}},
+        "jobs": {},
+    })
+    assert voxcpm_ranking.punti(CHIARA)[0] == 2
+    assert voxcpm_ranking.punti(STEFANO)[0] == 0
+
+
+def test_i_giorni_fuori_finestra_e_i_job_vecchi_si_potano(_dati_isolati):
+    _scrivi(_dati_isolati, {
+        "mesi": {"2024-01": {CHIARA: 7}, _mese(): {CHIARA: 1}},
+        "giorni": {_fa(45): {CHIARA: 1}, _fa(3): {CHIARA: 1}},
+        "jobs": {"antico": "2024-01", "vecchio": _fa(61), "recente": _fa(59),
+                 "di_questo_mese": _mese()},
+    })
     voxcpm_ranking.punto(CHIARA, "nuovo")
-    d = json.loads((_dati_isolati / "_voxcpm_voice_points.json").read_text("utf-8"))
-    # Tenuti i due mesi piu' recenti fra quelli dei job: il mese corrente e 2024-02.
-    assert set(d["jobs"]) == {"vecchio", "nuovo"}
+    d = _leggi(_dati_isolati)
+    assert set(d["giorni"]) == {_fa(3), _fa(0)}
+    assert set(d["jobs"]) == {"recente", "di_questo_mese", "nuovo"}
     # I mesi restano tutti: sono il totale assoluto.
-    assert set(d["mesi"]) == {"2024-01", "2024-02", _mese()}
-    assert voxcpm_ranking.punti(CHIARA) == (1, 9)
+    assert "2024-01" in d["mesi"]
+    assert voxcpm_ranking.punti(CHIARA) == (2, 9)
+
+
+def test_il_job_gia_contato_ritorna_i_punti_della_finestra(_dati_isolati):
+    _scrivi(_dati_isolati, {
+        "mesi": {_mese(): {CHIARA: 3}},
+        "giorni": {_fa(2): {CHIARA: 2}},
+        "jobs": {"j1": _fa(2)},
+    })
+    assert voxcpm_ranking.punto(CHIARA, "j1") == 2
+    assert voxcpm_ranking.punti(CHIARA) == (2, 3)
+
+
+def test_senza_giorni_la_finestra_si_ricostruisce_dal_business_log(
+        _dati_isolati, monkeypatch):
+    monkeypatch.setattr(voxcpm_ranking, "_righe_generate", lambda: [
+        ("j1", CHIARA, _fa(1) + " 10:00:00"),
+        ("j2", CHIARA, _fa(40) + " 10:00:00"),     # fuori finestra
+        ("j3", STEFANO, _fa(5) + " 09:00:00"),
+        ("j4", FEDERICA, _fa(1) + " 08:00:00"),    # mai contato: non c'e' in jobs
+        ("j5", EDGE, _fa(1) + " 08:00:00"),
+    ])
+    _scrivi(_dati_isolati, {
+        "mesi": {"2026-09": {CHIARA: 2, STEFANO: 1}},
+        "jobs": {"j1": "2026-09", "j2": "2026-09", "j3": "2026-09", "j5": "2026-09"},
+    })
+    assert voxcpm_ranking.punti(CHIARA) == (1, 2)
+    assert voxcpm_ranking.punti(STEFANO) == (1, 1)
+    assert voxcpm_ranking.punti(FEDERICA) == (0, 0)
+    voxcpm_ranking.punto(FEDERICA, "j9")
+    assert _leggi(_dati_isolati)["giorni"][_fa(1)] == {CHIARA: 1}
+
+
+def test_il_seme_non_si_rifa_se_giorni_c_e(_dati_isolati, monkeypatch):
+    monkeypatch.setattr(voxcpm_ranking, "_righe_generate", lambda: [
+        ("j1", CHIARA, _fa(1) + " 10:00:00")])
+    _scrivi(_dati_isolati, {"mesi": {}, "giorni": {}, "jobs": {"j1": _fa(1)}})
+    assert voxcpm_ranking.punti(CHIARA) == (0, 0)
+
+
+def test_il_seme_legge_le_generate_da_activity_db(monkeypatch, tmp_path):
+    import activity_db
+    import activity_log
+    db = tmp_path / "activity.db"
+    conn = activity_db.connect(db)
+    for ts, jid, op, voce in [
+        (_fa(1) + " 10:00:00", "j1", "GENERATE", CHIARA),
+        (_fa(0) + " 10:00:00", "j1", "GENERATE", CHIARA),    # rilancio: conta il primo
+        (_fa(1) + " 11:00:00", "j1", "COMPLETE", CHIARA),
+        (_fa(2) + " 10:00:00", "j2", "GENERATE", STEFANO),
+    ]:
+        conn.execute(
+            "INSERT INTO events (ym, ts, job_id, op, filename, client_id, ip,"
+            " voice, detail, lang, platform) VALUES (?,?,?,?,'','','',?,'','','')",
+            (ts[:7], ts, jid, op, voce))
+    conn.close()
+    monkeypatch.setattr(activity_log, "mode", lambda: "dual")
+    monkeypatch.setattr(activity_log, "db_path", lambda: db)
+    assert sorted(_RIGHE_VERE()) == [
+        ("j1", CHIARA, _fa(1) + " 10:00:00"), ("j2", STEFANO, _fa(2) + " 10:00:00")]
+    monkeypatch.setattr(activity_log, "db_path", lambda: tmp_path / "manca.db")
+    assert _RIGHE_VERE() == []
+    monkeypatch.setattr(activity_log, "mode", lambda: "off")
+    assert _RIGHE_VERE() == []
 
 
 @pytest.mark.parametrize("contenuto", [
-    "", "non json", "[]", "42", '{"mesi": [], "jobs": "x"}',
+    "", "non json", "[]", "42", '{"mesi": [], "jobs": "x", "giorni": 5}',
     '{"mesi": {"2024-01": "rotto", "2024-02": {"voxcpm:v2:it-IT/Chiara": "tre"}}}',
+    '{"giorni": {"2099-01-01": "rotto"}}',
 ])
 def test_un_file_rotto_non_ferma_nessuno(_dati_isolati, contenuto):
     (_dati_isolati / "_voxcpm_voice_points.json").write_text(contenuto, "utf-8")
@@ -153,22 +250,22 @@ def test_i_blocchi_non_si_mescolano():
                           "Stefano (IT)", "Diego (IT)"]
 
 
-def test_a_pari_mese_decide_il_totale(_dati_isolati):
-    (_dati_isolati / "_voxcpm_voice_points.json").write_text(json.dumps({
+def test_a_pari_finestra_decide_il_totale(_dati_isolati):
+    _scrivi(_dati_isolati, {
         "mesi": {"2024-01": {FEDERICA: 3}, _mese(): {CHIARA: 1, FEDERICA: 1}},
+        "giorni": {_fa(0): {CHIARA: 1, FEDERICA: 1}},
         "jobs": {},
-    }), "utf-8")
-    assert _nomi(voxcpm_ranking.ordina(_catalogo()))[:2] == \
-        ["Federica (IT)", "Chiara (IT)"]
+    })
+    assert _nomi(voxcpm_ranking.ordina(_catalogo()))[:2] ==         ["Federica (IT)", "Chiara (IT)"]
 
 
-def test_il_mese_corrente_batte_la_storia(_dati_isolati):
-    (_dati_isolati / "_voxcpm_voice_points.json").write_text(json.dumps({
+def test_la_finestra_batte_la_storia(_dati_isolati):
+    _scrivi(_dati_isolati, {
         "mesi": {"2024-01": {CHIARA: 40}, _mese(): {FEDERICA: 1}},
+        "giorni": {_fa(0): {FEDERICA: 1}},
         "jobs": {},
-    }), "utf-8")
-    assert _nomi(voxcpm_ranking.ordina(_catalogo()))[:2] == \
-        ["Federica (IT)", "Chiara (IT)"]
+    })
+    assert _nomi(voxcpm_ranking.ordina(_catalogo()))[:2] ==         ["Federica (IT)", "Chiara (IT)"]
 
 
 def test_ordina_tollera_forme_strane():
