@@ -1156,7 +1156,7 @@ Le durate (attesa in coda assembly, encode FFmpeg, durata job) sono in istogramm
 | `ABM_LOAD_METRICS_SAMPLE_SEC` | `30` | Periodo di campionamento dei gauge (job in elaborazione, RAM, CPU, swap, disco, coda assembly). | `load_metrics.py` | 39 |
 | `ABM_LOAD_METRICS_BUCKET_SEC` | `300` | Ampiezza del bucket di aggregazione (5 minuti): un bucket chiuso = una riga JSONL. | `load_metrics.py` | 40 |
 | `ABM_LOAD_METRICS_RETENTION_MONTHS` | `4` | Mesi di file `load_metrics_YYYY-MM.jsonl` conservati; i più vecchi vengono rimossi da `purge()`. | `load_metrics.py` | 41 |
-| `ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS` | `28` | Giorni di conservazione dei gauge della sonda RunPod VoxCPM2 (`vx_run`, `vx_busy`): `purge()` (una volta al giorno) li toglie dalle righe più vecchie riscrivendo il file mensile (tmp + rename); il resto della riga resta per `ABM_LOAD_METRICS_RETENTION_MONTHS`. | `load_metrics.py` | 45 |
+| `ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS` | `31` | Giorni di conservazione dei gauge della sonda RunPod VoxCPM2 (`vx_run`, `vx_busy`): `purge()` (una volta al giorno) li toglie dalle righe più vecchie riscrivendo il file mensile (tmp + rename); il resto della riga resta per `ABM_LOAD_METRICS_RETENTION_MONTHS`. | `load_metrics.py` | 45 |
 
 ### 16.2 API del modulo
 

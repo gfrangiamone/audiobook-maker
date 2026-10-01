@@ -42,7 +42,7 @@ RETENTION_MONTHS = int(os.environ.get("ABM_LOAD_METRICS_RETENTION_MONTHS", "4"))
 # I gauge della sonda RunPod di VoxCPM2 vivono meno del resto: servono solo a
 # dire se nelle ultime settimane un worker sempre attivo sarebbe convenuto.
 # Oltre questa eta' vengono tolti dalle righe, che restano per il resto.
-VOXCPM_RETENTION_DAYS = int(os.environ.get("ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS", "28"))
+VOXCPM_RETENTION_DAYS = int(os.environ.get("ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS", "31"))
 _VOXCPM_GAUGES = ("vx_run", "vx_busy")
 
 # Confini dei bin, in secondi. L'ottavo bin e' overflow (> 20 min).
