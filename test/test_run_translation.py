@@ -100,9 +100,12 @@ def test_run_translation_error_refunds(fake_llm, tmp_path, monkeypatch):
     refunds = []
     monkeypatch.setattr(ge, "_refund_job_payment",
                         lambda jid, j, reason: refunds.append((jid, reason)))
+    failed = []
+    monkeypatch.setattr(ge.pending_jobs, "mark_failed", failed.append)
     ge.run_translation(job_id)
     assert job["status"] == "error"
     assert refunds == [(job_id, "error")]
+    assert failed == [job_id]   # niente rilancio dal recovery dopo il rimborso
 
 
 def test_run_translation_cancel_refunds_and_reverts(fake_llm, tmp_path, monkeypatch):
@@ -111,9 +114,12 @@ def test_run_translation_cancel_refunds_and_reverts(fake_llm, tmp_path, monkeypa
     refunds = []
     monkeypatch.setattr(ge, "_refund_job_payment",
                         lambda jid, j, reason: refunds.append(reason))
+    failed = []
+    monkeypatch.setattr(ge.pending_jobs, "mark_failed", failed.append)
     ge.run_translation(job_id)
     assert job["status"] == "analyzed"
     assert refunds == ["cancel"]
+    assert failed == [job_id]
 
 
 def test_run_translation_heartbeat_timeout_cancels(fake_llm, tmp_path, monkeypatch):

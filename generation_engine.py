@@ -3402,6 +3402,7 @@ def run_optimization(job_id, selected_chapters=None):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
         _refund_job_payment(job_id, job, "cancel")
+        _mark_pending_failed(job_id, "optimization cancelled, refunded")
         _write_optimization_audit(
             job_id, job, language=lang, chars_total=total_chars,
             outcome="cancelled_refunded")
@@ -3411,6 +3412,10 @@ def run_optimization(job_id, selected_chapters=None):
         import traceback
         traceback.print_exc()
         _refund_job_payment(job_id, job, "error")
+        # Senza questo il descrittore resta "running" e il recovery al
+        # riavvio rilancia ottimizzazione + generazione di un job gia'
+        # rimborsato (yKsP1JQaXgYY2RzxsBKjEw, 2026-10-01).
+        _mark_pending_failed(job_id, "optimization failed, refunded")
         try:
             _send_optimization_failed_email(job_id, job)
         except Exception as _e_fail_mail:
@@ -3650,6 +3655,7 @@ def run_translation(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
         _refund_job_payment(job_id, job, "cancel")
+        _mark_pending_failed(job_id, "translation cancelled, refunded")
         _write_translation_audit(
             job_id, job, backend=backend, model=model,
             source_lang=source, target_lang=target, optimize=optimize,
@@ -3662,6 +3668,7 @@ def run_translation(job_id):
         job["tr_progress_message"] = f"Translation error: {e}"
         _log(f"translation FAILED: {type(e).__name__}: {e}")
         _refund_job_payment(job_id, job, "error")
+        _mark_pending_failed(job_id, "translation failed, refunded")
         _write_translation_audit(
             job_id, job, backend=backend, model=model,
             source_lang=source, target_lang=target, optimize=optimize,
