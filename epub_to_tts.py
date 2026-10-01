@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from text_reflow import dehyphenate_breaks, reflow_book, strip_soft_hyphens
+
 try:
     import ebooklib
     from ebooklib import epub
@@ -588,6 +590,8 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
 
     # 1. Normalizza Unicode (NFC)
     text = unicodedata.normalize("NFC", text)
+    # Trattino morbido (U+00AD): "bri\u00adlhante" arrivava intero al TTS.
+    text = strip_soft_hyphens(text)
 
     # 2. Sostituisci caratteri problematici
     replacements = {
@@ -722,6 +726,9 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
     text = re.sub(r" *\n *", "\n", text)           # Trim spazi intorno a newline
     text = re.sub(r"\n{4,}", "\n\n\n", text)       # Max 3 newline consecutive
     text = re.sub(r"(\n\s*){3,}", "\n\n", text)    # Righe vuote eccessive
+    # Parole sillabate a fine riga o fra due <p> ("ac-" / "cepted"), tipiche
+    # degli EPUB convertiti da PDF: senza unione il TTS legge due frammenti.
+    text = dehyphenate_breaks(text)
 
     # 7. Pulisci punteggiatura
     text = re.sub(r"\s+([.,;:!?])", r"\1", text)   # Spazio prima di punteggiatura
@@ -1665,6 +1672,17 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             resegmented = _resegment_chapters_by_markers(info.chapters)
         if len(resegmented) > len(info.chapters):
             info.chapters = resegmented
+
+    # ── Paragrafi spezzati a metà frase (EPUB convertiti da PDF) ──
+    # Un <p> per ogni riga stampata: ogni a-capo diventa una pausa di
+    # paragrafo. Si ricompone solo se il difetto è sistematico nel libro
+    # (text_reflow.book_needs_reflow), mai sui libri ben composti.
+    _reflowed = reflow_book([c.text for c in info.chapters])
+    if _reflowed is not None:
+        for _ch, _txt in zip(info.chapters, _reflowed):
+            _ch.text = _txt
+            _ch.word_count = len(_txt.split())
+            _ch.char_count = len(_txt)
 
     # Totali
     info.total_words = sum(c.word_count for c in info.chapters)

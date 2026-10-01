@@ -50,6 +50,14 @@ except ImportError:
         print("ERRORE: PyMuPDF non installato. Eseguire: pip install pymupdf", file=sys.stderr)
         sys.exit(1)
 
+# Regole testuali di ricomposizione righe/paragrafi, comuni a EPUB e TXT.
+from text_reflow import (
+    TERMINAL_RE as _PDF_LINE_TERMINAL_RE,
+    dehyphenate_breaks,
+    join_lines as _join_pdf_line,
+    lines_to_paragraphs as _lines_to_paragraphs,
+)
+
 # Importa strutture dati e funzioni di pulizia dal modulo EPUB
 # (evita duplicazione di logica — stessa interfaccia BookInfo/Chapter)
 try:
@@ -342,9 +350,6 @@ def _get_pdf_outline(doc: fitz.Document) -> list:
 # sensi (confronto su 180 PDF di produzione, 01/10/2026). Il rientro di prima
 # riga si misura dal margine sinistro del blocco, così due paragrafi di una
 # riga sola, entrambi rientrati, restano separati.
-_PDF_LINE_TERMINAL_RE = re.compile(
-    r"[.!?…:;\"'»«“”’)\]。！？」』）]\s*$")
-_PDF_SOFT_BREAK_MIN_LINE = 40
 _PDF_DIALOGUE_DASH_RE = re.compile(r"[-–—―]\s*\S")
 _PDF_NEXT_WORD_FIT = 1.3        # margine sulla larghezza stimata della parola
 _PDF_INDENT_MIN_RATIO = 0.025   # rientro di prima riga, frazione della colonna
@@ -352,29 +357,6 @@ _PDF_INDENT_MIN_PT = 6.0
 _PDF_INDENT_MAX_RATIO = 0.20    # oltre: riga centrata o citazione, non rientro
 _PDF_COLUMN_MIN_CHARS = 30      # righe usate per stimare la colonna
 _PDF_SAME_EDGE_PT = 1.0         # margine destro "uguale" fra righe giustificate
-# Trattino sospeso ("Hin- und Rückfahrt", "pre- e post-"): non è sillabazione.
-_PDF_SUSPENDED_HYPHEN_NEXT = frozenset({
-    "und", "oder", "bis", "sowie", "noch", "als", "wie",
-    "and", "or", "to", "nor",
-    "e", "ed", "o", "od", "y", "u", "et", "ou", "ni",
-})
-
-
-def _join_pdf_line(prev: str, nxt: str) -> str:
-    """Unisce due righe della stessa frase, ricomponendo la sillabazione.
-
-    "zurück-" + "kehren" → "zurückkehren"; "Ost-" + "Berlin" → "Ost-Berlin"
-    (trattino di composto davanti a maiuscola); "Hin-" + "und" → "Hin- und"
-    (trattino sospeso); "parola –" + "altra" → spazio.
-    """
-    if re.search(r"[^\W\d_]-$", prev):
-        first = nxt.split(" ", 1)[0].strip(",;.").lower()
-        if first in _PDF_SUSPENDED_HYPHEN_NEXT:
-            return prev + " " + nxt
-        if nxt[:1].islower():
-            return prev[:-1] + nxt
-        return prev + nxt
-    return prev + " " + nxt
 
 
 def _visual_lines(lines: list) -> list:
@@ -490,40 +472,6 @@ def _block_geometry_breaks(vlines: list, page_column) -> list:
     return out
 
 
-def _lines_to_paragraphs(items: list) -> str:
-    """Ricompone righe PDF in paragrafi separati da "\n\n".
-
-    `items`: lista di (brk, testo) dove `brk` è il tipo di confine che precede
-    la riga: None (stessa sequenza di righe), "hard" (riga vuota: fine
-    paragrafo certa), "soft" (nuovo blocco o nuova pagina: fine paragrafo solo
-    se la riga precedente chiude la frase o è corta come un sottotitolo).
-    """
-    paragraphs = []
-    cur = ""
-    last_line = ""
-    for brk, text in items:
-        text = text.strip()
-        if not text:
-            continue
-        if not cur:
-            cur = text
-        elif brk == "hard":
-            paragraphs.append(cur)
-            cur = text
-        elif brk == "soft" and (
-                _PDF_LINE_TERMINAL_RE.search(last_line)
-                or (len(last_line) < _PDF_SOFT_BREAK_MIN_LINE
-                    and not text[:1].islower())):
-            paragraphs.append(cur)
-            cur = text
-        else:
-            cur = _join_pdf_line(cur, text)
-        last_line = text
-    if cur:
-        paragraphs.append(cur)
-    return "\n\n".join(paragraphs)
-
-
 def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
                                  repeated_headers: set) -> str:
     """Estrae il testo di una singola pagina, filtrando:
@@ -623,13 +571,9 @@ def _clean_pdf_text(text: str) -> str:
 
     # 1. Rimuovi sillabazione da a-capo (parola spezzata con trattino a fine riga)
     #    es: "mate-\nmatica" → "matematica"
-    text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
-    #    Anche a cavallo di pagina/blocco ("zurück-\n\nkehren"), solo se la
-    #    riga dopo inizia minuscola: davanti a maiuscola è un vero paragrafo.
-    text = re.sub(r"([^\W\d_])-\n\n(\w+)",
-                  lambda m: m.group(1) + m.group(2) if m.group(2)[:1].islower()
-                  else m.group(0),
-                  text)
+    #    anche a cavallo di pagina/blocco ("zurück-\n\nkehren"): regola comune
+    #    a EPUB e TXT, vedi text_reflow.dehyphenate_breaks.
+    text = dehyphenate_breaks(text)
 
     # 2. Rimuovi didascalie di figure/tabelle
     text = _caption_re.sub("", text)

@@ -45,6 +45,7 @@ import llm_output_judge
 import translation_judge
 import storage_backend
 import storage_tiering
+import text_reflow
 import translation_core
 try:
     import gemini_tts
@@ -770,6 +771,15 @@ def parse_txt(file_path):
     text = text.strip()
     if not text:
         raise ValueError("Text file is empty")
+
+    # Stesse ricomposizioni di PDF/EPUB: trattini morbidi, parole sillabate a
+    # fine riga, e paragrafi spezzati a metà frase se il difetto è sistematico
+    # (TXT esportato da PDF con una riga vuota dopo ogni riga stampata).
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text_reflow.dehyphenate_breaks(text_reflow.strip_soft_hyphens(text))
+    reflowed = text_reflow.reflow_book([text])
+    if reflowed is not None:
+        text = reflowed[0]
 
     # Title = filename without extension
     title = path.stem.replace("_", " ").replace("-", " ").strip() or "Text"
