@@ -325,6 +325,205 @@ def _get_pdf_outline(doc: fitz.Document) -> list:
     return outline
 
 
+# ── Ricomposizione righe → paragrafi ──
+# Nel PDF ogni riga visiva è una "line" a sé: unirle con "\n\n" trasforma ogni
+# a-capo tipografico in un paragrafo, e la sintesi si ferma a metà frase
+# (incidente 30/09/2026, romanzo da Word: 10.087 paragrafi su 14.248 troncati
+# a metà frase, pause brusche in tutto il libro). Le righe si uniscono con uno
+# spazio; il paragrafo si chiude su una riga vuota (separatore tipico dei PDF
+# da Word), su una riga corta o un rientro di prima riga (a-capo voluto: fine
+# paragrafo, versi, elenchi) o su un confine di blocco/pagina che chiude
+# davvero la frase.
+#
+# Riga corta = la prima parola della riga successiva ci sarebbe stata: chi
+# ha composto il testo è andato a capo apposta (fine paragrafo, verso, voce
+# di elenco, battuta di dialogo). Vale per il giustificato e per il testo a
+# bandiera, dove una soglia fissa di spazio libero sbagliava in entrambi i
+# sensi (confronto su 180 PDF di produzione, 01/10/2026). Il rientro di prima
+# riga si misura dal margine sinistro del blocco, così due paragrafi di una
+# riga sola, entrambi rientrati, restano separati.
+_PDF_LINE_TERMINAL_RE = re.compile(
+    r"[.!?…:;\"'»«“”’)\]。！？」』）]\s*$")
+_PDF_SOFT_BREAK_MIN_LINE = 40
+_PDF_DIALOGUE_DASH_RE = re.compile(r"[-–—―]\s*\S")
+_PDF_NEXT_WORD_FIT = 1.3        # margine sulla larghezza stimata della parola
+_PDF_INDENT_MIN_RATIO = 0.025   # rientro di prima riga, frazione della colonna
+_PDF_INDENT_MIN_PT = 6.0
+_PDF_INDENT_MAX_RATIO = 0.20    # oltre: riga centrata o citazione, non rientro
+_PDF_COLUMN_MIN_CHARS = 30      # righe usate per stimare la colonna
+_PDF_SAME_EDGE_PT = 1.0         # margine destro "uguale" fra righe giustificate
+# Trattino sospeso ("Hin- und Rückfahrt", "pre- e post-"): non è sillabazione.
+_PDF_SUSPENDED_HYPHEN_NEXT = frozenset({
+    "und", "oder", "bis", "sowie", "noch", "als", "wie",
+    "and", "or", "to", "nor",
+    "e", "ed", "o", "od", "y", "u", "et", "ou", "ni",
+})
+
+
+def _join_pdf_line(prev: str, nxt: str) -> str:
+    """Unisce due righe della stessa frase, ricomponendo la sillabazione.
+
+    "zurück-" + "kehren" → "zurückkehren"; "Ost-" + "Berlin" → "Ost-Berlin"
+    (trattino di composto davanti a maiuscola); "Hin-" + "und" → "Hin- und"
+    (trattino sospeso); "parola –" + "altra" → spazio.
+    """
+    if re.search(r"[^\W\d_]-$", prev):
+        first = nxt.split(" ", 1)[0].strip(",;.").lower()
+        if first in _PDF_SUSPENDED_HYPHEN_NEXT:
+            return prev + " " + nxt
+        if nxt[:1].islower():
+            return prev[:-1] + nxt
+        return prev + nxt
+    return prev + " " + nxt
+
+
+def _visual_lines(lines: list) -> list:
+    """Fonde le "line" PyMuPDF che stanno sulla stessa riga visiva.
+
+    Nel testo giustificato con spaziatura larga PyMuPDF restituisce spesso una
+    "line" per parola (stessa linea di base, x crescente): trattate come righe
+    distinte diventavano un paragrafo per parola. Restituisce dict con
+    `spans` (con uno span-spazio fra i pezzi fusi) e `bbox`.
+    """
+    out = []
+    for line in lines:
+        bbox = tuple(line.get("bbox", (0, 0, 0, 0)))
+        spans = list(line.get("spans", []))
+        if out:
+            prev = out[-1]
+            pb = prev["bbox"]
+            if abs(pb[3] - bbox[3]) < 2 and bbox[0] >= pb[2] - 1:
+                prev["spans"] = prev["spans"] + [{"text": " ", "size": 0, "flags": 0}] + spans
+                prev["bbox"] = (pb[0], min(pb[1], bbox[1]), max(pb[2], bbox[2]), max(pb[3], bbox[3]))
+                continue
+        out.append({"spans": spans, "bbox": bbox})
+    return out
+
+
+def _page_text_column(text_blocks: list):
+    """Stima (sinistra, destra) della colonna di testo della pagina.
+
+    Usa solo le righe lunghe (corpo del testo). None se la pagina ne ha troppo
+    poche: in quel caso la geometria non decide nulla.
+    """
+    xs0, xs1 = [], []
+    for block in text_blocks:
+        for vl in _visual_lines(block.get("lines", [])):
+            text = "".join(s.get("text", "") for s in vl["spans"]).strip()
+            if len(text) >= _PDF_COLUMN_MIN_CHARS:
+                xs0.append(vl["bbox"][0])
+                xs1.append(vl["bbox"][2])
+    if len(xs0) < 3:
+        return None
+    left, right = min(xs0), max(xs1)
+    if right - left <= 0:
+        return None
+    return left, right
+
+
+def _vline_text(vl: dict) -> str:
+    return "".join(sp.get("text", "") for sp in vl["spans"]
+                   if not sp.get("flags", 0) & 1).strip()
+
+
+def _block_geometry_breaks(vlines: list, page_column) -> list:
+    """Per ogni riga visiva del blocco: "hard" se la geometria dice che lì
+    comincia un paragrafo (rientro di prima riga, o riga precedente lasciata
+    corta pur avendo spazio per la parola seguente), altrimenti None.
+
+    Il riferimento è la colonna del blocco quando ha abbastanza righe lunghe
+    (citazioni e versi rientrati fanno blocco a sé), altrimenti quella della
+    pagina, col margine destro ristretto alla riga più larga del blocco.
+    Senza riferimento la geometria non decide nulla.
+    """
+    texts = [_vline_text(vl) for vl in vlines]
+    out: list = [None] * len(vlines)
+    longs = [vl["bbox"] for vl, t in zip(vlines, texts)
+             if len(t) >= _PDF_COLUMN_MIN_CHARS]
+    if len(longs) >= 3:
+        left, right = min(b[0] for b in longs), max(b[2] for b in longs)
+    elif page_column:
+        left, right = page_column
+        # Blocco in un riquadro più stretto della colonna (domande, elenchi
+        # numerati, box): il margine destro è quello della sua riga più larga.
+        widths = [vl["bbox"][2] for vl, t in zip(vlines, texts) if t]
+        if len(widths) >= 2:
+            right = min(right, max(widths))
+    else:
+        return out
+    width = right - left
+    if width <= 0:
+        return out
+    ind_min = max(_PDF_INDENT_MIN_PT, width * _PDF_INDENT_MIN_RATIO)
+
+    def indented(bbox):
+        return ind_min <= bbox[0] - left <= width * _PDF_INDENT_MAX_RATIO
+
+    # Rientro sospeso (elenchi, bibliografie): quasi tutte le righe rientrano,
+    # il rientro non segna l'inizio del paragrafo.
+    cont = [vl["bbox"] for vl, t in zip(vlines[1:], texts[1:]) if t]
+    use_indent = not cont or sum(indented(b) for b in cont) * 2 <= len(cont)
+
+    prev = pprev = None  # indici delle ultime due righe non vuote
+    for i, (vl, t) in enumerate(zip(vlines, texts)):
+        if not t:
+            continue
+        if prev is not None:
+            pb, pt = vlines[prev]["bbox"], texts[prev]
+            # Giustificato che si restringe (testo attorno a una figura): la
+            # riga "corta" finisce allo stesso x di una vicina, non è voluta.
+            near = [vl] + ([vlines[pprev]] if pprev is not None else [])
+            same_edge = any(abs(pb[2] - n["bbox"][2]) <= _PDF_SAME_EDGE_PT for n in near)
+            if use_indent and indented(vl["bbox"]):
+                out[i] = "hard"
+            elif (_PDF_LINE_TERMINAL_RE.search(pt)
+                  and _PDF_DIALOGUE_DASH_RE.match(t)):
+                # Battuta di dialogo a inizio riga dopo una frase chiusa: nel
+                # testo a bandiera la riga prima può essere piena.
+                out[i] = "hard"
+            elif not same_edge and not re.search(r"[^\W\d_][-\u00ad]$", pt):
+                char_w = (pb[2] - pb[0]) / max(len(pt), 1)
+                word = t.split(" ", 1)[0]
+                if right - pb[2] > (len(word) + 1) * char_w * _PDF_NEXT_WORD_FIT:
+                    out[i] = "hard"
+        pprev, prev = prev, i
+    return out
+
+
+def _lines_to_paragraphs(items: list) -> str:
+    """Ricompone righe PDF in paragrafi separati da "\n\n".
+
+    `items`: lista di (brk, testo) dove `brk` è il tipo di confine che precede
+    la riga: None (stessa sequenza di righe), "hard" (riga vuota: fine
+    paragrafo certa), "soft" (nuovo blocco o nuova pagina: fine paragrafo solo
+    se la riga precedente chiude la frase o è corta come un sottotitolo).
+    """
+    paragraphs = []
+    cur = ""
+    last_line = ""
+    for brk, text in items:
+        text = text.strip()
+        if not text:
+            continue
+        if not cur:
+            cur = text
+        elif brk == "hard":
+            paragraphs.append(cur)
+            cur = text
+        elif brk == "soft" and (
+                _PDF_LINE_TERMINAL_RE.search(last_line)
+                or (len(last_line) < _PDF_SOFT_BREAK_MIN_LINE
+                    and not text[:1].islower())):
+            paragraphs.append(cur)
+            cur = text
+        else:
+            cur = _join_pdf_line(cur, text)
+        last_line = text
+    if cur:
+        paragraphs.append(cur)
+    return "\n\n".join(paragraphs)
+
+
 def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
                                  repeated_headers: set) -> str:
     """Estrae il testo di una singola pagina, filtrando:
@@ -346,13 +545,17 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
     text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
 
     paragraphs = []
+    column = _page_text_column(text_blocks)
 
     for block in text_blocks:
         bbox = block["bbox"]
         block_text_parts = []
+        pending_brk = None
         is_small = True  # Assumi piccolo fino a prova contraria
 
-        for line in block.get("lines", []):
+        vlines = _visual_lines(block.get("lines", []))
+        geo = _block_geometry_breaks(vlines, column)
+        for li, line in enumerate(vlines):
             line_parts = []
             for span in line.get("spans", []):
                 text = span.get("text", "")
@@ -370,9 +573,14 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
 
             line_text = "".join(line_parts).strip()
             if line_text:
-                block_text_parts.append(line_text)
+                if geo[li]:
+                    pending_brk = "hard"
+                block_text_parts.append((pending_brk, line_text))
+                pending_brk = None
+            elif block_text_parts:
+                pending_brk = "hard"  # riga vuota: separatore di paragrafo
 
-        block_text = " ".join(block_text_parts).strip()
+        block_text = _lines_to_paragraphs(block_text_parts).strip()
         if not block_text:
             continue
 
@@ -416,6 +624,12 @@ def _clean_pdf_text(text: str) -> str:
     # 1. Rimuovi sillabazione da a-capo (parola spezzata con trattino a fine riga)
     #    es: "mate-\nmatica" → "matematica"
     text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
+    #    Anche a cavallo di pagina/blocco ("zurück-\n\nkehren"), solo se la
+    #    riga dopo inizia minuscola: davanti a maiuscola è un vero paragrafo.
+    text = re.sub(r"([^\W\d_])-\n\n(\w+)",
+                  lambda m: m.group(1) + m.group(2) if m.group(2)[:1].islower()
+                  else m.group(0),
+                  text)
 
     # 2. Rimuovi didascalie di figure/tabelle
     text = _caption_re.sub("", text)
@@ -611,15 +825,24 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
     """
     # ── Pass unico: raccogli (max_size, is_all_bold, testo) per ogni riga ──
     raw_lines = []
+    # Confine che precede ogni riga di raw_lines (vedi _lines_to_paragraphs):
+    # serve a ricomporre i paragrafi invece di fare di ogni riga un paragrafo.
+    line_breaks = []
+    pending_brk = None
 
     for page_num in range(len(doc)):
         page = doc[page_num]
         blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
         text_blocks = [b for b in blocks if b["type"] == 0]
         text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+        column = _page_text_column(text_blocks)
 
         for block in text_blocks:
-            for line in block.get("lines", []):
+            if pending_brk is None:
+                pending_brk = "soft"
+            vlines = _visual_lines(block.get("lines", []))
+            geo = _block_geometry_breaks(vlines, column)
+            for li, line in enumerate(vlines):
                 line_parts = []
                 max_size = 0
                 bold_spans = 0
@@ -645,10 +868,15 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
 
                 line_text = "".join(line_parts).strip()
                 if not line_text:
+                    pending_brk = "hard"  # riga vuota: separatore di paragrafo
                     continue
 
                 is_all_bold = total_spans > 0 and bold_spans == total_spans
                 raw_lines.append((max_size, is_all_bold, line_text))
+                if geo[li]:
+                    pending_brk = "hard"
+                line_breaks.append(pending_brk)
+                pending_brk = None
 
     if not raw_lines:
         return []
@@ -672,6 +900,7 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
         # Pattern testuale: cattura i marcatori anche a dimensione-corpo.
         by_pattern = _line_is_chapter_marker(line_text)
         lines_seq.append((by_size or by_bold or by_pattern, line_text))
+    breaks_seq = line_breaks
 
     if not any(is_h for is_h, _ in lines_seq):
         return []
@@ -684,7 +913,8 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
     # del testo prima del primo titolo riconosciuto.
     first_heading = next(i for i, (h, _) in enumerate(lines_seq) if h)
     if first_heading > 0:
-        pre_text = "\n\n".join(t for _, t in lines_seq[:first_heading])
+        pre_text = _lines_to_paragraphs(
+            [(breaks_seq[j], lines_seq[j][1]) for j in range(first_heading)])
         if pre_text.strip():
             chapters.append(("", pre_text))
 
@@ -700,10 +930,10 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
 
         content_parts = []
         while i < n and not lines_seq[i][0]:
-            content_parts.append(lines_seq[i][1])
+            content_parts.append((breaks_seq[i], lines_seq[i][1]))
             i += 1
 
-        chapter_text = "\n\n".join(content_parts)
+        chapter_text = _lines_to_paragraphs(content_parts)
         if chapter_text.strip():
             chapters.append((title, chapter_text))
 
