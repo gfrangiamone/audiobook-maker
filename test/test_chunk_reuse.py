@@ -9,7 +9,7 @@ PLAN = [{"text": f"blocco numero {i}", "chars": 16} for i in range(6)]
 
 
 def _fp(**kw):
-    base = dict(voice="gemini:flash25:Enceladus", rate="+0%", engine="gemini",
+    base = dict(voice="gemini:flash31:Enceladus", rate="+0%", engine="gemini",
                 plan=PLAN, style_instruction="", accent="it-IT",
                 strip_round=True, strip_square=True)
     base.update(kw)

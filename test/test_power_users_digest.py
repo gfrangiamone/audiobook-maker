@@ -6,7 +6,7 @@ import activity_log
 import user_stats
 
 STD = "en-US-AriaNeural"
-PREM = "gemini:flash25:Zephyr"
+PREM = "gemini:flash31:Zephyr"
 
 
 def _line(sid, ts, fn, op, cid, ip, voice=STD, lang="en", plat="web"):

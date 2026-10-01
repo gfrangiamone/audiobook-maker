@@ -1205,7 +1205,7 @@ def _call_llm(user_content, job=None, max_retries=None):
     # dell'input). Fonte primaria: opt_lang (settato da /api/optimize a partire
     # dal selector di lingua TTS). Fallback: estrazione dal voice id, che pero'
     # funziona solo per voci Edge/Google (es. "it-IT-X", "en-US-Chirp3-HD-X")
-    # e fallisce per Gemini (es. "gemini:flash25:Zephyr" -> nessuna lingua
+    # e fallisce per Gemini (es. "gemini:flash31:Zephyr" -> nessuna lingua
     # estraibile -> prompt generico).
     lang = "it"
     if job:
@@ -1800,10 +1800,10 @@ def _generate_optimized_abm(job_id):
 # ── Email: blocco "dettagli di generazione" ─────────────────────────────────
 # Frasi con placeholder {…} formattate in Python. Entità HTML per gli accenti,
 # come le altre chiavi email. I nomi modello PREMIUM usano le stesse stringhe
-# del selettore UI (lbl_model_flash25/31) — deroga naming confermata 2026-06-06.
+# del selettore UI (lbl_model_flash31/38) — deroga naming confermata 2026-06-06.
 _EMAIL_MODEL_LABELS = {
-    "flash25": "Gemini 2.5 Flash TTS",
     "flash31": "Gemini 3.1 Flash TTS",
+    "flash38": "Gemini 3.8 (PREMIUM+)",
     "simba-3.2": "Simba (English)",
 }
 
@@ -1891,7 +1891,7 @@ _email_details_i18n = {
 def _friendly_voice_name(voice):
     """Nome amichevole della voce: 'it-IT-IsabellaNeural' -> 'Isabella',
     'en-US-AndrewMultilingualNeural' -> 'Andrew Multilingual',
-    'gemini:flash25:Zephyr' -> 'Zephyr'."""
+    'gemini:flash31:Zephyr' -> 'Zephyr'."""
     v = (voice or "").strip()
     if not v:
         return ""
@@ -4828,6 +4828,8 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
             "google_cost_eur_est": float(est.get("google_cost_eur", 0) or 0),
             "google_cost_eur_actual": round(google_cost_actual, 4),
+            # Parte IVA gia' compresa in google_cost_eur_actual (netto = differenza).
+            "vat_eur_actual": round(float(actual.get("vat_eur", 0.0) or 0.0), 4),
             # Costo di listino sugli stessi token reali: base di
             # `user_price_eur_should_have_been`/`delta_eur`/`delta_pct` sopra.
             # Coincide con google_cost_eur_actual quando Cloudflare non e'
@@ -4894,7 +4896,7 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         # non sarebbe confrontabile con un costo reale "tronco".
         try:
             if (gemini_tts is not None and outcome == "completed"
-                    and model_key in ("flash25", "flash31")):
+                    and model_key in gemini_tts.GEMINI_MODELS):
                 # F6: entrambi i lati sul LISTINO (D1), mai prezzo vs costo
                 # reale. `estimated_eur` (est["google_cost_eur"]) e' gia'
                 # listino (estimate_book_cost usa l'alias google_cost_
@@ -6405,6 +6407,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # divergono su Cloudflare per costruzione). Non e' contabilita':
             # per quella resta google_cost_eur.
             "pricing_cost_eur": 0.0,
+            # Quota IVA gia' compresa in google_cost_eur (0 su Cloudflare):
+            # solo audit admin, mai esposta all'utente.
+            "vat_eur": 0.0,
             "model_key": None,
         }
         # Riporto dal tentativo precedente: se il processo e' stato riavviato a
@@ -6460,7 +6465,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         if use_gemini and gemini_tts is not None:
             try:
                 _parts_v = (voice or "").split(":")
-                _model_key = _parts_v[1] if len(_parts_v) >= 3 else "flash25"
+                _model_key = _parts_v[1] if len(_parts_v) >= 3 else "flash31"
                 # I chunk riusati non consumano quota RPD: il preflight deve
                 # contare solo le richieste che verranno effettivamente fatte.
                 _pf = gemini_tts.preflight_can_run(
@@ -6761,6 +6766,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     print(f"[{job_id}] chunk {i} recuperato via edge-fallback "
                           f"(Gemini ha rifiutato il contenuto)", flush=True)
                     return result, part_path
+                if isinstance(result, dict) and result.get("fallback_model"):
+                    # Chunk rifatto sul modello di ripiego (flash38 -> flash31):
+                    # token e costo sotto, contabilizzati sul modello che li ha
+                    # prodotti (result["model_key"]).
+                    job["gemini_model_fallback_chunks"] = job.get("gemini_model_fallback_chunks", 0) + 1
+                    print(f"[{job_id}] chunk {i} recuperato via modello di ripiego "
+                          f"{result['fallback_model']}", flush=True)
                 gemini_usage["input_tokens"] += result.get("input_tokens", 0)
                 gemini_usage["output_tokens"] += result.get("output_tokens", 0)
                 if not gemini_usage["model_key"]:
@@ -6771,7 +6783,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 ga["chars"] += len(block["text"])
                 bw = result.get("bytes_written", 0)
                 ga["audio_seconds"] += bw / (24000.0 * 2)
-                model_key_local = result.get("model_key", "flash25")
+                model_key_local = result.get("model_key", "flash31")
                 if not ga["model_key"]:
                     ga["model_key"] = model_key_local
                 # Costo Google REALE del chunk (token reali x rate per MTok),
@@ -6787,6 +6799,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         )
                         chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
                         ga["google_cost_eur"] += chunk_google_cost_eur
+                        # Quota IVA del costo reale (0 su Cloudflare): solo
+                        # audit admin, mai esposta all'utente.
+                        ga["vat_eur"] = float(ga.get("vat_eur", 0.0) or 0.0) + float(
+                            bd.get("vat_eur", 0.0) or 0.0)
                     except Exception as e:
                         print(f"[{job_id}] actual_cost_breakdown failed (non-fatal): {e}")
                     # Stesso chunk, tariffa di LISTINO (D1, non oscilla col
@@ -6804,7 +6820,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     # Record usage per chunk (partial completions on cancel restano contabilizzate)
                     try:
                         gemini_tts.record_usage(
-                            result.get("model_key", "flash25"),
+                            result.get("model_key", "flash31"),
                             len(block["text"]),
                             result.get("input_tokens", 0),
                             result.get("output_tokens", 0),
@@ -6823,7 +6839,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
                         gemini_tts.record_rate_sample(
                             _norm_chars, _audio_secs, _lang,
-                            result.get("model_key", "flash25"),
+                            result.get("model_key", "flash31"),
                             rate_pct=rate,
                             voice=(voice or "").split(":")[-1],
                             job_id=job_id,

@@ -181,7 +181,7 @@ def test_voice_public_label_edge_tts():
 
 def test_voice_public_label_gemini(monkeypatch):
     f = audiobook_app._voice_public_label
-    assert f("gemini:flash25:Zephyr") == "Zephyr"
+    assert f("gemini:flash31:Zephyr") == "Zephyr"
 
 
 def test_voice_public_label_voxcpm():

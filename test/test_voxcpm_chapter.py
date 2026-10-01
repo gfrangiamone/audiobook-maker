@@ -325,7 +325,7 @@ def test_lo_sforamento_non_sfonda_il_cap_byte():
 def test_lo_sforamento_e_solo_di_voxcpm():
     assert tts_split._pick_sentence_slack(VOCE) > 0
     assert tts_split._pick_sentence_slack("it-IT-ElsaNeural") == 0.0
-    assert tts_split._pick_sentence_slack("gemini:flash25:it-IT/Kore") == 0.0
+    assert tts_split._pick_sentence_slack("gemini:flash31:it-IT/Kore") == 0.0
     assert tts_split._pick_sentence_slack("") == 0.0
 
 

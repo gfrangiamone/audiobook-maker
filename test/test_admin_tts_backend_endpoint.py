@@ -167,10 +167,11 @@ def test_reset_invalidates_the_cache_of_every_known_model_not_only_the_target(cl
 # `reset()` MATERIALIZZA la voce di stato su disco e il vecchio endpoint
 # chiamava poi `_set_backend(model_key, "cloudflare")` senza validare nulla.
 # Le conseguenze, entrambe verificate in esecuzione prima del fix:
-#  - un reset su un modello che Cloudflare non ospita (flash25,
-#    id_cloudflare=None) lo inchiodava su Cloudflare: da li' in poi ogni job
-#    PREMIUM su quel modello finiva in TransportError(fatal) ->
-#    GeminiUnavailable -> errore + rimborso integrale, fino al riavvio;
+#  - un reset su un modello che Cloudflare non ospita (nessun
+#    `id_cloudflare` nel catalogo) lo inchiodava comunque su Cloudflare: da
+#    li' in poi ogni job PREMIUM su quel modello finiva in
+#    TransportError(fatal) -> GeminiUnavailable -> errore + rimborso
+#    integrale, fino al riavvio;
 #  - con ABM_GEMINI_BACKEND diverso da "cloudflare" la console rispondeva
 #    200 e accendeva Cloudflare in-process, cosa che l'ambiente non
 #    autorizza. La guardia lato client (bottone disabilitato) e' scavalcata
@@ -213,26 +214,14 @@ def test_reset_is_refused_when_the_environment_does_not_select_cloudflare(
 
 def test_a_refused_reset_does_not_pin_any_model_on_cloudflare(client, monkeypatch):
     # Il difetto vero: con configurazione "auto" il vecchio endpoint fissava
-    # su Cloudflare il model_key passato, flash25 compreso — che su
-    # Cloudflare non esiste (id_cloudflare=None).
+    # su Cloudflare il model_key passato, anche quando quel modello non ha
+    # un `id_cloudflare` nel catalogo e su Cloudflare non esiste affatto.
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
     r = client.post("/admin/api/tts_backend", headers=AUTH,
-                    json={"action": "reset", "model_key": "flash25"})
+                    json={"action": "reset", "model_key": "flash31"})
     assert r.status_code == 409
-    assert gemini_tts._BACKEND.get("flash25") != "cloudflare"
-    assert gemini_tts._resolve_backend("flash25") != "cloudflare"
-
-
-def test_reset_never_pins_a_model_cloudflare_does_not_host(client):
-    # Anche con l'ambiente su "cloudflare" (reset legittimo), il rientro non
-    # deve mai forzare su Cloudflare un modello privo di id_cloudflare: dopo
-    # il pop, _resolve_backend lo rimanda su Vertex da solo.
-    assert gemini_tts.GEMINI_MODELS["flash25"].get("id_cloudflare") is None
-    r = client.post("/admin/api/tts_backend", headers=AUTH,
-                    json={"action": "reset", "model_key": "flash25"})
-    assert r.status_code == 200
-    assert gemini_tts._BACKEND.get("flash25") != "cloudflare"
-    assert gemini_tts._resolve_backend("flash25") != "cloudflare"
+    assert gemini_tts._BACKEND.get("flash31") != "cloudflare"
+    assert gemini_tts._resolve_backend("flash31") != "cloudflare"
 
 
 def test_a_clean_install_does_not_report_a_self_contradictory_state(
@@ -645,3 +634,20 @@ def test_the_refusal_explains_the_probe_in_its_own_words(client, monkeypatch):
 def test_the_get_payload_reports_no_probe_running_when_none_is(client):
     assert client.get("/admin/api/tts_backend",
                       headers=AUTH).get_json()["probe_running"] is False
+
+
+def test_disponibilita_modelli_get_e_reset(client, tmp_path):
+    import gemini_availability
+    gemini_availability.init(str(tmp_path))
+    gemini_availability.mark_unavailable("flash38", "403")
+    h = {"X-Admin-Token": "segreto"}
+    r = client.get("/admin/api/gemini_model_availability", headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["models"]["flash38"]["unavailable"] is True
+    r = client.post("/admin/api/gemini_model_availability", headers=h,
+                    json={"action": "reset", "model_key": "flash38"})
+    assert r.status_code == 200
+    assert not gemini_availability.is_unavailable("flash38")
+    r = client.post("/admin/api/gemini_model_availability", headers=h,
+                    json={"action": "reset", "model_key": "boh"})
+    assert r.status_code == 400

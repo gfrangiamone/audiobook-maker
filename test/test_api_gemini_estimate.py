@@ -49,15 +49,15 @@ def job_with_text():
 def test_gemini_estimate_returns_price_for_gemini_voice(client, job_with_text):
     r = client.post("/api/gemini_estimate", json={
         "job_id": "testjob1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
     })
     assert r.status_code == 200, r.get_data(as_text=True)
     data = r.get_json()
     assert "user_price_eur" in data
     assert "is_free" in data
-    assert data["model_key"] == "flash25"
-    assert data["model_label"] == "Gemini 2.5 Flash TTS"
+    assert data["model_key"] == "flash31"
+    assert data["model_label"] == "Gemini 3.1 Flash TTS"
     assert data["chars_total"] > 0
 
 
@@ -73,7 +73,7 @@ def test_gemini_estimate_rejects_non_gemini_voice(client, job_with_text):
 def test_gemini_estimate_missing_job(client):
     r = client.post("/api/gemini_estimate", json={
         "job_id": "nope",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
     })
     assert r.status_code == 404
@@ -82,10 +82,20 @@ def test_gemini_estimate_missing_job(client):
 def test_gemini_estimate_empty_selection_uses_all(client, job_with_text):
     r = client.post("/api/gemini_estimate", json={
         "job_id": "testjob1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [],
     })
     # quando selected è vuoto, deve usare TUTTI i capitoli (non errore)
     assert r.status_code == 200
     data = r.get_json()
     assert data["chars_total"] > 0
+
+
+def test_stima_non_espone_iva(client, job_with_text):
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "testjob1", "voice_id": "gemini:flash31:Zephyr",
+        "selected_chapters": [0]})
+    assert r.status_code == 200
+    testo = r.get_data(as_text=True).lower()
+    assert "vat" not in testo
+    assert "iva" not in testo

@@ -20,7 +20,7 @@ def client(monkeypatch):
 
 def test_voice_id_regex_rejects_html():
     assert audiobook_app._VOICE_ID_RE.match("it-IT-IsabellaNeural")
-    assert audiobook_app._VOICE_ID_RE.match("gemini:flash25:Zephyr")
+    assert audiobook_app._VOICE_ID_RE.match("gemini:flash31:Zephyr")
     assert audiobook_app._VOICE_ID_RE.match("it-IT-Chirp3-HD-Zephyr")
     # Voci VoxCPM contengono "/" (locale/Nome): allargata apposta (Task 10),
     # senza questo /api/generate e /api/optimize rifiutavano OGNI voce VoxCPM

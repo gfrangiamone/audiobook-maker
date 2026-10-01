@@ -3,7 +3,7 @@ riflettere la voce realmente usata (opt_voice), così la classificazione
 is_gemini / retention non resta inchiodata su una voce di un run manuale
 precedente (es. annullato).
 
-Incidente: job PREMIUM (gemini:flash25:Charon) loggato come en-US-GuyNeural in
+Incidente: job PREMIUM (gemini:flash31:Charon) loggato come en-US-GuyNeural in
 COMPLETE/EMAIL/DOWNLOAD e token is_gemini=False → retention 24h invece di 48h.
 Causa: il path auto-gen non riallineava job["voice"] = opt_voice.
 """
@@ -20,7 +20,7 @@ def known_retention(monkeypatch):
 
 def test_stale_voice_misclassifies_premium_job(known_retention):
     """Pre-fix: voice manuale obsoleto maschera l'opt_voice Gemini → standard."""
-    job = {"voice": "en-US-GuyNeural", "opt_voice": "gemini:flash25:Charon"}
+    job = {"voice": "en-US-GuyNeural", "opt_voice": "gemini:flash31:Charon"}
     # job["voice"] truthy non-gemini vince sul fallback → retention standard (bug)
     assert ge._retention_for_job(job) == 64800
     assert ge._is_gemini_voice(job.get("voice") or job.get("opt_voice")) is False
@@ -28,14 +28,14 @@ def test_stale_voice_misclassifies_premium_job(known_retention):
 
 def test_aligned_voice_classifies_premium_job(known_retention):
     """Post-fix: job["voice"] allineato a opt_voice Gemini → retention Gemini."""
-    job = {"voice": "gemini:flash25:Charon", "opt_voice": "gemini:flash25:Charon"}
+    job = {"voice": "gemini:flash31:Charon", "opt_voice": "gemini:flash31:Charon"}
     assert ge._retention_for_job(job) == 172800
     assert ge._is_gemini_voice(job.get("voice") or job.get("opt_voice")) is True
 
 
 def test_fallback_when_voice_empty(known_retention):
     """Optimize-only senza voice settato: il fallback su opt_voice resta valido."""
-    job = {"voice": "", "opt_voice": "gemini:flash25:Charon"}
+    job = {"voice": "", "opt_voice": "gemini:flash31:Charon"}
     assert ge._retention_for_job(job) == 172800
 
 

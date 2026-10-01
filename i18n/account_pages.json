@@ -78,8 +78,8 @@
     "delete_popup_email": "For safety we will send you an email with a link and a code: the account is deleted only after your confirmation.",
     "plan_free": "Free",
     "plan_premium": "PREMIUM",
-    "model_flash25": "Gemini 2.5 TTS",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -162,8 +162,8 @@
     "delete_popup_email": "Per sicurezza ti invieremo un'email con un link e un codice: l'account viene cancellato solo dopo la tua conferma.",
     "plan_free": "Gratis",
     "plan_premium": "PREMIUM",
-    "model_flash25": "Gemini 2.5 TTS",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -246,8 +246,8 @@
     "delete_popup_email": "Par sécurité, nous vous enverrons un e-mail avec un lien et un code : le compte n'est supprimé qu'après votre confirmation.",
     "plan_free": "Gratuit",
     "plan_premium": "PREMIUM",
-    "model_flash25": "Gemini 2.5 TTS",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -330,8 +330,8 @@
     "delete_popup_email": "Por seguridad te enviaremos un correo con un enlace y un código: la cuenta se elimina solo tras tu confirmación.",
     "plan_free": "Gratis",
     "plan_premium": "PREMIUM",
-    "model_flash25": "Gemini 2.5 TTS",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -414,8 +414,8 @@
     "delete_popup_email": "Zur Sicherheit senden wir dir eine E-Mail mit Link und Code: das Konto wird erst nach deiner Bestätigung gelöscht.",
     "plan_free": "Kostenlos",
     "plan_premium": "PREMIUM",
-    "model_flash25": "Gemini 2.5 TTS",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -498,8 +498,8 @@
     "delete_popup_email": "为安全起见，我们会向你发送一封包含链接和验证码的邮件：账户只有在你确认后才会被删除。",
     "plan_free": "免费",
     "plan_premium": "PREMIUM",
-    "model_flash25": "Gemini 2.5 TTS",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   },
@@ -582,8 +582,8 @@
     "delete_popup_email": "सुरक्षा के लिए हम आपको एक लिंक और कोड वाला ईमेल भेजेंगे: खाता आपकी पुष्टि के बाद ही हटाया जाएगा।",
     "plan_free": "मुफ़्त",
     "plan_premium": "PREMIUM",
-    "model_flash25": "Gemini 2.5 TTS",
     "model_flash31": "Gemini 3.1 TTS",
+    "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
     "model_voxcpm": "Audiobook Maker (VOXCPM2)"
   }

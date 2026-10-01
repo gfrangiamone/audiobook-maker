@@ -1,17 +1,21 @@
 """
-gemini_tts.py — Gemini 2.5/3.1 Flash TTS integration.
+gemini_tts.py — Gemini Flash TTS integration (3.1 "PREMIUM", 3.8 "PREMIUM+").
 
-Uses google-genai SDK with separate API key (or Vertex AI service account).
-Native output is PCM 24kHz mono 16-bit.
+Backends: Vertex AI (service account), API key (AI Studio) and Cloudflare AI
+Gateway; the model catalogue in GEMINI_MODELS says which ones each model may
+use (flash38: API key only). Output is PCM 24kHz mono 16-bit (flash38 answers
+WAV, unwrapped by _extract_audio_pcm).
 
-Plan A scope: standalone module — synthesis + pricing + usage tracking + preview cap.
-Integration with tts_split / generation_engine / audiobook_app is Plan B.
+Scope: synthesis + pricing + usage tracking + preview cap + availability.
 """
 
+import io
 import os
 import re
 import json
+import math
 import time
+import wave
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +31,7 @@ from community_store import atomic_write_json as _atomic_write_json
 from gemini_transport import TransportError
 import gemini_transport as _transport
 import tts_backend_state as _backend_state
+import gemini_availability as _availability
 
 # Audio output constants
 #
@@ -37,8 +42,8 @@ import tts_backend_state as _backend_state
 #   2. ancora per il clamp di `get_empirical_rate` (vedi RATE_CLAMP_*).
 # La velocita` di lettura dipende molto dalla lingua (zh ~4 char/sec contro
 # ~14 delle lingue latine): un unico numero globale sbagliava di 3.5x sul
-# cinese. Il modello (flash25/flash31) invece e` irrilevante: sui 256 job
-# spiega lo 0.4% della varianza del rate, quindi non entra in nessuna chiave.
+# cinese. Il modello invece e` irrilevante: sui 256 job spiega lo 0.4% della
+# varianza del rate, quindi non entra in nessuna chiave.
 LANG_BASELINE_RATE = {
     "it": 14.6,   # n=54
     "de": 14.4,   # n=75
@@ -71,8 +76,8 @@ def _audio_tokens_per_second(model_key=None):
     """Token audio output per secondo, per modello.
 
     Cerca ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>; fallback a
-    ABM_GEMINI_AUDIO_TOKENS_PER_SECOND; default hardcoded per modello.
-    Default flash25=25 (conservativo, da verificare), flash31=29 (calibrato).
+    ABM_GEMINI_AUDIO_TOKENS_PER_SECOND; default per modello dal campo
+    audio_tokens_per_second del catalogo.
     """
     if model_key and model_key in GEMINI_MODELS:
         suffix = model_key.upper().replace("-", "")
@@ -89,13 +94,13 @@ def _audio_tokens_per_second(model_key=None):
         except (ValueError, TypeError):
             pass
     # Misurati sull'audit reale (giu-ago 2026, 256 job): output_tokens_actual /
-    # audio_seconds_actual vale esattamente 25.0 per entrambi i modelli
-    # (flash25: 92 job, cv 0.0%; flash31: 122 job su 168 esattamente a 25.0,
-    # gli altri sopra solo per token bruciati dai chunk ritentati).
-    # Il vecchio default flash31=29 sovrastimava il costo Google del 16%: e`
-    # la causa principale del margine realizzato al 37% contro il 15% a target.
-    defaults = {"flash25": 25.0, "flash31": 25.0}
-    return defaults.get(model_key, 25.0) if model_key else 25.0
+    # audio_seconds_actual vale esattamente 25.0 per flash31 (122 job su 168
+    # esattamente a 25.0, gli altri sopra solo per token bruciati dai chunk
+    # ritentati). Il vecchio default flash31=29 sovrastimava il costo Google
+    # del 16%: e` la causa principale del margine realizzato al 37% contro
+    # il 15% a target.
+    m = GEMINI_MODELS.get(model_key) if model_key else None
+    return float(m["audio_tokens_per_second"]) if m else 25.0
 AUDIO_SAMPLE_RATE = 24000
 AUDIO_CHANNELS = 1
 AUDIO_SAMPLE_WIDTH_BYTES = 2
@@ -140,29 +145,24 @@ def _f(env, default):
         return float(default)
 
 
-# Default region Vertex per modello (override via env in _resolve_location).
-# flash25 GA disponibile su global con latenza inferiore.
+def _model_env_suffix(model_key):
+    return "".join(c for c in str(model_key or "") if c.isalnum()).upper()
+
+
+# Default region Vertex (override via env in _resolve_location).
 # flash31 preview solo su us-central1.
-_DEFAULT_VERTEX_LOCATION_FLASH25 = "global"
 _DEFAULT_VERTEX_LOCATION_FLASH31 = "us-central1"
 
+# Ogni ramo "per modello" legge da qui: aggiungere un modello significa
+# aggiungere una voce, non cercare gli `if model_key == ...` sparsi.
+#   env_prefix               -> ABM_GEMINI_<prefix>_{INPUT,OUTPUT}_USD_PER_MTOK / _MARGIN_PERCENT
+#   audio_tokens_per_second  -> default di _audio_tokens_per_second
+#   default_rpm / default_rpd-> 0 = nessun limite locale
+#   http_timeout_ms          -> timeout HTTP della singola chiamata
+#   preview_timeout_sec      -> wrapper server dell'anteprima (client = +5 s)
+#   backends_allowed         -> None = qualunque; tupla = solo questi backend
+#   mark_unavailable_on_fatal-> un errore fatale nasconde il modello (cooldown)
 GEMINI_MODELS = {
-    "flash25": {
-        "id": "gemini-2.5-flash-preview-tts",
-        "id_vertex": "gemini-2.5-flash-tts",
-        # Nessuna verifica che Cloudflare ospiti questo modello: finche' non
-        # c'e', flash25 resta su Vertex anche con backend=cloudflare.
-        # Cloudflare non ospita alcuna variante TTS di Gemini 2.5
-        # (verificato 26/08/2026): questo modello vive su Vertex.
-        "id_cloudflare": None,
-        "cf_input_usd_per_mtok": None,
-        "cf_output_usd_per_mtok": None,
-        "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH25,
-        "label": "Gemini 2.5 Flash TTS",
-        "input_usd_per_mtok": _f("ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK", 0.50),
-        "output_usd_per_mtok": _f("ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK", 10.00),
-        "default_margin_percent": _f("ABM_GEMINI_25FLASH_MARGIN_PERCENT", 35.0),
-    },
     "flash31": {
         "id": "gemini-3.1-flash-tts-preview",
         "id_vertex": "gemini-3.1-flash-tts-preview",
@@ -175,9 +175,51 @@ GEMINI_MODELS = {
         "cf_output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_CF_OUTPUT_USD_PER_MTOK", 12.00),
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.1 Flash TTS",
+        "env_prefix": "31FLASH",
         "input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK", 1.00),
         "output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK", 20.00),
+        "margin_default": 25.0,
         "default_margin_percent": _f("ABM_GEMINI_31FLASH_MARGIN_PERCENT", 25.0),
+        "audio_tokens_per_second": 25.0,
+        "default_rpm": 0,
+        "default_rpd": 0,
+        "http_timeout_ms": 60000,
+        "preview_timeout_sec": 65,
+        "backends_allowed": None,
+        "mark_unavailable_on_fatal": False,
+    },
+    # Verificato il 27/09/2026 via API key (AI Studio, Tier 3): Vertex
+    # risponde 404 al progetto, Cloudflare non lo ospita. Unico canale: API
+    # key. Output WAV (RIFF) invece di PCM grezzo: vedi _extract_audio_pcm.
+    # Limiti Tier 3: 1K RPM, 1M TPM, RPD illimitato; a ~1.200 token per chunk
+    # da 450 caratteri il TPM morde a ~830 RPM, da cui 800.
+    "flash38": {
+        "id": "gemini-3.8-flash-tts",
+        "id_vertex": "gemini-3.8-flash-tts",
+        "id_cloudflare": None,
+        "cf_input_usd_per_mtok": None,
+        "cf_output_usd_per_mtok": None,
+        "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
+        "label": "Gemini 3.8 (PREMIUM+)",
+        "env_prefix": "38FLASH",
+        # Listino 2027 (non quello promozionale 2026): il prezzo utente non
+        # deve cambiare quando scade la promozione.
+        "input_usd_per_mtok": _f("ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK", 1.00),
+        "output_usd_per_mtok": _f("ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK", 18.00),
+        "margin_default": 25.0,
+        "default_margin_percent": _f("ABM_GEMINI_38FLASH_MARGIN_PERCENT", 25.0),
+        # Misurato sul test Beren (27/09/2026); da riverificare in fattura.
+        "audio_tokens_per_second": 31.9,
+        "default_rpm": 800,
+        "default_rpd": 0,
+        "http_timeout_ms": 40000,
+        "preview_timeout_sec": 45,
+        "backends_allowed": ("apikey",),
+        "mark_unavailable_on_fatal": True,
+        # Chunk con i retry esauriti (risposta vuota, 5xx, timeout): stessa
+        # voce su questo modello, poi edge-tts (tts_split). Gli errori fatali
+        # (auth/billing/404) restano job-fatali con rimborso.
+        "chunk_fallback_model": "flash31",
     },
 }
 
@@ -224,6 +266,26 @@ def _vertex_ready():
     return bool(project) and bool(creds) and os.path.isfile(creds)
 
 
+def _apply_backends_allowed(key, resolved, apikey_ready):
+    """Filtra `resolved` sui `backends_allowed` del catalogo.
+
+    Va applicato su OGNI percorso di ritorno di `_resolve_backend`, incluso
+    quello di precedenza del breaker (rilievo review task-6 Important #1):
+    con `tts_backend_state._FAIL_SAFE` attivo (stato su disco illeggibile al
+    boot), `is_tripped()` risulta True per qualunque model_key non ancora in
+    cache, anche uno nuovo come flash38, e forzerebbe "vertex" bypassando il
+    filtro se questo non venisse richiamato anche li'. Un modello con
+    `backends_allowed=("apikey",)` non deve MAI finire su Vertex per nessuna
+    via, ne' un "auto", ne' un breaker scattato in fail-safe.
+    """
+    allowed = (GEMINI_MODELS.get(key) or {}).get("backends_allowed")
+    if resolved and allowed and resolved not in allowed:
+        if "apikey" in allowed and apikey_ready:
+            return "apikey"
+        return False
+    return resolved
+
+
 def _resolve_backend(model_key=None):
     """Risolve quale backend Gemini usare per un modello.
 
@@ -245,6 +307,11 @@ def _resolve_backend(model_key=None):
     True, tutto quanto sopra viene bypassato e si forza "vertex" (None se
     Vertex non e' pronto) — anche subito dopo un riavvio del processo, quando
     `_BACKEND` e' vuoto ma lo stato del breaker e' sopravvissuto su disco.
+    Anche in fail-safe (`tts_backend_state._FAIL_SAFE`, stato su disco
+    illeggibile al boot) OGNI model_key non ancora in cache risulta scattato:
+    `_apply_backends_allowed` filtra anche questo esito, altrimenti un
+    modello apikey-only come flash38 finirebbe su Vertex proprio nel caso che
+    `backends_allowed` esiste per escludere (review task-6 Important #1).
     """
     key = model_key or _BACKEND_DEFAULT_KEY
     cached = _BACKEND.get(key)
@@ -255,7 +322,14 @@ def _resolve_backend(model_key=None):
         if cached is not None:
             return cached if cached else None
 
-        choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+        # Override per modello (es. ABM_GEMINI_BACKEND_FLASH38=apikey) prima
+        # del selettore globale: flash31 resta su Cloudflare mentre flash38
+        # vive sull'API key.
+        per_model = ""
+        if model_key is not None:
+            per_model = (os.environ.get(
+                f"ABM_GEMINI_BACKEND_{_model_env_suffix(model_key)}", "") or "").strip().lower()
+        choice = per_model or (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
         api_key = os.environ.get("ABM_GEMINI_API_KEY", "").strip()
         cf_account = os.environ.get("ABM_CF_ACCOUNT_ID", "").strip()
         cf_token = os.environ.get("ABM_CF_API_TOKEN", "").strip()
@@ -280,10 +354,19 @@ def _resolve_backend(model_key=None):
         # esplicito (rientro manuale, mai automatico).
         if model_key is not None and _backend_state.is_tripped(model_key):
             resolved = "vertex" if vertex_ready else False
+            # Il filtro va applicato anche qui: senza, un modello apikey-only
+            # come flash38 potrebbe finire su Vertex quando is_tripped()
+            # risulta True in fail-safe (stato su disco illeggibile al boot),
+            # bypassando "no Vertex fallback" (review task-6 Important #1).
+            resolved = _apply_backends_allowed(key, resolved, apikey_ready)
             _BACKEND[key] = resolved
-            if resolved:
+            if resolved == "vertex":
                 print(f"[gemini-tts] Backend di {key} forzato su vertex "
                       f"(breaker gia' scattato, stato persistito)")
+            elif resolved:
+                print(f"[gemini-tts] Backend di {key} forzato su {resolved} "
+                      f"(breaker gia' scattato, stato persistito, vertex non "
+                      f"ammesso dal catalogo)")
             return resolved if resolved else None
 
         if choice == "vertex":
@@ -310,6 +393,10 @@ def _resolve_backend(model_key=None):
                 resolved = "apikey"
             else:
                 resolved = False
+
+        # Canali ammessi dal catalogo: un modello che esiste solo sull'API key
+        # non deve mai finire su Vertex per un "auto" (404 a ogni chunk).
+        resolved = _apply_backends_allowed(key, resolved, apikey_ready)
 
         _BACKEND[key] = resolved
         if resolved:
@@ -347,7 +434,7 @@ def _resolve_location(model_key):
     quando _resolve_backend() == "vertex" (per il backend apikey la region non
     si applica).
 
-    Override env per-modello: ABM_VERTEX_LOCATION_FLASH25 / _FLASH31.
+    Override env per-modello: ABM_VERTEX_LOCATION_FLASH31.
     Default: vedi GEMINI_MODELS[...]['location_vertex'].
     """
     if model_key not in GEMINI_MODELS:
@@ -371,6 +458,32 @@ def set_backend_switch_notifier(fn):
     """Registra la callback di trip: fn(model_key, reason, detail, job_id)."""
     global _backend_switch_notifier
     _backend_switch_notifier = fn
+
+
+# === Stato "modello non disponibile" (canale unico senza failover) =========
+
+_model_unavailable_notifier = None
+
+
+def set_model_unavailable_notifier(fn):
+    """fn(model_key, detail, job_id): chiamata una volta per apertura dello
+    stato non disponibile (non a ogni chunk fallito)."""
+    global _model_unavailable_notifier
+    _model_unavailable_notifier = fn
+
+
+def model_unavailable(model_key):
+    return _availability.is_unavailable(model_key)
+
+
+def offered_model_keys():
+    """Modelli da mostrare ORA: abilitati, con un canale risolto, non indisponibili.
+
+    Distinto da enabled_model_keys (solo interruttore env): il catalogo voci
+    e' in cache per tutto il processo e si filtra qui a ogni richiesta.
+    """
+    return [k for k in enabled_model_keys()
+            if _resolve_backend(k) is not None and not _availability.is_unavailable(k)]
 
 
 # Callback del RIENTRO: invocata quando una sonda riesce e il modello torna
@@ -831,21 +944,25 @@ def _b(env, default):
 # Max attempts e backoff
 SYNTH_MAX_ATTEMPTS_DEFAULT = 3
 
-# Throttle RPM (millisecondi minimi tra due chiamate consecutive per modello).
-# 0 = nessun throttle. Free tier: 6500 (flash25, 10 RPM) / 21000 (flash31, 3 RPM).
-# Tier 1: 80 (flash25, ~750 RPM) / 200 (flash31, ~300 RPM).
+# Throttle RPM (millisecondi minimi fra due chiamate consecutive per modello).
+# Precedenza: ABM_GEMINI_RPM_<KEY> (>0) -> ABM_GEMINI_MIN_INTERVAL_<KEY>_MS
+# (alias storico) -> default_rpm del catalogo. 0 = nessun throttle.
 def _min_interval_ms(model_key):
-    if model_key == "flash25":
-        return _i("ABM_GEMINI_MIN_INTERVAL_FLASH25_MS", 0)
-    return _i("ABM_GEMINI_MIN_INTERVAL_FLASH31_MS", 0)
+    sfx = _model_env_suffix(model_key)
+    rpm = _i(f"ABM_GEMINI_RPM_{sfx}", 0)
+    if rpm > 0:
+        return int(math.ceil(60000.0 / rpm))
+    legacy = os.environ.get(f"ABM_GEMINI_MIN_INTERVAL_{sfx}_MS")
+    if legacy is not None and legacy.strip():
+        return _i(f"ABM_GEMINI_MIN_INTERVAL_{sfx}_MS", 0)
+    default_rpm = int((GEMINI_MODELS.get(model_key) or {}).get("default_rpm", 0) or 0)
+    return int(math.ceil(60000.0 / default_rpm)) if default_rpm > 0 else 0
 
 
-# RPD safety cap per modello (numero massimo di richieste/giorno).
-# 0 = nessun cap locale (l'API Google fa da unica barriera).
+# RPD safety cap per modello. 0 = nessun cap locale.
 def _rpd_cap(model_key):
-    if model_key == "flash25":
-        return _i("ABM_GEMINI_RPD_FLASH25", 0)
-    return _i("ABM_GEMINI_RPD_FLASH31", 0)
+    default = int((GEMINI_MODELS.get(model_key) or {}).get("default_rpd", 0) or 0)
+    return _i(f"ABM_GEMINI_RPD_{_model_env_suffix(model_key)}", default)
 
 
 def _rpd_safety_reserve():
@@ -1019,11 +1136,10 @@ def _gender_icon(gender):
 
 def get_margin_percent(model_key):
     """Margine corrente per il modello (legge env var aggiornata)."""
-    if model_key == "flash25":
-        return _f("ABM_GEMINI_25FLASH_MARGIN_PERCENT", 35.0)
-    if model_key == "flash31":
-        return _f("ABM_GEMINI_31FLASH_MARGIN_PERCENT", 25.0)
-    raise ValueError(f"Unknown model_key: {model_key}")
+    m = GEMINI_MODELS.get(model_key)
+    if m is None:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    return _f(f"ABM_GEMINI_{m['env_prefix']}_MARGIN_PERCENT", m["margin_default"])
 
 
 def _cf_topup_fee():
@@ -1061,6 +1177,25 @@ def _pricing_uses_cloudflare(model_key):
     return bool(m.get("id_cloudflare")) and m.get("cf_output_usd_per_mtok") is not None
 
 
+# IVA 22% come costo non detraibile: la fatturano Vertex e l'API key (Google
+# Ireland), non Cloudflare. Fino al 27/09/2026 era dentro le env di costo
+# Vertex gonfiate a mano; ora le env sono il listino netto e l'IVA si somma
+# qui. Mai mostrata all'utente: entra nel prezzo come qualunque altro costo.
+_VAT_BACKENDS = ("vertex", "apikey")
+
+
+def vat_percent():
+    return max(0.0, _f("ABM_GEMINI_VAT_PERCENT", 22.0))
+
+
+def _vat_factor(backend):
+    """Moltiplicatore IVA del backend. None = backend non risolto: si assume
+    un backend Google (caso peggiore per il costo)."""
+    if backend is None or backend in _VAT_BACKENDS:
+        return 1.0 + vat_percent() / 100.0
+    return 1.0
+
+
 def pricing_rates(model_key):
     """(input, output) USD/Mtok da usare per il PREZZO all'utente.
 
@@ -1073,7 +1208,9 @@ def pricing_rates(model_key):
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
     m = GEMINI_MODELS[model_key]
-    g_in, g_out = m["input_usd_per_mtok"], m["output_usd_per_mtok"]
+    # Tariffa Google LORDA IVA: sia Vertex sia l'API key la applicano, quindi
+    # il listino non dipende da quale dei due esegue.
+    g_in, g_out = actual_rates(model_key, "vertex")
     if not _pricing_uses_cloudflare(model_key):
         return g_in, g_out
     share = cf_saving_share()
@@ -1083,11 +1220,12 @@ def pricing_rates(model_key):
             g_out - (g_out - c_out) * share)
 
 
-def actual_rates(model_key, backend):
+def _net_rates(model_key, backend):
     """(input, output) USD/Mtok REALMENTE sostenute dal backend che ha eseguito.
 
-    Serve alla contabilita', non al listino: e' l'unico numero con cui ha senso
-    riconciliare la spesa e misurare il margine vero.
+    Tariffe nette, senza IVA. Serve alla contabilita', non al listino: e'
+    l'unico numero con cui ha senso riconciliare la spesa e misurare il
+    margine vero.
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
@@ -1098,8 +1236,19 @@ def actual_rates(model_key, backend):
     return m["input_usd_per_mtok"], m["output_usd_per_mtok"]
 
 
+def actual_rates(model_key, backend):
+    """(input, output) USD/Mtok REALMENTE sostenute, IVA inclusa dove dovuta.
+
+    Serve alla contabilita', non al listino: e' l'unico numero con cui ha senso
+    riconciliare la spesa e misurare il margine vero.
+    """
+    n_in, n_out = _net_rates(model_key, backend)
+    f = _vat_factor(backend)
+    return n_in * f, n_out * f
+
+
 def parse_voice_id(voice_id):
-    """Estrae (model_key, model_full_id, voice_name) da 'gemini:flash25:Zephyr'.
+    """Estrae (model_key, model_full_id, voice_name) da 'gemini:flash31:Zephyr'.
 
     Raises ValueError se formato non valido, modello sconosciuto o voce sconosciuta.
     """
@@ -1407,15 +1556,19 @@ def pricing_cost_breakdown(input_tokens, output_tokens, model_key):
 
 
 def actual_cost_breakdown(input_tokens, output_tokens, model_key, backend):
-    """Costo REALMENTE sostenuto dal backend che ha eseguito.
+    """Costo REALMENTE sostenuto dal backend che ha eseguito, IVA inclusa.
 
-    E' l'ingresso della contabilita': con questo si misura il margine vero e si
-    riconcilia la spesa. Non usarlo mai per il prezzo.
+    `total_eur` e' lordo; `net_eur` e `vat_eur` lo scompongono per l'audit
+    admin. Non usarlo mai per il prezzo, e non esporre mai `vat_eur` agli utenti.
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
     in_rate, out_rate = actual_rates(model_key, backend)
-    return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
+    bd = _breakdown(input_tokens, output_tokens, in_rate, out_rate)
+    f = _vat_factor(backend)
+    bd["net_eur"] = bd["total_eur"] / f
+    bd["vat_eur"] = bd["total_eur"] - bd["net_eur"]
+    return bd
 
 
 def _budget_uses_cloudflare(model_key):
@@ -1798,6 +1951,7 @@ def init(data_dir):
     _rpd_cache = None
     _admin_state_path = _data_dir / "gemini_admin_state.json"
     _load_admin_state()
+    _availability.init(data_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -1946,6 +2100,12 @@ def _current_month():
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
 
+def _empty_model_usage():
+    return {"chars": 0, "input_tok": 0, "output_tok": 0,
+            "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
+            "estimated_eur": 0.0, "actual_eur": 0.0}
+
+
 def _empty_usage():
     return {
         "month": _current_month(),
@@ -1966,14 +2126,7 @@ def _empty_usage():
         "actual_cost_eur_total": 0.0,
         "cost_delta_eur_total": 0.0,    # actual - estimated (positivo = sottostima)
         "cost_delta_pct_sum": 0.0,      # somma dei delta% per calcolo media
-        "by_model": {
-            "flash25": {"chars": 0, "input_tok": 0, "output_tok": 0,
-                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
-                        "estimated_eur": 0.0, "actual_eur": 0.0},
-            "flash31": {"chars": 0, "input_tok": 0, "output_tok": 0,
-                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
-                        "estimated_eur": 0.0, "actual_eur": 0.0},
-        },
+        "by_model": {mk: _empty_model_usage() for mk in GEMINI_MODELS},
     }
 
 
@@ -1989,7 +2142,7 @@ def _ensure_reconciliation_fields(data):
     data.setdefault("cost_delta_eur_total", 0.0)
     data.setdefault("cost_delta_pct_sum", 0.0)
     by_model = data.get("by_model") or {}
-    for mk in ("flash25", "flash31"):
+    for mk in GEMINI_MODELS:
         m = by_model.setdefault(mk, {})
         m.setdefault("chars", 0)
         m.setdefault("input_tok", 0)
@@ -2065,7 +2218,7 @@ def record_job_completion(model_key, estimated_eur, actual_eur, user_price_eur=0
     sistematico di estimate_book_cost rispetto ai token reali di usage_metadata.
 
     Args:
-        model_key: 'flash25' | 'flash31'
+        model_key: chiave del modello (es. 'flash31')
         estimated_eur: costo di LISTINO stimato pre-job sui token stimati
             (da estimate_book_cost, che usa pricing_cost_breakdown)
         actual_eur: costo di LISTINO sui token REALI (pricing_cost_breakdown
@@ -2375,10 +2528,10 @@ def get_empirical_rate(lang, model_key=None, rate_step=0, window=None,
     Due differenze sostanziali rispetto alla versione precedente:
 
     * **il modello non entra nella chiave**. Sui 256 job reali di giu-ago 2026
-      flash25 e flash31 hanno la stessa mediana (13.96 vs 14.03) e il modello
-      spiega lo 0.4% della varianza del rate: raggruppare per modello dimezzava
-      la numerosita` dei gruppi senza guadagno predittivo. Contano lingua (36%
-      della varianza), velocita` (24%) e voce (11%).
+      i due modelli allora attivi avevano la stessa mediana (13.96 vs 14.03) e
+      il modello spiega lo 0.4% della varianza del rate: raggruppare per
+      modello dimezzava la numerosita` dei gruppi senza guadagno predittivo.
+      Contano lingua (36% della varianza), velocita` (24%) e voce (11%).
     * **campioni con rate_step diverso non vengono mai mescolati**. Il vecchio
       tier 2 ignorava rate_step, quindi un preventivo a velocita` normale poteva
       finire calcolato su campioni presi a +10% (15.8 char/sec contro 13.8).
@@ -2491,16 +2644,23 @@ def is_available():
 def _http_timeout_ms(model_key=None):
     """Timeout HTTP per le call al Gemini API (millisecondi).
 
-    `flash31` (gemini-3.1-flash-tts-preview) e` strutturalmente piu` lento
-    di `flash25`: RPM cap inferiore (3/300 vs 10/750) + audio gen piu`
-    lenta lato Google. Con il default 25s i chunk normali finiscono in
-    504 DEADLINE_EXCEEDED, saturano i 3 retry e producono silenzio. Per
-    flash31 il default sale a 60s; flash25 resta a 25s per preservare il
-    fast-fail su stall reali. Override via env per-modello.
+    Default dal campo `http_timeout_ms` del catalogo (flash31 60 s: con 25 s i
+    chunk normali finivano in 504 DEADLINE_EXCEEDED). Override per modello
+    con ABM_GEMINI_HTTP_TIMEOUT_MS_<KEY>; ABM_GEMINI_HTTP_TIMEOUT_MS vale
+    per le chiamate senza modello.
     """
-    if model_key == "flash31":
-        return _i("ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31", 60000)
-    return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
+    m = GEMINI_MODELS.get(model_key) if model_key else None
+    if m is None:
+        return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
+    return _i(f"ABM_GEMINI_HTTP_TIMEOUT_MS_{_model_env_suffix(model_key)}",
+              int(m["http_timeout_ms"]))
+
+
+def preview_timeout_sec(model_key):
+    """Timeout (s) del wrapper server dell'anteprima; il client aspetta +5 s."""
+    m = GEMINI_MODELS.get(model_key)
+    default = int(m["preview_timeout_sec"]) if m else 30
+    return _i(f"ABM_GEMINI_PREVIEW_TIMEOUT_SEC_{_model_env_suffix(model_key)}", default)
 
 
 def _cf_timeout_ms():
@@ -2569,7 +2729,7 @@ def _make_genai_client(**kwargs):
 def _get_client(model_key=None):
     """Lazy init del client google-genai, cached per location.
 
-    Vertex: il client e' tied a (project, location); flash25 e flash31
+    Vertex: il client e' tied a (project, location); modelli diversi
     possono finire su region diverse, quindi servono client distinti.
     API key: location e' ignorato, una sola entry "_apikey" nella cache.
     """
@@ -2622,11 +2782,17 @@ _throttle_lock = threading.Lock()
 
 _rpd_file_path = None
 _rpd_lock = threading.Lock()
-_rpd_cache = None  # {"date": "YYYY-MM-DD", "flash25": N, "flash31": M}
+_rpd_cache = None  # {"date": ..., "<model_key>": N}
 
 
 def _today_utc_str():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _rpd_fresh():
+    d = {"date": _today_utc_str()}
+    d.update({mk: 0 for mk in GEMINI_MODELS})
+    return d
 
 
 def _rpd_load():
@@ -2636,19 +2802,19 @@ def _rpd_load():
         return _rpd_cache
     if _rpd_file_path is None:
         # Fallback in-memory only
-        _rpd_cache = {"date": _today_utc_str(), "flash25": 0, "flash31": 0}
+        _rpd_cache = _rpd_fresh()
         return _rpd_cache
     if _rpd_file_path.exists():
         try:
             data = json.loads(_rpd_file_path.read_text(encoding="utf-8"))
             if data.get("date") == _today_utc_str():
-                data.setdefault("flash25", 0)
-                data.setdefault("flash31", 0)
+                for mk in GEMINI_MODELS:
+                    data.setdefault(mk, 0)
                 _rpd_cache = data
                 return data
         except Exception as e:
             print(f"[gemini-tts] RPD load failed: {e}")
-    _rpd_cache = {"date": _today_utc_str(), "flash25": 0, "flash31": 0}
+    _rpd_cache = _rpd_fresh()
     return _rpd_cache
 
 
@@ -2821,6 +2987,14 @@ class GeminiEmptyResponse(RuntimeError):
         self.retryable = retryable
 
 
+class GeminiAudioFormatError(RuntimeError):
+    """Audio in un formato diverso da PCM 24 kHz mono 16 bit.
+
+    Mai ritentabile: un chunk a sample rate diverso concatenato agli altri
+    produce un libro accelerato o rallentato, peggio di un job fallito.
+    """
+
+
 def _extract_audio_pcm(response, model_key):
     """Estrae il payload PCM da una response Gemini. Se mancano candidates,
     content, parts, o inline_data, solleva GeminiEmptyResponse con tutti i
@@ -2885,6 +3059,27 @@ def _extract_audio_pcm(response, model_key):
         raise GeminiEmptyResponse(
             msg, finish_reason=finish_label, retryable=True,
         )
+    mime = (getattr(inline, "mime_type", "") or "").lower()
+    # flash38 risponde audio/wav con header RIFF; flash31 PCM grezzo. Il
+    # controllo sui primi byte copre un mime_type assente o impreciso.
+    if mime.startswith("audio/wav") or mime.startswith("audio/x-wav") or data[:4] == b"RIFF":
+        try:
+            with wave.open(io.BytesIO(data)) as w:
+                fmt = (w.getframerate(), w.getnchannels(), w.getsampwidth())
+                frames = w.readframes(w.getnframes())
+        except (wave.Error, EOFError) as e:
+            raise GeminiAudioFormatError(f"WAV illeggibile (model={model_key}): {e}") from e
+        if fmt != (AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, AUDIO_SAMPLE_WIDTH_BYTES):
+            raise GeminiAudioFormatError(
+                f"WAV {fmt[0]} Hz / {fmt[1]} ch / {fmt[2] * 8} bit (model={model_key}): "
+                f"atteso {AUDIO_SAMPLE_RATE} Hz mono 16 bit")
+        if not frames:
+            # Header RIFF valido ma nessun campione: e' una risposta vuota,
+            # non un chunk riuscito (sarebbe un buco muto mai contato).
+            msg = f"Gemini WAV with 0 frames (model={model_key}, finish_reason={finish_label})"
+            print(f"[gemini-tts] EMPTY-RESPONSE: {msg}")
+            raise GeminiEmptyResponse(msg, finish_reason=finish_label, retryable=True)
+        return frames
     return data
 
 
@@ -2954,6 +3149,48 @@ def build_final_text(text, style_instruction=None, rate=None,
     return final_text
 
 
+_PERMANENT_HTTP = (401, 403, 404)
+_PERMANENT_MARKERS = ("API_KEY_INVALID", "PERMISSION_DENIED", "NOT_FOUND",
+                      "BILLING", "billing")
+
+# Credito/fatturazione esauriti: AI Studio li segnala come 429
+# RESOURCE_EXHAUSTED, indistinguibili dal rate limit per codice. Solo marker
+# specifici: il 429 di rate limit ordinario dice "check your plan and billing
+# details" e deve restare ritentabile, quindi "billing" da solo NON basta.
+_BILLING_EXHAUSTED_MARKERS = (
+    "prepayment", "credits are depleted", "credit balance", "out of credit",
+    "spend cap", "spending cap", "spending limit", "billing_disabled",
+    "billing account", "billing is not enabled", "billing has not been enabled",
+    "billing is disabled",
+)
+
+
+def _is_billing_exhausted_apikey_error(err, model_key):
+    """Credito o spesa esauriti sull'API key: fatale anche se arriva come 429."""
+    if _resolve_backend(model_key) != "apikey":
+        return False
+    msg = str(err).lower()
+    return any(m in msg for m in _BILLING_EXHAUSTED_MARKERS)
+
+
+def _is_permanent_apikey_error(err, model_key):
+    """Errore che ritentare non risolve (chiave, permessi, modello, credito).
+
+    Solo sull'API key: su Vertex un 403/404 transitorio durante il failover
+    Cloudflare e' gia' gestito dal retry e non deve fermare il libro.
+    """
+    if _resolve_backend(model_key) != "apikey":
+        return False
+    code = getattr(err, "code", None) or getattr(err, "status_code", None)
+    try:
+        if int(code) in _PERMANENT_HTTP:
+            return True
+    except (TypeError, ValueError):
+        pass
+    msg = str(err)
+    return any(m in msg for m in _PERMANENT_MARKERS)
+
+
 def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
                            timeout_ms, temperature):
     """Adapter di trasporto Vertex / API key.
@@ -3005,6 +3242,8 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
             ),
         )
         pcm_data = _extract_audio_pcm(response, model_key)
+    except GeminiAudioFormatError as e:
+        raise TransportError(str(e), kind="fatal") from e
     except GeminiEmptyResponse as e:
         # Il caller storico distingueva retryable da non-retryable: la
         # distinzione sopravvive nel kind.
@@ -3013,11 +3252,18 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
             kind="retryable" if e.retryable else "content_rejected",
         ) from e
     except Exception as e:
+        # Prima del 429: un credito esaurito arriva come 429 RESOURCE_EXHAUSTED
+        # ma ritentarlo non serve, va fermato il libro (fatal -> rimborso e,
+        # per i modelli a canale unico, modello nascosto).
+        if _is_billing_exhausted_apikey_error(e, model_key):
+            raise TransportError(str(e), kind="fatal") from e
         if _is_429(e):
             retry_after = _parse_retry_after(e)
             kind = "quota_daily" if _is_daily_quota_error(e) else "rate_limited"
             raise TransportError(str(e), kind=kind,
                                  retry_after_sec=retry_after) from e
+        if _is_permanent_apikey_error(e, model_key):
+            raise TransportError(str(e), kind="fatal") from e
         raise TransportError(str(e), kind="retryable") from e
 
     um = getattr(response, "usage_metadata", None)
@@ -3165,9 +3411,9 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         # valore resta quello di Cloudflare (m["id"], nome legacy) invece di
         # m["id_vertex"] (nome GA): oggi e' inerte solo perche' flash31 ha gli
         # id coincidenti sui due backend, ma diverge appena un modello con
-        # id_cloudflare != id_vertex viene abilitato (es. un futuro flash25 su
-        # Cloudflare). _resolve_model_id rifa' la stessa risoluzione backend
-        # (cache, quindi a costo zero) e resta corretta per vertex/apikey.
+        # id_cloudflare != id_vertex viene abilitato. _resolve_model_id rifa'
+        # la stessa risoluzione backend (cache, quindi a costo zero) e resta
+        # corretta per vertex/apikey.
         call_model_id = (GEMINI_MODELS[model_key].get("id_cloudflare")
                          if backend == "cloudflare" else _resolve_model_id(model_key))
         try:
@@ -3266,6 +3512,17 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                 # prima usciva la causa grezza — un KeyError che il chiamante
                 # scambiava per un guasto di chunk (spec §4.4 p.4).
                 # `from te`: str(te) e' il messaggio gia' redatto dall'adapter.
+                if (backend == "apikey"
+                        and (GEMINI_MODELS.get(model_key) or {}).get("mark_unavailable_on_fatal")):
+                    # Canale unico senza failover: il modello sparisce dal
+                    # catalogo finche' non rientra (cooldown o reset admin),
+                    # cosi' nessun nuovo utente paga un libro che non parte.
+                    if _availability.mark_unavailable(model_key, str(te)):
+                        if _model_unavailable_notifier is not None:
+                            try:
+                                _model_unavailable_notifier(model_key, str(te)[:300], job_id)
+                            except Exception as ne:
+                                print(f"[gemini-tts] notifier non disponibilita' fallito: {ne}")
                 raise GeminiUnavailable(str(te)) from te
 
             # Quota giornaliera: sospendere invece di dormire per ore.

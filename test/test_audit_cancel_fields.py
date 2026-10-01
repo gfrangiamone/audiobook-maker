@@ -29,7 +29,7 @@ def test_audit_includes_cancel_fields_when_present():
     with patch("generation_engine.gemini_cost_audit.append_record",
                side_effect=lambda r: captured.update(r)):
         generation_engine._write_gemini_audit(
-            "job1", job, "gemini:flash25:Zephyr", "it", "cancelled_partial")
+            "job1", job, "gemini:flash31:Zephyr", "it", "cancelled_partial")
     assert captured["outcome"] == "cancelled_partial"
     assert captured["cancel_paid_eur"] == 2.00
     assert captured["cancel_retained_eur"] == 0.71
@@ -44,7 +44,7 @@ def test_audit_no_cancel_fields_when_absent():
     with patch("generation_engine.gemini_cost_audit.append_record",
                side_effect=lambda r: captured.update(r)):
         generation_engine._write_gemini_audit(
-            "job1", job, "gemini:flash25:Zephyr", "it", "completed")
+            "job1", job, "gemini:flash31:Zephyr", "it", "completed")
     assert captured["outcome"] == "completed"
     assert "cancel_paid_eur" not in captured
     assert "cancel_retained_eur" not in captured

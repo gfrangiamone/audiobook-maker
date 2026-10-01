@@ -12,21 +12,21 @@ const CATALOGO = {
   it: {name: 'Italian', voices: [
     {id: 'it-IT-IsabellaNeural', name: 'Isabella', gender: 'Female', locale: 'it-IT', engine: 'edge'},
     {id: 'it-IT-DiegoNeural', name: 'Diego', gender: 'Male', locale: 'it-IT', engine: 'edge'},
-    {id: 'gemini:flash25:Achernar', name: 'Achernar', gender: 'Female', locale: 'it-IT', engine: 'gemini'},
+    {id: 'gemini:flash38:Achernar', name: 'Achernar', gender: 'Female', locale: 'it-IT', engine: 'gemini'},
     {id: 'gemini:flash31:Achernar', name: 'Achernar', gender: 'Female', locale: 'it-IT', engine: 'gemini'},
     {id: 'voxcpm:v2:it-IT/Bianca', name: 'Bianca', gender: 'Female', locale: 'it-IT', engine: 'voxcpm'},
   ]},
   en: {name: 'English', voices: [
     {id: 'en-US-AvaNeural', name: 'Ava', gender: 'Female', locale: 'en-US', engine: 'edge'},
     {id: 'en-GB-SoniaNeural', name: 'Sonia', gender: 'Female', locale: 'en-GB', engine: 'edge'},
-    {id: 'gemini:flash25:Puck', name: 'Puck', gender: 'Male', locale: 'en-US', engine: 'gemini', model_key: 'flash25'},
+    {id: 'gemini:flash38:Puck', name: 'Puck', gender: 'Male', locale: 'en-US', engine: 'gemini', model_key: 'flash38'},
     {id: 'gemini:flash31:Puck', name: 'Puck', gender: 'Male', locale: 'en-US', engine: 'gemini', model_key: 'flash31'},
     {id: 'voxcpm:v2:en-US/Grace', name: 'Grace', gender: 'Female', locale: 'en-US', engine: 'voxcpm'},
     {id: 'speechify:simba-3.2:beatrice_32', name: 'Beatrice', gender: 'Female', locale: 'en-GB', engine: 'speechify'},
   ]},
   fr: {name: 'French', voices: [
     {id: 'fr-FR-DeniseNeural', name: 'Denise', gender: 'Female', locale: 'fr-FR', engine: 'edge'},
-    {id: 'gemini:flash25:Kore', name: 'Kore', gender: 'Female', locale: 'fr-FR', engine: 'gemini'},
+    {id: 'gemini:flash38:Kore', name: 'Kore', gender: 'Female', locale: 'fr-FR', engine: 'gemini'},
     {id: 'gemini:flash31:Kore', name: 'Kore', gender: 'Female', locale: 'fr-FR', engine: 'gemini'},
   ]},
   sv: {name: 'Swedish', voices: [
@@ -36,7 +36,7 @@ const CATALOGO = {
     {id: 'es-ES-ElviraNeural', name: 'Elvira', gender: 'Female', locale: 'es-ES', engine: 'edge'},
     {id: 'es-MX-DaliaNeural', name: 'Dalia', gender: 'Female', locale: 'es-MX', engine: 'edge'},
     {id: 'es-AR-ElenaNeural', name: 'Elena', gender: 'Female', locale: 'es-AR', engine: 'edge'},
-    {id: 'gemini:flash25:Lyra', name: 'Lyra', gender: 'Female', locale: 'es-ES', engine: 'gemini'},
+    {id: 'gemini:flash38:Lyra', name: 'Lyra', gender: 'Female', locale: 'es-ES', engine: 'gemini'},
     {id: 'gemini:flash31:Lyra', name: 'Lyra', gender: 'Female', locale: 'es-ES', engine: 'gemini'},
   ]},
 };
@@ -44,7 +44,12 @@ const CATALOGO = {
 test('italiano: premium attivo, tre modelli, VOXCPM2 di default', () => {
   const r = resolveAudioSelection({lang: 'it', catalog: CATALOGO, current: {}});
   assert.strictEqual(r.premiumEnabled, true);
-  assert.deepStrictEqual(r.premium.models, ['voxcpm', 'flash25', 'flash31']);
+  assert.deepStrictEqual(r.premium.models, ['voxcpm', 'flash31', 'flash38']);
+  assert.strictEqual(r.premium.model, 'voxcpm');
+});
+
+test('il predefinito resta voxcpm anche con flash38 disponibile', () => {
+  const r = resolveAudioSelection({lang: 'it', catalog: CATALOGO, current: {tab: 'premium'}});
   assert.strictEqual(r.premium.model, 'voxcpm');
 });
 
@@ -54,7 +59,7 @@ test('italiano: un modello Gemini spento sul server sparisce dal selettore', () 
   const senzaFlash31 = JSON.parse(JSON.stringify(CATALOGO));
   senzaFlash31.it.voices = senzaFlash31.it.voices.filter(v => v.id.indexOf('gemini:flash31:') !== 0);
   const r = resolveAudioSelection({lang: 'it', catalog: senzaFlash31, current: {tab: 'premium', model: 'flash31'}});
-  assert.deepStrictEqual(r.premium.models, ['voxcpm', 'flash25']);
+  assert.deepStrictEqual(r.premium.models, ['voxcpm', 'flash38']);
   assert.notStrictEqual(r.premium.model, 'flash31');
 });
 
@@ -68,7 +73,7 @@ test('inglese: quattro modelli, nell ordine mostrato', () => {
      predefinito. */
   const r = resolveAudioSelection({lang: 'en', catalog: CATALOGO, current: {}});
   assert.deepStrictEqual(r.premium.models,
-    ['voxcpm', 'simba-3.2', 'flash25', 'flash31']);
+    ['voxcpm', 'simba-3.2', 'flash31', 'flash38']);
 });
 
 test('inglese senza VoxCPM: il predefinito e Simba, non Gemini', () => {
@@ -77,7 +82,7 @@ test('inglese senza VoxCPM: il predefinito e Simba, non Gemini', () => {
   const senzaVox = JSON.parse(JSON.stringify(CATALOGO));
   senzaVox._voxcpm = {available: false, model_label: '', personas: []};
   const r = resolveAudioSelection({lang: 'en', catalog: senzaVox, current: {}});
-  assert.deepStrictEqual(r.premium.models, ['simba-3.2', 'flash25', 'flash31']);
+  assert.deepStrictEqual(r.premium.models, ['simba-3.2', 'flash31', 'flash38']);
   assert.strictEqual(r.premium.model, 'simba-3.2');
 });
 
@@ -86,10 +91,10 @@ test('i due modelli Gemini non condividono le voci', () => {
      tornasse al solo prefisso corto, ogni modello mostrerebbe anche le voci
      dell'altro e l'utente sceglierebbe una voce che il suo modello non ha. */
   const std = resolveAudioSelection({
-    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash25'}});
+    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash38'}});
   const avz = resolveAudioSelection({
     lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash31'}});
-  assert.deepStrictEqual(std.premium.voices.map(v => v.id), ['gemini:flash25:Puck']);
+  assert.deepStrictEqual(std.premium.voices.map(v => v.id), ['gemini:flash38:Puck']);
   assert.deepStrictEqual(avz.premium.voices.map(v => v.id), ['gemini:flash31:Puck']);
 });
 
@@ -98,7 +103,7 @@ test('svedese: premium spento, col motivo', () => {
      l'assert sul tab tornato a 'standard' significa qualcosa (con
      `current: {}` il tab parte gia` da 'standard' e l'assert e` tautologico). */
   const r = resolveAudioSelection({
-    lang: 'sv', catalog: CATALOGO, current: {tab: 'premium', model: 'flash25'}});
+    lang: 'sv', catalog: CATALOGO, current: {tab: 'premium', model: 'flash38'}});
   assert.strictEqual(r.premiumEnabled, false);
   assert.ok(r.changes.some(c => c.what === 'tab' && c.to === 'standard'
                              && c.reason === 'no_premium_voices'),
@@ -124,7 +129,7 @@ test('catalogo senza VoxCPM: il modello non compare', () => {
   senzaVox._voxcpm = {available: false, model_label: '', personas: []};
   const r = resolveAudioSelection({lang: 'it', catalog: senzaVox, current: {}});
   assert.ok(!r.premium.models.includes('voxcpm'));
-  assert.strictEqual(r.premium.model, 'flash25');
+  assert.strictEqual(r.premium.model, 'flash31');
 });
 
 test('it -> sv con VOXCPM2 attivo: si scende a Standard e lo si dice', () => {
@@ -295,13 +300,13 @@ test('il reset di una voce dice a quale tab appartiene', () => {
      voce Standard, che non e` nemmeno sullo schermo. */
   const r = resolveAudioSelection({
     lang: 'it', catalog: CATALOGO,
-    current: {tab: 'premium', model: 'flash25',
+    current: {tab: 'premium', model: 'flash38',
               standardVoice: 'en-US-AvaNeural',
-              premiumVoice: 'gemini:flash25:Puck'}});
+              premiumVoice: 'gemini:flash38:Puck'}});
   const perTab = {};
   for (const c of r.changes) if (c.what === 'voice') perTab[c.dove] = c.to;
   assert.strictEqual(perTab.standard, 'it-IT-IsabellaNeural');
-  assert.strictEqual(perTab.premium, 'gemini:flash25:Achernar');
+  assert.strictEqual(perTab.premium, 'gemini:flash38:Achernar');
 });
 
 /* ── Ordine degli accenti ──────────────────────────────────────────────── */

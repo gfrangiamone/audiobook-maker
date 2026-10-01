@@ -46,8 +46,8 @@ def is_voxcpm_voice(voice):
     return bool(voice) and isinstance(voice, str) and voice.startswith(VOXCPM_VOICE_PREFIX)
 # === Interruttori per modello PREMIUM ======================================
 # Ogni modello premium ha una propria env `ABM_<MODELLO>_ENABLE`:
-#   flash25    -> ABM_FLASH25_ENABLE
 #   flash31    -> ABM_FLASH31_ENABLE
+#   flash38    -> ABM_FLASH38_ENABLE
 #   simba-3.2  -> ABM_SIMBA32_ENABLE
 # Default ABILITATO: serve un valore esplicitamente falso ("0", "false",
 # "no", "off") per togliere il modello dal catalogo voci e rifiutarlo sugli
@@ -56,10 +56,14 @@ def is_voxcpm_voice(voice):
 # gia' registrato o pagato prosegue anche se il modello viene spento dopo.
 
 _MODEL_DISABLE_VALUES = ("0", "false", "no", "off")
+# Modelli rilasciati spenti: servono un valore esplicitamente vero per
+# comparire (flash38 si accende dopo il collaudo dell'utente).
+_MODEL_DEFAULT_OFF = ("flash38",)
+_MODEL_ENABLE_VALUES = ("1", "true", "yes", "on")
 
 
 def premium_model_env_name(model_key):
-    """Nome della env che governa il modello premium (es. 'ABM_FLASH25_ENABLE').
+    """Nome della env che governa il modello premium (es. 'ABM_FLASH31_ENABLE').
 
     Il model_key viene normalizzato togliendo ogni carattere non alfanumerico:
     'simba-3.2' -> 'SIMBA32'.
@@ -69,20 +73,21 @@ def premium_model_env_name(model_key):
 
 
 def premium_model_enabled(model_key):
-    """True se il modello premium e' abilitato (default in assenza di env)."""
+    """True se il modello premium e' abilitato: default abilitato, salvo i
+    modelli in `_MODEL_DEFAULT_OFF` (default spento, serve un valore
+    esplicitamente vero)."""
     if not model_key:
         return True
-    raw = os.environ.get(premium_model_env_name(model_key))
-    if raw is None:
-        return True
-    raw = raw.strip()
+    raw = (os.environ.get(premium_model_env_name(model_key)) or "").strip()
+    if model_key in _MODEL_DEFAULT_OFF:
+        return raw.lower() in _MODEL_ENABLE_VALUES
     if not raw:
         return True
     return raw.lower() not in _MODEL_DISABLE_VALUES
 
 
 def voice_model_key(voice):
-    """model_key di una voce premium ('gemini:flash25:Zephyr' -> 'flash25').
+    """model_key di una voce premium ('gemini:flash31:Zephyr' -> 'flash31').
 
     Ritorna "" per voci non premium o con id malformato.
     """

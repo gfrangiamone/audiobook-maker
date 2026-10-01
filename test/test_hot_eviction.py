@@ -275,7 +275,7 @@ def test_no_evict_for_error_job(aa, monkeypatch, tmp_path):
                         lambda p, k: uploaded.append(k))
     monkeypatch.setattr(storage_backend, "object_size",
                         lambda k: audio.stat().st_size)
-    audiobook_app.jobs["jobERR"] = {"voice": "gemini:flash25:Puck",
+    audiobook_app.jobs["jobERR"] = {"voice": "gemini:flash31:Puck",
                                     "status": "error"}
 
     audiobook_app._evict_hot_local()

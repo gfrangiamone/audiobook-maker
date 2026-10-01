@@ -54,3 +54,35 @@ def test_get_voices_gemini_entry_shape(monkeypatch):
     sample = gemini_it[0]
     for key in ("id", "name", "gender", "gender_icon", "locale", "engine"):
         assert key in sample, f"Missing key: {key}"
+
+
+def test_api_voices_esclude_modello_indisponibile(monkeypatch, tmp_path):
+    """/api/voices toglie un modello marcato non disponibile, anche se la
+    cache voci (costruita una volta per processo) lo conterrebbe ancora."""
+    if audiobook_app.gemini_tts is None:
+        pytest.skip("gemini_tts module not importable")
+
+    import gemini_availability
+    monkeypatch.setenv("ABM_FLASH38_ENABLE", "true")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    audiobook_app.gemini_tts._BACKEND = {}
+    gemini_availability.init(str(tmp_path))
+
+    audiobook_app.app.config["TESTING"] = True
+    with audiobook_app.app.test_client() as c:
+        r = c.get("/api/voices")
+        assert r.status_code == 200
+        body = r.get_json()
+        it_voices = body.get("it", {}).get("voices", [])
+        assert any(v.get("id", "").startswith("gemini:flash38:") for v in it_voices)
+
+        gemini_availability.mark_unavailable("flash38", "403")
+        try:
+            r = c.get("/api/voices")
+            assert r.status_code == 200
+            body = r.get_json()
+            it_voices = body.get("it", {}).get("voices", [])
+            assert not any(v.get("id", "").startswith("gemini:flash38:") for v in it_voices)
+        finally:
+            gemini_availability.clear("flash38")
+    audiobook_app.gemini_tts._BACKEND = {}

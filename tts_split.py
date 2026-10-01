@@ -1264,6 +1264,52 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                 pass
 
 
+def _gemini_fallback_voice(_gemini, voice_id):
+    """Voce sostitutiva per un chunk con i retry esauriti, o None.
+
+    Stessa voce sul `chunk_fallback_model` del catalogo (flash38 -> flash31),
+    solo se quel modello ha un canale risolto e non e' marcato non
+    disponibile. Il ripiego e' per singolo chunk: il chunk successivo torna
+    sul modello scelto dall'utente.
+    """
+    try:
+        _, mk, vname = str(voice_id).split(":")
+        fb = (_gemini.GEMINI_MODELS.get(mk) or {}).get("chunk_fallback_model")
+        if not fb or fb not in _gemini.GEMINI_MODELS:
+            return None
+        if _gemini._resolve_backend(fb) is None or _gemini.model_unavailable(fb):
+            return None
+        return f"gemini:{fb}:{vname}"
+    except Exception:
+        return None
+
+
+def _synthesize_with_fallback_model(_gemini, text, voice_id, output_path, **kwargs):
+    """Tenta il chunk sul modello di ripiego. Ritorna il dict di synthesize()
+    (marcato `fallback_model`) o None se non c'e' ripiego o fallisce anche lui.
+
+    Qualunque errore del ripiego, quota e budget compresi, lascia il posto a
+    edge-tts: il modello di ripiego non deve mai sospendere o fermare un job
+    che non l'ha scelto.
+    """
+    fb_voice = _gemini_fallback_voice(_gemini, voice_id)
+    if not fb_voice:
+        return None
+    dbg = kwargs.pop("debug_prompt_path", None)
+    if dbg:
+        base, ext = os.path.splitext(dbg)
+        dbg = f"{base}.fallback{ext or '.txt'}"
+    try:
+        result = _gemini.synthesize(text, fb_voice, output_path=output_path,
+                                    debug_prompt_path=dbg, **kwargs)
+    except Exception as e:
+        print(f"[gemini-tts] Fallback {fb_voice} failed too: {e}")
+        return None
+    result["fallback_model"] = fb_voice.split(":")[1]
+    print(f"[gemini-tts] Chunk recovered via fallback model {fb_voice}")
+    return result
+
+
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
                               debug_prompt_path=None, rate="+0%", accent_directive=None,
                               failure_info=None, fallback_lang=None, accent_code=None,
@@ -1279,7 +1325,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
     Args:
         text: testo da sintetizzare.
-        voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash25:Zephyr').
+        voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash31:Zephyr').
         output_path: percorso file PCM in output.
         max_retries: numero di tentativi (default 1; il backoff vero è in synthesize).
         style_instruction: optional style/tone hint prepended to the prompt.
@@ -1327,6 +1373,24 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
             )
             if agg is not False:
                 return agg
+            # Modello con ripiego (flash38 -> flash31): l'intero chunk
+            # rifatto sul ripiego, cosi' i token restano di un modello solo.
+            fb_voice = _gemini_fallback_voice(_gemini, voice_id)
+            if fb_voice:
+                try:
+                    agg = _synthesize_pcm_pieces_and_concat(
+                        pieces, fb_voice, output_path, style_instruction, max_retries,
+                        rate=rate, accent_directive=accent_directive, job_id=job_id,
+                    )
+                except Exception as e:
+                    print(f"[gemini-tts] Fallback {fb_voice} byte-split failed too: {e}")
+                    agg = False
+                if agg is not False:
+                    agg["fallback_model"] = fb_voice.split(":")[1]
+                    if isinstance(failure_info, dict):
+                        failure_info["fallback_engine"] = f"gemini:{agg['fallback_model']}"
+                        failure_info["reason"] = "gemini_failed_model_fallback"
+                    return agg
             # Fall-through: se lo split fallisce, scriviamo silenzio sotto.
             _generate_silence_pcm(output_path, duration_sec=1)
             return _fail("byte_split_failed", f"{len(pieces)} sub-chunk")
@@ -1360,6 +1424,20 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
     print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
           f"generating silence ({len(clean)} chars). Last error: {last_error}")
+    # Modello con ripiego nel catalogo (flash38 -> flash31): stessa voce sul
+    # modello di ripiego, prima di edge-tts. Solo questo chunk; il successivo
+    # torna sul modello scelto.
+    fb = _synthesize_with_fallback_model(
+        _gemini, clean, voice_id, output_path,
+        style_instruction=style_instruction, rate=rate,
+        debug_prompt_path=debug_prompt_path,
+        accent_directive=accent_directive, job_id=job_id)
+    if fb is not None:
+        if isinstance(failure_info, dict):
+            failure_info["fallback_engine"] = f"gemini:{fb['fallback_model']}"
+            failure_info["reason"] = "gemini_failed_model_fallback"
+            failure_info["detail"] = str(last_error)[:300] if last_error else ""
+        return fb
     # Prima del silenzio: tenta una voce edge-tts standard, cosi' un chunk
     # rifiutato da Gemini (tipicamente content policy / safety su testi
     # sensibili) non lascia un buco muto nell'audiolibro. Solo se conosciamo la

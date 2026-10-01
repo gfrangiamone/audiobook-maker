@@ -21,7 +21,7 @@ def test_optimized_gets_tolerance():
 
 
 def test_optimized_gemini_voice_tolerance():
-    voice = "gemini:flash25:Charon"
+    voice = "gemini:flash31:Charon"
     base = app._max_text_chars_for_voice(voice)
     assert base == app.MAX_GEMINI_TEXT_CHARS
     eff = app._effective_max_text_chars(voice, {"ai_optimized": True})

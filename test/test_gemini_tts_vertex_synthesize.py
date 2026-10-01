@@ -48,11 +48,11 @@ def test_synthesize_uses_vertex_model_id_on_vertex_backend(
     out = tmp_path / "x.pcm"
     res = gemini_tts.synthesize(
         text="Ciao",
-        voice_id="gemini:flash25:Kore",
+        voice_id="gemini:flash31:Kore",
         output_path=str(out),
     )
     assert res["success"] is True
-    assert captured["model"] == "gemini-2.5-flash-tts"
+    assert captured["model"] == "gemini-3.1-flash-tts-preview"
 
 
 def test_synthesize_uses_apikey_model_id_on_apikey_backend(
@@ -72,7 +72,7 @@ def test_synthesize_uses_apikey_model_id_on_apikey_backend(
     out = tmp_path / "x.pcm"
     gemini_tts.synthesize(
         text="Hi",
-        voice_id="gemini:flash25:Kore",
+        voice_id="gemini:flash31:Kore",
         output_path=str(out),
     )
-    assert captured["model"] == "gemini-2.5-flash-preview-tts"
+    assert captured["model"] == "gemini-3.1-flash-tts-preview"

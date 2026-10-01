@@ -28,7 +28,7 @@ def test_speechify_chunk_cap_leaves_ssml_headroom():
 def test_other_engines_chunk_caps_unchanged():
     # Edge/Google restano 2000; Gemini resta 700 (default).
     assert tts_split._pick_chunk_max_chars("en-US-AriaNeural", "en") == 2000
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "en") == 700
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "en") == 700
 
 
 def test_chunk_max_chars_default_matches_constant():

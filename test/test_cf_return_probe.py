@@ -116,14 +116,21 @@ def test_a_failed_probe_records_how_long_it_waited(monkeypatch):
 
 
 def test_the_return_pops_the_cache_and_never_forces_cloudflare(monkeypatch):
+    # _finish_cf_return svuota _BACKEND per TUTTI i modelli noti in
+    # GEMINI_MODELS, non solo quello appena tornato: con un solo modello nel
+    # catalogo reale (flash31) questo comportamento cross-model non sarebbe
+    # osservabile, quindi si aggiunge temporaneamente un secondo modello
+    # fittizio ("other") al catalogo per provare che il pop copre entrambi.
+    monkeypatch.setitem(gemini_tts.GEMINI_MODELS, "other",
+                        gemini_tts.GEMINI_MODELS["flash31"])
     _trip()
     gemini_tts._BACKEND["flash31"] = "vertex"
-    gemini_tts._BACKEND["flash25"] = "vertex"
+    gemini_tts._BACKEND["other"] = "vertex"
     monkeypatch.setattr(gemini_tts._transport, "cloudflare_call",
                         lambda **kw: _pcm())
     gemini_tts.probe_cloudflare("flash31")
     assert "flash31" not in gemini_tts._BACKEND
-    assert "flash25" not in gemini_tts._BACKEND
+    assert "other" not in gemini_tts._BACKEND
 
 
 def test_the_probe_charges_the_ledger(monkeypatch):

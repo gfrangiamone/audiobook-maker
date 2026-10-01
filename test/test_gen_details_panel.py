@@ -47,12 +47,12 @@ def test_done_payload_has_details_standard_voice():
 
 
 def test_done_payload_has_model_for_premium_voice():
-    job = _done_job(voice="gemini:flash25:Zephyr", gen_lang="it",
+    job = _done_job(voice="gemini:flash31:Zephyr", gen_lang="it",
                     ai_optimized=True, gemini_style_instruction="tono calmo")
     body = _progress_body("gdp2", job, "it")
     assert "Voci PREMIUM" in body
     assert "Zephyr" in body
-    assert "Gemini 2.5 Flash TTS" in body    # model_line (stessa label email)
+    assert "Gemini 3.1 Flash TTS" in body    # model_line (stessa label email)
     assert "tono calmo" in body              # style_line
     assert "ottimizzato con l'AI" in body
 
@@ -67,7 +67,7 @@ def test_done_payload_details_localized_en():
 def test_details_same_source_as_email():
     """Il payload usa la stessa fonte del blocco email (nessun fork di testi)."""
     import generation_engine as ge
-    job = _done_job(voice="gemini:flash25:Zephyr", gen_lang="it", ai_optimized=True)
+    job = _done_job(voice="gemini:flash31:Zephyr", gen_lang="it", ai_optimized=True)
     lines = ge._generation_details_lines(job, "it")
     email_html = ge._email_generation_details(job, "it")
     for line in lines:

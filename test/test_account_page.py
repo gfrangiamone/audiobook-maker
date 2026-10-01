@@ -107,7 +107,7 @@ def test_account_page_plan_column(logged):
     job_id sotto (mai il job_id al posto del titolo quando c'e')."""
     c, acct = logged
     accounts.record_job(acct["id"], "jp", kind="generate", book_title="Il Gattopardo",
-                        voice="Zephyr", engine="premium", model="flash25",
+                        voice="Zephyr", engine="premium", model="flash31",
                         status="done", created_at=T0)
     accounts.record_job(acct["id"], "jf", kind="generate", book_title="Pinocchio",
                         voice="Isabella", engine="standard", status="done", created_at=T0 - 60)
@@ -115,7 +115,7 @@ def test_account_page_plan_column(logged):
                         status="done", created_at=T0 - 120)
     html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
     assert "<b>Il Gattopardo</b>" in html and "jp" in html
-    assert "PREMIUM" in html and "Gemini 2.5 TTS" in html
+    assert "PREMIUM" in html and "Gemini 3.1 TTS" in html
     assert "Gratis" in html
     # Traduzione: niente piano, resta l'etichetta del tipo.
     assert "Traduzione" in html

@@ -43,7 +43,7 @@ def _env(tmp_path, monkeypatch):
     gemini_tts._BACKEND = {}
     gemini_tts.set_backend_switch_notifier(None)
     st.reset("flash31")
-    st.reset("flash25")
+    st.reset("flash31")
 
 
 def _synth(tmp_path, text="ciao mondo, questa e' una frase di prova ragionevole"):

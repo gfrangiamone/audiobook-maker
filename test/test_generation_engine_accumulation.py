@@ -12,7 +12,7 @@ def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
         return {
             "success": True, "bytes_written": 1000,
             "input_tokens": 100, "output_tokens": 500,
-            "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1,
+            "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1,
         }
     monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
 
@@ -55,7 +55,7 @@ def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
     monkeypatch.setattr(generation_engine, "_jobs_lock", None, raising=False)
 
     try:
-        generation_engine.run_generation("j1", _Info(), "gemini:flash25:Zephyr", "+0%",
+        generation_engine.run_generation("j1", _Info(), "gemini:flash31:Zephyr", "+0%",
                                          single_file=True, output_format="mp3")
     except Exception:
         pass
@@ -68,7 +68,7 @@ def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
     assert abs(ga["audio_seconds"] - expected_audio) < 1e-6
     # google cost = 6 * ((100/1000)*0.001 + (500/1000)*0.005) = 6 * (0.0001 + 0.0025) = 0.0156
     assert abs(ga["google_cost_eur"] - 6 * (0.0001 + 0.0025)) < 1e-6
-    assert ga["model_key"] == "flash25"
+    assert ga["model_key"] == "flash31"
 
 
 def test_run_generation_accumulates_gemini_actuals_multifile(monkeypatch, tmp_path):
@@ -84,7 +84,7 @@ def test_run_generation_accumulates_gemini_actuals_multifile(monkeypatch, tmp_pa
         return {
             "success": True, "bytes_written": 1000,
             "input_tokens": 100, "output_tokens": 500,
-            "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1,
+            "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1,
         }
     monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
 
@@ -125,7 +125,7 @@ def test_run_generation_accumulates_gemini_actuals_multifile(monkeypatch, tmp_pa
     monkeypatch.setattr(generation_engine, "_jobs_lock", None, raising=False)
 
     try:
-        generation_engine.run_generation("jm", _Info(), "gemini:flash25:Zephyr", "+0%",
+        generation_engine.run_generation("jm", _Info(), "gemini:flash31:Zephyr", "+0%",
                                          single_file=False, output_format="zip")
     except Exception:
         pass
@@ -137,7 +137,7 @@ def test_run_generation_accumulates_gemini_actuals_multifile(monkeypatch, tmp_pa
     expected_audio = 6 * 1000 / (24000.0 * 2)
     assert abs(ga["audio_seconds"] - expected_audio) < 1e-6
     assert abs(ga["google_cost_eur"] - 6 * (0.0001 + 0.0025)) < 1e-6
-    assert ga["model_key"] == "flash25"
+    assert ga["model_key"] == "flash31"
 
 
 def test_run_generation_actuals_zero_when_no_gemini(monkeypatch, tmp_path):

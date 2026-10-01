@@ -39,7 +39,7 @@ def test_voxcpm_has_no_byte_cap():
 
 def test_other_engines_chunk_caps_unchanged():
     assert tts_split._pick_chunk_max_chars("en-US-AriaNeural", "en") == 2000
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "en") == 700
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "en") == 700
     assert tts_split._pick_chunk_max_chars("speechify:simba-3.2:hugh_32", "en") == 1800
 
 

@@ -3,7 +3,7 @@ import generation_engine
 
 
 def test_engine_for_voice_gemini():
-    assert generation_engine._engine_for_voice("gemini:flash25:Zephyr") == "gemini"
+    assert generation_engine._engine_for_voice("gemini:flash31:Zephyr") == "gemini"
     assert generation_engine._engine_for_voice("gemini:flash31:Achernar") == "gemini"
 
 

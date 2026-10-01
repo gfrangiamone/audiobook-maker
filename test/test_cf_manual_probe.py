@@ -281,10 +281,10 @@ def test_the_guard_is_per_model_not_global(monkeypatch):
 
     monkeypatch.setattr(gemini_tts, "probe_cloudflare", _lenta)
     assert audiobook_app._manual_probe_start("flash31") is True
-    assert audiobook_app._manual_probe_start("flash25") is True
+    assert audiobook_app._manual_probe_start("other") is True
     libera.set()
     assert _attendi(lambda: not audiobook_app._manual_probe_running)
-    assert sorted(visti) == ["flash25", "flash31"]
+    assert sorted(visti) == ["flash31", "other"]
 
 
 def test_an_exploding_probe_does_not_wedge_the_button_forever(monkeypatch):

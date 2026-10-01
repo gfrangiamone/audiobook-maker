@@ -47,7 +47,7 @@ def jb():
 def test_combined_both(client, jb):
     r = client.post("/api/combined_estimate", json={
         "job_id": "cj1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
         "ai_opt_enabled": True,
     })
@@ -76,7 +76,7 @@ def test_combined_standard_voice_no_gemini(client, jb):
 def test_combined_no_ai_opt(client, jb):
     r = client.post("/api/combined_estimate", json={
         "job_id": "cj1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
         "ai_opt_enabled": False,
     })
@@ -89,7 +89,7 @@ def test_combined_no_ai_opt(client, jb):
 def test_combined_missing_job(client):
     r = client.post("/api/combined_estimate", json={
         "job_id": "nope",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
         "ai_opt_enabled": False,
     })
@@ -194,7 +194,7 @@ def test_combined_premium_ai_not_floored(client, jb, monkeypatch):
     try:
         d = client.post("/api/combined_estimate", json={
             "job_id": "cjprem",
-            "voice_id": "gemini:flash25:Zephyr",  # premium => combinato
+            "voice_id": "gemini:flash31:Zephyr",  # premium => combinato
             "selected_chapters": [0],
             "ai_opt_enabled": True,
         }).get_json()

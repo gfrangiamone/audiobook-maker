@@ -780,6 +780,7 @@ async function loadVoices(){
     }else{
         _premiumStatus=null;
     }
+    try{ window._geminiPreviewTimeouts=(data._gemini&&data._gemini.preview_timeout_ms)||{}; }catch(_){}
     // Disponibilita' traduzione libro: se il backend non ha un modello di
     // traduzione configurato (ABM_TRANSLATE_MODEL) la feature e' nascosta.
     if('_translate_available' in data){
@@ -1134,8 +1135,8 @@ function _tOr(k,ripiego){
    l'i18n non copre: se scattano, scattano per tutti. */
 function _modelLabel(m){
   if(m==='voxcpm')return _tOr('lbl_model_voxcpm','Audiobook Maker (VOXCPM2)');
-  if(m==='flash25')return _tOr('lbl_model_flash25','Gemini 2.5 TTS');
   if(m==='flash31')return _tOr('lbl_model_flash31','Gemini 3.1 TTS');
+  if(m==='flash38')return _tOr('lbl_model_flash38','Gemini 3.8 (PREMIUM+)');
   if(m==='simba-3.2')return _tOr('lbl_model_simba','Simba 3.2');
   return m;
 }
@@ -1746,7 +1747,7 @@ function updVoicesPremium(){
   }
   // --- Ramo Gemini (esistente) ---
   const lang=bookLangState.code||'it';
-  const modelKey=(vmEl&&vmEl.value)||'flash25';
+  const modelKey=(vmEl&&vmEl.value)||'flash31';
   // Come nei rami VoxCPM e Simba: la scelta dell'utente vive fuori dal DOM,
   // perche' il DOM qui sotto viene svuotato e ricostruito. Senza questa
   // memoria il browser risceglie la prima <option> e la voce pagata cambia
@@ -2068,7 +2069,7 @@ function getParenFlags(){
 }
 function getEstimateCacheKey(){
   const tab=wizardState.audioTab||'standard';
-  const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash25'):'none';
+  const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash31'):'none';
   const aiOpt=document.getElementById('aiToggle')?.checked?'1':'0';
   const chapters=(typeof _getSelectedChapterIndexes==='function'?_getSelectedChapterIndexes():[]).join(',');
   const rate=document.getElementById('vr')?.value||'+0%';
@@ -2561,6 +2562,12 @@ async function renderPaypalGeminiButtons(){
         _payPaypalErr((typeof t==='function'&&t('server_busy'))||d.error);
         throw new Error('server busy');
       }
+      if(d&&_VOICE_MODEL_ERR[d.error_code]){
+        // Modello spento o non disponibile: nessun ordine creato, nessun addebito.
+        _payBusyNotice=true;
+        _payPaypalErr(_localizeErrCode(d.error_code));
+        throw new Error(d.error_code);
+      }
       if(d&&d.error_code==='price_changed'){
         // Quotazione non piu' valida: nessun ordine creato, nessun addebito.
         // Riallinea il modale e lascia decidere l'utente sul nuovo importo.
@@ -2952,15 +2959,14 @@ async function previewRead(){
   // Voci Gemini: prefetch via fetch() per intercettare 429 (cap superato) e 503 (non configurato).
   if(_isGeminiVoice(voice)){
     // Client-side timeout via AbortController, model-aware.
-    // Catena server: HTTP Google -> wrapper ThreadPoolExecutor -> handler.
-    //   flash25:  HTTP 25s -> wrapper 30s -> client 35s (5s buffer).
-    //   flash31:  HTTP 60s -> wrapper 65s -> client 70s (5s buffer).
-    // flash31 e` strutturalmente piu` lento (RPM cap 3/300 vs 10/750 +
-    // audio gen piu` lenta lato Google); senza buffer il client abortiva
-    // mentre il server stava completando con successo, generando il falso
-    // positivo "Il servizio TTS impiega troppo tempo".
+    // Catena server: HTTP provider -> wrapper ThreadPoolExecutor -> handler.
+    // Il wrapper per modello arriva da /api/voices (_gemini.preview_timeout_ms,
+    // gia' comprensivo dei 5 s di margine): senza il margine il client
+    // abortiva mentre il server stava completando con successo.
     const _ctrl=new AbortController();
-    const _toMs = voice.indexOf(':flash31:') !== -1 ? 70000 : 35000;
+    const _mkPrev=(voice.split(':')[1]||'');
+    const _toMap=(window._geminiPreviewTimeouts||{});
+    const _toMs = _toMap[_mkPrev] || 35000;
     const _toHandle=setTimeout(()=>{try{_ctrl.abort();}catch(_){}},_toMs);
     try{
       const r=await fetch(url,{signal:_ctrl.signal});
@@ -6192,7 +6198,19 @@ function fmtDur(m){if(m<1)return'< 1 min';if(m<60)return Math.round(m)+' min';co
 function fmtTime(s){if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;if(m<60)return m+'m'+(r>0?' '+r+'s':'');return Math.floor(m/60)+'h '+(m%60>0?(m%60)+'m':'')}
 function fmtBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(0)+' KB';return(b/1048576).toFixed(1)+' MB'}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
-function showErr(id,m){document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
+// Codici d'errore del gate modelli PREMIUM (400 voice_model_disabled, 503
+// voice_model_unavailable): il server manda il codice nudo in `error`, qui
+// diventa un messaggio localizzato invece del codice grezzo.
+const _VOICE_MODEL_ERR={
+  voice_model_unavailable:['err_voice_model_unavailable','This voice model is temporarily unavailable. Please choose another voice or try again later.'],
+  voice_model_disabled:['err_voice_model_disabled','This voice model is no longer available. Please choose another voice.']
+};
+function _localizeErrCode(m){
+  const e=_VOICE_MODEL_ERR[m];
+  if(!e)return m;
+  return (typeof t==='function'&&t(e[0]))||e[1];
+}
+function showErr(id,m){m=_localizeErrCode(m);document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
 function _elVisible(el){ if(!el) return false; try{ return el.offsetParent!==null || el.getClientRects().length>0; }catch(_e){ return false } }
 // showPErr scriveva SOLO in #pra, che sta dentro un blocco display:none (residuo
 // del layout pre-wizard): in pratica nessun errore di generazione o di download
@@ -6210,6 +6228,7 @@ function _praErrSlot(){
   return slot;
 }
 function showPErr(m){
+  if(typeof _localizeErrCode==='function')m=_localizeErrCode(m);
   const html='<div class="al al-e fi">'+esc(m)+'</div>';
   const praSlot=_praErrSlot();if(praSlot)praSlot.innerHTML=html;
   let target=null;

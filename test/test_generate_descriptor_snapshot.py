@@ -40,7 +40,7 @@ def test_generation_params_snapshot_precedes_register():
 def test_descriptor_carries_generation_params():
     job = {
         "original_filename": "book.epub",
-        "voice": "gemini:flash25:Enceladus",
+        "voice": "gemini:flash31:Enceladus",
         "rate": "+10%",
         "single_file": True,
         "output_format": "m4b",
@@ -50,7 +50,7 @@ def test_descriptor_carries_generation_params():
         "speechify_emotion": "warm",
     }
     d = audiobook_app._build_job_descriptor(job, "generate")
-    assert d["voice"] == "gemini:flash25:Enceladus"
+    assert d["voice"] == "gemini:flash31:Enceladus"
     assert d["rate"] == "+10%"
     assert d["selected_chapters"] == [0, 1, 2]
     assert d["gemini_style_instruction"] == "tono calmo"
@@ -79,7 +79,7 @@ def test_reenqueue_reports_whether_it_actually_started(tmp_path, monkeypatch):
             "input_path": str(epub)}
     assert audiobook_app._reenqueue_orphan("Jmute", mute) is False
 
-    ok = {"id": "Jok", "phase": "generate", "voice": "gemini:flash25:Enceladus",
+    ok = {"id": "Jok", "phase": "generate", "voice": "gemini:flash31:Enceladus",
           "input_path": str(epub)}
     try:
         assert audiobook_app._reenqueue_orphan("Jok", ok) is True

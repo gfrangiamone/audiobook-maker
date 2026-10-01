@@ -88,7 +88,7 @@ def test_quota_failure_marks_pending_failed(setup_engine, mark_failed_calls,
 
     generation_engine.run_generation(
         job_id, _Info(),
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",
@@ -119,7 +119,7 @@ def test_unavailable_aborts_job_no_mass_silence(setup_engine, mark_failed_calls,
 
     generation_engine.run_generation(
         job_id, _Info(),
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",
@@ -152,7 +152,7 @@ def test_generate_chunk_pcm_reraises_unavailable(monkeypatch, tmp_path):
     with pytest.raises(gemini_tts.GeminiUnavailable):
         tts_split.generate_chunk_pcm_gemini(
             "Frase di prova sufficientemente lunga per la sintesi.",
-            "gemini:flash25:Zephyr", str(out))
+            "gemini:flash31:Zephyr", str(out))
 
 
 @pytest.mark.skipif(ffmpeg_missing, reason="ffmpeg not in PATH")
@@ -180,7 +180,7 @@ def test_quality_failure_marks_pending_failed(setup_engine, mark_failed_calls,
 
     generation_engine.run_generation(
         job_id, _Info(),
-        voice="gemini:flash25:Zephyr",
+        voice="gemini:flash31:Zephyr",
         rate="+0%",
         single_file=True,
         output_format="m4b",
@@ -191,3 +191,42 @@ def test_quality_failure_marks_pending_failed(setup_engine, mark_failed_calls,
     # L'esito deve essere il quality-gate, non un errore generico
     recs = list(gemini_cost_audit.iter_records(outcome="failed_quality_refunded"))
     assert any(r.get("job_id") == job_id for r in recs)
+
+
+def test_flash38_chunk_esaurito_ferma_il_job_e_rimborsa(setup_engine, mark_failed_calls,
+                                                         monkeypatch):
+    """Review finale I1: su flash38 (canale unico) un chunk con i retry
+    esauriti non passa mai a una voce edge ne' lascia un buco: il job si
+    ferma al primo chunk, esito failed_refunded, rimborso emesso."""
+    upload_dir, jobs = setup_engine
+    job_id = "f38exh"
+    jobs[job_id] = {"gen_epoch": 0, "last_poll": 0, "email_registered": True,
+                    "payment": {"token": "tok38", "total_eur": 5.0, "method": "paypal"}}
+    calls = {"n": 0}
+
+    def boom(text, voice_id, output_path=None, **kw):
+        calls["n"] += 1
+        raise RuntimeError("Gemini TTS failed after 3 attempts: 503 UNAVAILABLE")
+
+    monkeypatch.setattr("gemini_tts.synthesize", boom)
+    monkeypatch.setattr("tts_split._edge_fallback_to_pcm",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("edge vietato")))
+    refunds = []
+    monkeypatch.setattr(generation_engine, "_refund_gemini_payment",
+                        lambda jid, job, reason: refunds.append(jid))
+
+    generation_engine.run_generation(
+        job_id, _Info(),
+        voice="gemini:flash38:Zephyr",
+        rate="+0%",
+        single_file=True,
+        output_format="m4b",
+    )
+
+    assert calls["n"] == 1
+    assert refunds == [job_id]
+    assert mark_failed_calls == [job_id]
+    job = jobs[job_id]
+    assert job["status"] == "error"
+    assert not job.get("gemini_edge_fallback_chunks")
+    assert "Gemini" not in job.get("user_facing_error", "")

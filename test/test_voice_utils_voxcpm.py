@@ -21,7 +21,7 @@ def test_cloned_voice_is_voxcpm():
 
 
 def test_other_engines_are_not_voxcpm():
-    assert voice_utils.is_voxcpm_voice("gemini:flash25:Zephyr") is False
+    assert voice_utils.is_voxcpm_voice("gemini:flash31:Zephyr") is False
     assert voice_utils.is_voxcpm_voice("speechify:simba-3.2:harper_32") is False
     assert voice_utils.is_voxcpm_voice("it-IT-IsabellaNeural") is False
 

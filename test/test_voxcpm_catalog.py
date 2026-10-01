@@ -214,7 +214,7 @@ def test_parse_voice_id_ritorna_il_record():
 
 
 def test_parse_voice_id_rifiuta_input_estranei():
-    for cattivo in (None, "", 7, "gemini:flash25:Zephyr", "voxcpm:v2", "voxcpm:v9:it-IT/Stefano"):
+    for cattivo in (None, "", 7, "gemini:flash31:Zephyr", "voxcpm:v2", "voxcpm:v9:it-IT/Stefano"):
         with pytest.raises(ValueError):
             voxcpm_catalog.parse_voice_id(cattivo)
 

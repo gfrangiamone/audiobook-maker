@@ -40,7 +40,7 @@ def test_style_instruction_prepended_to_text(monkeypatch, tmp_path):
     out = tmp_path / "x.pcm"
     gemini_tts.synthesize(
         "Ciao mondo",
-        "gemini:flash25:Zephyr",
+        "gemini:flash31:Zephyr",
         style_instruction="tono calmo e narrativo",
         output_path=str(out),
     )
@@ -54,7 +54,7 @@ def test_style_instruction_none_does_not_prepend(monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
-    gemini_tts.synthesize("Ciao", "gemini:flash25:Zephyr", style_instruction=None, output_path=str(out))
+    gemini_tts.synthesize("Ciao", "gemini:flash31:Zephyr", style_instruction=None, output_path=str(out))
     assert captured["contents"] == "Ciao"
 
 
@@ -64,7 +64,7 @@ def test_style_instruction_truncated_at_200_chars(monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
     long_style = "a" * 500
-    gemini_tts.synthesize("Testo", "gemini:flash25:Zephyr", style_instruction=long_style, output_path=str(out))
+    gemini_tts.synthesize("Testo", "gemini:flash31:Zephyr", style_instruction=long_style, output_path=str(out))
     # The style payload (between [style: and ]) must be capped at 200 chars
     assert "a" * 200 in captured["contents"]
     assert "a" * 201 not in captured["contents"]
@@ -76,7 +76,7 @@ def test_style_instruction_coexists_with_rate(monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     monkeypatch.setenv("ABM_GEMINI_RATE_MODE", "prompt")
     out = tmp_path / "x.pcm"
-    gemini_tts.synthesize("Frase", "gemini:flash25:Zephyr", rate="+10%",
+    gemini_tts.synthesize("Frase", "gemini:flash31:Zephyr", rate="+10%",
                           style_instruction="vivace", output_path=str(out))
     c = captured["contents"]
     # Le direttive rate sono in linguaggio naturale (refactor del +-10% in 7 step
@@ -92,7 +92,7 @@ def test_style_instruction_whitespace_only_does_not_prepend(monkeypatch, tmp_pat
     monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
-    gemini_tts.synthesize("Solo testo", "gemini:flash25:Zephyr",
+    gemini_tts.synthesize("Solo testo", "gemini:flash31:Zephyr",
                           style_instruction="   \t  \n  ", output_path=str(out))
     assert captured["contents"] == "Solo testo"
     assert "[style:" not in captured["contents"]
@@ -117,7 +117,7 @@ def test_prefissi_oltre_soglia_qualita_non_sollevano(monkeypatch, tmp_path, caps
     near_cap_text = "x" * (gemini_tts.MAX_BYTES_PER_CALL - 50)
     style = "y" * 300
     out = tmp_path / "x.pcm"
-    gemini_tts.synthesize(near_cap_text, "gemini:flash25:Zephyr",
+    gemini_tts.synthesize(near_cap_text, "gemini:flash31:Zephyr",
                           style_instruction=style, output_path=str(out))
     assert "[style:" in captured["contents"]
     # Niente warning: il testo puro sta sotto soglia.
@@ -139,7 +139,7 @@ def test_testo_oltre_soglia_qualita_warning_ma_non_solleva(monkeypatch, tmp_path
     monkeypatch.setattr(gemini_tts, "API_HARD_BYTES_CAP", 8000)
     oversized_text = "x" * (gemini_tts.MAX_BYTES_PER_CALL + 100)
     out = tmp_path / "x.pcm"
-    gemini_tts.synthesize(oversized_text, "gemini:flash25:Zephyr", output_path=str(out))
+    gemini_tts.synthesize(oversized_text, "gemini:flash31:Zephyr", output_path=str(out))
     out_log = capsys.readouterr().out
     assert "oltre soglia qualita" in out_log
     assert captured["contents"] == oversized_text
@@ -194,7 +194,7 @@ def test_accent_directive_leads_style_block(monkeypatch, tmp_path):
     out = tmp_path / "x.pcm"
     gemini_tts.synthesize(
         "Hello world",
-        "gemini:flash25:Zephyr",
+        "gemini:flash31:Zephyr",
         style_instruction="calm tone",
         accent_directive=gemini_tts.build_accent_directive("en", "gb"),
         output_path=str(out),
@@ -213,7 +213,7 @@ def test_accent_directive_none_keeps_legacy_behavior(monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
-    gemini_tts.synthesize("Solo testo", "gemini:flash25:Zephyr",
+    gemini_tts.synthesize("Solo testo", "gemini:flash31:Zephyr",
                           accent_directive=None, output_path=str(out))
     assert captured["contents"] == "Solo testo"
 
@@ -226,5 +226,5 @@ def test_payload_oltre_api_hard_cap_solleva(monkeypatch, tmp_path):
     huge_text = "x" * (gemini_tts.API_HARD_BYTES_CAP + 100)
     import pytest
     with pytest.raises(ValueError, match="API hard cap"):
-        gemini_tts.synthesize(huge_text, "gemini:flash25:Zephyr",
+        gemini_tts.synthesize(huge_text, "gemini:flash31:Zephyr",
                               output_path="/tmp/x.pcm")

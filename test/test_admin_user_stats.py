@@ -23,7 +23,7 @@ import user_stats
 # ---------------------------------------------------------------------------
 
 def test_cohort_voce_premium():
-    assert user_stats.cohort_of({"voice": "gemini:flash25:Zephyr", "events": set()}) == "premium"
+    assert user_stats.cohort_of({"voice": "gemini:flash31:Zephyr", "events": set()}) == "premium"
     assert user_stats.cohort_of({"voice": "speechify:scott", "events": set()}) == "premium"
 
 
@@ -120,8 +120,8 @@ def test_concentration_vuota_non_divide_per_zero():
 
 
 LOG = """\
-j1 # 2026-08-01 10:00:00 # "a.epub" # GENERATE # cidA # 1.1.1.1 # gemini:flash25:Zephyr # it # web
-j1 # 2026-08-01 10:20:00 # "a.epub" # COMPLETE # cidA # 1.1.1.1 # gemini:flash25:Zephyr # it # web
+j1 # 2026-08-01 10:00:00 # "a.epub" # GENERATE # cidA # 1.1.1.1 # gemini:flash31:Zephyr # it # web
+j1 # 2026-08-01 10:20:00 # "a.epub" # COMPLETE # cidA # 1.1.1.1 # gemini:flash31:Zephyr # it # web
 j2 # 2026-08-01 11:00:00 # "b # 2.epub" # GENERATE # cidA # 1.1.1.1 # it-IT-DiegoNeural # it # web
 j2 # 2026-08-01 11:10:00 # "b # 2.epub" # COMPLETE # cidA # 1.1.1.1 # it-IT-DiegoNeural # it # web
 j3 # 2026-08-02 09:00:00 # "c.epub" # PAYMENT_CAPTURED # cidB # 2.2.2.2 # it-IT-DiegoNeural # it # web

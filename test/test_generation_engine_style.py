@@ -25,13 +25,13 @@ def test_chunk_gemini_passes_style_to_synthesize(monkeypatch, tmp_path):
         return {
             "success": True, "bytes_written": 1000,
             "input_tokens": 10, "output_tokens": 50,
-            "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1,
+            "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1,
         }
     import gemini_tts
     monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize)
     out = tmp_path / "x.pcm"
     res = tts_split.generate_chunk_pcm_gemini(
-        "Ciao mondo", "gemini:flash25:Zephyr", str(out),
+        "Ciao mondo", "gemini:flash31:Zephyr", str(out),
         style_instruction="vivace e narrativo",
     )
     assert res is not False
@@ -45,11 +45,11 @@ def test_chunk_gemini_default_style_is_none(monkeypatch, tmp_path):
         with open(output_path, "wb") as f:
             f.write(b"\x00" * 100)
         return {"success": True, "bytes_written": 100, "input_tokens": 1,
-                "output_tokens": 1, "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1}
+                "output_tokens": 1, "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1}
     import gemini_tts
     monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize)
     out = tmp_path / "x.pcm"
-    tts_split.generate_chunk_pcm_gemini("Test", "gemini:flash25:Zephyr", str(out))
+    tts_split.generate_chunk_pcm_gemini("Test", "gemini:flash31:Zephyr", str(out))
     assert captured["style_instruction"] is None
 
 
@@ -70,7 +70,7 @@ def test_run_generation_applies_style_to_every_chunk(monkeypatch, tmp_path):
         return {
             "success": True, "bytes_written": 1000,
             "input_tokens": 1, "output_tokens": 1,
-            "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1,
+            "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1,
         }
     monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
 
@@ -115,7 +115,7 @@ def test_run_generation_applies_style_to_every_chunk(monkeypatch, tmp_path):
     monkeypatch.setattr(generation_engine, "gemini_tts", None, raising=False)
 
     try:
-        generation_engine.run_generation("j1", _Info(), "gemini:flash25:Zephyr", "+0%",
+        generation_engine.run_generation("j1", _Info(), "gemini:flash31:Zephyr", "+0%",
                                          single_file=True, output_format="mp3",
                                          gemini_style_instruction="calmo")
     except Exception:
@@ -138,7 +138,7 @@ def test_run_generation_multi_file_branch_also_applies_style_to_every_chunk(monk
         return {
             "success": True, "bytes_written": 1000,
             "input_tokens": 1, "output_tokens": 1,
-            "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1,
+            "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1,
         }
     monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
 
@@ -179,7 +179,7 @@ def test_run_generation_multi_file_branch_also_applies_style_to_every_chunk(monk
     monkeypatch.setattr(generation_engine, "gemini_tts", None, raising=False)
 
     try:
-        generation_engine.run_generation("j2", _Info(), "gemini:flash25:Zephyr", "+0%",
+        generation_engine.run_generation("j2", _Info(), "gemini:flash31:Zephyr", "+0%",
                                          single_file=False, output_format="zip",
                                          gemini_style_instruction="vivace")
     except Exception:

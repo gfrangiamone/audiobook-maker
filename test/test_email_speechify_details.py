@@ -34,7 +34,7 @@ def test_email_details_speechify_is_premium_with_friendly_voice_and_model():
 
 def test_email_details_gemini_still_works():
     job = {
-        "voice": "gemini:flash25:Zephyr",
+        "voice": "gemini:flash31:Zephyr",
         "rate": "+0%",
         "gen_lang": "it",
         "ai_optimized": False,
@@ -42,4 +42,4 @@ def test_email_details_gemini_still_works():
     html = ge._email_generation_details(job, "en")
     assert "PREMIUM" in html
     assert "Zephyr" in html
-    assert "Gemini 2.5 Flash TTS" in html
+    assert "Gemini 3.1 Flash TTS" in html

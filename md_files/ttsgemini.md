@@ -1,6 +1,8 @@
 # ttsgemini.md — Integrazione Gemini TTS
 
-Riferimento operativo per il motore TTS Premium basato su **Google Gemini 2.5 / 3.1 Flash TTS**. Documento parallelo a `CLAUDE.md`: copre architettura, pipeline di sintesi, pricing, throttling, retry, budget guard, audit, UI e variabili `ABM_GEMINI_*`. Il documento è **generico rispetto al tier Google** (Free / Tier 1 / Tier 2 / Tier 3): i numeri di esempio si riferiscono al tier corrente solo come illustrazione e sono interamente override-abili via env.
+Riferimento operativo per il motore TTS Premium basato su **Google Gemini 3.1 / 3.8 Flash TTS**. Documento parallelo a `CLAUDE.md`: copre architettura, pipeline di sintesi, pricing, throttling, retry, budget guard, audit, UI e variabili `ABM_GEMINI_*`. Il documento è **generico rispetto al tier Google** (Free / Tier 1 / Tier 2 / Tier 3): i numeri di esempio si riferiscono al tier corrente solo come illustrazione e sono interamente override-abili via env.
+
+> **`flash25` ritirato il 27/09/2026**: sostituito da `flash38` ("PREMIUM+", canale API key/Tier 3, senza failover Vertex/Cloudflare; un chunk con i retry esauriti ripiega sulla stessa voce `flash31`, poi su edge-tts). Ogni riferimento a `flash25` in questo documento è storico.
 
 > **Convenzione UI**: nelle interfacce utente il provider non viene mai nominato. Etichette: "Voci PREMIUM", "Ottimizzazione testo AI". Il nome "Gemini" compare solo in log tecnici, audit file e codice. Vedi memoria `feedback_ui_provider_naming.md`.
 
@@ -18,7 +20,7 @@ Gemini TTS è il terzo motore di sintesi vocale dell'app, accanto a:
 
 Gemini si distingue per:
 
-- **Voci multilingue native**: 30 voci × 2 modelli, ciascuna disponibile sotto ogni lingua UI supportata (vedi `SUPPORTED_UI_LANGUAGES` in `gemini_tts.py:415`: 23 codici ISO 639-1 ufficiali Google + `zh` legacy = 24 lingue; `en-US` ed `en-IN` collassano sotto `en`). Non c'è un catalogo per lingua: la stessa voce parla qualsiasi delle lingue supportate.
+- **Voci multilingue native**: 30 voci × 2 modelli (`flash31`, `flash38`; `flash38` disabilitato di default finché l'utente non ha collaudato, vedi §16), ciascuna disponibile sotto ogni lingua UI supportata (vedi `SUPPORTED_UI_LANGUAGES` in `gemini_tts.py:415`: 23 codici ISO 639-1 ufficiali Google + `zh` legacy = 24 lingue; `en-US` ed `en-IN` collassano sotto `en`). Non c'è un catalogo per lingua: la stessa voce parla qualsiasi delle lingue supportate.
 - **Stile controllabile via prompt**: `style_instruction` (max 200 char user-side; cap calibrato per lasciare spazio alla rate directive ~95 char nello stesso blocco `[style: ...]`) viene prefissata a ogni chunk per orientare tono/emozione.
 - **Direttive di velocità in linguaggio naturale**: 7 step (`-30%`..`+30%`) mappati su istruzioni testuali ("Read this text slowly...", "Read this text very quickly...") perché Gemini non espone una `speaking_rate` API.
 - **Costing per token**: input + output token tariffati separatamente in USD per MTok, con conversione EUR + margine + fee PayPal.
@@ -85,23 +87,25 @@ tts_split.py
 
 Formato canonico: `gemini:<model_key>:<voice_name>`.
 
-- `<model_key>` ∈ {`flash25`, `flash31`} (chiavi interne; vedi tabella sotto)
+- `<model_key>` ∈ {`flash31`, `flash38`} (chiavi interne; vedi tabella sotto). `flash25` ritirato il 27/09/2026, rimosso da `GEMINI_MODELS`: un voice_id `gemini:flash25:*` è ora sconosciuto e `parse_voice_id()` lo rifiuta.
 - `<voice_name>` ∈ `GEMINI_VOICE_NAMES` (30 nomi, es. `Zephyr`, `Kore`, `Algenib`)
 
-Esempi: `gemini:flash25:Zephyr`, `gemini:flash31:Kore`.
+Esempi: `gemini:flash31:Kore`, `gemini:flash38:Zephyr`.
 
 `parse_voice_id()` valida i tre componenti e solleva `ValueError` se uno è sconosciuto.
 
 ### 3.2 Modelli supportati
 
-Definiti in `GEMINI_MODELS` (`gemini_tts.py:62`). Ogni entry contiene id API (API key + Vertex) + label umana + tariffe USD/MTok + margine default. **Nota**: l'ID effettivo passato a `client.models.generate_content` dipende dal backend attivo (vedi §16 "Autenticazione e Backend") ed è risolto da `_resolve_model_id(model_key)`.
+Definiti in `GEMINI_MODELS` (`gemini_tts.py:164`). Ogni entry contiene id API (API key + Vertex + Cloudflare), label umana, tariffe USD/MTok, margine default, `backends_allowed` (canali su cui il modello può essere servito) e `mark_unavailable_on_fatal` (se un errore fatale lo mette in cooldown, vedi §16). **Nota**: l'ID effettivo passato a `client.models.generate_content` dipende dal backend attivo (vedi §16 "Autenticazione e Backend") ed è risolto da `_resolve_model_id(model_key)`.
 
-| `model_key` | API key ID | Vertex ID (GA) | Label | Input USD/MTok | Output USD/MTok |
-|-------------|------------|----------------|-------|----------------|-----------------|
-| `flash25` | `gemini-2.5-flash-preview-tts` | `gemini-2.5-flash-tts` | "Gemini 2.5 Flash TTS" | `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` |
-| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | "Gemini 3.1 Flash TTS" | `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` |
+| `model_key` | API key ID | Vertex ID (GA) | Cloudflare | `backends_allowed` | Label | Input USD/MTok | Output USD/MTok |
+|-------------|------------|----------------|------------|---------------------|-------|----------------|-----------------|
+| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | `google/gemini-3.1-flash-tts` | tutti (`None` = nessuna restrizione) | "Gemini 3.1 Flash TTS" | `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` |
+| `flash38` | `gemini-3.8-flash-tts` | `gemini-3.8-flash-tts` | *(non ospitato, `None`)* | solo `apikey` | "Gemini 3.8 (PREMIUM+)" | `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` |
 
-**Aggiungere un nuovo modello**: estendere `GEMINI_MODELS` con un nuovo `<model_key>` + ID per entrambi i backend (API key + Vertex) + relative env per pricing/margine + (se necessario) tuning RPM/RPD dedicato + region default (`_resolve_location`).
+`flash38` verificato il 27/09/2026 via API key (AI Studio, Tier 3): Vertex risponde 404 sul progetto ABM, Cloudflare non lo ospita. `backends_allowed=("apikey",)` blinda questo fatto a livello di codice: `_apply_backends_allowed()` impedisce che *qualunque* percorso di risoluzione (incluso l'`auto`, incluso un circuit breaker Cloudflare in fail-safe) lo instradi su Vertex. Risposta anche in formato diverso: WAV (RIFF) invece di PCM grezzo — vedi §4 e §16.
+
+**Aggiungere un nuovo modello**: estendere `GEMINI_MODELS` con un nuovo `<model_key>` + ID per i backend supportati + relative env per pricing/margine + `backends_allowed` (`None` se disponibile ovunque, tupla se ristretto) + (se necessario) tuning RPM/RPD dedicato + region default (`_resolve_location`).
 
 ### 3.3 Catalogo voci
 
@@ -144,7 +148,7 @@ testo capitolo
                  ├── _check_rpd_cap()
                  ├── _throttle_rpm()
                  ├── client.models.generate_content(...)
-                 ├── _extract_audio_pcm()
+                 ├── _extract_audio_pcm()   # PCM grezzo (flash31) o WAV/RIFF (flash38)
                  ├── _rpd_increment()
                  └── usage_metadata → input/output token counts
    └── trim trailing silence di ogni PCM (cap trim_tail_ms, default 800 ms; soglia trim_tail_threshold, default 200)
@@ -160,6 +164,8 @@ testo capitolo
 - **`max_bytes`** (solo Gemini): cap byte UTF-8 sul **testo puro** (= `MAX_BYTES_PER_CALL`). Edge/Google ricevono `None`.
 
 Filosofia: chunk piccoli (~700 char) sacrificano numero di chiamate API in cambio di **stabilità acustica e prosodia uniforme**. È un trade-off pensato per tier con RPD elevato (Tier 2/3); su Free/Tier 1 si raccomanda di alzare `ABM_GEMINI_CHUNK_CHARS` per ridurre RPD consumati.
+
+**Estrazione audio — PCM vs WAV**: `_extract_audio_pcm(response, model_key)` gestisce due formati di risposta. `flash31` risponde con **PCM grezzo** (comportamento storico). `flash38` risponde con **WAV/RIFF**: la funzione usa il modulo standard `wave` per fare il parsing dell'header e valida che il formato sia esattamente **24 kHz / mono / 16-bit** prima di estrarre i frame; un formato diverso solleva `GeminiAudioFormatError` (fallisce quel chunk, non silenzioso). Il ramo è scelto in base al `model_key`, non a un content-type dichiarato dalla risposta.
 
 ### 4.2 Prefissi di prompt (NON contati nel target qualità)
 
@@ -268,14 +274,14 @@ wait_ms = min_interval_ms - elapsed_ms
 if wait_ms > 0: sleep(wait_ms / 1000)
 ```
 
-Configurabile:
+Configurabile. Da questo rilascio la forma preferita è `ABM_GEMINI_RPM_<KEY>` (in **richieste al minuto**, convertita internamente in `min_interval_ms = ceil(60000/RPM)`); l'alias storico in millisecondi diretti `ABM_GEMINI_MIN_INTERVAL_<KEY>_MS` resta letto e vince solo se `ABM_GEMINI_RPM_<KEY>` è assente o `0` (`gemini_tts.py:_min_interval_ms`, 945):
 
-| Modello | Env | Default | Tipico free | Tipico Tier 1 | Tipico Tier 2/3 |
-|---------|-----|---------|-------------|---------------|-----------------|
-| flash25 | `ABM_GEMINI_MIN_INTERVAL_FLASH25_MS` | `0` | 6500 ms (10 RPM) | 80 ms (~750 RPM) | 0 (no throttle) |
-| flash31 | `ABM_GEMINI_MIN_INTERVAL_FLASH31_MS` | `0` | 21000 ms (3 RPM) | 200 ms (~300 RPM) | 0 (no throttle) |
+| Modello | Env (RPM, preferita) | Env legacy (ms) | Default | Tipico free | Tipico Tier 1 | Tipico Tier 2/3 |
+|---------|----------------------|------------------|---------|-------------|---------------|-----------------|
+| flash31 | `ABM_GEMINI_RPM_FLASH31` | `ABM_GEMINI_MIN_INTERVAL_FLASH31_MS` | `0` (nessun throttle, `default_rpm=0` in catalogo) | 21000 ms (3 RPM) | 200 ms (~300 RPM) | 0 (no throttle) |
+| flash38 | `ABM_GEMINI_RPM_FLASH38` | `ABM_GEMINI_MIN_INTERVAL_FLASH38_MS` | `800` RPM (`default_rpm` di catalogo → ~75 ms) | n/d (solo Tier 3, `apikey`-only) | n/d | 800 RPM calibrato sul Tier 3 (1K RPM / 1M TPM nominali; a ~1.200 token/chunk da 450 char il TPM morde prima, da cui il margine) |
 
-`0` disabilita il throttle (delega al rate-limit server-side di Google).
+`0` su `ABM_GEMINI_RPM_<KEY>` (con env legacy assente) disabilita il throttle (delega al rate-limit server-side di Google). `flash25`, ritirato il 27/09/2026, aveva `ABM_GEMINI_MIN_INTERVAL_FLASH25_MS`/`ABM_GEMINI_RPD_FLASH25`: non più lette.
 
 ### 7.2 RPD (Requests Per Day) — `_check_rpd_cap` / `_rpd_increment`
 
@@ -285,8 +291,8 @@ Configurabile:
 
 | Modello | Env | Default |
 |---------|-----|---------|
-| flash25 | `ABM_GEMINI_RPD_FLASH25` | `0` (= no cap locale, delega all'API) |
-| flash31 | `ABM_GEMINI_RPD_FLASH31` | `0` |
+| flash31 | `ABM_GEMINI_RPD_FLASH31` | `0` (= no cap locale, delega all'API; `default_rpd=0` in catalogo) |
+| flash38 | `ABM_GEMINI_RPD_FLASH38` | `0` |
 | Safety reserve | `ABM_GEMINI_RPD_SAFETY_RESERVE` | `0` |
 
 Quando `used + reserve >= cap`, `_check_rpd_cap()` solleva `GeminiQuotaExhausted(reason="rpd_local_cap")` con `retry_after_sec` = secondi residui fino a mezzanotte UTC.
@@ -316,9 +322,11 @@ Implementata in `synthesize()` (loop `while attempt < max_attempts`). Configurab
 | `ABM_GEMINI_RETRY_HONOR_DELAY` | `true` | Se `true`, rispetta `retryDelay` server-side |
 | `ABM_GEMINI_RETRY_MAX_WAIT_SEC` | `60` | Se `retryDelay > max_wait`, abort invece di sleep |
 | `ABM_GEMINI_ABORT_ON_QUOTA` | `true` | Su 429 daily-quota, abort immediato (no retry) |
-| `ABM_GEMINI_HTTP_TIMEOUT_MS` | `25000` | Timeout HTTP in ms per le call all'API Gemini su modello **`flash25`** (applicato per-call via `GenerateContentConfig.http_options=HttpOptions(timeout=...)`; il client singleton mantiene lo stesso valore come default fallback). Evita che `generate_content()` penda indefinitamente su API lenta/irraggiungibile. Per preview il ThreadPoolExecutor timeout di 30s funge da secondo limite. |
-| `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31` | `60000` | Timeout HTTP in ms per le call su modello **`flash31`** (`gemini-3.1-flash-tts-preview`). Default piu` permissivo (60s vs 25s di flash25) perche` flash31 ha RPM cap inferiore (3/300 vs 10/750) e audio gen piu` lenta lato Google: senza maggiorazione i chunk normali finiscono in 504 `DEADLINE_EXCEEDED`, saturano i 3 retry e producono silenzio. Selezione automatica via `_http_timeout_ms(model_key)` in `gemini_tts.py:1161` -- nessuna azione manuale necessaria, ma override possibile via env. |
-| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31` | `65` | Timeout in **secondi** del `ThreadPoolExecutor` wrapper in `/api/preview_audio` per modello **`flash31`**. Deve essere ≥ `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31/1000` + buffer per non strozzare la call Google. Default `65` (= 60s HTTP + 5s buffer). flash25 mantiene il wrapper hardcoded a 30s. Catena timeout preview: HTTP Google → wrapper → client JS; ognuno con ~5s di buffer sul precedente. |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS` | `25000` | Fallback **generico**, usato solo se il modello non ha un default proprio nel catalogo `GEMINI_MODELS` né un override `_<KEY>`. Con `flash25` ritirato, sia `flash31` (60000) che `flash38` (40000) hanno sempre un default di catalogo: questo fallback non entra mai in gioco in condizioni normali. Applicato per-call via `GenerateContentConfig.http_options=HttpOptions(timeout=...)`. |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31` | `60000` | Timeout HTTP in ms per le call su modello **`flash31`** (`gemini-3.1-flash-tts-preview`). Google e' piu` lento su flash31 (audio gen piu` lenta): senza maggiorazione i chunk normali finiscono in 504 `DEADLINE_EXCEEDED`, saturano i 3 retry e producono silenzio. Selezione automatica via `_http_timeout_ms(model_key)` in `gemini_tts.py:1161` -- nessuna azione manuale necessaria, ma override possibile via env. |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH38` | `40000` | Timeout HTTP in ms per le call su modello **`flash38`** (`gemini-3.8-flash-tts`, unico backend `apikey`/Tier 3). Piu` basso di flash31: la generazione WAV e' risultata piu` rapida lato Google nel test Beren del 27/09/2026. |
+| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31` | `65` | Timeout in **secondi** del `ThreadPoolExecutor` wrapper in `/api/preview_audio` per modello **`flash31`**. Deve essere ≥ `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31/1000` + buffer per non strozzare la call Google. Default `65` (= 60s HTTP + 5s buffer). |
+| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH38` | `45` | Idem per `flash38` (= 40s HTTP + 5s buffer). **Il timeout usato dal client JS non è più hardcoded per modello**: `/api/voices` espone `_gemini.preview_timeout_ms[model_key]` (valorizzato da questa env × 1000), e `static/js/app.js` lo legge dinamicamente invece di avere soglie fisse per `flash25`/`flash31` in JS. Catena timeout preview: HTTP Google → wrapper → client JS, ognuno con buffer sul precedente. |
 
 **Override per-caller**: `synthesize()` accetta un argomento opzionale `max_attempts` che, se passato (>0), vince sull'env. Usato dal path **preview** (`/api/preview_audio`) con `max_attempts=1` per fallire velocemente su `EMPTY-RESPONSE finish_reason=OTHER` (retry deterministicamente inutile per stesso payload) e non saturare il timeout client di 30s → 504. La generazione lunga continua a usare il default 3 perche` ha il fallback "1s silenzio" su chunk falliti.
 
@@ -407,7 +415,7 @@ chars_total = sum(len(_normalize_text(ch.text)) for ch in chapters)
 input_tokens = chars_total / CHARS_PER_TOKEN_BY_LANG[lang]
 audio_seconds = chars_total / empirical_rate(lang, voice, rate_step)  # fallback baseline_rate(lang)
 audio_seconds /= max(0.5, 1 + rate_pct/100)                 # scaling velocità
-output_tokens = audio_seconds * _audio_tokens_per_second(model_key)  # 25.0 per entrambi i modelli (misurato)
+output_tokens = audio_seconds * _audio_tokens_per_second(model_key)  # 25.0 flash31 (misurato su 168 job), 31.9 flash38 (test singolo, da confermare)
 google_cost_eur = (input_tokens × input_usd/MTok + output_tokens × output_usd/MTok) × USD_EUR_RATE
 user_price = compute_user_price_eur(google_cost_eur, model_key)
 ```
@@ -456,7 +464,7 @@ PayPal: lo stesso `lang` è ripassato a `/api/paypal_create_order_gemini` perche
 Catena di calcolo da costo Google netto a prezzo utente finale:
 
 ```
-google_cost_eur = google_cost_usd × USD_EUR_RATE
+google_cost_eur = google_cost_usd × USD_EUR_RATE   # google_cost_usd gia' IVA-inclusa dove dovuta, vedi §11.1.2
 base_eur        = google_cost_eur × (1 + margin_pct/100)
 gross_eur       = (base_eur + PAYPAL_FIXED_FEE_EUR) / (1 - PAYPAL_PERCENT_FEE/100)
 user_price_eur  = round(gross_eur, 2)
@@ -465,20 +473,35 @@ is_free         = user_price_eur < FREE_THRESHOLD_EUR
 
 ### 11.1 Parametri
 
+Le env `ABM_GEMINI_<KEY>_INPUT/OUTPUT_USD_PER_MTOK` sono **listino netto IVA** (dal 27/09/2026, vedi §11.1.2): il costo IVA-inclusa usato per il prezzo utente e per la contabilità è calcolato a runtime, non impostato in queste env.
+
 | Env | Default | Significato |
 |-----|---------|-------------|
 | `ABM_GEMINI_USD_EUR_RATE` | `0.86` | Cambio statico USD→EUR (aggiornato manualmente) |
 | `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` | Fee fissa PayPal per transazione |
 | `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` | Fee percentuale PayPal (gross-up) |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` | Sotto questa soglia il job è gratis (no addebito) |
-| `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` | `0.50` | Pricing input flash25 |
-| `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` | `10.00` | Pricing output flash25 |
-| `ABM_GEMINI_25FLASH_MARGIN_PERCENT` | `35.0` | Margine flash25 |
-| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing input flash31 |
-| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Pricing output flash31 |
+| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing input flash31 (netto IVA) |
+| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Pricing output flash31 (netto IVA) |
 | `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25.0` | Margine flash31 |
+| `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing input flash38 (netto IVA — listino 2027, non il promozionale 2026) |
+| `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` | Pricing output flash38 (netto IVA) |
+| `ABM_GEMINI_38FLASH_MARGIN_PERCENT` | `25.0` | Margine flash38 |
+| `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA applicata solo su backend `vertex`/`apikey` (vedi §11.1.2) |
 
-I default sono allineati al pricing pubblico Google al momento dello sviluppo. **Aggiornare i valori di pricing**: bumpare le env in `.env` di produzione; il modulo li legge a runtime (no caching), quindi un restart applica i nuovi valori.
+`ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026). I default sono allineati al pricing pubblico Google al momento dello sviluppo. **Aggiornare i valori di pricing**: bumpare le env in `.env` di produzione; il modulo li legge a runtime (no caching), quindi un restart applica i nuovi valori.
+
+### 11.1.2 IVA per backend
+
+Fino al 27/09/2026 le env di costo Vertex erano gonfiate a mano per includere l'IVA (es. `1.22`/`24.40` invece di `1.00`/`20.00`). Da questo rilascio le env sono **al netto IVA** (listino Google puro, uguale su tutti i backend) e l'IVA si somma a runtime:
+
+- `gemini_tts.vat_percent()` → `ABM_GEMINI_VAT_PERCENT`, default `22.0`.
+- `gemini_tts._vat_factor(backend)` → `1 + vat_percent/100` se `backend ∈ ("vertex", "apikey")` (Google Ireland Ltd fattura con IVA italiana su questi canali), altrimenti `1.0`. Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata).
+- **Mai applicata a `cloudflare`**: fatturazione extra-UE senza IVA italiana in questo schema.
+- `actual_rates(model_key, backend)` = tariffe nette × fattore IVA del backend **realmente usato** → è il numero con cui si riconcilia la spesa vera e si misura il margine reale.
+- `pricing_rates(model_key)` (il **listino esposto all'utente**) usa sempre `actual_rates(model_key, "vertex")` come base, indipendentemente dal backend che servirà davvero la richiesta — il prezzo mostrato all'utente non deve oscillare in base a quale backend risulta attivo in quel momento (stessa logica di stabilità di `_pricing_uses_cloudflare()`, §7.10 di `PARAMETRI_CONFIGURAZIONE.md`). Il risparmio Cloudflare, quando applicabile, si somma sopra come sconto esplicito (`cf_saving_share`), non cambiando l'assunzione IVA.
+
+**Un ambiente di prod che continuasse a usare le env di costo gonfiate manualmente conterebbe l'IVA due volte** (una nell'env, una nel fattore runtime): va corretto contestualmente a questo rilascio (checklist di prod, punto 1).
 
 ### 11.1.1 Semantica di `MARGIN_PERCENT` (IMPORTANTE)
 
@@ -499,6 +522,8 @@ Rate per minuto mostrato in UI: ~€0.0359/min. Il "ricarico apparente" 39–40%
 Asintoto su libri grandi (fee fissa diluita): `user_per_min → google_per_min × (1 + margin/100) / (1 − paypal_pct/100)` ≈ Google × 1.346 con i parametri di default.
 
 Per ottenere un ricarico utente apparente del 30%: impostare `MARGIN_PERCENT ≈ 21` (così `1.21 / 0.966 ≈ 1.253`, più la fee fissa diluita ≈ 30% complessivo a libro lungo). Trade-off: il margine netto operatore scende dal 30% al 21%.
+
+> Esempio scritto prima della separazione IVA (§11.1.2): il "Google cost" qui sopra è il listino netto. Dal 27/09/2026 va moltiplicato per `_vat_factor(backend)` (×1.22 di default su Vertex/API key) **prima** di applicare il margine — l'ordine di grandezza del ricarico apparente resta simile, ma la cifra "7.49" andrebbe ricalcolata con l'IVA inclusa per un preventivo esatto.
 
 ### 11.2 Free threshold
 
@@ -599,7 +624,7 @@ L'entry in memoria del job viene comunque rimossa (così il loop non si ripropon
   "ts": "2026-05-19T14:32:11Z",
   "job_id": "...",
   "outcome": "completed|error|cancelled_refunded|cancelled_partial|gemini_overload|budget_exceeded",
-  "voice_id": "gemini:flash25:Zephyr",
+  "voice_id": "gemini:flash31:Zephyr",
   "language": "it",
   "rate_pct": 0,
   "rate_step": 0,
@@ -612,7 +637,7 @@ L'entry in memoria del job viene comunque rimossa (così il loop non si ripropon
   "delta_pct": 2.7,
   "chars_total": 45000,
   "audio_seconds_real": 3010.5,
-  "model_key": "flash25",
+  "model_key": "flash31",
   "style_instruction": "Calm narrator",
   "chunks_total": 65,
   "chunks_failed": 0,
@@ -811,29 +836,35 @@ Il client renderizza un blocco riepilogo via `_renderGeminiCancelSummary(d)` con
 
 ### Autenticazione e Backend
 
-Gemini TTS supporta due backend, selezionabili via `ABM_GEMINI_BACKEND`:
+Gemini TTS supporta tre backend, selezionabili via `ABM_GEMINI_BACKEND` (globale) o `ABM_GEMINI_BACKEND_<KEY>` (per modello, ha precedenza):
 
 | `ABM_GEMINI_BACKEND` | Env richieste | Note |
 |---|---|---|
-| `vertex` (consigliato prod) | `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE` (path al SA JSON, lo stesso usato da Cloud TTS) | Quote a livello progetto GCP, no Tier API. Service account JSON deve avere ruolo `roles/aiplatform.user`. |
-| `apikey` (dev / fallback) | `ABM_GEMINI_API_KEY` (chiave Gemini AI Studio) | Quote tiered Google AI Studio (Tier 1/2/3). |
-| `auto` (default) o non settato | una delle due sopra | Preferisce Vertex se presente; cade su API key. |
+| `vertex` (consigliato prod per `flash31`) | `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE` (path al SA JSON, lo stesso usato da Cloud TTS) | Quote a livello progetto GCP, no Tier API. Service account JSON deve avere ruolo `roles/aiplatform.user`. |
+| `apikey` (dev / fallback, **unico canale per `flash38`**) | `ABM_GEMINI_API_KEY` (chiave Gemini AI Studio) | Quote tiered Google AI Studio (Tier 1/2/3). |
+| `cloudflare` (opt-in esplicito, solo modelli con `id_cloudflare`) | `ABM_CF_ACCOUNT_ID` + `ABM_CF_API_TOKEN` | Oggi solo `flash31`. |
+| `auto` (default) o non settato | una delle prime due | Preferisce Vertex se presente; cade su API key. **Non seleziona mai Cloudflare.** |
+
+`ABM_GEMINI_BACKEND_<KEY>` (`<KEY>` = model_key maiuscolo, es. `ABM_GEMINI_BACKEND_FLASH38=apikey`) prevale sul selettore globale, ma è comunque filtrata dai `backends_allowed` del catalogo (`_apply_backends_allowed`): un valore incompatibile con il modello non porta mai al backend richiesto, al più lo disabilita.
 
 #### Mapping modello → backend
 
-I modelli hanno ID differenti tra Vertex (GA) e API key (legacy "-preview"):
+I modelli hanno ID differenti tra Vertex (GA) e API key (legacy "-preview" per `flash31`, GA per `flash38`):
 
-| Modello key | API key ID | Vertex ID | Vertex region default |
-|---|---|---|---|
-| `flash25` | `gemini-2.5-flash-preview-tts` | `gemini-2.5-flash-tts` (GA) | `global` |
-| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | `us-central1` |
+| Modello key | API key ID | Vertex ID | Cloudflare | `backends_allowed` | Vertex region default |
+|---|---|---|---|---|---|
+| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | `google/gemini-3.1-flash-tts` | tutti | `us-central1` |
+| `flash38` | `gemini-3.8-flash-tts` | `gemini-3.8-flash-tts` (GA) | *(non ospitato)* | solo `apikey` | `us-central1` (mai usata: `backends_allowed` blocca Vertex) |
 
-Override region per modello: `ABM_VERTEX_LOCATION_FLASH25` / `ABM_VERTEX_LOCATION_FLASH31`.
+`flash25`, ritirato il 27/09/2026, non è più nel catalogo `GEMINI_MODELS`.
 
-Vertex client cache: un client `genai.Client(vertexai=True, project, location)` per ogni `(backend, location)` distinta. flash25/flash31 vivono su client separati per via della region diversa.
+Override region per modello: `ABM_VERTEX_LOCATION_FLASH31`. `ABM_VERTEX_LOCATION_FLASH25` non più letta. Un eventuale `ABM_VERTEX_LOCATION_FLASH38` sarebbe accettato da `_resolve_location` ma senza effetto pratico, dato che `flash38` non usa mai Vertex.
+
+Vertex client cache: un client `genai.Client(vertexai=True, project, location)` per ogni `(backend, location)` distinta. Oggi in pratica solo `flash31` vive su Vertex: `flash38` non ci arriva mai per via di `backends_allowed`.
 
 Resolver implementato in `gemini_tts.py`:
-- `_resolve_backend()` — sceglie vertex/apikey
+- `_resolve_backend()` — sceglie vertex/apikey/cloudflare, applica override per-modello e precedenza del circuit breaker
+- `_apply_backends_allowed(key, resolved, apikey_ready)` — filtra l'esito sui `backends_allowed` del catalogo, su OGNI percorso di ritorno (incluso il fail-safe del breaker)
 - `_resolve_model_id(model_key)` — ID corretto per backend
 - `_resolve_location(model_key)` — region Vertex
 - `_get_client(model_key)` — client cached per (backend, location)
@@ -842,14 +873,27 @@ Resolver implementato in `gemini_tts.py`:
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_BACKEND` | `auto` | `vertex` / `apikey` / `auto` — selettore backend. |
+| `ABM_GEMINI_BACKEND` | `auto` | `vertex` / `apikey` / `cloudflare` / `auto` — selettore backend globale. |
+| `ABM_GEMINI_BACKEND_<KEY>` | *(vuoto)* | Override per singolo modello (es. `ABM_GEMINI_BACKEND_FLASH38=apikey`). Prevale sul globale, filtrato da `backends_allowed`. |
 | `ABM_GCP_PROJECT_ID` | — | ID progetto GCP per Vertex. Obbligatorio se backend=vertex. |
 | `ABM_GOOGLE_CREDENTIALS_FILE` | *(empty)* | Path JSON service account (re-uso da Cloud TTS). Obbligatorio se backend=vertex. |
-| `ABM_VERTEX_LOCATION_FLASH25` | `global` | Region Vertex per flash25 (override). |
 | `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per flash31 (override). |
-| `ABM_GEMINI_API_KEY` | *(empty)* | API key Google AI Studio (backend=apikey). |
+| `ABM_GEMINI_API_KEY` | *(empty)* | API key Google AI Studio (backend=apikey). **Unico canale per `flash38`**: senza questa env il modello resta nascosto dal catalogo. |
+| `ABM_CF_ACCOUNT_ID` / `ABM_CF_API_TOKEN` | *(empty)* | Credenziali Cloudflare Workers AI (backend=cloudflare, solo `flash31`). |
 | `ABM_GEMINI_USE_VERTEX` | `false` | **DEPRECATED** — usa `ABM_GEMINI_BACKEND=vertex`. Conservato per backward-compat. |
 | `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(empty)* | **DEPRECATED** — usa `ABM_GOOGLE_CREDENTIALS_FILE` (condiviso con Cloud TTS). |
+
+#### Modello "non disponibile" e cooldown (`gemini_availability.py`)
+
+Modulo foglia distinto dal circuit breaker Cloudflare→Vertex (`tts_backend_state.py`, gestisce il *failover fra backend* dello stesso modello). `gemini_availability.py` gestisce lo stato "il modello stesso non è al momento utilizzabile" — rilevante soprattutto per `flash38`, che non ha un backend alternativo su cui deviare essendo `apikey`-only.
+
+| Variabile | Default | Note |
+|-----------|---------|------|
+| `ABM_GEMINI_UNAVAILABLE_COOLDOWN_SEC` | `900` | Durata del cooldown dopo un errore fatale. Scaduto, il modello ritorna offerto senza intervento admin. |
+
+Un modello entra in cooldown quando la sua entry di catalogo ha `mark_unavailable_on_fatal=True` (solo `flash38`; `flash31=False`) e una call fallisce con errore non recuperabile. API: `mark_unavailable(model_key, reason, now=None)`, `is_unavailable(model_key, now=None)`, `clear(model_key)`, `snapshot(now=None)`. Stato persistito su disco. `gemini_tts.model_unavailable(model_key)` consulta questo stato per escludere il modello da `offered_model_keys()`.
+
+**Reset manuale**: `GET/POST /admin/api/gemini_model_availability` (`{action: "reset", model_key}`) — endpoint distinto da `/admin/api/tts_backend` (reset del breaker Cloudflare).
 
 ### Chunking
 
@@ -868,11 +912,12 @@ Resolver implementato in `gemini_tts.py`:
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_MIN_INTERVAL_FLASH25_MS` | `0` | RPM throttle flash25 (0 = off) |
-| `ABM_GEMINI_MIN_INTERVAL_FLASH31_MS` | `0` | RPM throttle flash31 |
-| `ABM_GEMINI_RPD_FLASH25` | `0` | RPD cap flash25 (0 = no cap locale) |
-| `ABM_GEMINI_RPD_FLASH31` | `0` | RPD cap flash31 |
+| `ABM_GEMINI_RPM_<KEY>` | `default_rpm` di catalogo (`flash31`: `0`; `flash38`: `800`) | Forma preferita, in **richieste/minuto**: convertita in `min_interval_ms = ceil(60000/RPM)`. |
+| `ABM_GEMINI_MIN_INTERVAL_<KEY>_MS` | *(vuoto)* | Alias storico in ms diretti; vince solo se `ABM_GEMINI_RPM_<KEY>` è assente/`0`. Non deprecato. |
+| `ABM_GEMINI_RPD_<KEY>` | `default_rpd` di catalogo (`0` per entrambi i modelli oggi) | RPD cap locale per modello (0 = no cap locale, delega al Tier Google). |
 | `ABM_GEMINI_RPD_SAFETY_RESERVE` | `0` | Riserva sottratta dal cap RPD |
+
+`<KEY>` = model_key maiuscolo (`FLASH31`, `FLASH38`). `ABM_GEMINI_MIN_INTERVAL_FLASH25_MS` / `ABM_GEMINI_RPD_FLASH25` rimosse con `flash25`.
 
 ### Retry
 
@@ -900,16 +945,19 @@ Resolver implementato in `gemini_tts.py`:
 | `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` | Fee fissa PayPal |
 | `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` | Fee % PayPal |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` | Soglia gratuità |
-| `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` | `0.50` | Pricing flash25 input |
-| `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` | `10.00` | Pricing flash25 output |
-| `ABM_GEMINI_25FLASH_MARGIN_PERCENT` | `35.0` | Margine flash25 |
-| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing flash31 input |
-| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Pricing flash31 output |
+| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing flash31 input (netto IVA, vedi §11.1.2) |
+| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Pricing flash31 output (netto IVA) |
 | `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25.0` | Margine flash31 |
+| `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing flash38 input (netto IVA — listino 2027) |
+| `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` | Pricing flash38 output (netto IVA) |
+| `ABM_GEMINI_38FLASH_MARGIN_PERCENT` | `25.0` | Margine flash38 |
+| `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA applicata solo su backend `vertex`/`apikey`, mai su `cloudflare` (§11.1.2) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` | Modalità billing: `prompt`/`token`/`estimate` |
 | `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` | Token audio output per secondo (fallback globale). Default conservativo; preferire le varianti per-modello. |
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25` | `25.0` | Token audio/sec per flash25. Default conservativo — verificare con `output_tokens / audio_seconds` dai record audit `completed`. |
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `29.0` | Token audio/sec per flash31. Default calibrato empiricamente. Se il margine a consuntivo diverge dal `MARGIN_PERCENT`, ricalibrare. |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `25.0` | Token audio/sec per flash31. Calibrato empiricamente su 168 job (era `29.0`, sovrastimava il costo del 16-20%). Se il margine a consuntivo diverge dal `MARGIN_PERCENT`, ricalibrare. |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH38` | `31.9` | Token audio/sec per flash38. Misurato su un solo test (Beren, 27/09/2026) — **da riverificare in fattura** su un campione più ampio, a differenza di flash31. |
+
+`ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026).
 
 ### Preview
 
@@ -988,9 +1036,11 @@ Per **Tier 2/3** (RPD ampio):
 
 Per **Free tier**:
 
-- `MIN_INTERVAL_FLASH25_MS=6500`, `MIN_INTERVAL_FLASH31_MS=21000`.
-- `RPD_FLASH25=15`, `RPD_FLASH31=15`, `RPD_SAFETY_RESERVE=2`.
+- `ABM_GEMINI_RPM_FLASH31=3` (o l'alias legacy `MIN_INTERVAL_FLASH31_MS=21000`).
+- `ABM_GEMINI_RPD_FLASH31=15`, `RPD_SAFETY_RESERVE=2`.
 - `ABORT_ON_QUOTA=true` (retry inutili: quota giornaliera).
+
+`flash38` non ha un profilo Free/Tier 1: è nato direttamente su Tier 3 (`default_rpm=800`, `ABM_GEMINI_RPD_FLASH38=0`) ed è comunque servito solo su backend `apikey`, mai su Vertex.
 
 I numeri sopra sono indicativi e vanno verificati sul portale Google AI Studio al cambio di tier.
 

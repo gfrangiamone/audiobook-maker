@@ -56,7 +56,7 @@ def test_opt_lang_used_for_gemini_voice(monkeypatch):
     monkeypatch.setattr(generation_engine, "_llm_client",
                         type("C", (), {"chat": _FakeCompletions().chat})())
 
-    job = {"opt_lang": "fr", "opt_voice": "gemini:flash25:Zephyr"}
+    job = {"opt_lang": "fr", "opt_voice": "gemini:flash31:Zephyr"}
     generation_engine._call_llm("testo", job=job, max_retries=1)
 
     assert requested[0] == "fr", f"atteso 'fr', ricevuto {requested[0]!r}"
@@ -101,7 +101,7 @@ def test_fallback_to_voice_extraction_when_no_opt_lang(monkeypatch):
 
 
 def test_gemini_voice_without_opt_lang_does_not_corrupt_lang(monkeypatch):
-    """Voice Gemini SENZA opt_lang: la stringa "gemini:flash25:zephyr" non deve
+    """Voice Gemini SENZA opt_lang: la stringa "gemini:flash31:zephyr" non deve
     essere usata come lingua. Meglio fallback a 'it' (default) che a una
     stringa nonsense che cerca un file inesistente."""
     requested = _capture_prompt_lang(monkeypatch)
@@ -114,7 +114,7 @@ def test_gemini_voice_without_opt_lang_does_not_corrupt_lang(monkeypatch):
     monkeypatch.setattr(generation_engine, "_llm_client",
                         type("C", (), {"chat": type("X", (), {"completions": _FakeChat()})()})())
 
-    job = {"voice": "gemini:flash25:Zephyr"}
+    job = {"voice": "gemini:flash31:Zephyr"}
     generation_engine._call_llm("test", job=job, max_retries=1)
 
     # Default "it" mantenuto perche' la voice id Gemini non e` parsable.

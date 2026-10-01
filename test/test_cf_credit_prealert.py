@@ -69,7 +69,7 @@ def _env(tmp_path, monkeypatch):
     gemini_tts.set_backend_switch_notifier(original_switch)
     gemini_tts.set_credit_alert_notifier(original_credit)
     st.reset("flash31")
-    st.reset("flash25")
+    st.reset("flash31")
 
 
 def _cf_ok(**kw):

@@ -67,13 +67,13 @@ def test_recalc_params_empty_returns_no_groups(client, admin_headers):
 def test_recalc_params_emits_suggestion_for_full_group(client, admin_headers):
     # 3 record stesso gruppo, delta positivo => DELTA% = 0.3/1.5 = +20% => margine alto
     for i in range(3):
-        _add("flash25", "it", 0.1, f"j{i}")
+        _add("flash31", "it", 0.1, f"j{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     assert r.status_code == 200
     d = r.get_json()
     assert d["groups_evaluated"] == 1
-    line = _global_line(d, "flash25", "it")
+    line = _global_line(d, "flash31", "it")
     assert line is not None
     assert "margine alto" in line
 
@@ -81,14 +81,14 @@ def test_recalc_params_emits_suggestion_for_full_group(client, admin_headers):
 def test_recalc_params_skips_small_group(client, admin_headers):
     # solo 2 record => gruppo non valutato (servono >=3)
     for i in range(2):
-        _add("flash25", "it", 0.1, f"j{i}")
+        _add("flash31", "it", 0.1, f"j{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     assert r.status_code == 200
     d = r.get_json()
     assert d["groups_total"] == 1
     assert d["groups_evaluated"] == 0
-    line = _global_line(d, "flash25", "it")
+    line = _global_line(d, "flash31", "it")
     assert line is not None
     assert "campioni insufficienti" in line
 
@@ -108,11 +108,11 @@ def test_recalc_params_loss_suggestion(client, admin_headers):
 def test_recalc_params_ok_suggestion(client, admin_headers):
     # delta piccolo => DELTA% = 0.03/1.5 = +2% (entro +-5%) => parametri OK
     for i in range(3):
-        _add("flash25", "fr", 0.01, f"m{i}")
+        _add("flash31", "fr", 0.01, f"m{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     d = r.get_json()
-    line = _global_line(d, "flash25", "fr")
+    line = _global_line(d, "flash31", "fr")
     assert line is not None
     assert "parametri OK" in line
 

@@ -57,7 +57,7 @@ def _server_total(client, job_id, voice_id, selected, ai_opt):
 def test_create_order_amount_mismatch_409(client, jb):
     r = client.post("/api/paypal_create_order_gemini", json={
         "job_id": "pj1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
         "ai_opt_enabled": False,
         "amount_eur": 99.99,
@@ -72,7 +72,7 @@ def test_create_order_amount_mismatch_409(client, jb):
 def test_create_order_job_not_found(client):
     r = client.post("/api/paypal_create_order_gemini", json={
         "job_id": "nonexistent",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
         "ai_opt_enabled": False,
         "amount_eur": 1.20,
@@ -81,13 +81,13 @@ def test_create_order_job_not_found(client):
 
 
 def test_create_order_success(client, jb):
-    amount = _server_total(client, "pj1", "gemini:flash25:Zephyr", [0], False)
+    amount = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     assert amount > 0
     with patch("payment._paypal_create_order") as mock:
         mock.return_value = {"id": "ORDER123", "status": "CREATED"}
         r = client.post("/api/paypal_create_order_gemini", json={
             "job_id": "pj1",
-            "voice_id": "gemini:flash25:Zephyr",
+            "voice_id": "gemini:flash31:Zephyr",
             "selected_chapters": [0],
             "ai_opt_enabled": False,
             "amount_eur": amount,
@@ -157,11 +157,11 @@ def test_llm_rate_respects_module_constant(client, jb, monkeypatch):
 
 
 def test_create_order_paypal_exception_500(client, jb):
-    amount = _server_total(client, "pj1", "gemini:flash25:Zephyr", [0], False)
+    amount = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     with patch("payment._paypal_create_order", side_effect=RuntimeError("PayPal not configured")):
         r = client.post("/api/paypal_create_order_gemini", json={
             "job_id": "pj1",
-            "voice_id": "gemini:flash25:Zephyr",
+            "voice_id": "gemini:flash31:Zephyr",
             "selected_chapters": [0],
             "ai_opt_enabled": False,
             "amount_eur": amount,
@@ -178,13 +178,13 @@ def test_create_order_paypal_exception_500(client, jb):
 
 def test_quote_lock_survives_rate_drift(client, jb, monkeypatch):
     import gemini_tts
-    quoted = _server_total(client, "pj1", "gemini:flash25:Zephyr", [0], False)
+    quoted = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     assert quoted > 0
 
     # Il rate empirico crolla fra la stima e il click su PayPal: il ricalcolo
     # vivo darebbe un importo ben diverso da quello quotato.
     monkeypatch.setattr(gemini_tts, "get_empirical_rate", lambda *a, **k: 9.0)
-    drifted = _server_total(client, "pj1", "gemini:flash25:Zephyr", [0], False)
+    drifted = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     assert abs(drifted - quoted) > 0.01, "il drift simulato non ha spostato il prezzo"
 
     # La stima appena rifatta ha ri-quotato: il client che invia l'importo
@@ -192,14 +192,14 @@ def test_quote_lock_survives_rate_drift(client, jb, monkeypatch):
     # Simuliamo la sequenza reale ri-registrando la quotazione iniziale.
     with audiobook_app._jobs_lock:
         job = audiobook_app.jobs["pj1"]
-    sig = audiobook_app._pricing_signature("gemini:flash25:Zephyr", [0], "+0%", "it", False)
+    sig = audiobook_app._pricing_signature("gemini:flash31:Zephyr", [0], "+0%", "it", False)
     audiobook_app._quote_lock_store(job, sig, quoted)
 
     with patch("payment._paypal_create_order") as mock:
         mock.return_value = {"id": "ORDER_LOCK", "status": "CREATED"}
         r = client.post("/api/paypal_create_order_gemini", json={
             "job_id": "pj1",
-            "voice_id": "gemini:flash25:Zephyr",
+            "voice_id": "gemini:flash31:Zephyr",
             "selected_chapters": [0],
             "ai_opt_enabled": False,
             "amount_eur": quoted,
@@ -216,11 +216,11 @@ def test_quote_lock_does_not_cover_other_inputs(client, jb, monkeypatch):
     """Cambiando gli input di prezzo la firma non combacia: il lock non si
     applica e l'importo vecchio viene rifiutato con 409."""
     import gemini_tts
-    quoted = _server_total(client, "pj1", "gemini:flash25:Zephyr", [0], False)
+    quoted = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     monkeypatch.setattr(gemini_tts, "get_empirical_rate", lambda *a, **k: 9.0)
     r = client.post("/api/paypal_create_order_gemini", json={
         "job_id": "pj1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
         "ai_opt_enabled": False,
         "rate": "+20%",          # input diverso da quello quotato
@@ -233,10 +233,10 @@ def test_quote_lock_does_not_cover_other_inputs(client, jb, monkeypatch):
 def test_quote_lock_expires(client, jb, monkeypatch):
     """Oltre il TTL la quotazione non e' piu' difendibile: si ricalcola."""
     import gemini_tts
-    quoted = _server_total(client, "pj1", "gemini:flash25:Zephyr", [0], False)
+    quoted = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     with audiobook_app._jobs_lock:
         job = audiobook_app.jobs["pj1"]
-    sig = audiobook_app._pricing_signature("gemini:flash25:Zephyr", [0], "+0%", "it", False)
+    sig = audiobook_app._pricing_signature("gemini:flash31:Zephyr", [0], "+0%", "it", False)
     assert audiobook_app._quote_lock_lookup(job, sig) == quoted
     job["quote_locks"][sig]["ts"] -= audiobook_app._QUOTE_LOCK_TTL_SEC + 1
     assert audiobook_app._quote_lock_lookup(job, sig) is None

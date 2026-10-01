@@ -215,7 +215,7 @@ def _estimate_chapter_seconds(ch, language):
             secs = gemini_tts.estimate_audio_seconds(
                 getattr(ch, "text", "") or "",
                 language=language,
-                model_key="flash25",
+                model_key="flash31",
                 rate_pct=0,
             )
             if secs and secs > 0:
@@ -532,9 +532,17 @@ if gemini_tts is not None:
                       f"sonda riuscita dopo {probe_attempts} tentativi",
                       epoch=time.time())
 
+    def _on_gemini_model_unavailable(model_key, detail, job_id):
+        import gemini_availability
+        email_service.admin_notify_gemini_model_unavailable(
+            model_key, detail, job_id, gemini_availability.cooldown_sec())
+        _log_activity("", "", "TTS_MODEL_UNAVAILABLE", "", "",
+                      model_key, str(detail)[:80], epoch=time.time())
+
     gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
     gemini_tts.set_credit_alert_notifier(_on_cf_credit_alert)
     gemini_tts.set_backend_return_notifier(_on_tts_backend_return)
+    gemini_tts.set_model_unavailable_notifier(_on_gemini_model_unavailable)
 
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
@@ -572,7 +580,7 @@ MAX_VOXCPM_TEXT_CHARS = int(os.environ.get("ABM_MAX_VOXCPM_TEXT_CHARS",
 
 # Whitelist charset per gli id voce ricevuti dal client (edge
 # "it-IT-IsabellaNeural", google "it-IT-Chirp3-HD-Zephyr", gemini
-# "gemini:flash25:Zephyr", voxcpm "voxcpm:v2:it-IT/Stefano" — "/" separa
+# "gemini:flash31:Zephyr", voxcpm "voxcpm:v2:it-IT/Stefano" — "/" separa
 # locale e nome nel catalogo di voci inventate). Difesa in profondita' contro
 # stored XSS nelle pagine admin e injection nel formato "#"-separato
 # dell'Activity Log.
@@ -614,12 +622,35 @@ def _premium_model_gate(voice):
     """Risposta 400 se la voce appartiene a un modello PREMIUM disattivato.
 
     Il modello si spegne con `ABM_<MODELLO>_ENABLE=false` (default abilitato):
-    ABM_FLASH25_ENABLE, ABM_FLASH31_ENABLE, ABM_SIMBA32_ENABLE. Il gate copre
+    ABM_FLASH31_ENABLE, ABM_FLASH38_ENABLE, ABM_SIMBA32_ENABLE. Il gate copre
     solo gli ingressi HTTP (anteprima, stime, ordine PayPal, generazione,
     ottimizzazione con auto-generate): i job gia' registrati o pagati
     proseguono, cosi' spegnere un modello non trasforma un lavoro in corso in
     un rimborso. Ritorna None quando la voce e' ammessa.
     """
+    # Voce Gemini di un modello non piu' in catalogo (flash25 ritirato il
+    # 27/09/2026): stesso esito di un modello spento, mai un 500 da
+    # parse_voice_id piu' a valle.
+    if _is_gemini_voice(voice) and gemini_tts is not None:
+        mk = _voice_model_key(voice)
+        if mk and mk not in gemini_tts.GEMINI_MODELS:
+            return jsonify({"error": "voice_model_disabled",
+                            "error_code": "voice_model_disabled",
+                            "model_key": mk}), 400
+        # Modello a canale unico acceso ma senza backend risolvibile (es.
+        # ABM_FLASH38_ENABLE senza ABM_GEMINI_API_KEY): il catalogo lo
+        # nasconde gia', ma una pagina vecchia o una richiesta diretta farebbe
+        # pagare un job che fallisce al primo chunk. Stesso esito del modello
+        # non disponibile. Limitato ai modelli `mark_unavailable_on_fatal`:
+        # flash31 ha il suo percorso (is_available/kill-switch + failover).
+        _single = bool((gemini_tts.GEMINI_MODELS.get(mk) or {}).get(
+            "mark_unavailable_on_fatal")) if mk else False
+        if mk and (gemini_tts.model_unavailable(mk)
+                   or (_single and _voice_model_enabled(voice)
+                       and gemini_tts._resolve_backend(mk) is None)):
+            return jsonify({"error": "voice_model_unavailable",
+                            "error_code": "voice_model_unavailable",
+                            "model_key": mk}), 503
     if _voice_model_enabled(voice):
         return None
     return jsonify({"error": "voice_model_disabled",
@@ -1690,6 +1721,21 @@ def _orphan_reject(job_id, rec, reason):
         print(f"[recover] mark_failed {job_id} failed: {e}")
 
 
+def _recovery_reject_retired_model(voice):
+    """Solleva _RecoveryRejected se la voce e' di un modello Gemini ritirato.
+
+    Rigenerare con un altro modello cambierebbe la voce a meta' libro. Il
+    reject porta il job pagato al rimborso standard (_orphan_fallback), quello
+    non pagato a _orphan_reject. Vale anche per il ramo optimize senza .abm,
+    che non passa da _recovery_generate_gate.
+    """
+    voice = (voice or "").strip()
+    if _is_gemini_voice(voice) and gemini_tts is not None:
+        _mk = _voice_model_key(voice)
+        if _mk not in gemini_tts.GEMINI_MODELS:
+            raise _RecoveryRejected(f"modello ritirato: {_mk}")
+
+
 def _recovery_generate_gate(job_id, rec, info):
     """Gate PREZZO/QUOTA/CAP per un job che il recovery sta per mandare a
     run_generation. Replica i controlli di /api/generate che il recovery
@@ -1726,6 +1772,7 @@ def _recovery_generate_gate(job_id, rec, info):
     is_gem = _is_gemini_voice(voice)
     is_spx = _is_speechify_voice(voice)
     is_vox = _is_voxcpm_voice(voice)
+    _recovery_reject_retired_model(voice)
     if not (is_gem or is_spx or is_vox):
         return out
     total_chars = sum(getattr(ch, "char_count", 0) or 0 for ch in chs)
@@ -1808,19 +1855,24 @@ def _reenqueue_orphan(job_id, rec):
     # cap, stima, quota): il ramo optimize senza .abm ha i suoi controlli in
     # run_optimization e nell'auto-generazione post-LLM.
     _gate = None
-    if not (rec.get("phase") == "optimize" and not use_abm):
-        try:
+    try:
+        if rec.get("phase") == "optimize" and not use_abm:
+            # Niente gate completo qui, ma un modello ritirato va fermato
+            # ora: l'auto-generazione post-LLM lo leggerebbe con un'altra voce.
+            _recovery_reject_retired_model(rec.get("voice"))
+        else:
             _gate = _recovery_generate_gate(job_id, rec, info)
-        except _RecoveryRejected as e:
-            _pay = rec.get("payment") or {}
-            if isinstance(_pay, dict) and (_pay.get("token") or _pay.get("total_eur")):
-                # Pagato ma non eseguibile alle condizioni originali: policy
-                # "non recuperabile" (rimborso + email interrotto + failed).
-                print(f"[recover] {job_id}: {e} -> job pagato, fallback interrotto.")
-                _orphan_fallback(job_id, rec)
-            else:
-                _orphan_reject(job_id, rec, str(e))
-            return False
+    except _RecoveryRejected as e:
+        _pay = rec.get("payment") or {}
+        if isinstance(_pay, dict) and (_pay.get("token") or _pay.get("total_eur")):
+            # Pagato ma non eseguibile alle condizioni originali: policy
+            # "non recuperabile" (rimborso + email interrotto + failed).
+            print(f"[recover] {job_id}: {e} -> job pagato, fallback interrotto.")
+            _orphan_fallback(job_id, rec)
+        else:
+            _orphan_reject(job_id, rec, str(e))
+        return False
+    if _gate is not None:
         info = _gate["info"]
     job = {
         "status": "queued",
@@ -3131,7 +3183,7 @@ def _voice_for_log(voice):
 
 def _voice_public_label(voice):
     """Nome voce presentabile all'utente (mai il nome del provider AI/TTS,
-    regola UI): 'it-IT-IsabellaNeural' -> 'Isabella', 'gemini:flash25:Zephyr'
+    regola UI): 'it-IT-IsabellaNeural' -> 'Isabella', 'gemini:flash31:Zephyr'
     -> 'Zephyr', 'voxcpm:v2:it-IT/Stefano' -> 'Stefano', 'speechify:...:harper_32'
     -> 'harper_32'. Una voce campionata (voxcpm:mine:<token>) diventa la
     generica 'your voice': il token e' un segreto, non un nome da mostrare.
@@ -3171,7 +3223,7 @@ def _voice_public_label(voice):
 def _voice_plan_info(voice):
     """(engine, model_key) per lo storico account: `engine` e' il piano
     ('standard' = voci gratuite, 'premium' = voci a pagamento), `model_key` e'
-    la chiave del modello premium ('flash25', 'flash31', 'simba-3.2',
+    la chiave del modello premium ('flash31', 'simba-3.2',
     'voxcpm'), vuota per le voci standard. E' un identificatore interno: la
     pagina account lo traduce nella stessa etichetta che il selettore voci
     mostra all'utente. Non solleva: su voce ignota torna ('', '')."""
@@ -7256,6 +7308,7 @@ def admin_audit_premium_page():
     <button type="button" id="tbProbeBtn" disabled title="Esegue subito una sonda di rientro invece di aspettare l'appuntamento automatico: sintetizza una parola su Cloudflare e butta l'audio. Se Cloudflare risponde, il rientro avviene da solo; se fallisce, l'appuntamento automatico resta dov'e'.">Sonda ora</button>
     <button type="button" id="tbTopupBtn" disabled title="Da premere dopo aver ricaricato il credito Cloudflare e aggiornato ABM_CF_CREDIT_BALANCE_USD: azzera la spesa accumulata e riarma il pre-allarme per il ciclo successivo.">Ho ricaricato il credito</button>
   </div>
+  <div id="gaBox" style="margin-top:12px;font-size:.9rem"></div>
 </div>
 
 <div class="tab-bar">
@@ -7274,8 +7327,8 @@ def admin_audit_premium_page():
         <label for="tts_auditModelFilter">Modello</label>
         <select id="tts_auditModelFilter">
           <option value="all">Tutti</option>
-          <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
+          <option value="flash38">Gemini 3.8 (PREMIUM+)</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
           <option value="v2">VoxCPM2 (PREMIUM)</option>
         </select>
@@ -7800,6 +7853,8 @@ def admin_audit_premium_page():
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
       const gCost = Number(r.google_cost_eur_actual || 0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(gCost - vat)} + IVA ${fmtEur(vat)}` : "";
       const margEur = revenue - gCost;
       const fee = Number(r._paypal_fee_eur || 0);
       const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur)
@@ -7828,7 +7883,7 @@ def admin_audit_premium_page():
         <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
-        <td>${fmtEur(gCost)}</td>
+        <td title="${esc(costTip)}">${fmtEur(gCost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td${cancelTip}>${fmtEur(revenue)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
@@ -8112,6 +8167,28 @@ def admin_audit_premium_page():
   $("tbProbeBtn").addEventListener("click", tbProbe);
   $("tbTopupBtn").addEventListener("click", tbTopup);
 
+  // ---- Modelli Gemini senza failover: stato "non disponibile" e riattivazione ----
+  async function gaRefresh(){
+    try {
+      const r = await fetch("/admin/api/gemini_model_availability",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) return;
+      const s = await r.json();
+      const rows = Object.entries(s.models || {}).filter(([, v]) => v.unavailable);
+      const box = $("gaBox");
+      if (!rows.length) { box.textContent = ""; return; }
+      box.innerHTML = rows.map(([mk, v]) =>
+        `<div><strong>${esc(mk)}</strong> non disponibile (rientro fra ${Math.ceil(v.retry_in_sec/60)} min): `
+        + `<code>${esc(v.reason)}</code> <button type="button" data-ga-reset="${esc(mk)}">Riattiva</button></div>`).join("");
+      box.querySelectorAll("[data-ga-reset]").forEach(b => b.addEventListener("click", async () => {
+        await fetch("/admin/api/gemini_model_availability", {method: "POST",
+          headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+          body: JSON.stringify({action: "reset", model_key: b.dataset.gaReset})});
+        gaRefresh();
+      }));
+    } catch (e) { /* pannello informativo: nessun alert */ }
+  }
+
   // ===================== Tab Traduzioni =====================
   const TR_OUTCOME_BADGE = {
     "running":            ["badge-live",  "In corso"],
@@ -8196,6 +8273,8 @@ def admin_audit_premium_page():
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
       const cost = Number(r.google_cost_eur_actual || 0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(cost - vat)} + IVA ${fmtEur(vat)}` : "";
       const margEur = revenue - cost;
       const fee = Number(r._paypal_fee_eur || 0);
       const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur) : (margEur - fee);
@@ -8224,7 +8303,7 @@ def admin_audit_premium_page():
         <td>${esc(langLabel(r.target_lang))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td${tokTip}>${(tokIn + tokOut).toLocaleString()}${tokStar}</td>
-        <td>${fmtEur(cost)}</td>
+        <td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td>${fmtEur(revenue)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
@@ -8292,6 +8371,8 @@ def admin_audit_premium_page():
       const ts = esc(fmtIso(r.ts));
       const revenue = (r._eff_revenue_eur!=null)?Number(r._eff_revenue_eur):Number(r.user_price_eur_charged||0);
       const cost = Number(r.google_cost_eur_actual||0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(cost - vat)} + IVA ${fmtEur(vat)}` : "";
       const marg = revenue - cost;
       const fee = Number(r._paypal_fee_eur||0);
       const net = (r._net_margin_eur!=null)?Number(r._net_margin_eur):(marg-fee);
@@ -8311,7 +8392,7 @@ def admin_audit_premium_page():
         <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total)||0).toLocaleString()}</td>
         <td${tokTip}>${tok.toLocaleString()}</td>
-        <td>${fmtEur(revenue)}</td><td>${fmtEur(cost)}</td>
+        <td>${fmtEur(revenue)}</td><td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td class="${dCls}">${fmtEur(marg)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
         <td class="${dCls}">${pct.toFixed(2)}%</td>
@@ -8554,6 +8635,7 @@ def admin_audit_premium_page():
   ttsLoadLanguages().finally(ttsFetch);
   ksRefresh();
   tbRefresh();
+  gaRefresh();
   // Traduzioni e Optimization vengono caricate anche in background all'avvio,
   // cosi' il "Margine netto totale" in alto somma tutti e tre i servizi senza
   // dover aprire le rispettive tab. Le marchiamo come gia' caricate per non
@@ -8662,6 +8744,7 @@ def _synth_running_gemini_audit_records():
                 chars_total = int(ga.get("chars", 0) or 0)
                 audio_seconds = float(ga.get("audio_seconds", 0) or 0)
                 pricing_cost_field = pricing_cost_actual
+                vat_actual = float(ga.get("vat_eur", 0) or 0)
             elif is_vox:
                 # Mirror di _write_voxcpm_audit: costo = tempo di GPU stimato
                 # dai caratteri col tariffario VoxCPM, mai quello di Speechify
@@ -8684,6 +8767,7 @@ def _synth_running_gemini_audit_records():
                 chars_total = chars_metered
                 audio_seconds = float(va.get("audio_seconds", 0) or 0)
                 pricing_cost_field = provider_cost_actual
+                vat_actual = 0.0
             else:  # Speechify / Simba
                 sa = job.get("speechify_actual") or {}
                 metered = int(sa.get("billable_chars", 0) or 0) or int(sa.get("chars", 0) or 0)
@@ -8700,6 +8784,7 @@ def _synth_running_gemini_audit_records():
                 # Speechify non ha una separazione listino/costo reale (un
                 # solo backend): coincide col costo, come nel record persistito.
                 pricing_cost_field = provider_cost_actual
+                vat_actual = 0.0
             delta_eur = round(should_have_been - charged, 4)
             _llm_quota = (job.get("payment") or {}).get("llm_eur")
             combined_total = (round(charged + float(_llm_quota or 0), 4)
@@ -8713,6 +8798,7 @@ def _synth_running_gemini_audit_records():
                 "chars_total": chars_total,
                 "audio_seconds_actual": round(audio_seconds, 2),
                 "google_cost_eur_actual": round(provider_cost_actual, 4),
+                "vat_eur_actual": round(vat_actual, 4),
                 "pricing_cost_eur_actual": round(pricing_cost_field, 4),
                 "user_price_eur_charged": round(charged, 4),
                 "user_price_eur_should_have_been": round(should_have_been, 2),
@@ -9498,6 +9584,29 @@ def admin_api_tts_backend():
     return jsonify(_tts_backend_payload(model_key, configured_backend))
 
 
+@app.route("/admin/api/gemini_model_availability", methods=["GET", "POST"])
+def admin_api_gemini_model_availability():
+    """Stato "non disponibile" dei modelli Gemini senza failover e reset manuale."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+    if gemini_tts is None:
+        return jsonify({"error": "Gemini TTS module not loaded"}), 503
+    import gemini_availability
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        mk = str(data.get("model_key", "") or "")
+        if data.get("action") != "reset" or mk not in gemini_tts.GEMINI_MODELS:
+            return jsonify({"error": "bad request"}), 400
+        gemini_availability.clear(mk)
+        _invalidate_voices_cache()
+        _log_activity("", "", "ADMIN_TTS_MODEL_RESET", "", _get_client_ip(), mk, "")
+    return jsonify({"models": gemini_availability.snapshot(),
+                    "cooldown_sec": gemini_availability.cooldown_sec()})
+
+
 def _gemini_capability_ok():
     """True se Gemini TTS e' tecnicamente configurato (a prescindere dal
     kill-switch). Usato dal pannello admin per distinguere 'spento per scelta'
@@ -9952,6 +10061,23 @@ def admin_api_gemini_recalc_params():
 def api_voices():
     try:
         voices = get_voices()
+        # La cache voci vive per tutto il processo: un modello Gemini spento,
+        # senza canale o indisponibile si toglie qui, a ogni richiesta, su una
+        # copia (mai sulla cache condivisa).
+        if gemini_tts is not None:
+            try:
+                offerti = set(gemini_tts.offered_model_keys())
+                filtrate = {}
+                for k, v in voices.items():
+                    if isinstance(v, dict) and isinstance(v.get("voices"), list):
+                        v = dict(v)
+                        v["voices"] = [x for x in v["voices"]
+                                       if not (isinstance(x, dict) and x.get("engine") == "gemini"
+                                               and x.get("model_key") not in offerti)]
+                    filtrate[k] = v
+                voices = filtrate
+            except Exception:
+                pass
         # Stato voci PREMIUM: distingue "non configurato" (capability_ok=False)
         # da "spento per scelta admin" (admin_disabled=True). Serve alla UI per
         # mostrare il tab Premium con popup di manutenzione invece di nasconderlo,
@@ -9963,6 +10089,14 @@ def api_voices():
                 voices["_premium_status"] = {
                     "capability_ok": cap_ok,
                     "admin_disabled": bool(admin_state.get("disabled", False)),
+                }
+            except Exception:
+                pass
+            try:
+                voices["_gemini"] = {
+                    "preview_timeout_ms": {
+                        mk: (gemini_tts.preview_timeout_sec(mk) + 5) * 1000
+                        for mk in gemini_tts.GEMINI_MODELS},
                 }
             except Exception:
                 pass
@@ -13616,11 +13750,11 @@ def api_preview_audio(job_id):
         # Preflight RPD: se il modello non ha quota per anche solo 1 chunk,
         # falliamo immediatamente con 503 invece di lasciare la call al
         # synthesize() che andrebbe in errore dopo aver consumato tempo.
-        # Senza questo check, su flash25 con RPD esaurito l'utente vedeva
+        # Senza questo check, su flash31 con RPD esaurito l'utente vedeva
         # solo lo spinner per ~30s prima di un 504 generico.
         try:
             parts = voice.split(":")
-            _model_key_pf = parts[1] if len(parts) >= 3 else "flash25"
+            _model_key_pf = parts[1] if len(parts) >= 3 else "flash31"
             _pf = gemini_tts.preflight_can_run(_model_key_pf, 1)
             if not _pf.get("ok"):
                 return jsonify({
@@ -13655,7 +13789,7 @@ def api_preview_audio(job_id):
                 # max_attempts=1: il path preview ha timeout client 30s. Se
                 # Gemini restituisce EMPTY-RESPONSE con finish_reason=OTHER
                 # (modello fermato per ragioni non specificate, tipico su
-                # combo voce/rate/lingua poco stabili come flash25), i 3
+                # combo voce/rate/lingua poco stabili come flash31), i 3
                 # retry default + backoff saturano il timeout → 504 lato
                 # browser. Falliamo veloce: il caller (preview_audio)
                 # converte l'errore in 502 con messaggio utile e l'utente
@@ -13672,7 +13806,7 @@ def api_preview_audio(job_id):
                     _bd = gemini_tts.actual_cost_breakdown(
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
-                        result.get("model_key", "flash25"),
+                        result.get("model_key", "flash31"),
                         result.get("backend"),
                     )
                     _preview_cost_eur = float(_bd.get("total_eur", 0.0) or 0.0)
@@ -13680,7 +13814,7 @@ def api_preview_audio(job_id):
                     print(f"[preview] actual_cost_breakdown failed (non-fatal): {e}")
                 try:
                     gemini_tts.record_usage(
-                        result.get("model_key", "flash25"),
+                        result.get("model_key", "flash31"),
                         len(preview_text),
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
@@ -13708,7 +13842,7 @@ def api_preview_audio(job_id):
                         _norm_chars,
                         result.get("audio_seconds_real", 0.0),
                         _preview_lang,
-                        result.get("model_key", "flash25"),
+                        result.get("model_key", "flash31"),
                         rate_pct=rate,
                         voice=(voice or "").split(":")[-1],
                         job_id=job_id,
@@ -13755,18 +13889,15 @@ def api_preview_audio(job_id):
             finally:
                 loop.close()
 
-    # Wrapper timeout model-aware: flash31 (gemini-3.1-flash-tts-preview) e`
-    # strutturalmente piu` lento di flash25 (RPM cap 3/300 vs 10/750 + audio
-    # gen piu` lenta lato Google). Senza maggiorazione, il wrapper a 30s
-    # strozza prima del timeout HTTP Google (60s per flash31) e produce
-    # 504 spuri anche su preview legittime. flash25 resta a 30s.
+    # Wrapper timeout per modello dal catalogo (gemini_tts.preview_timeout_sec):
+    # deve superare il timeout HTTP del modello, altrimenti strozza anteprime
+    # che il provider sta completando (504 spuri). Il client aspetta +5 s.
     _wrapper_timeout = 30
     if use_gemini_preview:
         try:
             _mk = voice.split(":")[1] if _is_gemini_voice(voice) else ""
-            if _mk == "flash31":
-                _wrapper_timeout = int(os.environ.get(
-                    "ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31", "65"))
+            if _mk in gemini_tts.GEMINI_MODELS:
+                _wrapper_timeout = gemini_tts.preview_timeout_sec(_mk)
         except Exception:
             pass
     try:
@@ -13777,7 +13908,7 @@ def api_preview_audio(job_id):
     except Exception as e:
         # EMPTY-RESPONSE: Gemini ha risposto senza audio (finish_reason=OTHER
         # o simili). Tipicamente combo voce/rate/lingua poco stabile su un
-        # modello specifico (es. flash25). Restituiamo 502 con messaggio
+        # modello specifico (es. flash31). Restituiamo 502 con messaggio
         # actionable invece di 500 generico.
         if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiEmptyResponse", ())):
             _fr = getattr(e, "finish_reason", None) or "unknown"
@@ -14326,7 +14457,7 @@ def api_generate():
                                         strip_square=not read_square_brackets)
             _total_chunks_pf = len(_plan_for_pf)
             _parts_v_pf = (voice or "").split(":")
-            _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash25"
+            _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash31"
             _pf_sync = gemini_tts.preflight_can_run(_model_key_pf, _total_chunks_pf)
             # Log RPD status (richiesta utente) — sempre, anche se OK.
             _cap_v_pf = _pf_sync.get("cap", 0)
@@ -16888,7 +17019,7 @@ def api_combined_estimate():
                                     strip_square=not read_square_brackets)
             _total_chunks_cb = len(_plan_cb)
             _parts_cb = voice_id.split(":")
-            _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash25"
+            _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash31"
             _pf_cb = _gemini_tts_mod.preflight_can_run(_model_key_cb, _total_chunks_cb)
             if not _pf_cb.get("ok"):
                 overload_info = {

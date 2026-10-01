@@ -15,33 +15,32 @@ from epub_to_tts import BookInfo, Chapter
 # --- voice_utils ----------------------------------------------------------
 
 def test_env_name_normalizza_il_model_key():
-    assert voice_utils.premium_model_env_name("flash25") == "ABM_FLASH25_ENABLE"
     assert voice_utils.premium_model_env_name("flash31") == "ABM_FLASH31_ENABLE"
     assert voice_utils.premium_model_env_name("simba-3.2") == "ABM_SIMBA32_ENABLE"
 
 
 def test_default_abilitato_senza_env(monkeypatch):
     monkeypatch.delenv("ABM_FLASH25_ENABLE", raising=False)
-    assert voice_utils.premium_model_enabled("flash25") is True
+    assert voice_utils.premium_model_enabled("flash31") is True
 
 
 @pytest.mark.parametrize("val", ["0", "false", "FALSE", "No", " off "])
 def test_valori_falsi_disabilitano(monkeypatch, val):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", val)
-    assert voice_utils.premium_model_enabled("flash25") is False
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", val)
+    assert voice_utils.premium_model_enabled("flash31") is False
 
 
 @pytest.mark.parametrize("val", ["1", "true", "yes", "on", "", "   "])
 def test_altri_valori_lasciano_abilitato(monkeypatch, val):
     monkeypatch.setenv("ABM_FLASH25_ENABLE", val)
-    assert voice_utils.premium_model_enabled("flash25") is True
+    assert voice_utils.premium_model_enabled("flash31") is True
 
 
 def test_voice_model_key():
-    assert voice_utils.voice_model_key("gemini:flash25:Zephyr") == "flash25"
+    assert voice_utils.voice_model_key("gemini:flash31:Zephyr") == "flash31"
     assert voice_utils.voice_model_key("speechify:simba-3.2:harper_32") == "simba-3.2"
     assert voice_utils.voice_model_key("it-IT-IsabellaNeural") == ""
-    assert voice_utils.voice_model_key("gemini:flash25") == ""
+    assert voice_utils.voice_model_key("gemini:flash31") == ""
     assert voice_utils.voice_model_key(None) == ""
 
 
@@ -51,26 +50,33 @@ def test_voce_standard_mai_bloccata(monkeypatch):
 
 
 def test_solo_il_modello_spento_e_bloccato(monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
-    assert voice_utils.voice_model_enabled("gemini:flash25:Zephyr") is False
-    assert voice_utils.voice_model_enabled("gemini:flash31:Zephyr") is True
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "false")
+    assert voice_utils.voice_model_enabled("gemini:flash31:Zephyr") is False
 
 
 # --- cataloghi voci -------------------------------------------------------
 
 def test_catalogo_gemini_esclude_il_modello_spento(monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
-    assert gemini_tts.enabled_model_keys() == ["flash31"]
+    # Verifica solo che il flag del modello disabilitato lo tolga dal
+    # catalogo, indipendentemente da quanti altri modelli esistano in
+    # GEMINI_MODELS (flash38 e' un secondo modello, spento di default: non
+    # deve influenzare questa asserzione, che riguarda solo flash31).
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "false")
+    assert "flash31" not in gemini_tts.enabled_model_keys()
     voices = gemini_tts.get_voices()
     keys = {v["model_key"] for lst in voices.values() for v in lst}
-    assert keys == {"flash31"}
+    assert "flash31" not in keys
 
 
 def test_catalogo_gemini_completo_di_default(monkeypatch):
     monkeypatch.delenv("ABM_FLASH25_ENABLE", raising=False)
     monkeypatch.delenv("ABM_FLASH31_ENABLE", raising=False)
+    monkeypatch.delenv("ABM_FLASH38_ENABLE", raising=False)
+    # flash38 nasce spento (_MODEL_DEFAULT_OFF): il catalogo "completo di
+    # default" e' quello dei soli modelli abilitati, non tutto GEMINI_MODELS.
     keys = {v["model_key"] for lst in gemini_tts.get_voices().values() for v in lst}
-    assert keys == set(gemini_tts.GEMINI_MODELS)
+    assert keys == set(gemini_tts.enabled_model_keys())
+    assert keys == {"flash31"}
 
 
 def test_catalogo_gemini_vuoto_con_tutti_i_modelli_spenti(monkeypatch):
@@ -93,12 +99,23 @@ def test_sintesi_non_gated_dal_flag(monkeypatch):
     gia' avviato o in recovery deve poter finire anche a modello spento."""
     monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
     # parse_voice_id resta valido: accounting, audit e ripresa job lo usano.
-    assert gemini_tts.parse_voice_id("gemini:flash25:Zephyr")[0] == "flash25"
+    assert gemini_tts.parse_voice_id("gemini:flash31:Zephyr")[0] == "flash31"
     assert speechify_tts.parse_voice_id(
         "speechify:simba-3.2:harper_32")[0] == "simba-3.2"
 
 
 # --- ingressi HTTP --------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_gemini_availability():
+    # gemini_availability._state e' un dict di modulo globale, condiviso con
+    # ogni altro file di test nello stesso processo pytest: un modello
+    # marcato non disponibile qui non deve restare "aperto" (900s di default)
+    # per i test successivi che riabilitano lo stesso modello.
+    import gemini_availability
+    yield
+    gemini_availability._state = {}
+
 
 @pytest.fixture
 def client():
@@ -123,20 +140,20 @@ def job_with_text():
 
 
 def test_gemini_estimate_rifiuta_modello_spento(client, job_with_text, monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "false")
     r = client.post("/api/gemini_estimate", json={
         "job_id": "pmjob1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
     })
     assert r.status_code == 400
     body = r.get_json()
     assert body["error_code"] == "voice_model_disabled"
-    assert body["model_key"] == "flash25"
+    assert body["model_key"] == "flash31"
 
 
 def test_gemini_estimate_accetta_modello_acceso(client, job_with_text, monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "true")
     r = client.post("/api/gemini_estimate", json={
         "job_id": "pmjob1",
         "voice_id": "gemini:flash31:Zephyr",
@@ -147,10 +164,10 @@ def test_gemini_estimate_accetta_modello_acceso(client, job_with_text, monkeypat
 
 
 def test_combined_estimate_rifiuta_modello_spento(client, job_with_text, monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "false")
     r = client.post("/api/combined_estimate", json={
         "job_id": "pmjob1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
     })
     assert r.status_code == 400
@@ -158,10 +175,10 @@ def test_combined_estimate_rifiuta_modello_spento(client, job_with_text, monkeyp
 
 
 def test_paypal_order_gemini_rifiuta_modello_spento(client, job_with_text, monkeypatch):
-    monkeypatch.setenv("ABM_FLASH25_ENABLE", "false")
+    monkeypatch.setenv("ABM_FLASH31_ENABLE", "false")
     r = client.post("/api/paypal_create_order_gemini", json={
         "job_id": "pmjob1",
-        "voice_id": "gemini:flash25:Zephyr",
+        "voice_id": "gemini:flash31:Zephyr",
         "selected_chapters": [0],
         "amount_eur": 1.0,
     })
@@ -179,3 +196,71 @@ def test_generate_rifiuta_modello_spento(client, monkeypatch):
     # non "Session expired".
     assert r.status_code == 400
     assert r.get_json().get("error_code") == "voice_model_disabled"
+
+
+def test_gemini_estimate_rifiuta_flash38_spento_di_default(client, job_with_text, monkeypatch):
+    # flash38 nasce spento (_MODEL_DEFAULT_OFF): senza ABM_FLASH38_ENABLE
+    # esplicito il gate deve rifiutarlo anche con l'API key configurata.
+    monkeypatch.delenv("ABM_FLASH38_ENABLE", raising=False)
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+    })
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body["error_code"] == "voice_model_disabled"
+    assert body["model_key"] == "flash38"
+
+
+def test_ordine_paypal_flash38_indisponibile_503(client, job_with_text, monkeypatch, tmp_path):
+    import gemini_availability
+    monkeypatch.setenv("ABM_FLASH38_ENABLE", "true")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    gemini_availability.init(str(tmp_path))
+    gemini_availability.mark_unavailable("flash38", "403")
+    r = client.post("/api/paypal_create_order_gemini", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+        "amount_eur": 1.0,
+    })
+    assert r.status_code == 503
+    assert r.get_json()["error_code"] == "voice_model_unavailable"
+
+
+def test_gemini_estimate_flash38_indisponibile_503(client, job_with_text, monkeypatch, tmp_path):
+    import gemini_availability
+    monkeypatch.setenv("ABM_FLASH38_ENABLE", "true")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    gemini_availability.init(str(tmp_path))
+    gemini_availability.mark_unavailable("flash38", "403")
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+    })
+    assert r.status_code == 503
+    assert r.get_json()["error_code"] == "voice_model_unavailable"
+
+
+
+def test_flash38_acceso_senza_backend_503(client, job_with_text, monkeypatch, tmp_path):
+    # Review finale M1: ABM_FLASH38_ENABLE=true ma nessuna API key -> il
+    # backend non si risolve; stesso 503 del modello indisponibile, mai un
+    # job pagato che fallisce al primo chunk.
+    import gemini_availability
+    monkeypatch.setenv("ABM_FLASH38_ENABLE", "true")
+    monkeypatch.delenv("ABM_GEMINI_API_KEY", raising=False)
+    gemini_availability.init(str(tmp_path))
+    monkeypatch.setattr(gemini_tts, "_resolve_backend", lambda mk=None: None)
+    r = client.post("/api/gemini_estimate", json={
+        "job_id": "pmjob1",
+        "voice_id": "gemini:flash38:Zephyr",
+        "selected_chapters": [0],
+    })
+    assert r.status_code == 503
+    body = r.get_json()
+    assert body["error_code"] == "voice_model_unavailable"
+    assert body["model_key"] == "flash38"

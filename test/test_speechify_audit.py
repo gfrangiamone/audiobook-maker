@@ -117,7 +117,7 @@ def test_write_speechify_audit_skips_non_speechify_voice(tmp_path, monkeypatch):
     job = {"speechify_actual": {"chars": 10, "billable_chars": 10,
                                 "audio_seconds": 1.0, "model_key": "simba-3.2"}}
     generation_engine._write_speechify_audit(
-        "Jgem", job, "gemini:flash25:Zephyr", "en", "completed")
+        "Jgem", job, "gemini:flash31:Zephyr", "en", "completed")
     assert list(gemini_cost_audit.iter_records()) == []
 
 

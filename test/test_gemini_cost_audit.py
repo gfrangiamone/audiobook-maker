@@ -5,7 +5,7 @@ from pathlib import Path
 def test_append_record_creates_monthly_file(tmp_path, monkeypatch):
     import gemini_cost_audit as gca
     monkeypatch.setattr(gca, "_DATA_DIR", tmp_path)
-    rec = {"job_id":"j1","model_key":"flash25","language":"it",
+    rec = {"job_id":"j1","model_key":"flash31","language":"it",
            "user_price_eur_charged":1.0,"google_cost_eur_actual":0.5,
            "delta_eur":0.0,"outcome":"completed"}
     gca.append_record(rec)
@@ -17,9 +17,9 @@ def test_append_record_creates_monthly_file(tmp_path, monkeypatch):
 def test_iter_records_filters_by_model(tmp_path, monkeypatch):
     import gemini_cost_audit as gca
     monkeypatch.setattr(gca, "_DATA_DIR", tmp_path)
-    for k in ["flash25","flash31","flash25"]:
+    for k in ["flash31","other","flash31"]:
         gca.append_record({"job_id":"x","model_key":k,"outcome":"completed"})
-    recs = list(gca.iter_records(model="flash25"))
+    recs = list(gca.iter_records(model="flash31"))
     assert len(recs) == 2
 
 def test_aggregate_returns_delta_pct(tmp_path, monkeypatch):
@@ -30,15 +30,15 @@ def test_aggregate_returns_delta_pct(tmp_path, monkeypatch):
     #   b: 0.10 / 2.0 * 100 = 5.0
     # aggregate() ricomputa delta_pct_avg dai totali euro:
     #   sum(delta_eur) / sum(google_cost) * 100 = 0.20 / 3.0 * 100 = 6.67
-    gca.append_record({"job_id":"a","model_key":"flash25","language":"it",
+    gca.append_record({"job_id":"a","model_key":"flash31","language":"it",
                        "user_price_eur_charged":1.0,"user_price_eur_should_have_been":1.10,
                        "delta_eur":0.10,"delta_pct":10.0,
                        "google_cost_eur_actual":1.0,"outcome":"completed"})
-    gca.append_record({"job_id":"b","model_key":"flash25","language":"it",
+    gca.append_record({"job_id":"b","model_key":"flash31","language":"it",
                        "user_price_eur_charged":2.0,"user_price_eur_should_have_been":2.10,
                        "delta_eur":0.10,"delta_pct":5.0,
                        "google_cost_eur_actual":2.0,"outcome":"completed"})
-    agg = gca.aggregate(model="flash25")
+    agg = gca.aggregate(model="flash31")
     assert agg["count"] == 2
     assert agg["delta_pct_avg"] == pytest.approx(6.67, abs=0.1)
 
@@ -53,15 +53,15 @@ def test_aggregate_delta_pct_uses_pricing_cost_not_real_cost(tmp_path, monkeypat
     # Reale molto piu' basso del listino (Cloudflare): se il denominatore
     # fosse il reale (0.20 totali) invece del listino (2.0 totali),
     # delta_pct_avg risulterebbe 0.20/0.20*100=100.0 invece di 10.0.
-    gca.append_record({"job_id": "cf1", "model_key": "flash25", "language": "it",
+    gca.append_record({"job_id": "cf1", "model_key": "flash31", "language": "it",
                        "user_price_eur_charged": 1.0, "user_price_eur_should_have_been": 1.10,
                        "delta_eur": 0.10, "google_cost_eur_actual": 0.10,
                        "pricing_cost_eur_actual": 1.0, "outcome": "completed"})
-    gca.append_record({"job_id": "cf2", "model_key": "flash25", "language": "it",
+    gca.append_record({"job_id": "cf2", "model_key": "flash31", "language": "it",
                        "user_price_eur_charged": 2.0, "user_price_eur_should_have_been": 2.10,
                        "delta_eur": 0.10, "google_cost_eur_actual": 0.10,
                        "pricing_cost_eur_actual": 1.0, "outcome": "completed"})
-    agg = gca.aggregate(model="flash25")
+    agg = gca.aggregate(model="flash31")
     assert agg["count"] == 2
     # sum(delta_eur)=0.20, sum(pricing_cost_eur_actual)=2.0 -> 10.0
     assert agg["delta_pct_avg"] == pytest.approx(10.0, abs=0.01)

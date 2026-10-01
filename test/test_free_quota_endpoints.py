@@ -23,7 +23,7 @@ from epub_to_tts import BookInfo, Chapter
 # legato agli oggetti pre-reload.
 
 CID = "cid_quota_endpoint_test"
-VOICE = "gemini:flash25:Zephyr"
+VOICE = "gemini:flash31:Zephyr"
 
 
 @pytest.fixture
@@ -36,11 +36,11 @@ def client():
 
 @pytest.fixture
 def jb():
-    # 5000 caratteri -> list_price_eur ~0.45 con la voce Zephyr/flash25
+    # 4000 caratteri -> list_price_eur ~0.48 con la voce Zephyr/flash31
     # (verificato empiricamente): sotto il floor 0.50 usato nel test, cosi'
     # l'importo "quota esaurita" (floor) e quello "quota disponibile"
     # (grezzo) sono garantiti diversi.
-    ch = Chapter(index=0, title="Cap0", text="A" * 5000)
+    ch = Chapter(index=0, title="Cap0", text="A" * 4000)
     info = BookInfo(
         title="T", author="A", language="it", chapters=[ch],
         total_words=ch.word_count, total_chars=ch.char_count,

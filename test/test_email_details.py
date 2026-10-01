@@ -38,11 +38,11 @@ def test_standard_multilingual_name_spacing():
 
 def test_premium_voice_full_block():
     html = ge._email_generation_details(
-        _job(voice="gemini:flash25:Zephyr", gen_lang="it",
+        _job(voice="gemini:flash31:Zephyr", gen_lang="it",
              gemini_style_instruction="tono calmo", ai=True), "it")
     assert "Voci PREMIUM" in html
     assert "Zephyr" in html
-    assert "Gemini 2.5 Flash TTS" in html
+    assert "Gemini 3.1 Flash TTS" in html
     assert "tono calmo" in html
     assert ">it<" in html or ">it</strong>" in html.replace(" ", "")
 
@@ -56,14 +56,14 @@ def test_premium_flash31_model_label():
 
 def test_premium_without_style_omits_style_line():
     html = ge._email_generation_details(
-        _job(voice="gemini:flash25:Zephyr", gen_lang="it"), "it")
+        _job(voice="gemini:flash31:Zephyr", gen_lang="it"), "it")
     assert "Istruzioni di stile" not in html
-    assert "Gemini 2.5 Flash TTS" in html
+    assert "Gemini 3.1 Flash TTS" in html
 
 
 def test_style_is_html_escaped():
     html = ge._email_generation_details(
-        _job(voice="gemini:flash25:Zephyr", gen_lang="it",
+        _job(voice="gemini:flash31:Zephyr", gen_lang="it",
              gemini_style_instruction='<b>x</b>"y"'), "it")
     assert "<b>x</b>" not in html
     assert "&lt;b&gt;" in html

@@ -330,7 +330,7 @@ Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`
 | `_SEGNI_FORTI` | `;:；：` (punteggiatura che `_hard_split_oversized` preferisce alla virgola quando deve spezzare una frase troppo lunga: un taglio su punto e virgola si sente meno di uno su virgola, e i pezzi restano leggibili) | `tts_split.py` | 256 |
 | `_TTS_MAX_SENT_CHARS` | `1500` (cap superiore di sicurezza per frase) | `tts_split.py` | 43 |
 | *(nessun parametro: chunking dei frammenti)* | Non esiste alcuna soglia che impedisca a un chunk breve di raggiungere il backend TTS, ed e' una scelta esplicita. Un frammento tipo `XIV.` o `1793.` fa scattare la moderazione contenuti dei backend Gemini (codice `2017`), ma dal v3.35.0 **non produce un buco**: viene narrato dalla voce edge di ripiego (riga sotto) e non conta come `failed_chunks`. Silenziarlo a monte per risparmiare la chiamata cancellerebbe testo che oggi si sente. Un passo di fusione a valle dello split e' stato valutato e scartato (2026-08): `split_text_into_chunks` aggrega gia' il frammento al vicino quando c'e' spazio, e quando non ce n'e' nemmeno la fusione potrebbe rispettare i cap — misurato su 6000 input casuali (it/zh, cap 60-2000 char, byte-cap 200-1800), zero casi in cui la fusione cambiava l'esito. Comportamento fissato da `test/test_chunk_fragments.py` | `tts_split.py` | — |
-| `_EDGE_FALLBACK_VOICES` / `_EDGE_FALLBACK_DEFAULT` | Mappa lingua (2 lettere) → voce edge-tts standard (default `en-US-AriaNeural`) usata come **fallback quando un chunk Gemini viene rifiutato in modo definitivo** (content policy / safety su testi sensibili). Invece di scrivere silenzio, `generate_chunk_pcm_gemini(..., fallback_lang=...)` sintetizza il chunk con la voce edge, lo converte in PCM 24 kHz mono (`_mp3_to_pcm_24k` via ffmpeg) e lo concatena come i chunk Gemini. Chunk recuperato → **non conta come `failed_chunks`**, contatore `job["gemini_edge_fallback_chunks"]`, contabilità token/costo/rate-sample Gemini **saltata** (0 token reali). Quota/budget/kill-switch restano job-fatal senza fallback. Introdotto v3.35.0 (incidente `kd8XQj6WWdrZJt1_z0VMPQ`). | `tts_split.py` / `generation_engine.py` | — |
+| `_EDGE_FALLBACK_VOICES` / `_EDGE_FALLBACK_DEFAULT` | Mappa lingua (2 lettere) → voce edge-tts standard (default `en-US-AriaNeural`) usata come **fallback quando un chunk Gemini viene rifiutato in modo definitivo** (content policy / safety su testi sensibili). Invece di scrivere silenzio, `generate_chunk_pcm_gemini(..., fallback_lang=...)` sintetizza il chunk con la voce edge, lo converte in PCM 24 kHz mono (`_mp3_to_pcm_24k` via ffmpeg) e lo concatena come i chunk Gemini. Chunk recuperato → **non conta come `failed_chunks`**, contatore `job["gemini_edge_fallback_chunks"]`, contabilità token/costo/rate-sample Gemini **saltata** (0 token reali). Quota/budget/kill-switch restano job-fatal senza fallback. Introdotto v3.35.0 (incidente `kd8XQj6WWdrZJt1_z0VMPQ`). Per `flash38` il ripiego è a due passi: prima la stessa voce su `flash31` (`chunk_fallback_model` in `GEMINI_MODELS`, `_synthesize_with_fallback_model`), poi edge; contatore `job["gemini_model_fallback_chunks"]`, token/costo sul modello di ripiego. | `tts_split.py` / `generation_engine.py` | — |
 
 **Output M4B (v3.8.0+):**
 
@@ -618,34 +618,44 @@ Modulo `gemini_tts.py` indipendente da Chirp3-HD. Usa SDK `google-genai`, accoun
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto e backend non risolve a Vertex, Gemini TTS è disabilitato. Usato dal backend `apikey` (e fallback in modalità `auto`). |
-| `ABM_GEMINI_BACKEND` | `auto` | Selettore backend Gemini TTS: `vertex` \| `apikey` \| `cloudflare` \| `auto`. `auto` preferisce Vertex se config completa (project + credentials), altrimenti cade su API key; **`auto` non seleziona mai Cloudflare** (quel backend e' solo opt-in esplicito). `vertex` forza Vertex (richiede `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`). `apikey` forza API key. `cloudflare` richiede `ABM_CF_ACCOUNT_ID` + `ABM_CF_API_TOKEN` e che il modello abbia un `id_cloudflare` in `GEMINI_MODELS`: un modello non ospitato su Cloudflare ricade su Vertex, non va in errore. Il circuit breaker persistito (vedi §7.9) ha **precedenza su questa variabile**: un modello scattato viene forzato su Vertex anche dopo un riavvio del processo. File: `gemini_tts.py:_resolve_backend`. |
+| `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto e backend non risolve a Vertex, Gemini TTS è disabilitato. Usato dal backend `apikey` (e fallback in modalità `auto`). **Unico canale possibile per `flash38`** (`backends_allowed=("apikey",)` nel catalogo): senza questa env il modello resta nascosto dal catalogo, indipendentemente da `ABM_GEMINI_BACKEND_FLASH38`. |
+| `ABM_GEMINI_BACKEND` | `auto` | Selettore backend Gemini TTS: `vertex` \| `apikey` \| `cloudflare` \| `auto`. `auto` preferisce Vertex se config completa (project + credentials), altrimenti cade su API key; **`auto` non seleziona mai Cloudflare** (quel backend e' solo opt-in esplicito). `vertex` forza Vertex (richiede `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`). `apikey` forza API key. `cloudflare` richiede `ABM_CF_ACCOUNT_ID` + `ABM_CF_API_TOKEN` e che il modello abbia un `id_cloudflare` in `GEMINI_MODELS`: un modello non ospitato su Cloudflare ricade su Vertex, non va in errore. Il circuit breaker persistito (vedi §7.9) ha **precedenza su questa variabile**: un modello scattato viene forzato su Vertex anche dopo un riavvio del processo. Sovrascritta per singolo modello da `ABM_GEMINI_BACKEND_<KEY>` (vedi sotto). File: `gemini_tts.py:_resolve_backend`. |
+| `ABM_GEMINI_BACKEND_<KEY>` | *(vuoto)* | Override di `ABM_GEMINI_BACKEND` per un singolo modello, `<KEY>` = model_key maiuscolo senza simboli (es. `ABM_GEMINI_BACKEND_FLASH38=apikey`, unico valore valido in prod per `flash38`). Prevale su `ABM_GEMINI_BACKEND` **prima** di ogni altra risoluzione, incluso il breaker: `_apply_backends_allowed` filtra comunque l'esito sui `backends_allowed` del catalogo, quindi un valore incompatibile (es. `vertex` per un modello `apikey`-only) non porta mai a Vertex, al più a `False` (disabilitato). File: `gemini_tts.py:_resolve_backend` (320-327), `_apply_backends_allowed` (264-281). |
 | `ABM_CF_ACCOUNT_ID` | *(vuoto)* | Account ID Cloudflare per l'endpoint Workers AI `POST /client/v4/accounts/<id>/ai/run`. Assieme a `ABM_CF_API_TOKEN` abilita il backend `cloudflare`: se una delle due manca, `_resolve_backend` non seleziona mai Cloudflare e una call forzata fallisce con `kind="fatal"`. File: `gemini_transport.py:cloudflare_call` (257), `gemini_tts.py:_resolve_backend` (258). |
 | `ABM_CF_API_TOKEN` | *(vuoto)* | API token Cloudflare, ristretto ai soli permessi Workers AI. **Solo variabile d'ambiente**: mai in UI, mai in log, mai serializzato negli header di un'eccezione di trasporto. **Il valore non va mai riportato in questa documentazione, nei log applicativi o in export/dump di configurazione** — solo il nome della variabile. File: `gemini_transport.py:cloudflare_call` (258), `gemini_tts.py:_resolve_backend` (259). |
 | `ABM_GCP_PROJECT_ID` | *(vuoto)* | ID progetto GCP che ospita le API Vertex AI e Cloud TTS. Richiesto se `ABM_GEMINI_BACKEND=vertex` (o auto-risolto a Vertex). Esempio: `audiobook-maker-496208`. File: `gemini_tts.py:_vertex_project`. |
-| `ABM_VERTEX_LOCATION_FLASH25` | `global` | Region Vertex per il modello `gemini-2.5-flash-tts` (GA). Default `global`: routing automatico latency-aware. Pinnare `us-central1` se servono quote dedicate. File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash25"]["location_vertex"]`). |
-| `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per `gemini-3.1-flash-tts-preview`. Solo `us-central1` supporta il modello preview (verificato 2026-05-26 via `models.list()`). File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash31"]["location_vertex"]`). |
+| `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per `gemini-3.1-flash-tts-preview`. Solo `us-central1` supporta il modello preview (verificato 2026-05-26 via `models.list()`). File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash31"]["location_vertex"]`). **`flash25` ritirato il 27/09/2026**: `ABM_VERTEX_LOCATION_FLASH25` non è più letta da nessun modulo. `flash38` non usa mai Vertex (`backends_allowed=("apikey",)`): un eventuale `ABM_VERTEX_LOCATION_FLASH38` sarebbe accettato da `_resolve_location` ma senza alcun effetto pratico. |
 | `ABM_GEMINI_USE_VERTEX` | `false` | **DEPRECATED** (2026-05-26): sostituita da `ABM_GEMINI_BACKEND=vertex` + `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`. Mantenuta per back-compat ma non più letta da `gemini_tts.py` dopo la migrazione Vertex (vedi `md_files/ttsgemini.md`). |
 | `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(vuoto)* | **DEPRECATED** (2026-05-26): sostituita da `ABM_GOOGLE_CREDENTIALS_FILE` (unico path JSON service account per Vertex AI Gemini TTS + Google Cloud TTS). Mantenuta per back-compat ma non più letta da `gemini_tts.py` dopo la migrazione Vertex (vedi `md_files/ttsgemini.md`). |
 
 ### 7.2 Costi Google (USD per 1M token)
 
-Sovrascrivibili in caso di adeguamento listino Google.
+Sovrascrivibili in caso di adeguamento listino Google. **`flash25` ritirato il 27/09/2026**: `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` / `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` non sono più lette da nessun modulo.
+
+**IVA**: fino al 27/09/2026 queste env per Vertex erano gonfiate a mano per includere l'IVA (`1.22`/`24.40` invece di `1.00`/`20.00`). Da questo rilascio sono **al netto IVA** (listino Google puro) e l'IVA si applica separatamente via `vat_percent()`/§7.2.1 — un ambiente di prod che continuasse a usare i valori gonfiati la conterebbe due volte. Vale per tutti i modelli con backend Vertex/API key: nessun modello Gemini è oggi servito su un backend "netto IVA" diverso da questa regola.
 
 | Variabile | Default |
 |-----------|---------|
-| `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` | `0.50` |
-| `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` | `10.00` |
-| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` |
-| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` |
+| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` (netto IVA) |
+| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` (netto IVA) |
+| `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` (netto IVA — listino 2027, non quello promozionale 2026: non deve cambiare quando scade la promo) |
+| `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` (netto IVA) |
 | `ABM_GEMINI_USD_EUR_RATE` | `0.86` |
+
+### 7.2.1 IVA per backend
+
+| Variabile | Default | Note |
+|-----------|---------|------|
+| `ABM_GEMINI_VAT_PERCENT` | `22.0` | Percentuale IVA applicata al costo Google **solo** sui backend `vertex` e `apikey` (Google Ireland Ltd fattura con IVA italiana su questi canali). **Mai** applicata al backend `cloudflare` (fatturazione extra-UE senza IVA italiana in questo schema). Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata). Non mostrata mai all'utente: entra nel prezzo come un costo qualsiasi. File: `gemini_tts.py:vat_percent` (1182), `_vat_factor` (1186), `_VAT_BACKENDS = ("vertex", "apikey")` (1179). |
 
 ### 7.3 Margini di vendita (% sul costo Google)
 
 | Variabile | Default |
 |-----------|---------|
-| `ABM_GEMINI_25FLASH_MARGIN_PERCENT` | `35` |
 | `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25` |
+| `ABM_GEMINI_38FLASH_MARGIN_PERCENT` | `25` |
+
+`ABM_GEMINI_25FLASH_MARGIN_PERCENT` rimossa con `flash25`.
 
 ### 7.4 PayPal fee compensation e soglia gratuità
 
@@ -678,12 +688,12 @@ Token audio output per secondo, per-modello con fallback globale. Usato da `esti
 | Variabile | Default |
 |-----------|---------|
 | `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` (fallback globale) |
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25` | `25.0` (misurato) |
 | `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `25.0` (misurato — era `29.0`, vedi nota) |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH38` | `31.9` (misurato sul test Beren del 27/09/2026; **da riverificare in fattura**, non ancora su un campione ampio come flash31) |
 
 Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` → default hardcoded.
 
-**Misura su audit reale (giu–ago 2026, 256 job `completed`)**: il rapporto `output_tokens_actual / audio_seconds_actual` vale **esattamente 25.0** per entrambi i modelli — su flash25 con cv 0.0%, su flash31 esattamente 25.0 in 122 job su 168 (l'eccesso residuo viene solo dai chunk ritentati, che pagano token già fatturati). Il valore è quindi una costante del formato audio, non una caratteristica del modello. Il precedente `29.0` su flash31 (e il `30` impostato in produzione) produceva un **+16–20% sistematico sul costo stimato**, con margine a consuntivo del 36,8% contro un target del 25%.
+**Misura su audit reale (giu–ago 2026, 256 job `completed`, all'epoca ancora con `flash25`)**: il rapporto `output_tokens_actual / audio_seconds_actual` valeva **esattamente 25.0** su entrambi i modelli allora offerti — su flash25 con cv 0.0%, su flash31 esattamente 25.0 in 122 job su 168 (l'eccesso residuo viene solo dai chunk ritentati, che pagano token già fatturati). Il valore è quindi una costante del formato audio PCM 24 kHz, non una caratteristica del modello — motivo per cui il `29.0` storico su flash31 era sbagliato. `flash38` restituisce WAV invece di PCM grezzo (vedi §7.5.2) e nel test Beren il rapporto è risultato **31.9**, non 25.0: da confermare su un campione più ampio prima di fidarsene come per flash31. Il precedente `29.0` su flash31 (e il `30` impostato in produzione) produceva un **+16–20% sistematico sul costo stimato**, con margine a consuntivo del 36,8% contro un target del 25%.
 
 > **Attenzione operativa**: se in produzione è presente un override `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` diverso da `25`, il default corretto nel codice non ha alcun effetto. Verificare con `systemctl cat audiobook-maker`.
 
@@ -700,9 +710,11 @@ Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEM
 | `ABM_GEMINI_INTER_CHUNK_GAP_MS` | `100` (silenzio PCM in ms inserito tra chunk consecutivi in concat. Default abbassato da 250 a 100 perche` i chunk Gemini hanno gia` trailing silence naturale che ora viene trimmato — sommare 250 ms creava pause percepibili di "qualche secondo" all'inizio del libro) |
 | `ABM_GEMINI_TRIM_TAIL_MS` | `800` (cap massimo in ms di silenzio finale da rimuovere a ogni PCM chunk Gemini prima della concat — riduce le pause percepibili tra chunk consecutivi. `0` disabilita il trim. Implementazione: `audio_utils.trim_pcm_trailing_silence()`) |
 | `ABM_GEMINI_TRIM_TAIL_THRESHOLD` | `200` (soglia ampiezza int16 assoluta sotto cui un sample e` considerato "silenzio" durante il trim; 200 ≈ -44 dB. Range 0-32767. Valori troppo alti rischiano di tagliare l'attacco/coda di parola) |
-| `ABM_GEMINI_HTTP_TIMEOUT_MS` | `25000` (timeout HTTP in ms per le call su modello **`flash25`**; applicato per-call via `GenerateContentConfig.http_options=HttpOptions(timeout=...)`. Per preview il ThreadPoolExecutor timeout di 30s funge da secondo limite) |
-| `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31` | `60000` (timeout HTTP in ms per le call su modello **`flash31`** — `gemini-3.1-flash-tts-preview`. Piu` lento di flash25 lato Google: RPM cap 3/300 vs 10/750 + audio gen piu` lenta. Senza maggiorazione i chunk normali finiscono in 504 `DEADLINE_EXCEEDED`. Selezione automatica via `_http_timeout_ms(model_key)` in `gemini_tts.py:1161`) |
-| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31` | `65` (timeout in **secondi** del `ThreadPoolExecutor` wrapper in `/api/preview_audio` per modello `flash31`; vedi `audiobook_app.py:4962`. Deve essere ≥ HTTP timeout flash31 + buffer per non strozzare la call Google. flash25 resta hardcoded a 30s. Client JS legge il voice id e usa 70s sopra flash31 / 35s sopra flash25) |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS` | `25000` (fallback **generico** usato solo se il modello non ha un default proprio nel catalogo `GEMINI_MODELS` né un override `_<KEY>`; applicato per-call via `GenerateContentConfig.http_options=HttpOptions(timeout=...)`. Con `flash25` ritirato, oggi sia `flash31` che `flash38` hanno sempre un default di catalogo e questo fallback globale non entra mai in gioco in condizioni normali) |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31` | `60000` (timeout HTTP in ms per le call su modello **`flash31`** — `gemini-3.1-flash-tts-preview`. Google e' piu` lento su flash31 che su flash38: audio gen piu` lenta. Senza maggiorazione i chunk normali finiscono in 504 `DEADLINE_EXCEEDED`. Selezione automatica via `_http_timeout_ms(model_key)` in `gemini_tts.py:1161`) |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH38` | `40000` (default di catalogo per `flash38` — `gemini-3.8-flash-tts`, unico backend `apikey`/Tier 3. Piu` basso di flash31 perche' la generazione WAV e' piu` rapida lato Google nel test Beren del 27/09/2026) |
+| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31` | `65` (timeout in **secondi** del `ThreadPoolExecutor` wrapper in `/api/preview_audio` per modello `flash31`; vedi `audiobook_app.py:4962`. Deve essere ≥ HTTP timeout flash31 + buffer per non strozzare la call Google) |
+| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH38` | `45` (idem per `flash38`. Il timeout usato dal client JS in `/api/preview_audio` **non è più hardcoded per modello**: `/api/voices` espone `_gemini.preview_timeout_ms[model_key]` popolato da questo valore, e il frontend lo legge dinamicamente — vedi §7.5.2) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` |
 | `ABM_GEMINI_MAX_FAILED_RATIO` | `0.05` (oltre questa frazione di chunk falliti il job va in `partial`) |
 | `ABM_GEMINI_REFUND_FAILED_RATIO` | `0.0` (oltre questa frazione il job va in `error` con refund integrale — `0.0` = qualsiasi chunk silenziato innesca il refund; impostare `>1` per disabilitare) |
@@ -711,12 +723,43 @@ Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEM
 | `ABM_GEMINI_FORENSIC_RETENTION_DAYS` | `7` (giorni di retention forense della `work_dir` per i job Gemini falliti con refund — `kind` ∈ `quality`/`quota`/`budget`/`preflight`/`generic`. Marker JSON `.forensic_retain.json` scritto da `generation_engine._write_forensic_marker()` invocato in `_admin_alert_gemini_failure()` (linea ~1123); gate `audiobook_app._forensic_marker_protects()` (linea ~8956) applicato a `_cleanup_job` e ai tre branch orphan del cleanup loop. Sopravvive a restart del service. `0` = disabilita la retention forense (dir cancellata immediatamente al passaggio a `status=error`). La mail admin (`email_service._admin_notify_gemini_failure`) include link a `/admin/job/<job_id>/forensic.zip` — endpoint Flask `audiobook_app.admin_forensic_zip` che zippa on-the-fly la dir, gated da `ABM_ADMIN_TOKEN` via cookie HttpOnly o header `X-Admin-Token`) |
 | `ABM_GEMINI_CANCEL_LOCK_PCT` | `70` (soglia % di progresso oltre cui il cancel volontario di un job PREMIUM viene rifiutato da `/api/cancel` con HTTP 409 `cancel_locked_progress` + campo `lock_pct`; vedi `audiobook_app.py:5745`. Range valido `(0..100)`; valori `<=0` o `>=100` disabilitano il lock. Il client `static/js/app.js` disabilita preventivamente il pulsante "Cancel" sopra la stessa soglia hardcoded `_GEMINI_CANCEL_LOCK_PCT_CLIENT=70`; allineare se si cambia il server) |
 
+### 7.5.1 RPM/RPD per modello
+
+Throttle lato client fra due chiamate consecutive allo stesso modello, e cap giornaliero locale — entrambi indipendenti dal rate limiting che Google applica lato server.
+
+| Variabile | Default | Note |
+|-----------|---------|------|
+| `ABM_GEMINI_RPM_<KEY>` | `default_rpm` del catalogo (`flash31`: `0` = nessun throttle; `flash38`: `800`, calibrato sul Tier 3: 1K RPM / 1M TPM nominali, ma a ~1.200 token/chunk da 450 caratteri il TPM morde prima, da cui l'800 di margine) | Se `>0`, convertita in intervallo minimo fra chiamate: `min_interval_ms = ceil(60000 / RPM)`. Precedenza: `ABM_GEMINI_RPM_<KEY>` (se `>0`) → `ABM_GEMINI_MIN_INTERVAL_<KEY>_MS` (alias storico, vedi sotto) → `default_rpm` di catalogo → nessun throttle. File: `gemini_tts.py:_min_interval_ms` (945). |
+| `ABM_GEMINI_MIN_INTERVAL_<KEY>_MS` | *(vuoto)* | **Alias storico** in millisecondi diretti (pre-esistente a `ABM_GEMINI_RPM_<KEY>`): se valorizzata e `ABM_GEMINI_RPM_<KEY>` è assente o `0`, vince questa. Non deprecata: entrambe le forme restano lette, non serve migrare gli ambienti già configurati. |
+| `ABM_GEMINI_RPD_<KEY>` | `default_rpd` del catalogo (`0` per entrambi i modelli oggi, cioè nessun cap locale — il limite reale è quello del Tier Google) | Cap giornaliero locale per modello, indipendente dall'RPD contrattuale Google. File: `gemini_tts.py:_rpd_cap` (958). |
+| `ABM_GEMINI_RPD_SAFETY_RESERVE` | `0` | Margine di sicurezza sottratto al cap RPD effettivo (per non arrivare esattamente al limite Google). File: `gemini_tts.py:_rpd_safety_reserve` (963). |
+
+`<KEY>` = model_key maiuscolo senza simboli (`FLASH31`, `FLASH38`).
+
+### 7.5.2 Estrazione audio: PCM (`flash31`) vs WAV (`flash38`)
+
+`flash38` risponde con audio **WAV/RIFF** invece del PCM grezzo di `flash31`. `gemini_tts._extract_audio_pcm(response, model_key)` gestisce entrambi i formati: per il ramo WAV usa il modulo standard `wave` per fare il parsing dell'header e validare che il formato sia **esattamente 24 kHz / mono / 16-bit** prima di estrarre i frame raw; un formato diverso solleva `GeminiAudioFormatError` (job-fatal per quel chunk, non silenzioso). Nessuna env dedicata: il ramo è selezionato automaticamente dal `model_key`, non da un content-type esplicito.
+
+Anche il timeout di preview lato client non è più hardcoded per modello: `/api/voices` espone il campo `_gemini.preview_timeout_ms[model_key]` (valorizzato da `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_<KEY>` × 1000), e `static/js/app.js` lo legge da lì invece di avere soglie fisse in JS.
+
+### 7.5.3 Modello "non disponibile" e cooldown (`gemini_availability.py`)
+
+Modulo foglia separato dal circuit breaker Cloudflare→Vertex di `tts_backend_state.py` (§7.9): quest'ultimo gestisce il *failover fra backend* dello stesso modello, `gemini_availability.py` gestisce lo stato "il modello stesso non è al momento utilizzabile" (tipicamente `flash38`, che non ha un backend alternativo su cui deviare essendo `apikey`-only).
+
+| Variabile | Default | Note |
+|-----------|---------|------|
+| `ABM_GEMINI_UNAVAILABLE_COOLDOWN_SEC` | `900` | Durata del cooldown dopo un errore fatale marcato non disponibile. Scaduto il cooldown, il modello ritorna automaticamente offerto senza intervento admin. File: `gemini_availability.py:cooldown_sec`. |
+
+Stato persistito in JSON (via `gemini_availability.init(data_dir)`), API: `mark_unavailable(model_key, reason, now=None)`, `is_unavailable(model_key, now=None)`, `clear(model_key)`, `snapshot(now=None)`. Un modello entra in cooldown quando la sua entry di catalogo ha `mark_unavailable_on_fatal=True` (solo `flash38` oggi: `flash31` resta `False`, un errore fatale su `flash31` non lo nasconde dal catalogo) e una call fallisce con un errore non recuperabile. `gemini_tts.model_unavailable(model_key)` consulta questo stato per escludere il modello da `offered_model_keys()`.
+
+**Reset manuale**: `GET/POST /admin/api/gemini_model_availability` (`{action: "reset", model_key}`), distinto dall'endpoint `/admin/api/tts_backend` che resetta solo il breaker Cloudflare.
+
 ### 7.6 Note operative
 
 - **Requisito**: Gemini Tier 2 o 3 (RPD elevato). Il default `ABM_GEMINI_CHUNK_CHARS=700` privilegia stabilita` acustica e prosodia uniforme sul numero di richieste; un libro medio genera centinaia di chunk e satura rapidamente i 100 RPD/modello del Tier 1.
-- Voice ID formato: `gemini:<model_key>:<voice_name>` (es. `gemini:flash25:Zephyr`).
-- Modelli supportati: `flash25` (Gemini 2.5 Flash TTS), `flash31` (Gemini 3.1 Flash TTS).
-- 30 voci prebuilt × 2 modelli = 60 entry per lingua UI.
+- Voice ID formato: `gemini:<model_key>:<voice_name>` (es. `gemini:flash31:Zephyr`).
+- Modelli supportati: `flash31` (Gemini 3.1 Flash TTS), `flash38` (Gemini 3.8, etichetta UI "PREMIUM+"). `flash25` ritirato il 27/09/2026, rimosso dal catalogo `GEMINI_MODELS`.
+- 30 voci prebuilt × 2 modelli = 60 entry per lingua UI. `flash38` è però **disabilitato di default** (§7.11): finché `ABM_FLASH38_ENABLE` non è impostata, le sue 30 voci non compaiono nel catalogo `/api/voices`.
 - Chunk max chars: `700` globale, override per lingua via `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=850`).
 - Quality tuning: `ABM_GEMINI_TEMPERATURE=0.75` riduce la deriva metallica, `ABM_GEMINI_INTER_CHUNK_GAP_MS=100` inserisce un micro-silenzio tra chunk consecutivi in PCM, e `ABM_GEMINI_TRIM_TAIL_MS=800` tronca il trailing silence naturale che ogni chunk Gemini porta con se` (la combinazione dei due elimina pause percepibili di "qualche secondo" tra chunk lasciando un boundary acustico naturale).
 - Stato utilizzo persistito in `<ABM_DATA_DIR>/gemini_tts_usage.json`, preview cap in `gemini_tts_previews.json` (atomic write tmp+rename).
@@ -741,7 +784,7 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 | `client_id` | Cookie client (opaco) |
 | `email` | Email associata al pagamento (vuota per free) |
 | `language` | Lingua sintesi |
-| `model_key` | `flash25` o `flash31` |
+| `model_key` | `flash31` o `flash38` |
 | `voice` | Nome voce |
 | `chars_total` | Caratteri sintetizzati |
 | `chunks_total` | Numero chunk inviati |
@@ -860,20 +903,22 @@ Il prezzo esposto all'utente per `flash31` può incorporare parte del risparmio 
 
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
-| `ABM_GEMINI_31FLASH_CF_INPUT_USD_PER_MTOK` | `0.75` | Tariffa Cloudflare di listino (USD/1M token input) per `flash31`. Applicabile solo ai modelli con `id_cloudflare` popolato in `GEMINI_MODELS` — oggi solo `flash31` (`flash25` non è ospitato su Cloudflare, vedi nota in §7.1/`ABM_GEMINI_BACKEND`). File: `gemini_tts.py:172` (`GEMINI_MODELS["flash31"]["cf_input_usd_per_mtok"]`). |
+| `ABM_GEMINI_31FLASH_CF_INPUT_USD_PER_MTOK` | `0.75` | Tariffa Cloudflare di listino (USD/1M token input) per `flash31`. Applicabile solo ai modelli con `id_cloudflare` popolato in `GEMINI_MODELS` — oggi solo `flash31`: `flash38` ha `id_cloudflare=None` e `backends_allowed=("apikey",)`, quindi non è mai instradabile su Cloudflare né entra in questa economia (`flash25`, ritirato, non lo era già). File: `gemini_tts.py:172` (`GEMINI_MODELS["flash31"]["cf_input_usd_per_mtok"]`). |
 | `ABM_GEMINI_31FLASH_CF_OUTPUT_USD_PER_MTOK` | `12.00` | Tariffa Cloudflare di listino (USD/1M token output) per `flash31`. File: `gemini_tts.py:173`. |
 | `ABM_CF_CREDIT_TOPUP_FEE` | `0.05` | Commissione di ricarica del credito AI Gateway, come frazione (`0.05` = 5%) — **non** è il credito: si ricava dalla ricevuta come `(importo pagato − credito accreditato) / credito accreditato`. Il credito si paga comprandolo, non spendendolo: il costo reale per ABM è la tariffa nuda maggiorata di questa commissione (`_cf_effective(rate) = rate * (1 + fee)`), applicata solo al calcolo interno del margine — non è un costo separato in fattura. File: `gemini_tts.py:_cf_topup_fee` (666). |
 | `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT` | `50.0` | Quota percentuale del risparmio Cloudflare (rispetto al costo Google puro) ceduta al cliente nel prezzo finale, clampata a `[0, 100]`. Formula in `pricing_rates()`: `tariffa_utente = google - (google - cf_effettivo) * share`. `0` → listino esposto identico a oggi (Google puro, il risparmio resta interno); `100` → tutto il risparmio va al cliente. File: `gemini_tts.py:cf_saving_share` (671). |
 
 ### 7.11 Interruttori per modello PREMIUM (`voice_utils.py`)
 
-Ogni modello PREMIUM ha un proprio interruttore `ABM_<MODELLO>_ENABLE`. **Default abilitato**: la variabile serve solo a spegnere, e va valorizzata esplicitamente a `0` / `false` / `no` / `off` (case-insensitive, spazi ignorati). Qualunque altro valore — inclusi vuoto e valore assente — lascia il modello attivo.
+Ogni modello PREMIUM ha un proprio interruttore `ABM_<MODELLO>_ENABLE`. **Default abilitato per la maggior parte dei modelli**: la variabile serve solo a spegnere, e va valorizzata esplicitamente a `0` / `false` / `no` / `off` (case-insensitive, spazi ignorati) per nasconderlo. **Eccezione: `flash38`** — è in `_MODEL_DEFAULT_OFF` e ha semantica **invertita**: di default è spento, serve un valore esplicitamente vero (`1`/`true`/`yes`/`on`) per farlo comparire. Motivo: `flash38` è rilasciato spento finché l'utente non ha collaudato la qualità (vedi checklist di prod, §3 del piano).
 
 | Variabile | Default | Modello | Descrizione |
 |-----------|---------|---------|-------------|
-| `ABM_FLASH25_ENABLE` | *(abilitato)* | `flash25` (Gemini 2.5 Flash TTS) | A `false` il modello sparisce dal catalogo `/api/voices` e dal selettore PREMIUM, e gli ingressi HTTP che lo nominano rispondono `400 {"error_code": "voice_model_disabled"}`. File: `voice_utils.py:premium_model_enabled`, `gemini_tts.py:enabled_model_keys`. |
-| `ABM_FLASH31_ENABLE` | *(abilitato)* | `flash31` (Gemini 3.1 Flash TTS) | Come sopra. Con entrambi i modelli Gemini spenti il catalogo Gemini è vuoto; il tab PREMIUM resta visibile solo se Speechify è attivo (l'inglese continua a essere servito da Simba). |
+| `ABM_FLASH31_ENABLE` | *(abilitato)* | `flash31` (Gemini 3.1 Flash TTS) | A `false` il modello sparisce dal catalogo `/api/voices` e dal selettore PREMIUM, e gli ingressi HTTP che lo nominano rispondono `400 {"error_code": "voice_model_disabled"}`. File: `voice_utils.py:premium_model_enabled`, `gemini_tts.py:enabled_model_keys`. |
+| `ABM_FLASH38_ENABLE` | *(disabilitato — semantica invertita)* | `flash38` (Gemini 3.8, "PREMIUM+") | Deve valere `1`/`true`/`yes`/`on` perché il modello compaia. Senza questa env (o con un valore diverso da quelli veri) il modello resta nascosto anche se `ABM_GEMINI_API_KEY` e `ABM_GEMINI_BACKEND_FLASH38=apikey` sono già configurate — permette di predisporre l'infrastruttura in produzione senza esporla agli utenti. File: `voice_utils.py:_MODEL_DEFAULT_OFF`, `premium_model_enabled` (75-86). |
 | `ABM_SIMBA32_ENABLE` | *(abilitato)* | `simba-3.2` (Speechify) | A `false` `speechify_tts.get_voices()` restituisce `{}`. Non tocca `ABM_SPEECHIFY_API_KEY` né la contabilità. |
+
+`ABM_FLASH25_ENABLE` rimossa con `flash25` (27/09/2026): non più letta da nessun modulo.
 
 Il nome della variabile si ricava dal `model_key` togliendo i caratteri non alfanumerici e maiuscolando: `simba-3.2` → `ABM_SIMBA32_ENABLE` (`voice_utils.premium_model_env_name`).
 

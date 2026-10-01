@@ -10,7 +10,7 @@ def test_engine_for_speechify_voice():
 
 
 def test_engine_for_gemini_still_gemini():
-    assert generation_engine._engine_for_voice("gemini:flash25:Zephyr") == "gemini"
+    assert generation_engine._engine_for_voice("gemini:flash31:Zephyr") == "gemini"
 
 
 def test_engine_for_edge_default():

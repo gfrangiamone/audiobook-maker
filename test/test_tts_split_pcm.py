@@ -44,18 +44,18 @@ def test_generate_chunk_pcm_gemini_success(tmp_path, monkeypatch):
             "bytes_written": 2000,
             "input_tokens": 10,
             "output_tokens": 25,
-            "model_key": "flash25",
+            "model_key": "flash31",
         }
 
     monkeypatch.setattr("gemini_tts.synthesize", fake_synth)
     result = tts_split.generate_chunk_pcm_gemini(
-        "Ciao mondo.", "gemini:flash25:Zephyr", str(out)
+        "Ciao mondo.", "gemini:flash31:Zephyr", str(out)
     )
     assert result is not False
     assert isinstance(result, dict)
     assert result["input_tokens"] == 10
     assert result["output_tokens"] == 25
-    assert result["model_key"] == "flash25"
+    assert result["model_key"] == "flash31"
     assert out.exists()
     assert out.stat().st_size == 2000
 
@@ -69,13 +69,13 @@ def test_generate_chunk_pcm_gemini_retries_then_succeeds(tmp_path, monkeypatch):
             raise RuntimeError("transient")
         with open(output_path, "wb") as f:
             f.write(b"\x00" * 100)
-        return {"bytes_written": 100, "input_tokens": 1, "output_tokens": 2, "model_key": "flash25"}
+        return {"bytes_written": 100, "input_tokens": 1, "output_tokens": 2, "model_key": "flash31"}
 
     monkeypatch.setattr("gemini_tts.synthesize", flaky_synth)
     monkeypatch.setattr("time.sleep", lambda s: None)  # no real backoff in tests
     out = tmp_path / "chunk.pcm"
     result = tts_split.generate_chunk_pcm_gemini(
-        "hello", "gemini:flash25:Zephyr", str(out), max_retries=3
+        "hello", "gemini:flash31:Zephyr", str(out), max_retries=3
     )
     assert result is not False
     assert calls["n"] == 3
@@ -89,7 +89,7 @@ def test_generate_chunk_pcm_gemini_total_failure_writes_silence(tmp_path, monkey
     monkeypatch.setattr("time.sleep", lambda s: None)
     out = tmp_path / "chunk.pcm"
     result = tts_split.generate_chunk_pcm_gemini(
-        "fail", "gemini:flash25:Zephyr", str(out), max_retries=2
+        "fail", "gemini:flash31:Zephyr", str(out), max_retries=2
     )
     assert result is False
     assert out.exists()
@@ -100,7 +100,7 @@ def test_generate_chunk_pcm_gemini_empty_text(tmp_path):
     """Empty/blank text writes silence and returns False (no API call)."""
     out = tmp_path / "chunk.pcm"
     result = tts_split.generate_chunk_pcm_gemini(
-        "   ", "gemini:flash25:Zephyr", str(out)
+        "   ", "gemini:flash31:Zephyr", str(out)
     )
     assert result is False
     assert out.exists()
@@ -116,32 +116,32 @@ def test_pick_chunk_max_chars_edge_voice():
 # env). Edge resta a 2000. Cfr. tts_split._pick_chunk_max_chars.
 def test_pick_chunk_max_chars_gemini_italian():
     import gemini_tts
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "it") == gemini_tts.get_max_chunk_chars("it")
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "it") == gemini_tts.get_max_chunk_chars("it")
 
 
 def test_pick_chunk_max_chars_gemini_chinese():
     import gemini_tts
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "zh") == gemini_tts.get_max_chunk_chars("zh")
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "zh") == gemini_tts.get_max_chunk_chars("zh")
 
 
 def test_pick_chunk_max_chars_gemini_japanese():
     import gemini_tts
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "ja") == gemini_tts.get_max_chunk_chars("ja")
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "ja") == gemini_tts.get_max_chunk_chars("ja")
 
 
 def test_pick_chunk_max_chars_gemini_hindi():
     import gemini_tts
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "hi") == gemini_tts.get_max_chunk_chars("hi")
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "hi") == gemini_tts.get_max_chunk_chars("hi")
 
 
 def test_pick_chunk_max_chars_gemini_arabic():
     import gemini_tts
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "ar") == gemini_tts.get_max_chunk_chars("ar")
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "ar") == gemini_tts.get_max_chunk_chars("ar")
 
 
 def test_pick_chunk_max_chars_gemini_default_700():
     # Default per Gemini: 700 char (stabilità acustica), salvo override env.
-    assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "xx") == 700
+    assert tts_split._pick_chunk_max_chars("gemini:flash31:Zephyr", "xx") == 700
 
 
 class _FakeCh:

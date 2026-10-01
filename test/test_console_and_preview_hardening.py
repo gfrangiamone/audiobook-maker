@@ -65,7 +65,7 @@ def test_premium_preview_503_when_ffmpeg_missing(client, monkeypatch):
         audiobook_app, "_preview_ffmpeg_ok", lambda: False)
     with patch("audiobook_app._check_job_owner",
                return_value=(audiobook_app.jobs["PVJ1"], None, None)):
-        r = client.get("/api/preview_audio/PVJ1?voice=gemini:flash25:Zephyr")
+        r = client.get("/api/preview_audio/PVJ1?voice=gemini:flash31:Zephyr")
     assert r.status_code == 503
     d = r.get_json()
     assert d["code"] == "ffmpeg_missing"

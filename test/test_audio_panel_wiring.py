@@ -166,8 +166,8 @@ def test_il_tab_spento_si_vede_che_e_spento():
 # di etichette neutre: chi paga deve riconoscere il motore che compra.
 # Sono nomi propri, quindi identici in tutte e sette le lingue.
 NOMI_MODELLI = {
-    "lbl_model_flash25": "Gemini 2.5 TTS",
     "lbl_model_flash31": "Gemini 3.1 TTS",
+    "lbl_model_flash38": "Gemini 3.8 (PREMIUM+)",
     "lbl_model_simba": "Simba 3.2",
     "lbl_model_voxcpm": "Audiobook Maker (VOXCPM2)",
 }
@@ -196,7 +196,7 @@ def test_i_modelli_premium_mostrano_il_loro_nome_proprio():
 
 
 def test_le_etichette_dei_modelli_esistono_in_tutti_i_locali():
-    for chiave in ("lbl_model_flash25", "lbl_model_flash31",
+    for chiave in ("lbl_model_flash31", "lbl_model_flash38",
                    "lbl_model_simba", "lbl_model_voxcpm"):
         n = len(re.findall(r'\b%s\s*:' % chiave, I18N))
         assert n == len(LOCALI), \
