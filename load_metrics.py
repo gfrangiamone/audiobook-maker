@@ -39,6 +39,11 @@ ENABLED = (os.environ.get("ABM_LOAD_METRICS_ENABLED", "true").strip().lower()
 SAMPLE_SEC = int(os.environ.get("ABM_LOAD_METRICS_SAMPLE_SEC", "30"))
 BUCKET_SEC = int(os.environ.get("ABM_LOAD_METRICS_BUCKET_SEC", "300"))
 RETENTION_MONTHS = int(os.environ.get("ABM_LOAD_METRICS_RETENTION_MONTHS", "4"))
+# I gauge della sonda RunPod di VoxCPM2 vivono meno del resto: servono solo a
+# dire se nelle ultime settimane un worker sempre attivo sarebbe convenuto.
+# Oltre questa eta' vengono tolti dalle righe, che restano per il resto.
+VOXCPM_RETENTION_DAYS = int(os.environ.get("ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS", "28"))
+_VOXCPM_GAUGES = ("vx_run", "vx_busy")
 
 # Confini dei bin, in secondi. L'ottavo bin e' overflow (> 20 min).
 _BINS = (10, 30, 60, 120, 300, 600, 1200)
@@ -520,6 +525,57 @@ def query(window, now=None, global_cap=0, assembly_slots=0):
                 "reliability": {}, "voxcpm": {}, "timeline": []}
 
 
+def _strip_voxcpm_gauges(data_dir, now):
+    """Toglie i gauge della sonda VoxCPM2 dalle righe oltre VOXCPM_RETENTION_DAYS.
+
+    Riscrive (tmp + rename) solo i file che contengono qualcosa da togliere;
+    i mesi interamente piu' recenti della soglia non vengono neppure letti.
+    Gira nello stesso thread di flush(), quindi nessun append concorrente puo'
+    perdersi fra la lettura e il rename. Ritorna quante righe ha ripulito.
+    """
+    cutoff = now - max(1, VOXCPM_RETENTION_DAYS) * 86400
+    last_month = _month_of(cutoff)
+    stripped = 0
+    for path in sorted(Path(data_dir).glob(f"{_FILE_PREFIX}*.jsonl")):
+        tag = path.stem[len(_FILE_PREFIX):]
+        if not tag or tag > last_month:
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError:
+            continue
+        out, changed = [], 0
+        for line in lines:
+            try:
+                row = json.loads(line)
+                g = row.get("g") if isinstance(row, dict) else None
+                if (row.get("t", 0) < cutoff and isinstance(g, dict)
+                        and any(k in g for k in _VOXCPM_GAUGES)):
+                    for k in _VOXCPM_GAUGES:
+                        g.pop(k, None)
+                    out.append(json.dumps(row, separators=(",", ":")) + "\n")
+                    changed += 1
+                    continue
+            except (ValueError, AttributeError):
+                pass                  # riga illeggibile: resta com'e'
+            out.append(line)
+        if not changed:
+            continue
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.writelines(out)
+            os.replace(tmp, path)
+            stripped += changed
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    return stripped
+
+
 def purge(now=None):
     """Elimina i file mensili oltre la retention. Ritorna quanti ne ha rimossi.
 
@@ -547,6 +603,10 @@ def purge(now=None):
                     removed += 1
                 except OSError:
                     pass
+        try:
+            _strip_voxcpm_gauges(_data_dir, now)
+        except Exception:
+            pass
         return removed
     except Exception:
         return 0
