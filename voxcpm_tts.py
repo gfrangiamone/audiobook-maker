@@ -1278,11 +1278,16 @@ def pulisci_coda(testo):
     """Toglie la virgola (o il punto e virgola, o i due punti) rimasta in coda.
 
     Quando una frase supera il cap, `tts_split` la spezza sui breakpoint
-    deboli e il pezzo se ne va con la virgola attaccata in fondo. VoxCPM quel
-    segno sospeso lo puo' pronunciare: nel collaudo del 9/9/2026 il chunk che
-    finiva «il piu' delle volte,» usciva con un «punto» detto a voce. Il
-    chunk tagliato a meta' frase deve arrivare al modello come arriva
-    qualunque altro taglio dello splitter, cioe' senza punteggiatura finale.
+    deboli e il pezzo se ne va con la virgola attaccata in fondo. Il chunk
+    tagliato a meta' frase deve arrivare al modello come arriva qualunque
+    altro taglio dello splitter, cioe' senza punteggiatura finale; il segno
+    tolto viaggia a parte in `giunti`, per la pausa della giunzione.
+
+    Il «punto» detto a voce del collaudo del 9/9/2026, attribuito qui alla
+    virgola in coda, stava invece in testa al chunk dopo, che cominciava in
+    minuscolo: il worker incollava la trascrizione del campione al chunk
+    senza spazio («binario.a favore»). Corretto nel worker il 2/10/2026
+    (abm-voxcpm-worker f648eac, `_prompt_separato`).
 
     Non tocca i terminatori veri (. ! ? ...): li' la pausa e' dovuta.
     """
