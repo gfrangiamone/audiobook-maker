@@ -1,5 +1,6 @@
 ruff
 boto3
+google-genai>=2.25  # Part.speech_metadata: stile del 3.8 fuori dalla trascrizione (gemini_tts._transport_contents)
 flask-compress
 google-auth>=2.23  # FCM HTTP v1 push notifications (app mobile)
 requests  # client HTTP per push FCM (push_service)

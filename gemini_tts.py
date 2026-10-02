@@ -216,11 +216,12 @@ GEMINI_MODELS = {
         "preview_timeout_sec": 45,
         "backends_allowed": ("apikey",),
         "mark_unavailable_on_fatal": True,
-        # Il 3.8 legge ad alta voce il blocco "[style: ...]" se arriva nella
-        # stessa parte del testo (job UGk7l5kB, 01/10/2026: 5 chunk su 24 con
-        # stile/velocita' letti); in una parte separata 0 su 24, velocita'
-        # rispettata. Vedi split_style_block.
-        "style_as_separate_part": True,
+        # Il 3.8 tratta ogni parte di testo come trascrizione letterale: il
+        # blocco "[style: ...]" nel testo veniva letto (job UGk7l5kB, 5 chunk
+        # su 24), in una parte separata faceva rileggere il chunk due volte
+        # (job iuyIVrUf, 02/10/2026: 4 su 8 al test). Lo stile va nel campo
+        # speech_metadata.style della parte (0 su 8). Vedi _transport_contents.
+        "style_as_speech_metadata": True,
         # Chunk con i retry esauriti (risposta vuota, 5xx, timeout): stessa
         # voce su questo modello, poi edge-tts (tts_split). Gli errori fatali
         # (auth/billing/404) restano job-fatali con rimborso.
@@ -3175,15 +3176,19 @@ def split_style_block(final_text):
 
 
 def _transport_contents(final_text, model_key):
-    """Contenuto della richiesta: stringa unica, o blocco stile in una parte a se'."""
-    if not GEMINI_MODELS.get(model_key, {}).get("style_as_separate_part"):
+    """Contenuto della richiesta: stringa unica, o testo con lo stile in speech_metadata.
+
+    Richiede google-genai >= 2.25 (Part.speech_metadata).
+    """
+    if not GEMINI_MODELS.get(model_key, {}).get("style_as_speech_metadata"):
         return final_text
     block, text = split_style_block(final_text)
     if block is None:
         return final_text
+    style = block[len(_STYLE_BLOCK_PREFIX):-1].strip()
     from google.genai import types as genai_types
-    return [genai_types.Content(role="user", parts=[
-        genai_types.Part(text=block), genai_types.Part(text=text)])]
+    return [genai_types.Content(role="user", parts=[genai_types.Part(
+        text=text, speech_metadata=genai_types.SpeechMetadata(style=style))])]
 
 
 _PERMANENT_HTTP = (401, 403, 404)
