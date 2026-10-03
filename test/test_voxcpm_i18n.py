@@ -32,6 +32,9 @@ CHIAVI_PERSONA = [
     "persona_deep_adventure", "persona_elder_sage", "persona_grave_narrator",
     "persona_intimate", "persona_neutral_pro", "persona_poised_dry",
     "persona_warm_pro", "persona_warm_young", "persona_weathered",
+    # catalogo Gemini, 3 ottobre 2026
+    "persona_professor", "persona_elder", "persona_young",
+    "persona_fairytale",
 ]
 
 
