@@ -151,15 +151,15 @@ def test_tags_voce_speechify_usa_locale_come_accento():
 
 
 def test_tags_voce_voxcpm_non_scambia_lid_per_la_lingua():
-    # `voxcpm:v2:it-IT/Lorenzo` non e' una locale col nome dentro: spezzarlo
+    # `voxcpm:v2:it-IT/Marco` non e' una locale col nome dentro: spezzarlo
     # sui trattini come le voci Edge finiva per incidere l'id intero nella
     # lingua e lasciare il modello vuoto.
     import voxcpm_catalog
     tags = generation_engine._generation_tags(
-        {}, _Info(), "voxcpm:v2:it-IT/Lorenzo", "-10%")
+        {}, _Info(), "voxcpm:v2:it-IT/Marco", "-10%")
     assert tags["abm_model"] == voxcpm_catalog.MODEL_LABEL
-    assert tags["abm_voice"] == "Lorenzo (IT)"
-    assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/Lorenzo"
+    assert tags["abm_voice"] == "Marco (IT)"
+    assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/Marco"
     assert tags["abm_language"] == "it-IT"
     assert tags["abm_accent"] == "it-IT"
     assert tags["abm_speed"].startswith("0.90x")

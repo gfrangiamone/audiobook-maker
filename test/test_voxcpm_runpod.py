@@ -677,7 +677,7 @@ def test_il_capitolo_inoltra_gli_avanzamenti(tmp_path, monkeypatch):
          {"phase": "generate", "chunks_done": 2, "chunks_total": 2}])
     viste = []
     voxcpm_tts.synthesize_chapter(
-        ["uno", "due"], "voxcpm:v2:it-IT/Elena",
+        ["uno", "due"], "voxcpm:v2:it-IT/Alessia",
         str(tmp_path / "ch.pcm"), session=ses, sleep=dormi_finto,
         on_progress=viste.append)
     assert [r["phase"] for r in viste] == ["warmup", "generate"]
@@ -693,7 +693,7 @@ def test_l_interruttore_spegne_l_inoltro(tmp_path, monkeypatch):
         [{"phase": "generate", "chunks_done": 1, "chunks_total": 2}])
     viste = []
     voxcpm_tts.synthesize_chapter(
-        ["uno", "due"], "voxcpm:v2:it-IT/Elena",
+        ["uno", "due"], "voxcpm:v2:it-IT/Alessia",
         str(tmp_path / "ch.pcm"), session=ses, sleep=dormi_finto,
         on_progress=viste.append)
     assert viste == []
