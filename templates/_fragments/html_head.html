@@ -485,6 +485,13 @@ __REVIEWS_LD__
                  combo: sta nel pannello PREMIUM (quindi mai visibile sulla scheda
                  Standard) e vcSyncButton lo scopre solo col modello VoxCPM. -->
             <div class="vc-voice-row">
+              <!-- Fumetto giornaliero sopra il microfono (voice_clone.js, vcMaybeShowMicTip). -->
+              <div id="vcMicTip" class="prem-coach vc-mic-tip" hidden role="status" aria-live="polite">
+                <button type="button" class="vc-promo-go" onclick="vcOpen()">
+                  <span class="prem-coach-text" data-t="vc_mic_tip_text"></span>
+                </button>
+                <button type="button" class="prem-coach-x" aria-label="Close" onclick="vcDismissMicTip()">&times;</button>
+              </div>
               <select id="vvPremium"></select>
               <button type="button" id="vcOpenBtn" class="vc-mic-btn" data-t-title="vc_btn_tip"
                       aria-label="Create an audiobook using your own voice" hidden>

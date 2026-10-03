@@ -1074,6 +1074,25 @@ def test_fumetto_promozionale_delle_voci_campionate():
     assert "maybeShowPremiumHint()" in _estrai_funzione(VC, "vcInit")
 
 
+def test_fumetto_giornaliero_sopra_il_microfono():
+    # la bolla sta nella riga del microfono e apre il wizard col click sul testo
+    blocco = HTML[HTML.index('class="vc-voice-row"'):]
+    blocco = blocco[:blocco.index('id="vcOpenBtn"')]
+    assert 'id="vcMicTip"' in blocco
+    assert 'onclick="vcOpen()"' in blocco and 'onclick="vcDismissMicTip()"' in blocco
+    assert 'data-t="vc_mic_tip_text"' in blocco
+    for lang in LANGS:
+        assert "vc_mic_tip_text" in _chiavi_i18n(lang), lang
+    assert ".prem-coach.vc-mic-tip" in CSS
+    # compare col microfono, sparisce con lui, una volta al giorno, solo a chi non ha voci
+    sync = _estrai_funzione(VC, "vcSyncButton")
+    assert "vcMaybeShowMicTip()" in sync and "vcDismissMicTip()" in sync
+    tip = _estrai_funzione(VC, "vcMaybeShowMicTip")
+    assert "S.mineOk" in tip and "S.mine.length" in tip and "vcMicTipDue(" in tip
+    assert "vcPromoCoach" in tip
+    assert "vcDismissMicTip()" in _estrai_funzione(VC, "vcOpen")
+
+
 def test_chiudere_il_modal_ferma_il_riascolto():
     pausa = _estrai_funzione(VC, "vcPauseAudio")
     assert "querySelectorAll('audio')" in pausa and ".pause()" in pausa

@@ -78,6 +78,16 @@
     return now - last >= VC_PROMO_EVERY_MS;
   }
 
+  /* Fumetto sopra il microfono: una volta al giorno (data locale AAAA-MM-GG). */
+  function vcDayKey(d) {
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  function vcMicTipDue(lastDay, today) {
+    return String(lastDay || '') !== today;
+  }
+
   function vcUploadCheck(name, size, maxMb) {
     var m = /\.([A-Za-z0-9]+)$/.exec(name || '');
     var ext = m ? m[1].toLowerCase() : '';
@@ -141,6 +151,7 @@
     vcHasReadyFor: vcHasReadyFor, vcButtonKey: vcButtonKey, vcVisible: vcVisible,
     vcUploadCheck: vcUploadCheck, vcRecordExt: vcRecordExt, vcFixDurata: vcFixDurata,
     vcPromoDue: vcPromoDue, VC_PROMO_EVERY_MS: VC_PROMO_EVERY_MS, ACCEPTED_EXT: ACCEPTED_EXT,
+    vcDayKey: vcDayKey, vcMicTipDue: vcMicTipDue,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = VcCore;
@@ -304,8 +315,38 @@
     var pend = show && !!vcPending(S.mine);
     if (row) row.hidden = !pend;
     if (banner) banner.hidden = !pend;
+    if (show) vcMaybeShowMicTip(); else vcDismissMicTip();
   }
   window.vcSyncButton = vcSyncButton;
+
+  /* Fumetto sopra il microfono: al massimo una volta al giorno, appena il
+     bottone compare sulla scheda PREMIUM. Stesse cautele del fumetto sulla
+     tab: niente se l'elenco voci non e' arrivato o se il dispositivo ha gia'
+     le sue voci; niente in contemporanea con l'altro fumetto. */
+  var VC_MIC_TIP_KEY = 'abm_vc_mic_tip';
+  var _micTipTimer = null;
+
+  function vcMaybeShowMicTip() {
+    var tip = $('vcMicTip');
+    if (!tip || !tip.hidden) return;
+    if (!S.mineOk || S.mine.length || vcPending(S.mine)) return;
+    var promo = $('vcPromoCoach');
+    if (promo && !promo.hidden) return;
+    var today = vcDayKey(new Date());
+    var last = '';
+    try { last = localStorage.getItem(VC_MIC_TIP_KEY) || ''; } catch (e) {}
+    if (!vcMicTipDue(last, today)) return;
+    try { localStorage.setItem(VC_MIC_TIP_KEY, today); } catch (e) {}
+    tip.hidden = false;
+    if (_micTipTimer) clearTimeout(_micTipTimer);
+    _micTipTimer = setTimeout(vcDismissMicTip, 15000);
+  }
+
+  function vcDismissMicTip() {
+    var tip = $('vcMicTip'); if (tip) tip.hidden = true;
+    if (_micTipTimer) { clearTimeout(_micTipTimer); _micTipTimer = null; }
+  }
+  window.vcDismissMicTip = vcDismissMicTip;
 
   /* Chiudere il modal o cambiare pannello ferma ogni riascolto in corso:
      un campione che continua a suonare dietro il modal chiuso non ha piu'
@@ -344,6 +385,7 @@
   /* Apre il wizard dal bottone: in sospeso -> pannello dello stato;
      con voci -> «Le tue voci»; altrimenti condizioni. */
   function vcOpen(force) {
+    vcDismissMicTip();
     vcRefreshMine().then(function (mine) {
       if (force) return vcShow(force);
       var p = vcPending(mine);

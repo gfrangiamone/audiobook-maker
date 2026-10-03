@@ -204,6 +204,15 @@ test('vcFixDurata: elemento assente non fa esplodere il chiamante', () => {
   VcCore.vcFixDurata(null)();
 });
 
+test('vcMicTipDue: una volta al giorno', () => {
+  assert.equal(VcCore.vcDayKey(new Date(2026, 9, 3, 23, 59)), '2026-10-03');
+  assert.equal(VcCore.vcDayKey(new Date(2026, 0, 9)), '2026-01-09');
+  assert.equal(VcCore.vcMicTipDue('', '2026-10-03'), true);
+  assert.equal(VcCore.vcMicTipDue(null, '2026-10-03'), true);
+  assert.equal(VcCore.vcMicTipDue('2026-10-03', '2026-10-03'), false);
+  assert.equal(VcCore.vcMicTipDue('2026-10-02', '2026-10-03'), true);
+});
+
 test('vcPromoDue: la prima volta, poi ogni 7 giorni', () => {
   const G = 24 * 3600 * 1000;
   const now = 1_800_000_000_000;

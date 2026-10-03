@@ -1270,7 +1270,14 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* Combo delle voci PREMIUM + bottone microfono: la combo resta elastica
    (min-width:0, altrimenti il select non si stringe), il bottone e' quadrato e
    alto quanto lei (align-items:stretch). */
-.vc-voice-row{display:flex;align-items:stretch;gap:8px}
+.vc-voice-row{display:flex;align-items:stretch;gap:8px;position:relative}
+/* Fumetto sopra il microfono: ancorato a destra, freccia al centro del bottone (44px). */
+.prem-coach.vc-mic-tip{right:0;left:auto}
+.prem-coach.vc-mic-tip::before{left:auto;right:16px}
+@media (max-width:720px){
+  .prem-coach.vc-mic-tip{left:0 !important;right:0}
+  .prem-coach.vc-mic-tip::before{left:auto;right:16px}
+}
 .vc-voice-row select{flex:1 1 auto;min-width:0}
 .vc-mic-btn{flex:0 0 auto;width:44px;display:inline-flex;align-items:center;justify-content:center;
             padding:0;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs);
