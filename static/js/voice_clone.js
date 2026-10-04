@@ -221,10 +221,18 @@
     var cfg = S.cfg || {};
     var mt = (d && d.metrics) || {};
     var dur = Number(mt.duration);
-    var rep = {got: isFinite(dur) && dur > 0 ? dur.toFixed(1) : '?',
+    var keys = vcGateKeys(d);
+    /* La durata misurata e' quella del parlato, gia' senza i silenzi ai bordi:
+       17,96 s arrotondati a «18.0» sembravano bastare contro un minimo di 18.
+       Si arrotonda verso il lato della soglia violata. */
+    var got = '?';
+    if (isFinite(dur) && dur > 0) {
+      var r10 = keys.indexOf('vc_gate_long') >= 0 ? Math.ceil(dur * 10) : Math.floor(dur * 10);
+      got = (r10 / 10).toFixed(1);
+    }
+    var rep = {got: got,
                min: Math.round(Number(cfg.min_sec) || 18),
                max: Math.round(Number(cfg.max_sec) || 26)};
-    var keys = vcGateKeys(d);
     var msg = keys.map(function (k) { return tt(k, rep); }).join(' ');
     var heard = (d && d.heard || '').trim();
     if (heard && keys.indexOf('vc_gate_transcript') >= 0) msg += ' ' + tt('vc_gate_heard', {heard: heard});
