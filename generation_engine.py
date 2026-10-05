@@ -3066,8 +3066,6 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0,
         print(f"[{job_id}] Gemini refund skipped: persistent refund trace already exists (reason={reason})")
         return None
     refund_amt = round(max(0.0, paid - float(retained_eur or 0.0)), 2)
-    if llm_eur > 0:
-        job["refund_llm_eur"] = llm_eur
     apply_bonus = not (reason == "cancelled" or float(retained_eur or 0.0) > 0)
     result = {"method": method, "amount_eur": refund_amt, "email": "", "voucher_code": None}
     if refund_amt <= 0:
@@ -3104,10 +3102,29 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0,
                     f"PayPal order {tok} has no buyer email "
                     f"(amount {refund_amt:.2f} EUR, reason {reason})"
                 )
+                return result
     except Exception as _ref_err:
         print(f"[{job_id}] refund failed ({reason}, non-fatal): {_ref_err}")
         return None
+    if llm_eur > 0 and method in ("voucher", "paypal"):
+        job["refund_llm_eur"] = llm_eur
+        _mark_optimization_refunded(job_id, llm_eur, reason)
     return result
+
+
+def _mark_optimization_refunded(job_id, llm_eur, reason):
+    """Marker nell'audit dell'ottimizzazione: la quota AI pagata con il job
+    premium e' stata restituita. Il record `completed` resta (il costo LLM e'
+    stato sostenuto davvero); l'admin lo legge con ricavo 0. Best-effort."""
+    try:
+        optimization_cost_audit.append_record({
+            "job_id": job_id,
+            "outcome": "llm_refunded",
+            "refund_eur": round(float(llm_eur), 4),
+            "reason": str(reason)[:200],
+        })
+    except Exception as e:
+        print(f"[{job_id}] optimization refund marker failed (non-fatal): {e}")
 
 
 def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
@@ -5948,6 +5965,36 @@ def _early_abort_params():
     return ratio, max(1, min_chunks)
 
 
+def _premium_job_failed(job_id, job, voice, info, e, engine):
+    """Job premium Speechify/VoxCPM caduto con un'eccezione: audit, rimborso
+    integrale (ottimizzazione AI compresa), email + push all'utente, allerta
+    admin, descrittore pending marcato failed. Ogni passo e' non-fatale."""
+    audit = (_write_voxcpm_audit if engine == "voxcpm"
+             else _write_speechify_audit)
+    try:
+        audit(job_id, job, voice, _audit_language(job, info), "failed_refunded")
+    except Exception:
+        pass
+    refund = None
+    try:
+        refund = _refund_gemini_payment(job_id, job, f"failed: {e}")
+    except Exception as _ref_err:
+        print(f"[{job_id}] {engine} refund failed (non-fatal): {_ref_err}")
+    try:
+        _notify_user_premium_job_failed(job_id, job, refund)
+    except Exception as _notif_err:
+        print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+    try:
+        _admin_alert_gemini_failure(
+            job_id, job, kind="generic",
+            audit_outcome="failed_refunded",
+            reason_detail=f"{engine} {type(e).__name__}: {str(e)[:300]}",
+        )
+    except Exception as _al_err:
+        print(f"[{job_id}] Admin alert failed (non-fatal): {_al_err}")
+    _mark_pending_failed(job_id, "failed_refunded")
+
+
 def _gemini_quality_refund(job_id, job, voice, info, failed_chunks, total_chunks, early=False):
     """Path unico di fallimento-qualita' Gemini: status error + refund integrale +
     notifica utente + alert admin (con marker forense) + mark pending failed.
@@ -8353,51 +8400,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             )
             _mark_pending_failed(job_id, "failed_refunded")
         if use_speechify:
-            # Job premium Speechify fallito: rimborso integrale (path generico premium,
-            # _refund_gemini_payment legge job['payment_token'] a prescindere dall'engine).
-            try:
-                _write_speechify_audit(job_id, job, voice,
-                                       _audit_language(job, info), "failed_refunded")
-            except Exception:
-                pass
-            _refund = None
-            try:
-                _refund = _refund_gemini_payment(job_id, job, f"failed: {e}")
-            except Exception as _ref_err:
-                print(f"[{job_id}] Speechify refund failed (non-fatal): {_ref_err}")
-            try:
-                _notify_user_premium_job_failed(job_id, job, _refund)
-            except Exception as _notif_err:
-                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
-            _admin_alert_gemini_failure(
-                job_id, job, kind="generic",
-                audit_outcome="failed_refunded",
-                reason_detail=f"speechify {type(e).__name__}: {str(e)[:300]}",
-            )
-            _mark_pending_failed(job_id, "failed_refunded")
+            _premium_job_failed(job_id, job, voice, info, e, "speechify")
         if use_voxcpm:
-            # Job premium VoxCPM fallito: rimborso integrale (path generico premium,
-            # _refund_gemini_payment legge job['payment_token'] a prescindere dall'engine).
-            try:
-                _write_voxcpm_audit(job_id, job, voice,
-                                    _audit_language(job, info), "failed_refunded")
-            except Exception:
-                pass
-            _refund = None
-            try:
-                _refund = _refund_gemini_payment(job_id, job, f"failed: {e}")
-            except Exception as _ref_err:
-                print(f"[{job_id}] VoxCPM refund failed (non-fatal): {_ref_err}")
-            try:
-                _notify_user_premium_job_failed(job_id, job, _refund)
-            except Exception as _notif_err:
-                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
-            _admin_alert_gemini_failure(
-                job_id, job, kind="generic",
-                audit_outcome="failed_refunded",
-                reason_detail=f"voxcpm {type(e).__name__}: {str(e)[:300]}",
-            )
-            _mark_pending_failed(job_id, "failed_refunded")
+            _premium_job_failed(job_id, job, voice, info, e, "voxcpm")
         if not _dir_gone:
             import traceback
             traceback.print_exc()

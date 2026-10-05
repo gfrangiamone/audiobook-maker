@@ -9043,6 +9043,10 @@ def _apply_cancel_effective(rec):
     outcome = rec.get("outcome") or ""
     if outcome in _FULL_REFUND_OUTCOMES:
         revenue = 0.0
+    elif rec.get("llm_refunded_eur"):
+        # Ottimizzazione consegnata ma restituita col job premium fallito:
+        # il costo resta, il ricavo no (marker `llm_refunded`).
+        revenue = 0.0
     elif cancel_retained is not None:
         revenue = float(cancel_retained or 0)
     else:
@@ -9805,6 +9809,18 @@ def admin_api_optimization_cost_audit():
         language=_norm(language), outcome=_norm(outcome),
         date_from=date_from, date_to=date_to,
     ))
+    # Marker `llm_refunded` (quota AI restituita col job premium fallito):
+    # non sono righe, si applicano al record del job. Letti senza filtri di
+    # data, perche' il rimborso puo' cadere dopo la fine dell'intervallo.
+    _llm_refunds = {
+        m.get("job_id"): float(m.get("refund_eur", 0) or 0)
+        for m in optimization_cost_audit.iter_records(outcome="llm_refunded")
+        if m.get("outcome") == "llm_refunded"
+    }
+    persisted = [r for r in persisted if r.get("outcome") != "llm_refunded"]
+    for r in persisted:
+        if r.get("job_id") in _llm_refunds:
+            r["llm_refunded_eur"] = _llm_refunds[r.get("job_id")]
     persisted_ids = {r.get("job_id") for r in persisted}
 
     live = []
