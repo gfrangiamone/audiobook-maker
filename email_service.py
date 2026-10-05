@@ -689,47 +689,158 @@ def _try_send_voxcpm_digest():
 # Payment emails
 # ---------------------------------------------------------------------------
 
-def _send_payment_receipt_email(order_id, email, amount_eur, job):
-    """Send payment receipt email to buyer."""
-    book_title = ""
-    info = job.get("info")
-    if info:
-        book_title = getattr(info, "title", "") or ""
-    lang = job.get("browser_lang", "en")[:2] if job else "en"
-    subj_map = {
-        "it": f"Ricevuta pagamento Audiobook Maker \u2014 {amount_eur:.2f} EUR",
-        "en": f"Audiobook Maker payment receipt \u2014 EUR {amount_eur:.2f}",
-        "fr": f"Re\u00e7u de paiement Audiobook Maker \u2014 {amount_eur:.2f} EUR",
-        "es": f"Recibo de pago Audiobook Maker \u2014 {amount_eur:.2f} EUR",
-        "de": f"Zahlungsbeleg Audiobook Maker \u2014 {amount_eur:.2f} EUR",
-        "zh": f"Audiobook Maker \u4ed8\u6b3e\u6536\u636e \u2014 {amount_eur:.2f} EUR",
-        "hi": f"Audiobook Maker \u092d\u0941\u0917\u0924\u093e\u0928 \u0930\u0938\u0940\u0926 \u2014 {amount_eur:.2f} EUR",
-    }
-    subject = subj_map.get(lang, subj_map["en"])
-    body_map = {
-        "it": ("Grazie per il tuo pagamento.",
-               f"Importo: <strong>{amount_eur:.2f} EUR</strong><br>ID transazione: <code>{order_id}</code>"
-               f"<br>Progetto: <strong>{book_title}</strong>",
-               "Il pagamento copre l'ottimizzazione AI del testo per la sintesi vocale. "
-               "Conserva questa email come ricevuta. Per fatturazione contattaci.",
-               "In caso di fallimento dell'ottimizzazione riceverai un buono di valore maggiorato del "
-               f"{VOUCHER_BONUS_PERCENT}% riutilizzabile entro {VOUCHER_EXPIRY_DAYS} giorni."),
-        "en": ("Thank you for your payment.",
-               f"Amount: <strong>EUR {amount_eur:.2f}</strong><br>Transaction ID: <code>{order_id}</code>"
-               f"<br>Project: <strong>{book_title}</strong>",
-               "This payment covers AI text optimization for speech synthesis. "
-               "Keep this email as receipt. Contact us for invoicing.",
-               f"If optimization fails, you will receive a voucher worth {VOUCHER_BONUS_PERCENT}% more, "
-               f"valid for {VOUCHER_EXPIRY_DAYS} days."),
-        "hi": ("आपके भुगतान के लिए धन्यवाद.",
-               f"राशि: <strong>EUR {amount_eur:.2f}</strong><br>लेन-देन ID: <code>{order_id}</code>"
-               f"<br>परियोजना: <strong>{book_title}</strong>",
-               "यह भुगतान वाक् संश्लेषण के लिए AI टेक्स्ट अनुकूलन को कवर करता है. "
-               "इस ईमेल को रसीद के रूप में रखें. चालान के लिए हमसे संपर्क करें.",
-               f"यदि अनुकूलन विफल हो जाता है, तो आपको {VOUCHER_BONUS_PERCENT}% अधिक मूल्य का कूपन मिलेगा, "
-               f"जो {VOUCHER_EXPIRY_DAYS} दिनों के लिए मान्य है."),
-    }
-    heading, details, info_txt, refund = body_map.get(lang, body_map["en"])
+# Ricevuta di pagamento in sette lingue. `kind` = servizio pagato, fissato
+# dalla route di creazione dell'ordine in job["pay_receipt_kind"] (vedi
+# api_paypal_capture_order); "voice_clone" per il campionamento di una voce.
+_RECEIPT_SERVICE = {
+    "it": {"optimization": "Ottimizzazione AI del testo",
+           "translation": "Traduzione del libro",
+           "translation_opt": "Traduzione del libro con ottimizzazione AI del testo",
+           "premium": "Audiolibro con voce PREMIUM",
+           "premium_opt": "Audiolibro con voce PREMIUM e ottimizzazione AI del testo",
+           "voice_clone": "Campionamento della tua voce"},
+    "en": {"optimization": "AI text optimization",
+           "translation": "Book translation",
+           "translation_opt": "Book translation with AI text optimization",
+           "premium": "Audiobook with PREMIUM voice",
+           "premium_opt": "Audiobook with PREMIUM voice and AI text optimization",
+           "voice_clone": "Sampling of your voice"},
+    "fr": {"optimization": "Optimisation IA du texte",
+           "translation": "Traduction du livre",
+           "translation_opt": "Traduction du livre avec optimisation IA du texte",
+           "premium": "Livre audio avec voix PREMIUM",
+           "premium_opt": "Livre audio avec voix PREMIUM et optimisation IA du texte",
+           "voice_clone": "Échantillonnage de votre voix"},
+    "es": {"optimization": "Optimización IA del texto",
+           "translation": "Traducción del libro",
+           "translation_opt": "Traducción del libro con optimización IA del texto",
+           "premium": "Audiolibro con voz PREMIUM",
+           "premium_opt": "Audiolibro con voz PREMIUM y optimización IA del texto",
+           "voice_clone": "Muestreo de tu voz"},
+    "de": {"optimization": "KI-Textoptimierung",
+           "translation": "Buchübersetzung",
+           "translation_opt": "Buchübersetzung mit KI-Textoptimierung",
+           "premium": "Hörbuch mit PREMIUM-Stimme",
+           "premium_opt": "Hörbuch mit PREMIUM-Stimme und KI-Textoptimierung",
+           "voice_clone": "Aufnahme deiner Stimme"},
+    "zh": {"optimization": "AI 文本优化",
+           "translation": "图书翻译",
+           "translation_opt": "图书翻译（含 AI 文本优化）",
+           "premium": "PREMIUM 语音有声书",
+           "premium_opt": "PREMIUM 语音有声书（含 AI 文本优化）",
+           "voice_clone": "您的声音采样"},
+    "hi": {"optimization": "AI टेक्स्ट ऑप्टिमाइज़ेशन",
+           "translation": "पुस्तक अनुवाद",
+           "translation_opt": "AI टेक्स्ट ऑप्टिमाइज़ेशन सहित पुस्तक अनुवाद",
+           "premium": "PREMIUM आवाज़ वाली ऑडियोबुक",
+           "premium_opt": "PREMIUM आवाज़ और AI टेक्स्ट ऑप्टिमाइज़ेशन वाली ऑडियोबुक",
+           "voice_clone": "आपकी आवाज़ का सैंपलिंग"},
+}
+
+_RECEIPT_I18N = {
+    "it": {
+        "subject": "Ricevuta pagamento Audiobook Maker — {amount} EUR",
+        "heading": "Grazie per il tuo pagamento.",
+        "amount": "Importo", "txid": "ID transazione", "service": "Servizio", "project": "Progetto",
+        "info": "Conserva questa email come ricevuta. Per la fatturazione contattaci.",
+        "refund": "Se il servizio non può essere completato, l'importo ti viene rimborsato "
+                  "automaticamente con un buono (maggiorato del {pct}% in caso di errore tecnico), "
+                  "valido {days} giorni.",
+        "delivery": "Il link per scaricare il risultato verrà inviato a <strong>{dest}</strong> "
+                    "al termine della lavorazione. Se preferisci riceverlo a un altro indirizzo, "
+                    "indicalo nella pagina di generazione prima che il lavoro finisca.",
+    },
+    "en": {
+        "subject": "Audiobook Maker payment receipt — EUR {amount}",
+        "heading": "Thank you for your payment.",
+        "amount": "Amount", "txid": "Transaction ID", "service": "Service", "project": "Project",
+        "info": "Keep this email as your receipt. Contact us for invoicing.",
+        "refund": "If the service cannot be completed, the amount is refunded automatically "
+                  "with a voucher ({pct}% more in case of a technical failure), valid for {days} days.",
+        "delivery": "The download link will be sent to <strong>{dest}</strong> once processing "
+                    "is complete. To receive it at a different address, enter it on the "
+                    "generation page before the job finishes.",
+    },
+    "fr": {
+        "subject": "Reçu de paiement Audiobook Maker — {amount} EUR",
+        "heading": "Merci pour votre paiement.",
+        "amount": "Montant", "txid": "ID de transaction", "service": "Service", "project": "Projet",
+        "info": "Conservez cet e-mail comme reçu. Contactez-nous pour la facturation.",
+        "refund": "Si le service ne peut pas être réalisé, le montant vous est remboursé "
+                  "automatiquement sous forme de bon (majoré de {pct} % en cas d'erreur technique), "
+                  "valable {days} jours.",
+        "delivery": "Le lien de téléchargement sera envoyé à <strong>{dest}</strong> "
+                    "à la fin du traitement. Pour le recevoir à une autre adresse, indiquez-la "
+                    "sur la page de génération avant la fin du travail.",
+    },
+    "es": {
+        "subject": "Recibo de pago Audiobook Maker — {amount} EUR",
+        "heading": "Gracias por tu pago.",
+        "amount": "Importe", "txid": "ID de transacción", "service": "Servicio", "project": "Proyecto",
+        "info": "Guarda este correo como recibo. Contáctanos para la facturación.",
+        "refund": "Si el servicio no puede completarse, el importe se reembolsa automáticamente "
+                  "con un cupón (un {pct}% más en caso de error técnico), válido "
+                  "{days} días.",
+        "delivery": "El enlace de descarga se enviará a <strong>{dest}</strong> al finalizar "
+                    "el procesamiento. Si prefieres otra dirección, indícala en la página "
+                    "de generación antes de que termine el trabajo.",
+    },
+    "de": {
+        "subject": "Zahlungsbeleg Audiobook Maker — {amount} EUR",
+        "heading": "Danke für deine Zahlung.",
+        "amount": "Betrag", "txid": "Transaktions-ID", "service": "Leistung", "project": "Projekt",
+        "info": "Bewahre diese E-Mail als Beleg auf. Für eine Rechnung kontaktiere uns.",
+        "refund": "Kann die Leistung nicht erbracht werden, wird der Betrag automatisch als "
+                  "Gutschein erstattet (bei technischen Fehlern um {pct} % erhöht), "
+                  "{days} Tage gültig.",
+        "delivery": "Der Download-Link wird nach Abschluss der Verarbeitung an "
+                    "<strong>{dest}</strong> gesendet. Für eine andere Adresse gib sie vor "
+                    "Ende des Auftrags auf der Generierungsseite an.",
+    },
+    "zh": {
+        "subject": "Audiobook Maker 付款收据 — {amount} EUR",
+        "heading": "感谢您的付款。",
+        "amount": "金额", "txid": "交易 ID", "service": "服务", "project": "项目",
+        "info": "请保留此邮件作为收据。如需发票请联系我们。",
+        "refund": "如服务无法完成，付款将自动以代金券形式退还"
+                  "（技术故障时额外增加 {pct}%），有效期 {days} 天。",
+        "delivery": "处理完成后，下载链接将发送至 <strong>{dest}</strong>。"
+                    "如需发送到其他邮箱，请在任务结束前"
+                    "在生成页面填写另一个邮箱。",
+    },
+    "hi": {
+        "subject": "Audiobook Maker भुगतान रसीद — EUR {amount}",
+        "heading": "आपके भुगतान के लिए धन्यवाद।",
+        "amount": "राशि", "txid": "लेन-देन ID", "service": "सेवा", "project": "परियोजना",
+        "info": "इस ईमेल को रसीद के रूप में रखें। चालान के लिए हमसे संपर्क करें।",
+        "refund": "यदि सेवा पूरी नहीं हो पाती, तो राशि अपने आप वाउचर के रूप में लौटा दी जाती है "
+                  "(तकनीकी त्रुटि पर {pct}% अधिक), जो {days} दिनों तक मान्य है।",
+        "delivery": "प्रसंस्करण पूरा होने पर डाउनलोड लिंक "
+                    "<strong>{dest}</strong> पर भेजा जाएगा। "
+                    "किसी दूसरे पते पर चाहिए तो जॉब खत्म होने से पहले "
+                    "जेनरेशन पेज पर वह ईमेल दर्ज करें।",
+    },
+}
+
+
+def _send_payment_receipt_email(order_id, email, amount_eur, kind="optimization",
+                                lang="en", book_title="", job=None):
+    """Ricevuta del pagamento PayPal, nella lingua UI di chi paga (fallback
+    inglese). `kind`: servizio pagato (chiavi di `_RECEIPT_SERVICE`). `job`:
+    se presente aggiunge il blocco su dove arrivera' il link di download."""
+    lang = (lang or "").split("-")[0].lower()
+    if lang not in _RECEIPT_I18N:
+        lang = "en"
+    t = _RECEIPT_I18N[lang]
+    service = _RECEIPT_SERVICE[lang].get(kind) or _RECEIPT_SERVICE[lang]["optimization"]
+    amount = f"{amount_eur:.2f}"
+    subject = t["subject"].format(amount=amount)
+    rows = (f"{t['amount']}: <strong>{amount} EUR</strong>"
+            f"<br>{t['txid']}: <code>{html.escape(str(order_id))}</code>"
+            f"<br>{t['service']}: <strong>{service}</strong>")
+    if book_title:
+        rows += f"<br>{t['project']}: <strong>{html.escape(book_title)}</strong>"
+    refund = t["refund"].format(pct=VOUCHER_BONUS_PERCENT, days=VOUCHER_EXPIRY_DAYS)
     # Blocco consegna: rende esplicito SU QUALE indirizzo arrivera' il link di
     # download. Il job pagato passa in batch implicito sull'email del pagamento
     # (vedi api_paypal_capture -> job["notify_email"]), che puo' essere diversa
@@ -738,72 +849,159 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
     # Destinatario reale della notifica: l'email eventualmente gia' registrata
     # dall'utente ha la precedenza sull'email del pagamento (stessa priorita' di
     # api_paypal_capture / api_register_email).
-    dest = ((job.get("notify_email") or "").strip() if job else "") or email
-    delivery_map = {
-        "it": (f"Il link per scaricare il risultato verr&agrave; inviato a "
-               f"<strong>{dest}</strong> al termine della lavorazione. "
-               f"Se preferisci riceverlo a un altro indirizzo, indicalo nella pagina di "
-               f"generazione prima che il lavoro finisca."),
-        "en": (f"The download link will be sent to <strong>{dest}</strong> "
-               f"once processing is complete. "
-               f"To receive it at a different address, enter it on the generation page "
-               f"before the job finishes."),
-        "fr": (f"Le lien de t&eacute;l&eacute;chargement sera envoy&eacute; &agrave; "
-               f"<strong>{dest}</strong> &agrave; la fin du traitement. "
-               f"Pour le recevoir &agrave; une autre adresse, indiquez-la sur la page de "
-               f"g&eacute;n&eacute;ration avant la fin du travail."),
-        "es": (f"El enlace de descarga se enviar&aacute; a <strong>{dest}</strong> "
-               f"al finalizar el procesamiento. "
-               f"Si prefieres otra direcci&oacute;n, ind&iacute;cala en la p&aacute;gina de "
-               f"generaci&oacute;n antes de que termine el trabajo."),
-        "de": (f"Der Download-Link wird nach Abschluss der Verarbeitung an "
-               f"<strong>{dest}</strong> gesendet. "
-               f"F&uuml;r eine andere Adresse gib sie vor Ende des Auftrags "
-               f"auf der Generierungsseite an."),
-        "zh": (f"处理完成后，下载链接将发送至 <strong>{dest}</strong>。"
-               f"如需发送到其他邮箱，请在任务结束前"
-               f"在生成页面填写另一个邮箱。"),
-        "hi": (f"प्रसंस्करण पूरा होने पर डाउनलोड लिंक "
-               f"<strong>{dest}</strong> पर भेजा जाएगा। "
-               f"किसी दूसरे पते पर चाहिए तो जॉब खत्म होने से पहले "
-               f"जेनरेशन पेज पर वह ईमेल दर्ज करें।"),
-    }
-    delivery = delivery_map.get(lang, delivery_map["en"])
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#2c3e50">&#x1F4B3; {heading}</h2>
-  <div style="padding:16px;background:#f0f5ff;border-radius:8px;margin:16px 0">
-    <p style="margin:0">{details}</p>
-  </div>
+    delivery_html = ""
+    if job is not None:
+        dest = (job.get("notify_email") or "").strip() or email
+        delivery_html = f"""
   <div style="padding:14px 16px;background:#fff7ed;border-left:4px solid #f97316;border-radius:4px;margin:16px 0">
-    <p style="margin:0">&#x1F4E7; {delivery}</p>
-  </div>
-  <p>{info_txt}</p>
+    <p style="margin:0">&#x1F4E7; {t["delivery"].format(dest=html.escape(dest))}</p>
+  </div>"""
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <h2 style="color:#2c3e50">&#x1F4B3; {t["heading"]}</h2>
+  <div style="padding:16px;background:#f0f5ff;border-radius:8px;margin:16px 0">
+    <p style="margin:0">{rows}</p>
+  </div>{delivery_html}
+  <p>{t["info"]}</p>
   <p style="font-size:.9em;color:#666">{refund}</p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
+  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
 </div>"""
     _send_email(email, subject, html_body)
 
 
-def _send_voucher_email(code, email, amount_eur, book_title):
-    """Send voucher email after optimization failure."""
+# Email del buono di rimborso, in sette lingue. `{what}` e' l'operazione
+# fallita, presa da `_VOUCHER_WHAT` secondo il `kind` del job; `{bonus}` vale
+# "" quando il buono non e' maggiorato (annullamento volontario).
+_VOUCHER_WHAT = {
+    "it": {"optimization": "L'ottimizzazione AI del testo", "translation": "La traduzione"},
+    "en": {"optimization": "The AI text optimization", "translation": "The translation"},
+    "fr": {"optimization": "L'optimisation IA du texte", "translation": "La traduction"},
+    "es": {"optimization": "La optimizaci\u00f3n IA del texto", "translation": "La traducci\u00f3n"},
+    "de": {"optimization": "Die KI-Textoptimierung", "translation": "Die \u00dcbersetzung"},
+    "zh": {"optimization": "AI \u6587\u672c\u4f18\u5316", "translation": "\u7ffb\u8bd1"},
+    "hi": {"optimization": "AI \u091f\u0947\u0915\u094d\u0938\u094d\u091f \u0911\u092a\u094d\u091f\u093f\u092e\u093e\u0907\u091c\u093c\u0947\u0936\u0928",
+           "translation": "\u0905\u0928\u0941\u0935\u093e\u0926"},
+}
+
+_VOUCHER_I18N = {
+    "it": {
+        "subject": "Audiobook Maker \u2014 Buono di rimborso {amount} EUR",
+        "heading": "Il tuo buono di rimborso",
+        "failed": "{what} di <strong>{title}</strong> non \u00e8 andata a buon fine. "
+                  "Il pagamento ti \u00e8 stato interamente rimborsato con un buono{bonus}.",
+        "bonus": ", maggiorato del {pct}%",
+        "code": "Codice buono", "value": "Valore", "expiry": "Scadenza",
+        "use": "Per usarlo, scegli il pagamento con buono e inserisci questo codice "
+               "insieme all'email <strong>{email}</strong>. Vale per qualunque servizio a pagamento.",
+        "note": "Il buono \u00e8 nominativo e riutilizzabile: se l'operazione costa meno del suo valore, "
+                "il saldo residuo resta disponibile fino alla scadenza.",
+    },
+    "en": {
+        "subject": "Audiobook Maker \u2014 Refund voucher EUR {amount}",
+        "heading": "Your refund voucher",
+        "failed": "{what} of <strong>{title}</strong> could not be completed. "
+                  "Your payment has been fully refunded with a voucher{bonus}.",
+        "bonus": ", increased by {pct}%",
+        "code": "Voucher code", "value": "Value", "expiry": "Expires",
+        "use": "To use it, choose voucher payment and enter this code together with "
+               "the email <strong>{email}</strong>. It is valid for any paid service.",
+        "note": "The voucher is personal and reusable: if a purchase costs less than its value, "
+                "the remaining balance stays available until it expires.",
+    },
+    "fr": {
+        "subject": "Audiobook Maker \u2014 Bon de remboursement {amount} EUR",
+        "heading": "Votre bon de remboursement",
+        "failed": "{what} de <strong>{title}</strong> n'a pas pu \u00eatre men\u00e9e \u00e0 bien. "
+                  "Votre paiement vous a \u00e9t\u00e9 enti\u00e8rement rembours\u00e9 sous forme de bon{bonus}.",
+        "bonus": ", major\u00e9 de {pct} %",
+        "code": "Code du bon", "value": "Valeur", "expiry": "Expiration",
+        "use": "Pour l'utiliser, choisissez le paiement par bon et saisissez ce code avec "
+               "l'adresse <strong>{email}</strong>. Il est valable pour tous les services payants.",
+        "note": "Le bon est nominatif et r\u00e9utilisable : si une op\u00e9ration co\u00fbte moins que sa valeur, "
+                "le solde restant reste disponible jusqu'\u00e0 l'expiration.",
+    },
+    "es": {
+        "subject": "Audiobook Maker \u2014 Cup\u00f3n de reembolso {amount} EUR",
+        "heading": "Tu cup\u00f3n de reembolso",
+        "failed": "{what} de <strong>{title}</strong> no se ha podido completar. "
+                  "Te hemos reembolsado el pago \u00edntegramente con un cup\u00f3n{bonus}.",
+        "bonus": ", incrementado en un {pct}%",
+        "code": "C\u00f3digo del cup\u00f3n", "value": "Valor", "expiry": "Caducidad",
+        "use": "Para usarlo, elige el pago con cup\u00f3n e introduce este c\u00f3digo junto con "
+               "el correo <strong>{email}</strong>. Sirve para cualquier servicio de pago.",
+        "note": "El cup\u00f3n es nominativo y reutilizable: si una operaci\u00f3n cuesta menos que su valor, "
+                "el saldo restante sigue disponible hasta la caducidad.",
+    },
+    "de": {
+        "subject": "Audiobook Maker \u2014 Erstattungsgutschein {amount} EUR",
+        "heading": "Dein Erstattungsgutschein",
+        "failed": "{what} von <strong>{title}</strong> konnte nicht abgeschlossen werden. "
+                  "Deine Zahlung wurde dir vollst\u00e4ndig als Gutschein erstattet{bonus}.",
+        "bonus": ", um {pct} % erh\u00f6ht",
+        "code": "Gutscheincode", "value": "Wert", "expiry": "G\u00fcltig bis",
+        "use": "Um ihn einzul\u00f6sen, w\u00e4hle die Zahlung per Gutschein und gib diesen Code zusammen mit "
+               "der E-Mail <strong>{email}</strong> ein. Er gilt f\u00fcr alle kostenpflichtigen Dienste.",
+        "note": "Der Gutschein ist personengebunden und mehrfach nutzbar: Kostet ein Vorgang weniger als "
+                "sein Wert, bleibt das Restguthaben bis zum Ablauf verf\u00fcgbar.",
+    },
+    "zh": {
+        "subject": "Audiobook Maker \u2014 \u9000\u6b3e\u4ee3\u91d1\u5238 {amount} EUR",
+        "heading": "\u60a8\u7684\u9000\u6b3e\u4ee3\u91d1\u5238",
+        "failed": "<strong>{title}</strong> \u7684{what}\u672a\u80fd\u5b8c\u6210\u3002"
+                  "\u60a8\u7684\u4ed8\u6b3e\u5df2\u4ee5\u4ee3\u91d1\u5238\u5f62\u5f0f\u5168\u989d\u9000\u8fd8{bonus}\u3002",
+        "bonus": "\uff0c\u5e76\u989d\u5916\u589e\u52a0 {pct}%",
+        "code": "\u4ee3\u91d1\u5238\u4ee3\u7801", "value": "\u91d1\u989d", "expiry": "\u6709\u6548\u671f\u81f3",
+        "use": "\u4f7f\u7528\u65f6\u8bf7\u9009\u62e9\u4ee3\u91d1\u5238\u652f\u4ed8\uff0c\u5e76\u8f93\u5165\u6b64\u4ee3\u7801\u53ca\u90ae\u7bb1 "
+               "<strong>{email}</strong>\u3002\u9002\u7528\u4e8e\u6240\u6709\u4ed8\u8d39\u670d\u52a1\u3002",
+        "note": "\u4ee3\u91d1\u5238\u4e3a\u5b9e\u540d\u4e14\u53ef\u91cd\u590d\u4f7f\u7528\uff1a\u82e5\u6d88\u8d39\u91d1\u989d\u4f4e\u4e8e\u5238\u9762\u91d1\u989d\uff0c"
+                "\u4f59\u989d\u5728\u6709\u6548\u671f\u5185\u4ecd\u53ef\u4f7f\u7528\u3002",
+    },
+    "hi": {
+        "subject": "Audiobook Maker \u2014 \u0930\u093f\u092b\u0902\u0921 \u0935\u093e\u0909\u091a\u0930 EUR {amount}",
+        "heading": "\u0906\u092a\u0915\u093e \u0930\u093f\u092b\u0902\u0921 \u0935\u093e\u0909\u091a\u0930",
+        "failed": "<strong>{title}</strong> \u0915\u093e {what} \u092a\u0942\u0930\u093e \u0928\u0939\u0940\u0902 \u0939\u094b \u0938\u0915\u093e\u0964 "
+                  "\u0906\u092a\u0915\u093e \u092d\u0941\u0917\u0924\u093e\u0928 \u0935\u093e\u0909\u091a\u0930 \u0915\u0947 \u0930\u0942\u092a \u092e\u0947\u0902 \u092a\u0942\u0930\u0940 \u0924\u0930\u0939 \u0932\u094c\u091f\u093e \u0926\u093f\u092f\u093e \u0917\u092f\u093e \u0939\u0948{bonus}\u0964",
+        "bonus": " ({pct}% \u0905\u0924\u093f\u0930\u093f\u0915\u094d\u0924 \u0938\u0939\u093f\u0924)",
+        "code": "\u0935\u093e\u0909\u091a\u0930 \u0915\u094b\u0921", "value": "\u092e\u0942\u0932\u094d\u092f", "expiry": "\u0938\u092e\u093e\u092a\u094d\u0924\u093f",
+        "use": "\u0907\u0938\u0947 \u0907\u0938\u094d\u0924\u0947\u092e\u093e\u0932 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0935\u093e\u0909\u091a\u0930 \u092d\u0941\u0917\u0924\u093e\u0928 \u091a\u0941\u0928\u0947\u0902 \u0914\u0930 \u092f\u0939 \u0915\u094b\u0921 \u0908\u092e\u0947\u0932 "
+               "<strong>{email}</strong> \u0915\u0947 \u0938\u093e\u0925 \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964 \u092f\u0939 \u0938\u092d\u0940 \u0938\u0936\u0941\u0932\u094d\u0915 \u0938\u0947\u0935\u093e\u0913\u0902 \u092a\u0930 \u092e\u093e\u0928\u094d\u092f \u0939\u0948\u0964",
+        "note": "\u0935\u093e\u0909\u091a\u0930 \u0935\u094d\u092f\u0915\u094d\u0924\u093f\u0917\u0924 \u0914\u0930 \u0926\u094b\u092c\u093e\u0930\u093e \u0907\u0938\u094d\u0924\u0947\u092e\u093e\u0932 \u092f\u094b\u0917\u094d\u092f \u0939\u0948: \u0916\u0930\u094d\u091a \u0907\u0938\u0915\u0947 \u092e\u0942\u0932\u094d\u092f \u0938\u0947 \u0915\u092e \u0939\u094b \u0924\u094b "
+                "\u0936\u0947\u0937 \u0930\u093e\u0936\u093f \u0938\u092e\u093e\u092a\u094d\u0924\u093f \u0924\u0915 \u0909\u092a\u0932\u092c\u094d\u0927 \u0930\u0939\u0924\u0940 \u0939\u0948\u0964",
+    },
+}
+
+
+def _send_voucher_email(code, email, amount_eur, book_title, kind="optimization",
+                        lang="en", bonus_applied=True):
+    """Email del buono di rimborso dopo un'ottimizzazione o una traduzione
+    fallita/annullata. `kind`: "optimization" | "translation"; `lang`: lingua
+    UI del job (fallback inglese)."""
     if not (email and _smtp_available()):
         return
     from datetime import datetime, timedelta
+    lang = (lang or "").split("-")[0].lower()
+    if lang not in _VOUCHER_I18N:
+        lang = "en"
+    t = _VOUCHER_I18N[lang]
+    what = _VOUCHER_WHAT[lang].get(kind) or _VOUCHER_WHAT[lang]["optimization"]
     expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
-    subject = f"Audiobook Maker \u2014 Buono {amount_eur:.2f} EUR (ottimizzazione non riuscita)"
+    amount = f"{amount_eur:.2f}"
+    title = html.escape(book_title or "") or "&mdash;"
+    bonus = t["bonus"].format(pct=VOUCHER_BONUS_PERCENT) if bonus_applied else ""
+    subject = t["subject"].format(amount=amount)
+    failed = t["failed"].format(what=what, title=title, bonus=bonus)
+    use = t["use"].format(email=html.escape(email))
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#2c3e50">&#x1F381; Il tuo buono</h2>
-  <p>L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine.</p>
-  <p>Come convenuto, ti inviamo un buono di valore maggiorato del {VOUCHER_BONUS_PERCENT}%:</p>
+  <h2 style="color:#2c3e50">&#x1F381; {t["heading"]}</h2>
+  <p>{failed}</p>
   <div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
-    <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono:</div>
+    <div style="font-size:.85em;color:#666;margin-bottom:8px">{t["code"]}:</div>
     <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{code}</div>
-    <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
-    <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
+    <div style="margin-top:12px">{t["value"]}: <strong>{amount} EUR</strong></div>
+    <div style="margin-top:4px;font-size:.9em;color:#666">{t["expiry"]}: {expiry}</div>
   </div>
-  <p>Per utilizzarlo, avvia una nuova ottimizzazione AI e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>
-  <p style="font-size:.85em;color:#666">Il buono \u00e8 nominativo e riutilizzabile: se l'operazione costa meno del valore del buono, il saldo residuo rimane disponibile per usi successivi fino alla scadenza.</p>
+  <p>{use}</p>
+  <p style="font-size:.85em;color:#666">{t["note"]}</p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
   <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
 </div>"""

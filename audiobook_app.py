@@ -16565,6 +16565,7 @@ def api_paypal_create_order():
     if not _lp["requires_payment"]:
         return jsonify({"error": "Payment not required for this job"}), 400
 
+    job["pay_receipt_kind"] = "optimization"
     book_title = getattr(info, "title", "") or "Audiobook"
     description = f"AI text optimization  -  {book_title[:60]}"
     try:
@@ -16704,7 +16705,18 @@ def api_paypal_capture_order():
         # Send receipt email (non-blocking best-effort)
         if email and _smtp_available():
             try:
-                _send_payment_receipt_email(effective_order_id, email, amount_eur, jobs.get(job_id, {}))
+                _rjob = jobs.get(job_id, {})
+                if job_id.startswith("vc:"):
+                    _rkind = "voice_clone"
+                    _rtitle = (voice_clone.get(job_id[3:]) or {}).get("name", "")
+                else:
+                    _rkind = _rjob.get("pay_receipt_kind") or "optimization"
+                    _rtitle = getattr(_rjob.get("info"), "title", "") or _rjob.get("original_filename", "")
+                _rlang = ((data.get("ui_lang") or "").strip()
+                          or _rjob.get("notify_lang") or _rjob.get("browser_lang") or "en")
+                _send_payment_receipt_email(effective_order_id, email, amount_eur,
+                                            kind=_rkind, lang=_rlang, book_title=_rtitle,
+                                            job=None if _rkind == "voice_clone" else _rjob)
             except Exception as e:
                 print(f"[paypal] receipt email failed: {e}")
 
@@ -17253,6 +17265,9 @@ def api_paypal_create_order_gemini():
             "client_amount_eur": requested_amount,
         }), 409
 
+    # Servizio pagato, per la ricevuta email inviata alla capture.
+    job["pay_receipt_kind"] = (("premium_opt" if llm_eur > 0 else "premium")
+                               if _has_premium else "optimization")
     book_title = getattr(info, "title", "") or "Audiobook"
     description = f"Audiobook Maker - Voci PREMIUM - {book_title[:60]}"
     try:
@@ -17314,6 +17329,7 @@ def api_paypal_create_order_translate():
     if not amount_eur or amount_eur <= 0:
         return jsonify({"error": "No payment required"}), 400
 
+    job["pay_receipt_kind"] = "translation_opt" if optimize else "translation"
     book_title = getattr(info, "title", "") or "Audiobook"
     description = f"Book translation  -  {book_title[:60]}"
     try:

@@ -3253,7 +3253,13 @@ def _refund_job_payment(job_id, job, reason="error"):
                 note=f"Rimborso automatico {kind_label} ({reason})",
                 apply_bonus=_apply_bonus,
             )
-            email_service._send_voucher_email(code, payment_email, bonus_amount, book_title)
+            email_service._send_voucher_email(
+                code, payment_email, bonus_amount,
+                book_title or job.get("original_filename", ""),
+                kind="translation" if job.get("tr_params") else "optimization",
+                lang=job.get("notify_lang") or job.get("browser_lang") or "en",
+                bonus_applied=_apply_bonus,
+            )
             job["refund_voucher_code"] = code
             job["refund_done"] = True
             _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_ISSUED",

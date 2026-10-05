@@ -2580,7 +2580,7 @@ async function renderPaypalGeminiButtons(){
     },
     onApprove:async function(data,actions){
       try{
-        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:(_payCtx&&_payCtx.paypal&&_payCtx.paypal.captureJobId)||jobId})});
+        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:(_payCtx&&_payCtx.paypal&&_payCtx.paypal.captureJobId)||jobId,ui_lang:cl})});
         const d=await r.json();
         if(d.error||!d.payment_token){
           // Capture rifiutata dall'emittente (INSTRUMENT_DECLINED): flusso
