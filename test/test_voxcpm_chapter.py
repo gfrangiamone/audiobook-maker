@@ -513,6 +513,24 @@ def test_worker_senza_rientri_lascia_la_lista_vuota(tmp_path, monkeypatch):
     assert stats["verifica_giri"] == 2
 
 
+def test_i_dubbi_del_worker_arrivano_nelle_misure(tmp_path, monkeypatch):
+    # Il worker manda gli indici in dubbio e, per quelli sciolti, il giro:
+    # al capitolo servono i due conti.
+    finto = FintoRunJob(esito_ok(verify={
+        "chunks_verificati": 40, "giri": 2, "dubbi": [3, 8, 17],
+        "dubbi_chiariti": {"3": 1, "17": 2}}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_dubbi"] == 3
+    assert stats["verifica_dubbi_chiariti"] == 2
+
+
+def test_worker_senza_dubbi_lascia_zero(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok(verify={"chunks_verificati": 40, "giri": 0}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_dubbi"] == 0
+    assert stats["verifica_dubbi_chiariti"] == 0
+
+
 def test_l_audio_finisce_nel_file(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok(pcm=b"\xaa\xbb" * 50))
     stats, dest = sintetizza(finto, tmp_path, monkeypatch)

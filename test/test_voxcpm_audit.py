@@ -326,6 +326,29 @@ def test_il_worker_senza_grafia_scrive_zero(audit_isolato):
     assert leggi(audit_isolato)[0]["worker_verify_falsi_grafia"] == 0
 
 
+def test_i_dubbi_arrivano_nel_record(audit_isolato):
+    # «controcult» per «controcultura»: la prova della parola l'assolveva, ora
+    # il worker la ricompra. Quante erano e quante sono state sciolte devono
+    # restare nello storico: chi resta in dubbio non e' fra le code tagliate.
+    job = job_con_fattura()
+    job["voxcpm_actual"].update({"verifica_dubbi": 13,
+                                 "verifica_dubbi_chiariti": 10})
+    generation_engine._write_voxcpm_audit("job-4", job, VOCE, "it",
+                                          "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_dubbi"] == 13
+    assert r["worker_verify_dubbi_chiariti"] == 10
+
+
+def test_il_worker_senza_dubbi_scrive_zero(audit_isolato):
+    # Immagine precedente a dc468e0: i dubbi non li ricomprava, zero.
+    generation_engine._write_voxcpm_audit("job-5", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_dubbi"] == 0
+    assert r["worker_verify_dubbi_chiariti"] == 0
+
+
 def leggi_code_tagliate(dir_dati):
     righe = []
     for fp in sorted(dir_dati.glob("voxcpm_code_tagliate_*.jsonl")):

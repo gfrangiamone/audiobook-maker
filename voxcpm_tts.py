@@ -1437,7 +1437,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         `code_tagliate_dettaglio`,
         `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
         `verifica_giri`, `verifica_rientri`, `verifica_numerali`,
-        `verifica_falsi_numerali`, `verifica_falsi_grafia`, `bytes` e `runpod`,
+        `verifica_falsi_numerali`, `verifica_falsi_grafia`, `verifica_dubbi`,
+        `verifica_dubbi_chiariti`, `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -1514,6 +1515,13 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # separato perche' i due difetti non si guastano insieme, e un
              # totale unico nasconderebbe quale dei due sta cedendo.
              "verifica_falsi_grafia": 0,
+             # Le code che solo la prova della parola assolveva («controcult»
+             # per «controcultura», 4 ottobre 2026): dal worker dc468e0 si
+             # ricomprano lo stesso. Quante erano, e quante un take nuovo ha
+             # letto per intero: la differenza e' cio' che resta in dubbio, e
+             # non sta in `code_tagliate`.
+             "verifica_dubbi": 0,
+             "verifica_dubbi_chiariti": 0,
              # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
              # buttati via sono GPU comprata, ed e' il conto sui caratteri a
              # non vederli.
@@ -1679,6 +1687,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 # zero e' la risposta giusta — quella regola li' non c'era.
                 stats["verifica_falsi_grafia"] = int(
                     _ver.get("falsi_grafia") or 0)
+                # Assenti sui worker prima di dc468e0, che i dubbi non li
+                # ricompravano: lo zero e' di nuovo la risposta giusta.
+                stats["verifica_dubbi"] = len(_ver.get("dubbi") or [])
+                stats["verifica_dubbi_chiariti"] = len(
+                    _ver.get("dubbi_chiariti") or {})
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
             bad = out["failed_indices"] or []

@@ -4082,6 +4082,9 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             # separato dai numerali perche' e' un altro vizio del
             # riconoscitore, e i due non si guastano insieme.
             "verifica_falsi_grafia": 0,
+            # Le code assolte solo dalla prova della parola, che il worker
+            # ora ricompra, e quante di quelle un take nuovo ha sciolto.
+            "verifica_dubbi": 0, "verifica_dubbi_chiariti": 0,
             # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
             # fattura: e' il costo vero del libro, che il conto sui caratteri
             # non puo' vedere.
@@ -4319,7 +4322,9 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                                        "verifica_rinunciati", "verifica_giri",
                                        "verifica_numerali",
                                        "verifica_falsi_numerali",
-                                       "verifica_falsi_grafia"):
+                                       "verifica_falsi_grafia",
+                                       "verifica_dubbi",
+                                       "verifica_dubbi_chiariti"):
                                 _va[_k] = int(_va.get(_k, 0) or 0) + int(
                                     stats.get(_k, 0) or 0)
                             # I rientri si sommano posizione per posizione, non si
@@ -5430,6 +5435,15 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             # lo direbbe.
             "worker_verify_falsi_grafia": int(
                 actual.get("verifica_falsi_grafia", 0) or 0),
+            # Il rovescio di quella regola: le code che la prova della parola
+            # assolveva e che dal 4 ottobre 2026 il worker ricompra lo stesso
+            # («controcult» per «controcultura»). `dubbi` quante erano,
+            # `dubbi_chiariti` quante un take nuovo ha letto per intero. Chi
+            # resta in dubbio non e' in `worker_code_tagliate`: la differenza
+            # fra i due e' la sola traccia dei tagli veri che passano.
+            "worker_verify_dubbi": int(actual.get("verifica_dubbi", 0) or 0),
+            "worker_verify_dubbi_chiariti": int(
+                actual.get("verifica_dubbi_chiariti", 0) or 0),
         }
         _reused_n = int(job.get("chunks_reused", 0) or 0)
         if _reused_n:
