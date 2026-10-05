@@ -40,6 +40,16 @@ class TranslationCancelled(TranslationError):
     """Traduzione annullata (cancel_cb ha restituito True)."""
 
 
+class TranslationContentBlocked(TranslationError):
+    """Il provider ha interrotto la risposta per il contenuto (filtro
+    safety/recitation): ripetere la stessa richiesta allo stesso modello non
+    serve, il chiamante puo' ripiegare su un altro LLM."""
+
+    def __init__(self, message, finish_reason=""):
+        super().__init__(message)
+        self.finish_reason = finish_reason
+
+
 # ---------------------------------------------------------------------------
 # Config (letta a ogni chiamata: testabile con monkeypatch.setenv)
 # ---------------------------------------------------------------------------
@@ -114,6 +124,26 @@ def temperature():
 
 def request_timeout():
     return _env_num(float, "ABM_TRANSLATE_REQUEST_TIMEOUT_SEC", 300)
+
+
+def block_attempts():
+    """Tentativi sullo stesso chunk quando il provider lo blocca per il
+    contenuto, prima di arrendersi (TranslationContentBlocked). Il blocco e'
+    quasi sempre deterministico: 2 bastano a coprire il caso sporadico."""
+    return max(1, _env_num(int, "ABM_TRANSLATE_BLOCK_ATTEMPTS", 2))
+
+
+def fallback_model():
+    """Modello di ripiego per i chunk bloccati per il contenuto: di default
+    quello dell'ottimizzazione AI (ABM_LLM_MODEL). 'off' disabilita."""
+    v = _env("ABM_TRANSLATE_FALLBACK_MODEL", "ABM_LLM_MODEL", "deepseek-chat")
+    return "" if v.lower() in ("off", "none", "0") else v
+
+
+def fallback_sticky_after():
+    """Dopo quanti chunk bloccati il resto del libro va direttamente al
+    modello di ripiego (0 = mai: si ripiega solo chunk per chunk)."""
+    return max(0, _env_num(int, "ABM_TRANSLATE_FALLBACK_STICKY_AFTER", 2))
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +404,40 @@ def make_client_provider(backend):
     return provider, model, base_url
 
 
+def make_fallback_provider(primary_model=""):
+    """Provider di ripiego per i chunk che il modello primario blocca per il
+    contenuto: l'LLM dell'ottimizzazione AI (ABM_LLM_API_KEY/_API_BASE,
+    modello fallback_model()). Usa le credenziali ABM_LLM_* e non le
+    ABM_TRANSLATE_*: e' il provider dell'ottimizzazione, non un secondo
+    backend di traduzione.
+
+    Ritorna (provider, model, extra_kwargs) oppure None se il ripiego non e'
+    configurato o coincide col primario. extra_kwargs spegne il thinking
+    (default "on" sui DeepSeek v4) e alza max_tokens come fa l'ottimizzazione.
+    """
+    key = os.environ.get("ABM_LLM_API_KEY", "").strip()
+    mdl = fallback_model()
+    if not key or not mdl or mdl == primary_model:
+        return None
+    from openai import OpenAI
+
+    base = (os.environ.get("ABM_LLM_API_BASE", "").strip()
+            or "https://api.deepseek.com")
+    state = {"client": None}
+
+    def provider():
+        if state["client"] is None:
+            state["client"] = OpenAI(api_key=key, base_url=base,
+                                     timeout=request_timeout())
+        return state["client"]
+
+    extra = {
+        "max_tokens": _env_num(int, "ABM_LLM_MAX_TOKENS", 65536),
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+    return provider, mdl, extra
+
+
 # ---------------------------------------------------------------------------
 # Chiamate LLM
 # ---------------------------------------------------------------------------
@@ -406,14 +470,33 @@ def _thinking_off_kwargs(model):
     return {}
 
 
+# finish_reason che indicano una risposta interrotta per il contenuto. Vertex
+# (endpoint OpenAI-compatibile) mappa SAFETY/RECITATION/BLOCKLIST/
+# PROHIBITED_CONTENT/SPII su "content_filter"; i nomi nativi restano per i
+# proxy che li passano invariati.
+_BLOCK_FINISH_RE = re.compile(
+    r"content_filter|safety|recitation|blocklist|prohibited|spii",
+    re.IGNORECASE)
+
+
+def _is_block_finish(reason):
+    return bool(reason) and bool(_BLOCK_FINISH_RE.search(str(reason)))
+
+
 def call_llm(client_provider, system_prompt, user_content, *, model, usage,
-             label="", progress_cb=None, cancel_cb=None, log=print):
+             label="", progress_cb=None, cancel_cb=None, log=print,
+             extra_kwargs=None):
     """Chiamata LLM streaming con retry esponenziale. Ritorna il testo.
 
     usage: UsageTracker dell'esecuzione (anche stato no_stream_options).
     progress_cb(received_chars): notificata col cumulativo caratteri ricevuti.
     cancel_cb() -> bool: se True a inizio chiamata o tra gli eventi dello
     stream, solleva TranslationCancelled.
+    extra_kwargs: parametri aggiuntivi per la create() (provider di ripiego).
+
+    Una risposta interrotta per il contenuto (finish_reason di blocco) non e'
+    mai restituita, nemmeno se parziale: dopo block_attempts() tentativi
+    solleva TranslationContentBlocked, senza consumare tutti i retry.
     """
     messages = [
         {"role": "system", "content": system_prompt},
@@ -422,6 +505,7 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
     retries = max_retries()
     last_exc = None
     attempt = 0
+    blocked = 0
     while attempt < retries:
         if cancel_cb and cancel_cb():
             raise TranslationCancelled("cancelled before LLM call")
@@ -437,22 +521,40 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
                 kwargs.update(_thinking_off_kwargs(model))
             if not usage.no_stream_options:
                 kwargs["stream_options"] = {"include_usage": True}
+            if extra_kwargs:
+                kwargs.update(extra_kwargs)
             stream = client.chat.completions.create(**kwargs)
             parts = []
             received = 0
             usage_obj = None
+            finish = ""
             for event in stream:
                 if cancel_cb and cancel_cb():
                     raise TranslationCancelled("cancelled mid-stream")
-                if event.choices and event.choices[0].delta.content:
-                    chunk = event.choices[0].delta.content
-                    parts.append(chunk)
-                    received += len(chunk)
-                    if progress_cb:
-                        progress_cb(received)
+                choice = event.choices[0] if event.choices else None
+                if choice is not None:
+                    # Vertex chiude lo stream bloccato con una choice senza
+                    # delta: leggere delta.content qui era l'AttributeError
+                    # che faceva fallire i job (incidente 2026-10-05).
+                    finish = getattr(choice, "finish_reason", None) or finish
+                    delta = getattr(choice, "delta", None)
+                    chunk = getattr(delta, "content", None) if delta else None
+                    if chunk:
+                        parts.append(chunk)
+                        received += len(chunk)
+                        if progress_cb:
+                            progress_cb(received)
                 if getattr(event, "usage", None):
                     usage_obj = event.usage
             text = _strip_fences("".join(parts))
+            if _is_block_finish(finish):
+                # Il consumo c'e' stato anche se il testo si scarta.
+                usage.track(system_prompt, user_content, text, usage_obj)
+                raise TranslationContentBlocked(
+                    f"response blocked by provider (finish_reason={finish}, "
+                    f"{len(text)} chars discarded)", finish)
+            if finish and finish not in ("stop", "length"):
+                log(f"  {label} [LLM] finish_reason inatteso: {finish}")
             if not text.strip():
                 raise TranslationError("empty completion from provider")
             usage.track(system_prompt, user_content, text, usage_obj)
@@ -461,6 +563,15 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
             raise
         except KeyboardInterrupt:
             raise
+        except TranslationContentBlocked as e:
+            blocked += 1
+            last_exc = e
+            if blocked >= block_attempts():
+                raise
+            log(f"  {label} [LLM] risposta bloccata per il contenuto "
+                f"({e.finish_reason}), tentativo {blocked}/{block_attempts()}")
+            attempt += 1
+            continue
         except Exception as e:
             # Provider senza stream_options: disabilita e riprova subito
             # senza consumare un tentativo (errore di config, non transient).
@@ -491,12 +602,14 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
                 f"{attempt + 1}/{retries}), riprovo tra {wait}s: {e}")
             time.sleep(wait)
             attempt += 1
+    if isinstance(last_exc, TranslationContentBlocked):
+        raise last_exc
     raise TranslationError(
         f"Chiamata LLM fallita dopo {retries} tentativi: {last_exc}")
 
 
 def translate_titles(client_provider, titles, source, target, *, model,
-                     usage, log=print, dry_run=False):
+                     usage, log=print, dry_run=False, extra_kwargs=None):
     """Traduce i titoli dei capitoli in una singola chiamata batch (JSON).
     Su risposta invalida ritorna i titoli originali (non fatale)."""
     if dry_run:
@@ -511,7 +624,8 @@ def translate_titles(client_provider, titles, source, target, *, model,
     try:
         raw = call_llm(client_provider, system,
                        json.dumps(titles, ensure_ascii=False),
-                       model=model, usage=usage, label="[titoli]", log=log)
+                       model=model, usage=usage, label="[titoli]", log=log,
+                       extra_kwargs=extra_kwargs)
         out = json.loads(_strip_fences(raw))
         if isinstance(out, list) and len(out) == len(titles) \
                 and all(isinstance(t, str) for t in out):

@@ -3672,6 +3672,7 @@ def run_translation(job_id):
         return False
 
     usage = translation_core.UsageTracker()
+    fb_usage = translation_core.UsageTracker()
     backend = ""
     model = ""
     try:
@@ -3684,6 +3685,29 @@ def run_translation(job_id):
              f"chapters={len(chapters)} chars={total_chars}")
         system_prompt = translation_core.build_system_prompt(
             source, target, optimize)
+
+        # Ripiego sull'LLM dell'ottimizzazione AI per i chunk che il modello
+        # primario blocca per il contenuto (filtro recitation/safety di
+        # Vertex su libri editi famosi: incidente 2026-10-05, job pagati
+        # rimborsati dopo pochi capitoli). Dopo `sticky_after` chunk bloccati
+        # il resto del libro va diretto al ripiego: il blocco si ripete sullo
+        # stesso testo e ogni tentativo sul primario e' tempo perso.
+        fb = None
+        fb_tried = False
+        sticky_after = translation_core.fallback_sticky_after()
+
+        def _fallback():
+            nonlocal fb, fb_tried
+            if not fb_tried:
+                fb_tried = True
+                fb = translation_core.make_fallback_provider(model)
+                if fb is not None:
+                    job["tr_fallback_model"] = fb[1]
+            return fb
+
+        def _sticky():
+            return (sticky_after > 0 and fb is not None
+                    and job.get("tr_blocked_chunks", 0) >= sticky_after)
 
         out_chapters = []
         for i, ch in enumerate(chapters):
@@ -3704,12 +3728,32 @@ def run_translation(job_id):
                 def _pcb(n, _base=base):
                     job["tr_streamed_chars"] = job["tr_processed_chars"] + _base + n
 
-                def _traduci():
+                def _traduci_fallback(_label):
+                    fprov, fmodel, fextra = fb
+                    job["tr_fallback_chunks"] = job.get("tr_fallback_chunks", 0) + 1
                     return translation_core.call_llm(
-                        provider, system_prompt, chunk,
-                        model=model, usage=usage,
-                        label=f"[cap {i + 1}]",
-                        progress_cb=_pcb, cancel_cb=_cancelled, log=_log)
+                        fprov, system_prompt, chunk,
+                        model=fmodel, usage=fb_usage, label=_label,
+                        progress_cb=_pcb, cancel_cb=_cancelled, log=_log,
+                        extra_kwargs=fextra)
+
+                def _traduci():
+                    label = f"[cap {i + 1}]"
+                    if _sticky():
+                        return _traduci_fallback(label)
+                    try:
+                        return translation_core.call_llm(
+                            provider, system_prompt, chunk,
+                            model=model, usage=usage, label=label,
+                            progress_cb=_pcb, cancel_cb=_cancelled, log=_log)
+                    except translation_core.TranslationContentBlocked as e:
+                        job["tr_blocked_chunks"] = job.get("tr_blocked_chunks", 0) + 1
+                        if _fallback() is None:
+                            raise
+                        _log(f"{label} bloccato dal modello primario "
+                             f"({e.finish_reason}): ripiego su {fb[1]}"
+                             + (" per il resto del libro" if _sticky() else ""))
+                        return _traduci_fallback(label)
 
                 out = _traduci()
                 # Campione: solo il primo chunk del capitolo. Un modello che
@@ -3751,9 +3795,14 @@ def run_translation(job_id):
             # capitoli: un elemento in piu', zero chiamate LLM extra
             # (spec 2026-06-06-translated-title-filename).
             titles.append(book_title)
-        translated_titles = translation_core.translate_titles(
-            provider, titles, source, target,
-            model=model, usage=usage, log=_log)
+        if _sticky():
+            translated_titles = translation_core.translate_titles(
+                fb[0], titles, source, target,
+                model=fb[1], usage=fb_usage, log=_log, extra_kwargs=fb[2])
+        else:
+            translated_titles = translation_core.translate_titles(
+                provider, titles, source, target,
+                model=model, usage=usage, log=_log)
         translated_title = ""
         if book_title:
             translated_title = (translated_titles[-1] or "").strip() or book_title
@@ -3801,6 +3850,7 @@ def run_translation(job_id):
             job_id, job, backend=backend, model=model,
             source_lang=source, target_lang=target, optimize=optimize,
             chars_total=total_chars, usage_report=usage.report(),
+            fallback_usage_report=fb_usage.report(),
             outcome="completed")
         _set_job_status(job, "translated")
         # Istante di completamento: lo consuma la retention del cleanup loop
@@ -3850,6 +3900,7 @@ def run_translation(job_id):
             job_id, job, backend=backend, model=model,
             source_lang=source, target_lang=target, optimize=optimize,
             chars_total=total_chars, usage_report=usage.report(),
+            fallback_usage_report=fb_usage.report(),
             outcome="cancelled_refunded")
         _set_job_status(job, "analyzed")  # consenti retry (gate riaperto per ultimo)
     except Exception as e:
@@ -3863,6 +3914,7 @@ def run_translation(job_id):
             job_id, job, backend=backend, model=model,
             source_lang=source, target_lang=target, optimize=optimize,
             chars_total=total_chars, usage_report=usage.report(),
+            fallback_usage_report=fb_usage.report(),
             outcome="failed_refunded")
 
 
@@ -5672,7 +5724,8 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
 
 def _write_translation_audit(job_id, job, *, backend, model, source_lang,
                              target_lang, optimize, chars_total,
-                             usage_report, outcome):
+                             usage_report, outcome,
+                             fallback_usage_report=None):
     """Append record audit al termine (o interruzione) di un job di traduzione.
 
     Best-effort/non-fatale. Costo LLM stimato dai token reali dell'UsageTracker
@@ -5688,6 +5741,15 @@ def _write_translation_audit(job_id, job, *, backend, model, source_lang,
         tokens_estimated = bool(ur.get("estimated", False))
         cost_eur = payment._translation_provider_cost_eur(
             prompt_tokens, completion_tokens)
+        # Chunk ripiegati sull'LLM dell'ottimizzazione: tariffa di quel
+        # provider, sommata nel costo totale (chiave provider-agnostica).
+        fr = fallback_usage_report or {}
+        fb_cost_eur = 0.0
+        if fr.get("calls"):
+            fb_cost_eur = payment._optimization_provider_cost_eur(
+                int(fr.get("prompt_tokens", 0) or 0),
+                int(fr.get("completion_tokens", 0) or 0))
+            cost_eur += fb_cost_eur
 
         # --- Pagamento (stessa tasca job["payment"], fallback legacy) ---
         pay = job.get("payment") or {}
@@ -5736,6 +5798,15 @@ def _write_translation_audit(job_id, job, *, backend, model, source_lang,
             "payment_source": payment_source,
             "outcome": outcome,
         }
+        if job.get("tr_blocked_chunks") or fr.get("calls"):
+            rec.update({
+                "blocked_chunks": int(job.get("tr_blocked_chunks", 0) or 0),
+                "fallback_model": job.get("tr_fallback_model", "") or "",
+                "fallback_chunks": int(job.get("tr_fallback_chunks", 0) or 0),
+                "fallback_prompt_tokens": int(fr.get("prompt_tokens", 0) or 0),
+                "fallback_completion_tokens": int(fr.get("completion_tokens", 0) or 0),
+                "fallback_cost_eur": round(fb_cost_eur, 6),
+            })
         translation_cost_audit.append_record(rec)
     except Exception as e:
         print(f"[{job_id}] translation audit write failed (non-fatal): {e}")

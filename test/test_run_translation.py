@@ -293,3 +293,64 @@ def test_il_giudizio_confronta_sorgente_e_traduzione(fake_llm, tmp_path,
     assert viste[0]["source"] == "Testo uno."
     assert viste[0]["output"] == "TESTO UNO."
     assert viste[0]["src"] == "it" and viste[0]["dst"] == "en"
+
+
+# ── Ripiego su blocco per contenuto (incidente 2026-10-05) ────────────
+
+def _blocking_primary(blocked_texts):
+    """call_llm finto: il primario blocca i testi in `blocked_texts`, il
+    ripiego (riconosciuto da extra_kwargs) traduce in lower()."""
+    calls = []
+    def _call(provider, sys_p, user, **kw):
+        via = "fb" if kw.get("extra_kwargs") else "primary"
+        calls.append((via, user))
+        if via == "primary" and user in blocked_texts:
+            raise tc.TranslationContentBlocked("blocked", "content_filter")
+        return user.lower() if via == "fb" else user.upper()
+    return _call, calls
+
+
+def test_run_translation_blocked_chunk_falls_back(fake_llm, tmp_path, monkeypatch):
+    job_id, job = _seed_job(tmp_path)
+    call, calls = _blocking_primary({"Testo uno."})
+    monkeypatch.setattr(tc, "call_llm", call)
+    monkeypatch.setattr(tc, "make_fallback_provider",
+                        lambda m: ((lambda: None), "fb-model", {"max_tokens": 1}))
+    monkeypatch.setattr(tj, "check", lambda *a, **kw: "")
+    audits = []
+    monkeypatch.setattr(ge.translation_cost_audit, "append_record", audits.append)
+    ge.run_translation(job_id)
+    assert job["status"] == "translated"
+    assert [c["text"] for c in job["translated_chapters"]] == ["testo uno.", "TESTO DUE."]
+    assert job["tr_blocked_chunks"] == 1 and job["tr_fallback_chunks"] == 1
+    assert audits[-1]["fallback_model"] == "fb-model"
+    assert audits[-1]["outcome"] == "completed"
+
+
+def test_run_translation_sticky_fallback_after_repeated_blocks(fake_llm, tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_FALLBACK_STICKY_AFTER", "1")
+    job_id, job = _seed_job(tmp_path)
+    call, calls = _blocking_primary({"Testo uno."})
+    monkeypatch.setattr(tc, "call_llm", call)
+    monkeypatch.setattr(tc, "make_fallback_provider",
+                        lambda m: ((lambda: None), "fb-model", {"max_tokens": 1}))
+    monkeypatch.setattr(tj, "check", lambda *a, **kw: "")
+    ge.run_translation(job_id)
+    assert job["status"] == "translated"
+    # Il capitolo 2 non passa piu' dal primario.
+    assert ("primary", "Testo due.") not in calls
+    assert job["translated_chapters"][1]["text"] == "testo due."
+
+
+def test_run_translation_blocked_without_fallback_refunds(fake_llm, tmp_path, monkeypatch):
+    job_id, job = _seed_job(tmp_path)
+    call, _ = _blocking_primary({"Testo uno."})
+    monkeypatch.setattr(tc, "call_llm", call)
+    monkeypatch.setattr(tc, "make_fallback_provider", lambda m: None)
+    refunds = []
+    monkeypatch.setattr(ge, "_refund_job_payment",
+                        lambda jid, j, reason: refunds.append(reason))
+    monkeypatch.setattr(ge.pending_jobs, "mark_failed", lambda j: None)
+    ge.run_translation(job_id)
+    assert job["status"] == "error"
+    assert refunds == ["error"]

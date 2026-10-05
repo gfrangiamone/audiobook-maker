@@ -332,3 +332,72 @@ def test_env_num_malformed_falls_back(monkeypatch, capsys):
 def test_env_num_comma_decimal(monkeypatch):
     monkeypatch.setenv("ABM_TRANSLATE_TEMPERATURE", "0,7")
     assert tc.temperature() == 0.7
+
+
+# ── Blocco per contenuto (incidente 2026-10-05) ───────────────────────
+
+class _FinishChoice:
+    """Choice di chiusura come la manda Vertex su blocco: delta assente."""
+    def __init__(self, finish_reason, delta=None):
+        self.delta = delta
+        self.finish_reason = finish_reason
+
+class _FinishEvent:
+    def __init__(self, finish_reason, delta=None):
+        self.choices = [_FinishChoice(finish_reason, delta)]
+        self.usage = None
+
+
+def test_call_llm_choice_without_delta_does_not_crash(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
+    provider, comp = _provider_for([_FakeEvent("ciao"), _FinishEvent("stop")])
+    out = tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+    assert out == "ciao"
+
+
+def test_call_llm_content_filter_raises_blocked_after_block_attempts(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "4")
+    monkeypatch.delenv("ABM_TRANSLATE_BLOCK_ATTEMPTS", raising=False)
+    monkeypatch.setattr(tc.time, "sleep", lambda s: None)
+    provider, comp = _provider_for(
+        [_FakeEvent("testo parziale"), _FinishEvent("content_filter")])
+    usage = tc.UsageTracker()
+    with pytest.raises(tc.TranslationContentBlocked) as ei:
+        tc.call_llm(provider, "s", "u", model="m", usage=usage)
+    assert ei.value.finish_reason == "content_filter"
+    assert comp.calls == 2          # block_attempts di default, non 4
+    assert usage.report()["calls"] == 2  # il consumo resta tracciato
+
+
+def test_call_llm_blocked_with_single_retry_still_raises_blocked(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
+    provider, comp = _provider_for([_FinishEvent("RECITATION")])
+    with pytest.raises(tc.TranslationContentBlocked):
+        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+
+
+def test_call_llm_extra_kwargs_reach_create(monkeypatch):
+    seen = {}
+    class _C(_FakeCompletions):
+        def create(self, **kw):
+            seen.update(kw)
+            return super().create(**kw)
+    comp = _C([_FakeEvent("ok")])
+    client = _FakeClient(comp)
+    tc.call_llm(lambda: client, "s", "u", model="m", usage=tc.UsageTracker(),
+                extra_kwargs={"max_tokens": 7})
+    assert seen["max_tokens"] == 7
+
+
+def test_make_fallback_provider(monkeypatch):
+    monkeypatch.delenv("ABM_TRANSLATE_FALLBACK_MODEL", raising=False)
+    monkeypatch.delenv("ABM_LLM_API_KEY", raising=False)
+    assert tc.make_fallback_provider("google/x") is None
+    monkeypatch.setenv("ABM_LLM_API_KEY", "k")
+    monkeypatch.setenv("ABM_LLM_MODEL", "deepseek-v4-flash")
+    prov, mdl, extra = tc.make_fallback_provider("google/x")
+    assert mdl == "deepseek-v4-flash"
+    assert extra["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert tc.make_fallback_provider("deepseek-v4-flash") is None  # = primario
+    monkeypatch.setenv("ABM_TRANSLATE_FALLBACK_MODEL", "off")
+    assert tc.make_fallback_provider("google/x") is None
