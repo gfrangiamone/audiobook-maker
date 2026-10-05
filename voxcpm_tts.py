@@ -1468,7 +1468,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
         `verifica_giri`, `verifica_rientri`, `verifica_numerali`,
         `verifica_falsi_numerali`, `verifica_falsi_grafia`, `verifica_dubbi`,
-        `verifica_dubbi_chiariti`, `bytes` e `runpod`,
+        `verifica_dubbi_chiariti`, `verifica_ripetizioni`, `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -1552,6 +1552,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # non sta in `code_tagliate`.
              "verifica_dubbi": 0,
              "verifica_dubbi_chiariti": 0,
+             # Le code dove Whisper era andato in loop su una parola tagliata
+             # («della L'Ori de L'Ori» per «della loro ideologia.», 5 ottobre
+             # 2026): dal worker 73a455c il loop si toglie prima del
+             # confronto, e qui si conta quante volte e' servito.
+             "verifica_ripetizioni": 0,
              # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
              # buttati via sono GPU comprata, ed e' il conto sui caratteri a
              # non vederli.
@@ -1722,6 +1727,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 stats["verifica_dubbi"] = len(_ver.get("dubbi") or [])
                 stats["verifica_dubbi_chiariti"] = len(
                     _ver.get("dubbi_chiariti") or {})
+                # Assente prima del worker 73a455c: zero.
+                stats["verifica_ripetizioni"] = int(
+                    _ver.get("ripetizioni") or 0)
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
             bad = out["failed_indices"] or []

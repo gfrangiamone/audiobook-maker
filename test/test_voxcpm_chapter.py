@@ -531,6 +531,20 @@ def test_worker_senza_dubbi_lascia_zero(tmp_path, monkeypatch):
     assert stats["verifica_dubbi_chiariti"] == 0
 
 
+def test_le_ripetizioni_del_worker_arrivano_nelle_misure(tmp_path,
+                                                        monkeypatch):
+    finto = FintoRunJob(esito_ok(verify={
+        "chunks_verificati": 40, "giri": 1, "ripetizioni": 2}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_ripetizioni"] == 2
+
+
+def test_worker_senza_ripetizioni_lascia_zero(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok(verify={"chunks_verificati": 40, "giri": 0}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_ripetizioni"] == 0
+
+
 def test_l_audio_finisce_nel_file(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok(pcm=b"\xaa\xbb" * 50))
     stats, dest = sintetizza(finto, tmp_path, monkeypatch)

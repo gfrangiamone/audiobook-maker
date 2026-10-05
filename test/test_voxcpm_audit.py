@@ -349,6 +349,23 @@ def test_il_worker_senza_dubbi_scrive_zero(audit_isolato):
     assert r["worker_verify_dubbi_chiariti"] == 0
 
 
+def test_le_ripetizioni_arrivano_nel_record(audit_isolato):
+    # Il loop di Whisper sulla coda tagliata («della L'Ori de L'Ori»): quante
+    # volte il worker l'ha tolto prima del confronto.
+    job = job_con_fattura()
+    job["voxcpm_actual"]["verifica_ripetizioni"] = 4
+    generation_engine._write_voxcpm_audit("job-6", job, VOCE, "it",
+                                          "completed")
+    assert leggi(audit_isolato)[0]["worker_verify_ripetizioni"] == 4
+
+
+def test_il_worker_senza_ripetizioni_scrive_zero(audit_isolato):
+    # Immagine precedente a 73a455c: il loop non lo guardava, zero.
+    generation_engine._write_voxcpm_audit("job-7", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    assert leggi(audit_isolato)[0]["worker_verify_ripetizioni"] == 0
+
+
 def leggi_code_tagliate(dir_dati):
     righe = []
     for fp in sorted(dir_dati.glob("voxcpm_code_tagliate_*.jsonl")):
