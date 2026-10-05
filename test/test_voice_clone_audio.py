@@ -132,6 +132,59 @@ def test_wav_roundtrip(tmp_path):
     assert np.max(np.abs(y - x)) < 1e-3
 
 
+def _con_respiri(floor_db=-75.0, seed=3):
+    """Parlato a -20 dB in raffiche da 1 s, pause da 0,6 s con dentro un
+    «respiro» da 0,2 s a -45 dB, il tutto sopra un fondo bianco."""
+    rng = np.random.default_rng(seed)
+    n = int(8.0 * SR)
+    x = rng.standard_normal(n).astype(np.float32) * _db(floor_db)
+    respiri = []
+    t = 0.3
+    while t + 1.0 < 8.0:
+        a, b = int(t * SR), int((t + 1.0) * SR)
+        x[a:b] += rng.standard_normal(b - a).astype(np.float32) * _db(-20.0)
+        r0, r1 = int((t + 1.2) * SR), int((t + 1.4) * SR)
+        if t + 1.6 + 1.0 < 8.0:
+            x[r0:r1] += rng.standard_normal(r1 - r0).astype(np.float32) * _db(-45.0)
+            respiri.append((r0, r1))
+        t += 1.6
+    return x, respiri
+
+
+def _rms_db(x):
+    return 20.0 * np.log10(np.sqrt(np.mean(x.astype(np.float64) ** 2)) + 1e-12)
+
+
+def test_attenua_respiri_abbassa_il_respiro_e_lascia_le_parole():
+    x, respiri = _con_respiri()
+    y, esito = vca.attenua_respiri(x, SR)
+    assert esito == f"{len(respiri)} pause attenuate"
+    assert len(y) == len(x)
+    for a, b in respiri:
+        assert _rms_db(x[a:b]) - _rms_db(y[a:b]) > 15.0
+    parola = slice(int(0.4 * SR), int(1.2 * SR))
+    assert np.max(np.abs(y[parola] - x[parola])) < 1e-6
+
+
+def test_attenua_respiri_rimette_il_fondo_non_lo_zero():
+    x, respiri = _con_respiri(floor_db=-75.0)
+    y, _ = vca.attenua_respiri(x, SR)
+    _, b = respiri[0]
+    pausa = y[b + int(0.05 * SR):b + int(0.15 * SR)]
+    assert abs(_rms_db(pausa) - (-75.0)) < 4.0
+
+
+def test_attenua_respiri_lascia_stare_il_fondo_rumoroso():
+    x, _ = _con_respiri(floor_db=-50.0)
+    y, esito = vca.attenua_respiri(x, SR)
+    assert esito == "fondo rumoroso" and np.array_equal(x, y)
+
+
+def test_attenua_respiri_senza_pause():
+    _, esito = vca.attenua_respiri(_parlato(seconds=6.0), SR)
+    assert esito == "nessuna pausa"
+
+
 import shutil
 import subprocess
 

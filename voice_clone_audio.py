@@ -297,6 +297,132 @@ def apply_gate(mt, sr, g=None):
 
 
 # ---------------------------------------------------------------------------
+# Respiri nelle pause (porting di `tools/gemini/attenua_respiri.py` del worker)
+# ---------------------------------------------------------------------------
+# VoxCPM2 clona anche i respiri del campione e li rimette nelle pause del
+# libro. Azzerare le pause li toglie ma rende la voce robotica (il silenzio
+# digitale nel campione e' fuori distribuzione): il compromesso approvato
+# all'ascolto il 4/10/2026 sulle voci di catalogo e' -18 dB dentro la pausa,
+# con sotto il fondo d'ambiente vero del campione, il suo tratto piu' quieto
+# ripetuto con dissolvenze incrociate. Le parole non si toccano e la durata
+# non cambia: la frase guidata resta la trascrizione del campione.
+RESPIRI_VOCE_DB = -38.0
+RESPIRI_CODA_DB = -50.0
+RESPIRI_PAUSA_MIN_S = 0.20
+RESPIRI_MARGINE_ATTACCO_S = 0.04
+RESPIRI_RAMPA_S = 0.012
+RESPIRI_ATTENUAZIONE_DB = -18.0
+RESPIRI_FONDO_MAX_DB = -55.0     # sopra, il fondo e' rumore: niente da rimettere
+RESPIRI_FONDO_MIN_DB = -90.0     # sotto, il campione e' gia' gated
+RESPIRI_TONO_MIN_S = 0.25
+RESPIRI_TONO_CORTO_S = 0.12
+
+
+def respiri_enabled():
+    return (os.environ.get("ABM_VOICE_CLONE_BREATHS") or "1").strip() != "0"
+
+
+def _corse(mask):
+    i, n = 0, len(mask)
+    while i < n:
+        j = i
+        while j < n and mask[j] == mask[i]:
+            j += 1
+        yield bool(mask[i]), i, j
+        i = j
+
+
+def _livelli_10ms(x, sr):
+    h = sr // 100
+    n = len(x) // h
+    r = np.sqrt((x[:n * h].astype(np.float64).reshape(n, h) ** 2).mean(1))
+    return 20.0 * np.log10(r + 1e-9), h
+
+
+def _pause_respiro(r):
+    out = []
+    minimo = int(RESPIRI_PAUSA_MIN_S * 100)
+    margine = int(RESPIRI_MARGINE_ATTACCO_S * 100)
+    for voce, a, b in _corse(r > RESPIRI_VOCE_DB):
+        if voce or a == 0 or b == len(r) or b - a < minimo:
+            continue
+        st = next((t for t in range(a, b) if r[t] < RESPIRI_CODA_DB), None)
+        en = b - margine
+        if st is not None and en - st >= 5:
+            out.append((st, en))
+    return out
+
+
+def _tono_di_fondo(x, r, h):
+    """(pavimento dB, tratto di fondo): il tratto piu' lungo entro 3..6 dB dal
+    pavimento che arrivi a RESPIRI_TONO_MIN_S, in ripiego a TONO_CORTO_S."""
+    validi = r[r > -120]
+    pavimento = float(np.percentile(validi, 5)) if len(validi) else -120.0
+    best = (0, 0)
+    for minimo in (RESPIRI_TONO_MIN_S, RESPIRI_TONO_CORTO_S):
+        for margine in (3, 4, 5, 6):
+            best = (0, 0)
+            for quieto, a, b in _corse(r < pavimento + margine):
+                if quieto and b - a > best[1] - best[0]:
+                    best = (a, b)
+            if (best[1] - best[0]) / 100 >= minimo:
+                return pavimento, x[best[0] * h:best[1] * h]
+    return pavimento, x[best[0] * h:best[1] * h]
+
+
+def _letto_di_fondo(t, n, sr):
+    """Il fondo ripetuto fino a n campioni, con dissolvenze incrociate."""
+    xf = min(int(sr * 0.05), len(t) // 4)
+    w = np.linspace(0, 1, xf)
+    pezzo = t.astype(np.float64)
+    pezzo[:xf] *= w
+    pezzo[len(pezzo) - xf:] *= w[::-1]
+    out = np.zeros(n)
+    p = 0
+    while p < n:
+        k = min(len(pezzo), n - p)
+        out[p:p + k] += pezzo[:k]
+        p += len(pezzo) - xf
+    return out
+
+
+def _guadagno_pause(n, sr, h, ps):
+    att = 10 ** (RESPIRI_ATTENUAZIONE_DB / 20)
+    g = np.ones(n)
+    f = int(sr * RESPIRI_RAMPA_S)
+    giu = att + (1 - att) * np.cos(np.linspace(0, np.pi / 2, f)) ** 2
+    su = att + (1 - att) * np.sin(np.linspace(0, np.pi / 2, f)) ** 2
+    for st, en in ps:
+        x0, x1 = st * h, en * h
+        g[x0:x1] = att
+        a = max(0, x0 - f)
+        g[a:x0] = np.minimum(g[a:x0], giu[f - (x0 - a):])
+        k = min(f, n - x1)
+        g[x1:x1 + k] = np.minimum(g[x1:x1 + k], su[:k])
+    return g
+
+
+def attenua_respiri(x, sr):
+    """(segnale, esito). Col fondo fuori norma o senza pause il campione
+    resta com'e' e l'esito dice perche'."""
+    x = np.asarray(x, dtype=np.float32)
+    r, h = _livelli_10ms(x, sr)
+    ps = _pause_respiro(r)
+    pav, t = _tono_di_fondo(x, r, h)
+    if pav > RESPIRI_FONDO_MAX_DB:
+        return x, "fondo rumoroso"
+    if pav < RESPIRI_FONDO_MIN_DB:
+        return x, "fondo gia' a zero"
+    if len(t) / sr < RESPIRI_TONO_CORTO_S:
+        return x, "fondo troppo corto"
+    if not ps:
+        return x, "nessuna pausa"
+    g = _guadagno_pause(len(x), sr, h, ps)
+    y = x * g + _letto_di_fondo(t, len(x), sr) * (1 - g)
+    return y.astype(np.float32), f"{len(ps)} pause attenuate"
+
+
+# ---------------------------------------------------------------------------
 # ffmpeg: probe, conversione, loudness
 # ---------------------------------------------------------------------------
 import json
@@ -458,6 +584,11 @@ def prepare_sample(src_path, dst_wav, *, gate=None):
     mt = apply_gate(measure(y, sr), sr, gate)
     if mt.reasons:
         raise SampleRejected(mt.reasons[0], "; ".join(mt.reasons), metrics=mt)
+    # Il gate giudica la registrazione com'e' arrivata; i respiri si
+    # abbassano dopo, sul campione che va a VoxCPM.
+    if respiri_enabled():
+        y, esito = attenua_respiri(y, sr)
+        print(f"[voice_clone] respiri: {esito}", flush=True)
     write_wav(dst_wav, y, sr)
     mt.lufs = round(loudness_lufs(dst_wav), 2)     # misurata sul file consegnato
     return mt
