@@ -9,3 +9,18 @@ numpy>=1.26  # misure acustiche del campione vocale (voice_clone_audio)
 faster-whisper>=1.2  # verifica ASR del campione vocale su CPU (voice_clone_audio); porta ctranslate2
 zhconv  # cinese tradizionale->semplificato nel CER (voice_clone_audio)
 typesafe-sdk>=0.7  # giudizi semantici tipizzati (semantic_judge); opzionale a runtime
+# Pulizia ZipEnhancer del campione delle voci utente sulla CPU del server
+# (voice_denoise, in un processo figlio). torch dall'indice CPU: con `==2.8.*`
+# vince 2.8.x+cpu, che e' piu' alto della build CUDA di PyPI per PEP 440, e
+# non arrivano i 2 GB di librerie nvidia. Solo Linux: in sviluppo su Windows
+# torch si installa a mano. modelscope fissato alla versione provata sul
+# worker; le altre sono le dipendenze che la pipeline importa senza dichiararle.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.*; sys_platform == "linux"
+modelscope==1.39.1
+datasets
+addict
+simplejson
+sortedcontainers
+librosa  # porta scipy (ricampionamento 16 -> 24 kHz)
+soundfile

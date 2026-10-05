@@ -94,6 +94,7 @@ import voice_clone
 import voice_clone_audio
 import voice_clone_demo
 import voice_clone_prompts
+import voice_denoise
 
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
@@ -416,6 +417,7 @@ pending_jobs.init()  # richiede community_store.init() già chiamato
 tts_backend_state.init(_DATA_DIR)
 voice_clone.init(_DATA_DIR)
 voice_clone_audio.init(_DATA_DIR)
+voice_denoise.init(_DATA_DIR)
 
 # Account opzionali (SQLite): il DB apre sempre, l'interruttore e' ABM_ACCOUNT_ENABLE.
 try:
@@ -22205,6 +22207,7 @@ def _ensure_background_threads():
             n = voice_clone_demo.recover()
             if n:
                 print(f"[voice_clone] recover: {n} generazioni demo rilanciate", flush=True)
+            voice_clone_demo.start_denoise_backfill()
         threading.Thread(target=_voice_clone_sweep_supervisor, daemon=True,
                          name="voice-clone-sweep").start()
     except Exception as e:      # noqa: BLE001

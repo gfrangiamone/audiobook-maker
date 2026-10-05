@@ -20,6 +20,7 @@ import traceback
 
 import payment
 import voice_clone as vc
+import voice_denoise
 import voxcpm_tts
 
 _notifier = None
@@ -88,6 +89,14 @@ def generate_demos(clone_id, *, sleep=time.sleep):
     rec = vc.get(clone_id)
     if rec is None:
         return "failed", "record assente"
+    # Il campione si pulisce qui, prima delle demo, cosi' le demo suonano come
+    # suoneranno i libri. Se la pulizia non riesce si va avanti col campione
+    # com'e': il worker lo pulira' lui, come prima (voxcpm_tts.clone_block).
+    try:
+        vc.denoise_sample(clone_id)
+    except Exception as e:      # noqa: BLE001 - modello, disco, R2
+        print(f"[voice_clone] pulizia del campione fallita per {clone_id}: "
+              f"{type(e).__name__}: {e}", flush=True)
     d = vc.voice_dir(rec["token"])
     os.makedirs(d, exist_ok=True)
     voice_id = vc.voice_id_of(rec)
@@ -306,6 +315,37 @@ def refund(clone_id, reason, *, bonus=False):
     vc.remove_files(out)
     _notify("refunded", out, **extra)
     return out
+
+
+def denoise_backfill():
+    """Pulisce i campioni delle voci registrate prima della pulizia sul server.
+
+    Una voce alla volta, saltando quelle che stanno generando le demo (le
+    pulisce il loro thread). Il segno `denoised_at` resta nel record, quindi
+    dopo un riavvio si riparte dalle voci che mancano. Ritorna quante pulite.
+    """
+    n = 0
+    for rec in vc._all():
+        if (rec.get("denoised_at") or rec.get("state") not in vc.HAS_SAMPLE
+                or rec.get("state") in ("paid", "demos_generating")):
+            continue
+        try:
+            if vc.denoise_sample(rec["id"]) == "done":
+                n += 1
+        except Exception as e:      # noqa: BLE001 - modello, disco, R2
+            print(f"[voice_clone_demo] pulizia arretrata {rec.get('id')}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+    if n:
+        print(f"[voice_clone_demo] pulizia arretrata: {n} campioni puliti", flush=True)
+    return n
+
+
+def start_denoise_backfill():
+    if not voice_denoise.enabled():
+        return None
+    t = threading.Thread(target=denoise_backfill, daemon=True, name="vc-denoise-backfill")
+    t.start()
+    return t
 
 
 def recover():

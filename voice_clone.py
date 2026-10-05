@@ -33,6 +33,7 @@ import community_store
 import payment
 import storage_backend
 import voice_clone_prompts
+import voice_denoise
 import voxcpm_catalog
 
 VOICE_ID_PREFIX = "voxcpm:mine:"
@@ -513,6 +514,8 @@ def _files_to_replicate(rec):
     solo da `ready` (prima si rigenerano; `demo_try_*` e i .pcm mai)."""
     ext = (rec.get("sample") or {}).get("original_ext") or "wav"
     nomi = ["sample.wav", f"original.{ext}"]
+    if rec.get("denoised_at"):
+        nomi.append(RAW_SAMPLE)
     if rec.get("state") == "ready":
         nomi += list(DEMO_NAMES)
     return nomi
@@ -990,7 +993,46 @@ def resolve(voice_id):
     if rec.get("state") not in HAS_SAMPLE:
         raise VoiceGone(f"voce {rec['id']} in stato {rec.get('state')}")
     return {"wav_path": _ensure_local(rec, "sample.wav"),
-            "prompt_text": rec["prompt_text"], "lang": rec["lang"], "locale": rec["locale"]}
+            "prompt_text": rec["prompt_text"], "lang": rec["lang"], "locale": rec["locale"],
+            "denoised": bool(rec.get("denoised_at"))}
+
+
+RAW_SAMPLE = "sample_raw.wav"
+
+
+def denoise_sample(clone_id):
+    """Pulisce `sample.wav` con ZipEnhancer, una volta per voce.
+
+    Il campione com'era resta in `sample_raw.wav` e la pulizia riparte sempre
+    da quello, cosi' rifarla non pulisce due volte. `denoised_at` nel record
+    dice a `voxcpm_tts.clone_block` di non chiedere piu' la pulizia al worker.
+    Ritorna "done", "skipped" o solleva (DenoiseFailed, SampleUnavailable,
+    VoiceGone): il chiamante decide se andare avanti col campione com'e'.
+    """
+    rec = get(clone_id)
+    if (rec is None or rec.get("denoised_at") or rec.get("state") not in HAS_SAMPLE
+            or not voice_denoise.enabled()):
+        return "skipped"
+    sample = _ensure_local(rec, "sample.wav")
+    d = voice_dir(rec["token"])
+    raw = os.path.join(d, RAW_SAMPLE)
+    if not os.path.exists(raw):
+        tmp = raw + ".tmp"
+        shutil.copyfile(sample, tmp)
+        os.replace(tmp, raw)
+    tmp = os.path.join(d, "sample.denoise.tmp.wav")
+    try:
+        secondi = voice_denoise.clean(raw, tmp)
+        os.replace(tmp, sample)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    rec = store().update(clone_id, {"denoised_at": _now(None),
+                                    "denoise_s": round(secondi, 1)}) or rec
+    upload_to_r2(rec, RAW_SAMPLE)
+    upload_to_r2(rec, "sample.wav")
+    print(f"[voice_clone] campione pulito per {clone_id} in {secondi:.0f}s", flush=True)
+    return "done"
 
 
 def language_of(voice_id):

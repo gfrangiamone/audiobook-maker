@@ -26,6 +26,14 @@ def _no_live_typesafe(monkeypatch):
     monkeypatch.delenv("ABM_TYPESAFE_API_KEY", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_denoise(monkeypatch):
+    """Nessun ZipEnhancer vero: i campioni dei test sono byte finti, e il
+    processo figlio caricherebbe torch a ogni demo. Chi prova la pulizia
+    rimette la variabile e sostituisce `voice_denoise.clean`."""
+    monkeypatch.setenv("ABM_VOICE_CLONE_DENOISE", "0")
+
+
 @pytest.fixture
 def reset_backend_cache():
     """Reset cache backend Gemini tra test (module-level state)."""

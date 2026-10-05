@@ -1046,6 +1046,11 @@ def denoise_mine():
     pulizia senza toccare il codice, per l'A/B o se il worker la sbagliasse.
     Un worker che non conosce il campo lo ignora: niente da coordinare col
     deploy dell'immagine.
+
+    Dal 5/10/2026 e' solo un ripiego: il campione lo pulisce il server quando
+    partono le demo (`voice_clone.denoise_sample`), e `clone_block` manda
+    `denoise` solo per le voci il cui campione non e' ancora stato pulito.
+    Sulla GPU del worker la pulizia mandava in OOM il motore.
     """
     return os.environ.get("ABM_VOXCPM_DENOISE_MINE", "1").strip() != "0"
 
@@ -1064,28 +1069,38 @@ def clone_block(voice_id):
     libro da quaranta capitoli sarebbero quaranta letture identiche.
 
     Per gli id `voxcpm:mine:<token>` il campione e la frase vengono da
-    `voice_clone.resolve`; la cache e' la stessa, per `voice_id`.
+    `voice_clone.resolve`, a ogni chiamata; la cache e' la stessa, per
+    `voice_id`, ma vale finche' il wav ha lo stesso mtime.
     """
     # Il flag si decide a ogni chiamata e non si memorizza: spegnere la
     # pulizia dall'ambiente deve valere dal job dopo, non dal riavvio.
-    extra = ({"denoise": True}
-             if voice_clone_token(voice_id) is not None and denoise_mine() else {})
+    # Le voci utente si risolvono sempre: il campione puo' essere stato pulito
+    # sul server (voice_clone.denoise_sample) dopo che la cache l'ha letto, e
+    # allora cambia il file e il worker non deve ripulirlo.
+    tok = voice_clone_token(voice_id)
     with _clone_lock:
         pronto = _clone_cache.get(voice_id)
-    if pronto is not None:
-        return {**pronto, **extra}
-
-    tok = voice_clone_token(voice_id)
+    extra, firma = {}, None
     if tok is not None:
         import voice_clone       # foglia rispetto a questo modulo; import qui
         # per non caricare lo store quando si servono solo voci di catalogo
         try:
             risolta = voice_clone.resolve(voice_id)
         except voice_clone.VoiceGone as e:
+            # Una voce gia' in cache finisce il libro anche se nel frattempo
+            # e' stata cancellata, come quando la cache non si rivalidava.
+            if pronto is not None:
+                return {**pronto[1], **pronto[2]}
             # stessa famiglia d'errore delle voci di catalogo sparite (§9.4)
             raise ValueError(str(e)) from e
         wav_path, prompt_text = risolta["wav_path"], risolta["prompt_text"]
-    else:
+        firma = os.stat(wav_path).st_mtime_ns
+        if denoise_mine() and not risolta.get("denoised"):
+            extra = {"denoise": True}
+    if pronto is not None and pronto[0] == firma:
+        return {**pronto[1], **extra}
+
+    if tok is None:
         rec = voxcpm_catalog.parse_voice_id(voice_id)
         wav_path, prompt_text = voxcpm_catalog.sample_path(voice_id), rec["transcript"]
     with open(wav_path, "rb") as f:
@@ -1098,7 +1113,7 @@ def clone_block(voice_id):
         "reference_format": "wav",
     }
     with _clone_lock:
-        _clone_cache[voice_id] = blocco
+        _clone_cache[voice_id] = (firma, blocco, extra)
         if len(_clone_cache) > _CLONE_CACHE_MAX:
             _clone_cache.popitem(last=False)
     return {**blocco, **extra}
