@@ -28,6 +28,7 @@ _CSS = page_brand.BASE_CSS + (
     ".bk b{display:block;font-weight:600}"
     ".bk .meta{display:block;font-size:.8em;color:var(--txm);word-break:break-all}"
     ".plan .meta{display:block;font-size:.8em;color:var(--txm);margin-top:.2em}"
+    ".plan .opt{display:block;margin-bottom:.2em}"
     ".badge{font-size:.8em;border-radius:1em;padding:.1em .6em;background:var(--srf2);color:var(--txd);white-space:nowrap}"
     ".badge.premium{background:var(--acs,var(--srf2));color:var(--ac)}"
     ".badge.done{background:var(--oks);color:var(--ok)}.badge.error,.badge.cancelled{background:var(--errs);color:var(--err)}"
@@ -134,14 +135,29 @@ _MODEL_LABEL_KEYS = {
 }
 
 
+_AUDIO_FORMATS = ("m4b", "mp3")
+
+
+def is_optimize_with_audio(r):
+    """Riga di storico di un'ottimizzazione che genera anche l'audiolibro
+    (wizard combinato): /api/optimize registra `output_format` solo con
+    l'auto-generazione, quindi m4b/mp3 sulla riga = c'e' un audiolibro."""
+    return ((r.get("kind") or "") == "optimize"
+            and (r.get("output_format") or "").strip().lower() in _AUDIO_FORMATS)
+
+
 def _plan_cell(t, r, kind):
     """Contenuto della colonna Piano: badge Gratis/PREMIUM (con il modello
     sotto, quando lo conosciamo) per gli audiolibri, etichetta del tipo per
-    ottimizzazione e traduzione, che di voci non ne usano.
+    ottimizzazione e traduzione, che di voci non ne usano. Ottimizzazione con
+    audiolibro: "Ottimizzazione testo +" sopra il piano della generazione.
 
     Storico piu' vecchio delle colonne engine/model (righe adottate da
     `_payments.json`): il piano non e' ricostruibile, ma un job pagato era per
     forza PREMIUM — quello si puo' dire; il resto resta un trattino."""
+    if kind == "optimize" and is_optimize_with_audio(r):
+        prefix = t.get("kind_optimize_plus") or (t.get("kind_optimize", kind) + " +")
+        return f"<span class=\"opt\">{_e(prefix)}</span>{_plan_cell(t, r, 'generate')}"
     if kind != "generate":
         return _e(t.get("kind_" + kind, kind))
     engine = (r.get("engine") or "").strip()

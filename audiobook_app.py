@@ -12220,8 +12220,12 @@ def api_account_jobs():
     except ValueError:
         page = 1
     rows, total = _account_rows_for(acct, page)
+    # Ottimizzazione con audiolibro: per l'app e' un audiolibro ("generate",
+    # importabile in libreria); `optimized` conserva il resto dell'informazione.
     jobs = [{
-        "job_id": r["job_id"], "created_at": r.get("created_at"), "kind": r.get("kind"),
+        "job_id": r["job_id"], "created_at": r.get("created_at"),
+        "kind": "generate" if account_page.is_optimize_with_audio(r) else r.get("kind"),
+        "optimized": r.get("kind") == "optimize",
         "book_title": r.get("book_title") or "", "output_format": r.get("output_format") or "",
         "status": r.get("status"), "paid_eur": float(r.get("paid_eur") or 0),
         "engine": r.get("engine") or "", "model": r.get("model") or "",

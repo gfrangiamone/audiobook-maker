@@ -135,6 +135,42 @@ def test_account_page_plan_legacy_row_paid_is_premium(logged):
     assert "&mdash;" in html
 
 
+def test_account_page_plan_optimize_with_audio(logged):
+    """Ottimizzazione che genera anche l'audiolibro: prefisso "Ottimizzazione
+    testo +" sopra il piano della generazione; sola ottimizzazione invariata."""
+    c, acct = logged
+    accounts.record_job(acct["id"], "jcp", kind="optimize", book_title="Solaris",
+                        output_format="m4b", voice="Alessia", engine="premium",
+                        model="voxcpm", status="done", created_at=T0)
+    accounts.record_job(acct["id"], "jcf", kind="optimize", book_title="Eden",
+                        output_format="mp3", voice="Bruno", engine="standard",
+                        status="running", created_at=T0 - 60)
+    accounts.record_job(acct["id"], "jo", kind="optimize", book_title="Fiasco",
+                        status="done", created_at=T0 - 120)
+    html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
+    cells = [p.split("</td>")[0] for p in html.split('<td class="plan">')[1:]]
+    assert len(cells) == 3
+    assert "Ottimizzazione testo +" in cells[0] and "PREMIUM" in cells[0] and "VOXCPM2" in cells[0]
+    assert "Ottimizzazione testo +" in cells[1] and "Gratis" in cells[1]
+    assert cells[2] == "Ottimizzazione testo"
+
+
+def test_account_jobs_api_optimize_with_audio_is_audiobook(logged):
+    """L'app importa solo i `generate`: un'ottimizzazione con m4b/mp3 arriva
+    come audiolibro, con `optimized` a vero; la sola ottimizzazione no."""
+    c, acct = logged
+    accounts.record_job(acct["id"], "jc", kind="optimize", book_title="A",
+                        output_format="m4b", status="running", created_at=T0)
+    accounts.record_job(acct["id"], "jo", kind="optimize", book_title="B",
+                        status="done", created_at=T0 - 60)
+    accounts.record_job(acct["id"], "jg", kind="generate", book_title="C",
+                        output_format="mp3", status="done", created_at=T0 - 120)
+    jobs = {j["job_id"]: j for j in c.get("/api/account/jobs").get_json()["jobs"]}
+    assert (jobs["jc"]["kind"], jobs["jc"]["optimized"]) == ("generate", True)
+    assert (jobs["jo"]["kind"], jobs["jo"]["optimized"]) == ("optimize", True)
+    assert (jobs["jg"]["kind"], jobs["jg"]["optimized"]) == ("generate", False)
+
+
 def test_account_jobs_api_exposes_plan(logged):
     c, acct = logged
     accounts.record_job(acct["id"], "jp", kind="generate", book_title="T",
