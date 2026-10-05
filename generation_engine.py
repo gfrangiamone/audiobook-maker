@@ -2590,6 +2590,162 @@ def _send_optimization_failed_email(job_id, job):
     return success
 
 
+def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
+    """i18n email di generazione premium NON riuscita (VoxCPM/Speechify).
+    Tre varianti della riga di rimborso: `refund_paypal` (buono nuovo, con
+    codice e scadenza: e' l'unica email che lo porta), `refund_voucher`
+    (ri-accredito sul buono usato), `refund_none` (rimborso non riuscito,
+    nessuna promessa). Mai il nome del motore."""
+    amt = f"{amount_eur:.2f}"
+    code = voucher_code or ""
+    return {
+        "it": {
+            "subject": f"Audiobook Maker — \"{book_title}\" generazione non riuscita",
+            "heading": "&#x26A0;&#xFE0F; Generazione dell'audiolibro non riuscita",
+            "body": f"La generazione di <strong>{book_title}</strong> si &egrave; interrotta per un guasto del servizio voci e non &egrave; stato possibile completarla. Ci scusiamo per l'inconveniente: il file parziale non &egrave; stato consegnato.",
+            "btn": "&#x1F504; Riprova",
+            "refund_paypal": f"Ti abbiamo rimborsato l'intero importo pagato, ottimizzazione del testo compresa, con un buono di {amt} EUR: codice <strong>{code}</strong>, valido fino al {expiry}. Inseriscilo al prossimo pagamento.",
+            "refund_voucher": f"Ti abbiamo riaccreditato l'intero importo pagato, ottimizzazione del testo compresa ({amt} EUR), sul buono che hai usato: &egrave; gi&agrave; disponibile.",
+            "refund_none": "Il rimborso automatico non &egrave; riuscito: rispondi a questa email e lo emetteremo a mano.",
+            "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
+        },
+        "en": {
+            "subject": f"Audiobook Maker — \"{book_title}\" generation failed",
+            "heading": "&#x26A0;&#xFE0F; Audiobook generation failed",
+            "body": f"The generation of <strong>{book_title}</strong> stopped because of a voice service failure and could not be completed. We apologise for the inconvenience: the partial file was not delivered.",
+            "btn": "&#x1F504; Try again",
+            "refund_paypal": f"We refunded the full amount you paid, text optimization included, with a {amt} EUR voucher: code <strong>{code}</strong>, valid until {expiry}. Enter it at your next payment.",
+            "refund_voucher": f"We credited the full amount you paid, text optimization included ({amt} EUR), back to the voucher you used: it is already available.",
+            "refund_none": "The automatic refund did not go through: reply to this email and we will issue it manually.",
+            "footer": "This email was generated automatically by Audiobook Maker.",
+        },
+        "fr": {
+            "subject": f"Audiobook Maker — \"{book_title}\" g&eacute;n&eacute;ration &eacute;chou&eacute;e",
+            "heading": "&#x26A0;&#xFE0F; La g&eacute;n&eacute;ration du livre audio a &eacute;chou&eacute;",
+            "body": f"La g&eacute;n&eacute;ration de <strong>{book_title}</strong> s'est interrompue &agrave; cause d'une panne du service vocal et n'a pas pu &ecirc;tre termin&eacute;e. Nous nous excusons pour la g&ecirc;ne : le fichier partiel n'a pas &eacute;t&eacute; livr&eacute;.",
+            "btn": "&#x1F504; R&eacute;essayer",
+            "refund_paypal": f"Nous vous avons rembours&eacute; la totalit&eacute; du montant pay&eacute;, optimisation du texte comprise, avec un bon de {amt} EUR : code <strong>{code}</strong>, valable jusqu'au {expiry}. Saisissez-le lors de votre prochain paiement.",
+            "refund_voucher": f"Nous avons recr&eacute;dit&eacute; la totalit&eacute; du montant pay&eacute;, optimisation du texte comprise ({amt} EUR), sur le bon que vous avez utilis&eacute; : il est d&eacute;j&agrave; disponible.",
+            "refund_none": "Le remboursement automatique n'a pas abouti : r&eacute;pondez &agrave; cet e-mail et nous l'&eacute;mettrons manuellement.",
+            "footer": "Cet e-mail a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
+        },
+        "es": {
+            "subject": f"Audiobook Maker — \"{book_title}\" generaci&oacute;n fallida",
+            "heading": "&#x26A0;&#xFE0F; La generaci&oacute;n del audiolibro ha fallado",
+            "body": f"La generaci&oacute;n de <strong>{book_title}</strong> se interrumpi&oacute; por un fallo del servicio de voces y no se pudo completar. Disculpa las molestias: el archivo parcial no se ha entregado.",
+            "btn": "&#x1F504; Reintentar",
+            "refund_paypal": f"Te hemos reembolsado el importe total pagado, optimizaci&oacute;n del texto incluida, con un bono de {amt} EUR: c&oacute;digo <strong>{code}</strong>, v&aacute;lido hasta el {expiry}. Introd&uacute;celo en tu pr&oacute;ximo pago.",
+            "refund_voucher": f"Hemos devuelto el importe total pagado, optimizaci&oacute;n del texto incluida ({amt} EUR), al bono que usaste: ya est&aacute; disponible.",
+            "refund_none": "El reembolso autom&aacute;tico no se ha completado: responde a este correo y lo emitiremos manualmente.",
+            "footer": "Este correo ha sido generado autom&aacute;ticamente por Audiobook Maker.",
+        },
+        "de": {
+            "subject": f"Audiobook Maker — \"{book_title}\" Erstellung fehlgeschlagen",
+            "heading": "&#x26A0;&#xFE0F; Erstellung des H&ouml;rbuchs fehlgeschlagen",
+            "body": f"Die Erstellung von <strong>{book_title}</strong> wurde durch eine St&ouml;rung des Sprachdienstes unterbrochen und konnte nicht abgeschlossen werden. Wir entschuldigen uns: Die unvollst&auml;ndige Datei wurde nicht ausgeliefert.",
+            "btn": "&#x1F504; Erneut versuchen",
+            "refund_paypal": f"Wir haben dir den gesamten bezahlten Betrag, Textoptimierung inklusive, mit einem Gutschein &uuml;ber {amt} EUR erstattet: Code <strong>{code}</strong>, g&uuml;ltig bis {expiry}. Gib ihn bei deiner n&auml;chsten Zahlung ein.",
+            "refund_voucher": f"Wir haben den gesamten bezahlten Betrag, Textoptimierung inklusive ({amt} EUR), deinem verwendeten Gutschein gutgeschrieben: Er ist bereits verf&uuml;gbar.",
+            "refund_none": "Die automatische Erstattung ist fehlgeschlagen: Antworte auf diese E-Mail, wir erstatten manuell.",
+            "footer": "Diese E-Mail wurde automatisch von Audiobook Maker erstellt.",
+        },
+        "pt": {
+            "subject": f"Audiobook Maker — \"{book_title}\" gera&ccedil;&atilde;o falhou",
+            "heading": "&#x26A0;&#xFE0F; A gera&ccedil;&atilde;o do audiolivro falhou",
+            "body": f"A gera&ccedil;&atilde;o de <strong>{book_title}</strong> foi interrompida por uma falha do servi&ccedil;o de vozes e n&atilde;o p&ocirc;de ser conclu&iacute;da. Pedimos desculpa: o arquivo parcial n&atilde;o foi entregue.",
+            "btn": "&#x1F504; Tentar novamente",
+            "refund_paypal": f"Reembolsamos o valor total pago, otimiza&ccedil;&atilde;o do texto inclu&iacute;da, com um voucher de {amt} EUR: c&oacute;digo <strong>{code}</strong>, v&aacute;lido at&eacute; {expiry}. Use-o no pr&oacute;ximo pagamento.",
+            "refund_voucher": f"Devolvemos o valor total pago, otimiza&ccedil;&atilde;o do texto inclu&iacute;da ({amt} EUR), ao voucher que voc&ecirc; usou: j&aacute; est&aacute; dispon&iacute;vel.",
+            "refund_none": "O reembolso autom&aacute;tico n&atilde;o foi conclu&iacute;do: responda a este e-mail e o emitiremos manualmente.",
+            "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
+        },
+        "zh": {
+            "subject": f"Audiobook Maker — \"{book_title}\" 生成失败",
+            "heading": "&#x26A0;&#xFE0F; 有声书生成失败",
+            "body": f"<strong>{book_title}</strong> 的生成因语音服务故障而中断，未能完成。非常抱歉：不完整的文件未予交付。",
+            "btn": "&#x1F504; 重试",
+            "refund_paypal": f"我们已全额退还您支付的金额（包括文本优化），退款优惠券价值 {amt} EUR：代码 <strong>{code}</strong>，有效期至 {expiry}。请在下次付款时输入。",
+            "refund_voucher": f"我们已将您支付的全部金额（包括文本优化，{amt} EUR）退回您使用的优惠券，可立即使用。",
+            "refund_none": "自动退款未能完成：请回复此邮件，我们将手动处理。",
+            "footer": "此邮件由 Audiobook Maker 自动生成。",
+        },
+        "hi": {
+            "subject": f"Audiobook Maker — \"{book_title}\" निर्माण विफल",
+            "heading": "&#x26A0;&#xFE0F; ऑडियोबुक का निर्माण विफल रहा",
+            "body": f"<strong>{book_title}</strong> का निर्माण वॉइस सेवा की खराबी के कारण रुक गया और पूरा नहीं हो सका। असुविधा के लिए हमें खेद है: अधूरी फ़ाइल नहीं भेजी गई।",
+            "btn": "&#x1F504; फिर से प्रयास करें",
+            "refund_paypal": f"हमने आपके द्वारा भुगतान की गई पूरी राशि, टेक्स्ट ऑप्टिमाइज़ेशन सहित, {amt} EUR के वाउचर से लौटा दी है: कोड <strong>{code}</strong>, {expiry} तक मान्य। इसे अपने अगले भुगतान पर दर्ज करें।",
+            "refund_voucher": f"हमने भुगतान की गई पूरी राशि, टेक्स्ट ऑप्टिमाइज़ेशन सहित ({amt} EUR), आपके उपयोग किए गए वाउचर में वापस जमा कर दी है: यह पहले से उपलब्ध है।",
+            "refund_none": "स्वचालित रिफ़ंड पूरा नहीं हुआ: इस ईमेल का उत्तर दें और हम इसे मैन्युअल रूप से जारी करेंगे।",
+            "footer": "यह ईमेल Audiobook Maker द्वारा स्वचालित रूप से बनाया गया है।",
+        },
+    }
+
+
+def _notify_user_premium_job_failed(job_id, job, refund):
+    """Avvisa chi ha pagato un job premium VoxCPM/Speechify fallito, dopo il
+    rimborso. Per PayPal e' l'unica email che porta il codice del buono:
+    `_refund_gemini_payment` lo crea ma non lo invia (job
+    5hxSn_-I0LgKV0D9i9Nvjg, 04/10/2026: rimborso emesso, utente mai
+    avvisato). Destinatario: email del pagamento, poi quella di notifica.
+    Non-fatal."""
+    if _send_push:
+        try:
+            threading.Thread(
+                target=_send_push, args=(job_id, "error", ""),
+                daemon=True, name=f"push-err-{job_id}",
+            ).start()
+        except Exception as _push_err:
+            print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
+    if job.get("premium_fail_email_sent"):
+        return False
+    refund = refund or {}
+    email = refund.get("email") or job.get("notify_email") or ""
+    if not email:
+        print(f"[{job_id}] No email available for premium failure notification.")
+        return False
+    info = job.get("info")
+    book_title = getattr(info, "title", "") or "Audiobook"
+    lang = (job.get("notify_lang") or "en").split("-")[0].lower()
+    amount = float(refund.get("amount_eur", 0) or 0)
+    code = refund.get("voucher_code") or ""
+    expiry = ""
+    if code:
+        try:
+            v = payment._vouchers.get(code, {})
+            amount = float(v.get("amount_eur", amount) or amount)
+            if v.get("expires_at"):
+                expiry = time.strftime("%d/%m/%Y",
+                                       time.localtime(float(v["expires_at"])))
+        except Exception:
+            pass
+
+    texts = _premium_failed_email_texts(book_title, amount, code, expiry)
+    t = dict(texts.get(lang, texts["en"]))
+    if refund.get("method") == "paypal" and code and amount > 0:
+        t["warn"] = t["refund_paypal"]
+    elif refund.get("method") == "voucher" and amount > 0:
+        t["warn"] = t["refund_voucher"]
+    else:
+        t["warn"] = t["refund_none"]
+    retry_url = f"{BASE_URL}/" if BASE_URL else "/"
+    html_body = _email_html_body(t, retry_url)
+
+    try:
+        success = email_service._send_email(email, t["subject"], html_body)
+    except Exception as e:
+        print(f"[{job_id}] premium-failed email error: {e}", flush=True)
+        success = False
+    if success:
+        job["premium_fail_email_sent"] = True
+    _log_activity(job_id, job.get("original_filename", ""),
+                  "PREMIUM_FAIL_EMAIL_SENT" if success
+                  else "PREMIUM_FAIL_EMAIL_FAILED",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  "", job.get("browser_lang", ""))
+    return success
+
+
 # ---------------------------------------------------------------------------
 # Payment refund helper
 # ---------------------------------------------------------------------------
@@ -2862,7 +3018,8 @@ def _cancel_cleanup_workdir(job, job_id, work_dir, partial_audio_delivered):
         pass
 
 
-def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
+def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0,
+                           include_llm=None):
     """F3: Refund Gemini payment on cancel/error.
 
     For voucher tokens, refunds the amount on the original voucher.
@@ -2877,6 +3034,13 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
     (default), False per cancel volontario (retained_eur > 0 oppure
     reason == "cancelled").
 
+    `include_llm`: sui fallimenti della generazione il rimborso copre anche
+    la quota dell'ottimizzazione AI pagata nella stessa transazione
+    (`payment["llm_eur"]`): il testo ottimizzato senza audio non serve a
+    nulla (job 5hxSn_-I0LgKV0D9i9Nvjg, 04/10/2026). None (default) = si'
+    sui fallimenti, no sui cancel volontari; la quota inclusa resta in
+    job["refund_llm_eur"] per le email che citano l'importo.
+
     Non-fatal: any failure is logged and swallowed.
 
     Returns a dict with refund details (or None if no refund applied):
@@ -2886,6 +3050,12 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
     paid = float(payment_meta.get("total_eur", 0) or 0)
+    if include_llm is None:
+        include_llm = not (reason == "cancelled"
+                           or float(retained_eur or 0.0) > 0)
+    llm_eur = (float(payment_meta.get("llm_eur", 0) or 0)
+               if include_llm else 0.0)
+    paid += llm_eur
     method = payment_meta.get("method", "")
     if not tok or paid <= 0:
         return None
@@ -2896,6 +3066,8 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
         print(f"[{job_id}] Gemini refund skipped: persistent refund trace already exists (reason={reason})")
         return None
     refund_amt = round(max(0.0, paid - float(retained_eur or 0.0)), 2)
+    if llm_eur > 0:
+        job["refund_llm_eur"] = llm_eur
     apply_bonus = not (reason == "cancelled" or float(retained_eur or 0.0) > 0)
     result = {"method": method, "amount_eur": refund_amt, "email": "", "voucher_code": None}
     if refund_amt <= 0:
@@ -2961,6 +3133,7 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
     amt = float(payment_meta.get("total_eur", 0) or 0)
+    amt += float(job.get("refund_llm_eur", 0) or 0)
     method = payment_meta.get("method", "")
     if not tok or amt <= 0:
         return
@@ -6554,6 +6727,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 try:
                     payment_meta = job.get("payment") or {}
                     amt = float(payment_meta.get("total_eur", 0) or 0)
+                    amt += float(job.get("refund_llm_eur", 0) or 0)
                     method = payment_meta.get("method", "")
                     tok = payment_meta.get("token")
                     _email_to = ""
@@ -8186,10 +8360,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                        _audit_language(job, info), "failed_refunded")
             except Exception:
                 pass
+            _refund = None
             try:
-                _refund_gemini_payment(job_id, job, f"failed: {e}")
+                _refund = _refund_gemini_payment(job_id, job, f"failed: {e}")
             except Exception as _ref_err:
                 print(f"[{job_id}] Speechify refund failed (non-fatal): {_ref_err}")
+            try:
+                _notify_user_premium_job_failed(job_id, job, _refund)
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job, kind="generic",
+                audit_outcome="failed_refunded",
+                reason_detail=f"speechify {type(e).__name__}: {str(e)[:300]}",
+            )
             _mark_pending_failed(job_id, "failed_refunded")
         if use_voxcpm:
             # Job premium VoxCPM fallito: rimborso integrale (path generico premium,
@@ -8199,10 +8383,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                     _audit_language(job, info), "failed_refunded")
             except Exception:
                 pass
+            _refund = None
             try:
-                _refund_gemini_payment(job_id, job, f"failed: {e}")
+                _refund = _refund_gemini_payment(job_id, job, f"failed: {e}")
             except Exception as _ref_err:
                 print(f"[{job_id}] VoxCPM refund failed (non-fatal): {_ref_err}")
+            try:
+                _notify_user_premium_job_failed(job_id, job, _refund)
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job, kind="generic",
+                audit_outcome="failed_refunded",
+                reason_detail=f"voxcpm {type(e).__name__}: {str(e)[:300]}",
+            )
             _mark_pending_failed(job_id, "failed_refunded")
         if not _dir_gone:
             import traceback

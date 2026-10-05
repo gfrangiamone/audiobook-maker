@@ -177,6 +177,60 @@ def test_motore_compromesso_non_e_un_rimbalzo():
     assert e.value.ritentabile is True
 
 
+def _traceback_lungo(ultima_riga, frame="_denoise_ref"):
+    """Un traceback del worker come lo manda `handler.py` (ultimi 4000
+    caratteri): il frame e il tipo dell'eccezione stanno in fondo."""
+    riempitivo = "\n".join(f'  File "/app/handler.py", line {i}, in _x'
+                           for i in range(60))
+    return (f"{riempitivo}\n  File \"/app/handler.py\", line 1044, in {frame}\n"
+            f"    pcm = _denoiser()(raw)[OutputKeys.OUTPUT_PCM]\n{ultima_riga}")
+
+
+def test_tipo_in_coda_al_traceback_decide_la_classificazione():
+    # 04/10/2026: il messaggio tagliato ai primi 400 caratteri perdeva il
+    # tipo dell'eccezione, e un OOM diventava un VoxcpmJobError nudo che
+    # uccideva il libro invece di rifare il capitolo.
+    tb = _traceback_lungo("torch.OutOfMemoryError: CUDA out of memory.",
+                          frame="_qualcosa")
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-tb"})],
+        get=[FintaRisposta(body={"status": "FAILED",
+                                 "output": {"traceback": tb}})],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmMotoreCompromesso) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    # Il messaggio resta corto ma porta la coda, cioe' il tipo.
+    assert "OutOfMemoryError" in str(e.value)
+    assert len(str(e.value)) < 1000
+
+
+def test_preparazione_della_voce_caduta_si_rifa():
+    # Il campione e' quello dei capitoli gia' consegnati: se cade la sua
+    # pulizia il guasto e' del worker, e il capitolo va rifatto.
+    tb = _traceback_lungo("RuntimeError: qualcosa nella pipeline")
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-dn"})],
+        get=[FintaRisposta(body={"status": "FAILED",
+                                 "output": {"traceback": tb}})],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmMotoreCompromesso) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert e.value.ritentabile is True
+
+
+def test_errore_generico_lungo_resta_non_ritentabile():
+    tb = _traceback_lungo("ValueError: testo malformato", frame="_genera")
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-ve"})],
+        get=[FintaRisposta(body={"status": "FAILED",
+                                 "output": {"traceback": tb}})],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert type(e.value) is voxcpm_tts.VoxcpmJobError
+    assert "ValueError" in str(e.value)
+
+
 def test_errore_nell_output_di_un_job_completato():
     # Il worker puo' consegnare COMPLETED con `error` dentro: e' il caso
     # dell'upload fallito. Non e' audio, quindi non e' un successo.

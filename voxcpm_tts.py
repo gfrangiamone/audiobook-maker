@@ -464,6 +464,20 @@ SUBMIT_CHAPTER_RETRIES = 2
 _GPU_PRESSURE = ("out of memory", "cuda", "nvml", "cublas", "device-side",
                  "motore compromesso")
 
+# Frame del traceback del worker che dicono "e' caduta la preparazione della
+# voce", cioe' la pulizia (ZipEnhancer) o la codifica in latenti del campione,
+# prima di sintetizzare un solo chunk. Il campione e' lo stesso dei capitoli
+# gia' consegnati, quindi il guasto e' del worker e non della voce: si rifa'.
+# Il 04/10/2026 (5hxSn_-I0LgKV0D9i9Nvjg) `_denoise_ref` caduto su un worker
+# appena nato ha ucciso un libro a 28 capitoli su 39.
+_PREPARAZIONE_VOCE = ("_denoise_ref", "_encode_cached", "encode_latents")
+
+# Quanto del dettaglio d'errore finisce nel messaggio dell'eccezione: la testa
+# (stato, campi diagnostici) e la coda, dove un traceback porta il tipo
+# dell'eccezione. Il solo `[:400]` di prima tagliava proprio quello.
+_DETTAGLIO_TESTA = 400
+_DETTAGLIO_CODA = 400
+
 _RUNPOD_BASE = "https://api.runpod.ai/v2"
 # Otto prove, con pausa che raddoppia da 2 s fino a un tetto di 60 s
 # (2, 4, 8, 16, 32, 60, 60): circa tre minuti di attesa. Erano quattro prove
@@ -533,12 +547,28 @@ def _rimbalzo(out, testo):
     return bool(out.get("bounced")) or "in spegnimento" in testo
 
 
-def _errore_del_job(out, testo, job_id):
-    """Da una risposta fallita all'eccezione giusta."""
+def _accorcia_dettaglio(dettaglio):
+    """Testa e coda di un dettaglio lungo, per il messaggio dell'eccezione."""
+    if len(dettaglio) <= _DETTAGLIO_TESTA + _DETTAGLIO_CODA:
+        return dettaglio
+    return (f"{dettaglio[:_DETTAGLIO_TESTA]} [...] "
+            f"{dettaglio[-_DETTAGLIO_CODA:]}")
+
+
+def _errore_del_job(out, testo, job_id, completo=""):
+    """Da una risposta fallita all'eccezione giusta.
+
+    `completo` e' il dettaglio intero, prima del taglio per il messaggio: la
+    classificazione si fa su quello, perche' la parola che decide (il tipo
+    dell'eccezione, il frame che e' caduto) sta spesso in un punto che il
+    messaggio non riporta.
+    """
     if _rimbalzo(out, testo):
         return VoxcpmRimbalzato(testo, job_id)
-    basso = testo.lower()
+    basso = f"{testo}\n{completo}".lower()
     if out.get("engine_dead") or any(k in basso for k in _GPU_PRESSURE):
+        return VoxcpmMotoreCompromesso(testo, job_id)
+    if any(k.lower() in basso for k in _PREPARAZIONE_VOCE):
         return VoxcpmMotoreCompromesso(testo, job_id)
     return VoxcpmJobError(testo, job_id)
 
@@ -889,15 +919,15 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
             # messi li' per diagnosticare il guasto.
             dettaglio = json.dumps(out) if out else json.dumps(
                 st.get("error") or st)
-            testo = f"job {job_id} {stato}: {dettaglio[:400]}"
+            testo = f"job {job_id} {stato}: {_accorcia_dettaglio(dettaglio)}"
             if (stato in ("TIMED_OUT", "CANCELLED")
-                    or _EXEC_TIMEOUT_RUNPOD in testo.lower()):
+                    or _EXEC_TIMEOUT_RUNPOD in dettaglio.lower()):
                 # RunPod l'ha chiuso lei, non il worker: e' "partito e mai
                 # arrivato", cioe' esattamente VoxcpmBloccato (§9.4) — non un
                 # generico VoxcpmJobError non ritentabile. L'Execution Timeout
                 # dell'endpoint arriva come FAILED, ma e' lo stesso caso.
                 raise VoxcpmBloccato(testo, job_id)
-            raise _errore_del_job(out, testo, job_id)
+            raise _errore_del_job(out, testo, job_id, completo=dettaglio)
 
         # Dopo il blocco degli stati terminali, non prima: nessun parziale
         # puo' essere scambiato per un esito, e l'uscita dal ciclo resta
