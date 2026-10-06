@@ -260,3 +260,51 @@ def test_voxcpm_combined_below_threshold_runs_free_and_debits_quota(client, env,
     assert free_quota.used_eur(cid) == pytest.approx(expected_combined_list, abs=0.01)
     # Nessun pagamento: il job resta senza job["payment"] (come per Gemini free).
     assert "payment" not in job
+
+
+# ---------------------------------------------------------------------------
+# Ripartizione del pagato combinato fra audit TTS e audit AI Optimization
+# (06/10/2026, job nUZM2cPOg8qLoxdF6CyBmA): sotto soglia con quota esaurita si
+# paga il floor premium, ma job["payment"]["total_eur"] restava la stima TTS
+# (0) e l'audit TTS ripiegava su payment_amount_eur, cioe' il pagato INTERO:
+# la quota AI finiva contata due volte (0,50 TTS + 0,02 AI = 0,52 su 0,50).
+# ---------------------------------------------------------------------------
+
+def test_tts_share_splits_paid_total():
+    share = audiobook_app.generation_engine._tts_share_eur
+    assert share(0.50, 0.02) == pytest.approx(0.48)
+    assert share(0.30, 0.04) == pytest.approx(0.26)
+    assert share(0.50, None) == pytest.approx(0.50)
+    assert share(0.02, 0.05) == 0.0
+
+
+def test_combined_payment_total_is_tts_share(client, env):
+    job = _mk_job("cpe-split", 300_000)
+    code, _v = payment._create_voucher("u@x.it", 100.0, kind="test", note="t")
+    r = _post_optimize(client, "cpe-split", payment_token=code)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    pay = job["payment"]
+    assert pay["llm_eur"] > 0
+    assert pay["total_eur"] + pay["llm_eur"] == pytest.approx(
+        job["payment_amount_eur"], abs=0.005)
+
+
+def test_voxcpm_combined_floor_goes_to_tts_not_ai(client, env, monkeypatch):
+    monkeypatch.setattr(voxcpm_tts, "is_available", lambda: True)
+    monkeypatch.setenv("ABM_VOXCPM_RATE_EUR_PER_MCHAR", "12")
+    monkeypatch.setenv("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.20")
+    monkeypatch.setenv("ABM_VOXCPM_MIN_COST_EUR", "0.50")
+    # Quota mensile minima: il job sotto soglia la sfora -> floor.
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "0.01")
+    job = _mk_job("cpe-vox-floor", 10_000)
+    code, _v = payment._create_voucher("u@x.it", 10.0, kind="test", note="t")
+    before = payment._voucher_remaining(payment._vouchers[code])
+    r = _post_optimize(client, "cpe-vox-floor", voice=VOXCPM_VOICE,
+                       payment_token=code)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    consumed = before - payment._voucher_remaining(payment._vouchers[code])
+    assert consumed == pytest.approx(0.50, abs=0.005)
+    pay = job["payment"]
+    llm = pay["llm_eur"]
+    assert pay["total_eur"] == pytest.approx(round(0.50 - llm, 2))
+    assert pay["total_eur"] + llm == pytest.approx(consumed, abs=0.005)

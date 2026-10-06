@@ -4992,6 +4992,22 @@ def _clear_cost_carry(job_id, engine):
         pass
 
 
+def _tts_share_eur(paid_total_eur, llm_eur):
+    """Quota TTS di un pagamento: il pagato meno l'eventuale quota AI.
+
+    Nel pagamento combinato (voce premium + ottimizzazione AI) un solo token
+    copre entrambe le voci: la quota AI va all'audit dell'ottimizzazione, il
+    resto - floor premium compreso, quando la quota gratuita e' esaurita - e'
+    incasso TTS. `llm_eur` None = pagamento non combinato, tutto TTS.
+    """
+    try:
+        paid = float(paid_total_eur or 0)
+        llm = float(llm_eur or 0) if llm_eur is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    return round(max(0.0, paid - llm), 2)
+
+
 def _write_gemini_audit(job_id, job, voice_id, language, outcome):
     """Append audit record at end of Gemini job. Best-effort, non-fatal."""
     try:
@@ -5012,7 +5028,10 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         # Nel JSONL marchiamo l'origine con payment_source="legacy_fallback"
         # cosi' un'eventuale doppia copertura e' rintracciabile.
         if charged <= 0:
-            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            # payment_amount_eur e' il pagato intero: nel combinato la quota
+            # AI va scorporata, altrimenti finirebbe anche nell'audit TTS.
+            _legacy_amt = _tts_share_eur(job.get("payment_amount_eur", 0),
+                                         payment.get("llm_eur"))
             if _legacy_amt > 0:
                 charged = _legacy_amt
                 payment_method = job.get("payment_type", "") or payment_method
@@ -5278,7 +5297,10 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         payment_source = payment.get("source", "") or ""
         payment_token_full = payment.get("token", "") or ""
         if charged <= 0:
-            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            # payment_amount_eur e' il pagato intero: nel combinato la quota
+            # AI va scorporata, altrimenti finirebbe anche nell'audit TTS.
+            _legacy_amt = _tts_share_eur(job.get("payment_amount_eur", 0),
+                                         payment.get("llm_eur"))
             if _legacy_amt > 0:
                 charged = _legacy_amt
                 payment_method = job.get("payment_type", "") or payment_method
@@ -5516,7 +5538,10 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         payment_source = payment.get("source", "") or ""
         payment_token_full = payment.get("token", "") or ""
         if charged <= 0:
-            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            # payment_amount_eur e' il pagato intero: nel combinato la quota
+            # AI va scorporata, altrimenti finirebbe anche nell'audit TTS.
+            _legacy_amt = _tts_share_eur(job.get("payment_amount_eur", 0),
+                                         payment.get("llm_eur"))
             if _legacy_amt > 0:
                 charged = _legacy_amt
                 payment_method = job.get("payment_type", "") or payment_method

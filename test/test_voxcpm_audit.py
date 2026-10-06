@@ -460,3 +460,17 @@ def test_il_minuto_finisce_nel_dataset_delle_code(tmp_path, monkeypatch):
     assert rec["posizione_s"] == 662.3
     assert rec["nel_capitolo_s"] == 63.8
     assert "testa" not in rec
+
+
+def test_combinato_legacy_scorpora_la_quota_ai(audit_isolato):
+    """Job in volo pagato prima dello scorporo: total_eur 0 (stima TTS sotto
+    soglia) e floor intero in payment_amount_eur. L'audit TTS ne prende solo
+    la parte TTS, la quota AI resta all'audit dell'ottimizzazione."""
+    job = job_finito(charged=0.0)
+    job["payment"].update({"llm_eur": 0.02, "method": "voucher",
+                           "source": "combined_optimize_autogen"})
+    job["payment_amount_eur"] = 0.50
+    generation_engine._write_voxcpm_audit("job-1", job, VOCE, "it", "completed")
+    r = leggi(audit_isolato)[-1]
+    assert r["user_price_eur_charged"] == pytest.approx(0.48)
+    assert r["combined_total_eur"] == pytest.approx(0.50)

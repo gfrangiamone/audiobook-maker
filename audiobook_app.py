@@ -1381,7 +1381,11 @@ def _refund_payment_on_orphan(job_id, job, reason):
     """
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
-    amt = float(payment_meta.get("total_eur", 0) or 0)
+    # total_eur e' la sola quota TTS: nel pagamento combinato la quota AI sta
+    # in llm_eur e va resa anch'essa, il testo ottimizzato senza audio non
+    # serve (stessa regola di generation_engine._refund_gemini_payment).
+    amt = round(float(payment_meta.get("total_eur", 0) or 0)
+                + float(payment_meta.get("llm_eur", 0) or 0), 2)
     method = payment_meta.get("method", "")
     refund_code = None
     if not tok or amt <= 0:
@@ -2002,7 +2006,9 @@ def _send_interrupted_email(rec, refund_code=None):
     email = rec.get("notify_email", "")
     if not email or not _smtp_available():
         return
-    amt = float((rec.get("payment") or {}).get("total_eur", 0) or 0)
+    _pay = rec.get("payment") or {}
+    amt = round(float(_pay.get("total_eur", 0) or 0)
+                + float(_pay.get("llm_eur", 0) or 0), 2)
     title = rec.get("original_filename", "") or "Audiobook"
     try:
         email_service._send_gemini_failed_refund_email(
@@ -8742,7 +8748,8 @@ def _synth_running_gemini_audit_records():
             payment = job.get("payment") or {}
             charged = float(payment.get("total_eur", 0) or 0)
             if charged <= 0:
-                charged = float(job.get("payment_amount_eur", 0) or 0)
+                charged = generation_engine._tts_share_eur(
+                    job.get("payment_amount_eur", 0), payment.get("llm_eur"))
             rate_raw = job.get("rate", "+0%")
             try:
                 rate_pct = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
@@ -14643,17 +14650,13 @@ def api_generate():
                 except Exception: pass
                 return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
             # Stash payment info on job for refund + audit
-            # NB: qui `total_eur` e' il COMBINED totale (Gemini TTS + LLM,
-            # vedi total_eur_pre = gemini_eur_pre + llm_eur_pre sopra), non la
-            # sola quota TTS come assumono i writer/synth di audit
-            # (_write_gemini_audit, _synth_running_gemini_audit_records), che
-            # trattano payment["total_eur"] come quota TTS e sommano
-            # payment["llm_eur"] a parte per ottenere combined_total_eur.
-            # Questo path non e' raggiungibile da UI con llm_eur_pre > 0:
-            # app.js non invia mai ai_opt_enabled a /api/generate.
+            # total_eur_pre e' il pagato intero (TTS + LLM): in job["payment"]
+            # va la sola quota TTS, come assumono i writer di audit e i
+            # rimborsi, che sommano payment["llm_eur"] a parte.
             job["payment"] = {
                 "token": payment_token,
-                "total_eur": total_eur_pre,
+                "total_eur": generation_engine._tts_share_eur(
+                    total_eur_pre, llm_eur_pre),
                 "method": _pay_method,
                 "ts": time.time(),
                 "gemini_est": est_pre,
@@ -14808,7 +14811,8 @@ def api_generate():
             # pocket-based, non purpose-based, quindi funzionano identici.
             job["payment"] = {
                 "token": payment_token,
-                "total_eur": total_eur_pre,
+                "total_eur": generation_engine._tts_share_eur(
+                    total_eur_pre, llm_eur_pre),
                 "method": _pay_method,
                 "ts": time.time(),
                 "llm_eur": llm_eur_pre,
@@ -17777,7 +17781,10 @@ def api_optimize():
             # l'audit Gemini legge solo la quota voce, non il combinato.
             job["payment"] = {
                 "token": _combined_token,
-                "total_eur": _gemini_eur_quota,
+                # Pagato meno quota AI: comprende il floor premium quando la
+                # quota gratuita e' esaurita (la stima TTS sotto soglia e' 0).
+                "total_eur": generation_engine._tts_share_eur(
+                    _expected_total, estimated_cost),
                 "method": _consumed_method,
                 "ts": time.time(),
                 "gemini_est": _est_gemini,
@@ -17938,7 +17945,10 @@ def api_optimize():
             # quota Simba (la quota LLM e' in payment["llm_eur"]).
             job["payment"] = {
                 "token": _combined_token_spx,
-                "total_eur": _speechify_eur_quota,
+                # Pagato meno quota AI: comprende il floor premium quando la
+                # quota gratuita e' esaurita (la stima TTS sotto soglia e' 0).
+                "total_eur": generation_engine._tts_share_eur(
+                    _expected_total_spx, estimated_cost),
                 "method": _consumed_method_spx,
                 "ts": time.time(),
                 "speechify_est": _est_spx,
@@ -18091,7 +18101,10 @@ def api_optimize():
             # quota VoxCPM (la quota LLM e' in payment["llm_eur"]).
             job["payment"] = {
                 "token": _combined_token_vox,
-                "total_eur": _voxcpm_eur_quota,
+                # Pagato meno quota AI: comprende il floor premium quando la
+                # quota gratuita e' esaurita (la stima TTS sotto soglia e' 0).
+                "total_eur": generation_engine._tts_share_eur(
+                    _expected_total_vox, estimated_cost),
                 "method": _consumed_method_vox,
                 "ts": time.time(),
                 "voxcpm_est": _est_vox,
