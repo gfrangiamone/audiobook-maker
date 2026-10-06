@@ -94,6 +94,15 @@ body{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','N
 .acct-menu-email{font-size:.78rem;color:var(--txm);padding:6px 10px;border-bottom:1px solid var(--brd);margin-bottom:4px;word-break:break-all}
 .acct-menu-item{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:6px;font:inherit;font-size:.88rem;color:var(--tx);cursor:pointer;text-decoration:none}
 .acct-menu-item:hover{background:var(--srf2)}
+.acct-nudge{position:absolute;right:-8px;top:44px;width:260px;max-width:calc(100vw - 32px);background:var(--srf);border:1px solid var(--ac,#b5651d);border-radius:var(--rs);box-shadow:0 8px 24px rgba(0,0,0,.22);padding:10px 30px 10px 12px;z-index:890;animation:acctNudgeIn .25s ease-out}
+.acct-nudge[hidden]{display:none}
+.acct-nudge::before{content:'';position:absolute;right:18px;top:-7px;width:12px;height:12px;background:var(--srf);border-left:1px solid var(--ac,#b5651d);border-top:1px solid var(--ac,#b5651d);transform:rotate(45deg)}
+.acct-nudge-text{display:block;background:none;border:0;padding:0;margin:0;font:inherit;font-size:.84rem;line-height:1.4;color:var(--tx);text-align:left;cursor:pointer}
+.acct-nudge-text:hover{color:var(--ac,#b5651d)}
+.acct-nudge-close{position:absolute;right:4px;top:4px;width:22px;height:22px;background:none;border:0;border-radius:50%;font-size:1.05rem;line-height:1;color:var(--txm);cursor:pointer}
+.acct-nudge-close:hover{background:var(--srf2);color:var(--tx)}
+@keyframes acctNudgeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.acct-nudge{animation:none}}
 .theme-btn:hover{border-color:var(--ac);color:var(--ac)}
 
 /* ═══ BREADCRUMB ═══ */

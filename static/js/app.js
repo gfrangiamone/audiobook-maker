@@ -7223,8 +7223,43 @@ async function _acctBoot(){
     if(_acctLoggedIn()){location.href='/account';return}
     _acctAfterLogin=function(){location.href='/account'};
     openLoginModal();
+    return;
   }
+  _acctNudgeMaybe();
 }
+
+// Fumetto sotto l'icona account: invita gli utenti non registrati ad accedere,
+// al massimo una volta al giorno (data locale in localStorage).
+const _ACCT_NUDGE_KEY='abm_acct_nudge_day';
+let _acctNudgeTimer=null;
+function _acctNudgeToday(){
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function _acctNudgeMaybe(){
+  const box=document.getElementById('acctNudge');
+  if(!box||!_acctMe||!_acctMe.enabled||_acctLoggedIn())return;
+  const today=_acctNudgeToday();
+  try{
+    if(localStorage.getItem(_ACCT_NUDGE_KEY)===today)return;
+    localStorage.setItem(_ACCT_NUDGE_KEY,today);
+  }catch(e){return}
+  const txt=document.getElementById('acctNudgeText');
+  if(txt)txt.textContent=t('acct_nudge');
+  box.hidden=false;
+  _acctNudgeTimer=setTimeout(_acctNudgeHide,20000);
+}
+function _acctNudgeHide(){
+  const box=document.getElementById('acctNudge');
+  if(box)box.hidden=true;
+  if(_acctNudgeTimer){clearTimeout(_acctNudgeTimer);_acctNudgeTimer=null}
+}
+document.addEventListener('DOMContentLoaded',function(){
+  const txt=document.getElementById('acctNudgeText');
+  if(txt)txt.addEventListener('click',function(){_acctNudgeHide();openLoginModal()});
+  const x=document.getElementById('acctNudgeClose');
+  if(x)x.addEventListener('click',_acctNudgeHide);
+});
 
 function _acctRender(){
   const btn=document.getElementById('acctBtn');
@@ -7272,6 +7307,7 @@ function _acctShowErr(msg){
 function openLoginModal(){
   const m=document.getElementById('loginModal');
   if(!m)return;
+  _acctNudgeHide();
   _acctShowErr('');
   const se=document.getElementById('acctStepEmail'), sc=document.getElementById('acctStepCode');
   if(se)se.style.display='';

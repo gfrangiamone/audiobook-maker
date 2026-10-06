@@ -18,7 +18,7 @@ ACCT_KEYS = [
     "acct_email_ph", "acct_send_code", "acct_code_ph", "acct_code_intro", "acct_verify",
     "acct_err_wrong", "acct_err_expired", "acct_err_locked", "acct_err_none",
     "acct_err_rate", "acct_err_generic", "acct_forced_notice", "acct_signed_in_as",
-    "acct_logged_out",
+    "acct_logged_out", "acct_nudge",
 ]
 
 
@@ -244,3 +244,15 @@ def test_il_cookie_della_lingua_e_posato_anche_al_boot():
     boot = APP[APP.index("cl=detectLang();"):]
     boot = boot[:boot.index("\n")]
     assert "_setLangCookie(cl)" in boot
+
+
+def test_nudge_shown_once_per_day_only_to_guests():
+    assert 'id="acctNudge"' in HEAD and 'data-t="acct_nudge"' in HEAD
+    fn = _extract_fn("_acctNudgeMaybe")
+    assert "_acctLoggedIn()" in fn and "_acctMe.enabled" in fn
+    assert "localStorage.getItem(_ACCT_NUDGE_KEY)===today" in fn
+    assert "localStorage.setItem(_ACCT_NUDGE_KEY,today)" in fn
+    # non compare quando ?login=1 apre gia' la modale, e si chiude all'apertura
+    boot = _extract_fn("_acctBoot")
+    assert boot.index("openLoginModal();\n    return;") < boot.index("_acctNudgeMaybe()")
+    assert "_acctNudgeHide()" in _extract_fn("openLoginModal")
