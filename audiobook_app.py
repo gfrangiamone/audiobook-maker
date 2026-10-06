@@ -1435,6 +1435,9 @@ def _build_job_descriptor(job, phase):
         "input_path": job.get("epub_path", ""),       # path file caricato (qualsiasi tipo)
         "input_kind": kind,
         "abm_path": job.get("optimized_abm_path", ""), # presente solo se LLM completato
+        # Libro tradotto adottato (/api/translate_adopt): sostituisce input_path
+        # come sorgente del recovery, ma non implica ottimizzazione AI.
+        "adopted_abm_path": job.get("adopted_abm_path", ""),
         "ai_optimized": bool(job.get("ai_optimized")),
         # Per i job optimize-batch con auto-generate i parametri TTS vivono sotto
         # prefisso opt_* (non ancora promossi a job["voice"] ecc.): fallback su quelli.
@@ -1850,7 +1853,17 @@ def _reenqueue_orphan(job_id, rec):
         return False
     abm_path = rec.get("abm_path") or ""
     use_abm = bool(abm_path) and os.path.exists(abm_path)
-    src = abm_path if use_abm else rec.get("input_path", "")
+    # Traduzione adottata: il libro del job e' quello tradotto, non il file
+    # caricato. Se lo snapshot manca, ri-parsare l'originale farebbe leggere
+    # il testo sorgente alla voce della lingua tradotta: meglio non ripartire.
+    adopted_path = rec.get("adopted_abm_path") or ""
+    if not use_abm and adopted_path:
+        if not os.path.exists(adopted_path):
+            raise FileNotFoundError(
+                f"traduzione adottata mancante per {job_id}: {adopted_path!r}")
+        src = adopted_path
+    else:
+        src = abm_path if use_abm else rec.get("input_path", "")
     if not src or not os.path.exists(src):
         raise FileNotFoundError(f"input mancante per {job_id}: {src!r}")
     info = _parse_book(src)
@@ -1913,6 +1926,7 @@ def _reenqueue_orphan(job_id, rec):
         "client_ip": rec.get("client_ip", ""),
         "payment": rec.get("payment"),
         "ai_optimized": bool(rec.get("ai_optimized")) or use_abm,
+        "adopted_abm_path": adopted_path,
         "recovered": True,
         "gen_epoch": 1,
         # Parametri opt_* per il ramo optimize: run_optimization legge questi
@@ -15600,6 +15614,10 @@ def api_reset_to_chapters(job_id):
     # (the work_dir-root path is no longer in use once output_dir exists).
     work_dir = UPLOAD_DIR / job_id
     for abm in work_dir.glob("*.abm"):
+        # La traduzione adottata resta il libro del job anche dopo il reset:
+        # e' la sorgente del recovery per la prossima generazione.
+        if abm.name == ADOPTED_TRANSLATION_ABM:
+            continue
         try:
             abm.unlink()
             print(f"[reset] Removed work_dir-root ABM: {abm}")
@@ -18554,6 +18572,34 @@ def api_translate_cancel(job_id):
     return jsonify({"status": "cancelling"})
 
 
+ADOPTED_TRANSLATION_ABM = "_adopted_translation.abm"
+
+
+def _write_adopted_translation_abm(job_id, job, chapters):
+    """Scrive nella job dir l'.abm dei capitoli tradotti adottati, con gli
+    stessi indici della SPA: e' la sorgente del recovery (vedi
+    _reenqueue_orphan). Ritorna il path, o "" se la scrittura fallisce
+    (non fatale: il job prosegue, solo il recovery resta sull'originale)."""
+    try:
+        info = job.get("info")
+        out_path = UPLOAD_DIR / job_id / ADOPTED_TRANSLATION_ABM
+        manifest_src = {
+            "title": getattr(info, "title", "") or "",
+            "author": getattr(info, "author", "") or "",
+            "original_filename": job.get("original_filename", ""),
+        }
+        translation_core.write_abm(
+            out_path, manifest_src,
+            [{"index": c.index, "title": c.title, "text": c.text} for c in chapters],
+            None, "", job.get("translated_lang", "") or getattr(info, "language", ""),
+            bool(job.get("translated_optimized")))
+        return str(out_path)
+    except Exception as e:
+        print(f"[{job_id}] snapshot traduzione adottata fallito (non-fatal): {e}",
+              flush=True)
+        return ""
+
+
 @app.route("/api/translate_adopt/<job_id>", methods=["POST"])
 def api_translate_adopt(job_id):
     """Adotta la traduzione come libro attivo: sostituisce i capitoli del
@@ -18603,6 +18649,11 @@ def api_translate_adopt(job_id):
         job["optimized_chapters"] = []
     job["status"] = "analyzed"
     job["tr_cancelled"] = False
+    # Il testo adottato vive solo in RAM: senza una copia su disco il recovery
+    # dopo un restart ri-parsava il libro ORIGINALE (input_path) e la voce
+    # della lingua di destinazione leggeva il testo sorgente (job
+    # LxRrADnUul50aFbWLM0rAg, 06/10/2026: voce greca su EPUB inglese).
+    job["adopted_abm_path"] = _write_adopted_translation_abm(job_id, job, new_chapters)
     _log_activity(job_id, job.get("original_filename", ""), "TRANSLATE_ADOPT",
                   job.get("client_id", ""), job.get("client_ip", ""), "", "")
     return jsonify({
