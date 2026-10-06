@@ -63,7 +63,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_PAYPAL_UNFUNDED_PENDING_REASONS` | `ECHECK,TRANSACTION_APPROVED_AWAITING_FUNDING,INTERNATIONAL_WITHDRAWAL,RECEIVING_PREFERENCE_MANDATES_MANUAL_ACTION,UNILATERAL,VERIFICATION_REQUIRED` (CSV dei `status_details.reason` PayPal che, su una capture con status `PENDING`, indicano fondi **non trasferiti**: la capture viene rifiutata e il servizio non erogato. I `PENDING` con reason non in lista — es. `PENDING_REVIEW`, revisione antifrode — restano accettati e vengono loggati come `WARN capture PENDING accettata`) | `payment.py` | 277–291 |
 | `ABM_PAYPAL_IMMEDIATE_PAYMENT` | `1` (gate **preventivo** sugli strumenti a compensazione differita: aggiunge `application_context.payment_method = {payer_selected: PAYPAL, payee_preferred: IMMEDIATE_PAYMENT_REQUIRED}` alla creazione dell'ordine, così PayPal non consente al pagante di completare il checkout con eCheck/addebito bancario. Complementare al filtro sul `payment_status` alla capture (`ABM_PAYPAL_UNFUNDED_PENDING_REASONS`), che resta come rete di sicurezza. `0\|false\|no\|off` per disattivarlo senza deploy se PayPal rifiutasse la preferenza per un account/paese specifico) | `payment.py` | 293–299 |
 | `ABM_JOB_RETENTION_SEC` | `64800` (18 ore, retention elaborazioni completate e token download per voci standard) | `audiobook_app.py` | 300 |
-| `ABM_GEMINI_JOB_RETENTION_SEC` | `172800` (48 ore, retention estesa per job con voci PREMIUM/Gemini — token download e cleanup loop usano questo valore quando `voice` inizia per `gemini:` o il token ha `is_gemini=True`. **Protezione no-download**: se un job/token PREMIUM non risulta mai scaricato (`job["downloaded_at"]` e `token_info["downloaded_at"]` entrambi vuoti) la retention effettiva è raddoppiata via `GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER=2`, default 96h — vedi `_effective_retention_for_job` / `_effective_retention_for_token_info` in `audiobook_app.py`) | `audiobook_app.py` | 301 |
+| `ABM_GEMINI_JOB_RETENTION_SEC` | `172800` (48 ore, retention estesa per job con voci PREMIUM/Gemini — token download e cleanup loop usano questo valore quando `voice` è PREMIUM (`gemini:`, `speechify:`, `voxcpm:` — `voice_utils.is_premium_voice`, dalla v3.75.0; prima solo `gemini:`) o il token ha `is_gemini=True` (flag storico: significa "retention PREMIUM"). **Protezione no-download**: se un job/token PREMIUM non risulta mai scaricato (`job["downloaded_at"]` e `token_info["downloaded_at"]` entrambi vuoti) la retention effettiva è raddoppiata via `GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER=2`, default 96h — vedi `_effective_retention_for_job` / `_effective_retention_for_token_info` in `audiobook_app.py`) | `audiobook_app.py` | 301 |
 | `ABM_RECOVER_ENABLED` | `1` (abilita il recupero al boot dei job **batch** interrotti da un riavvio/deploy; `0\|false\|no\|off` per disabilitare). Letto in `_recover_orphan_jobs()`. | `audiobook_app.py` | — |
 | `ABM_RECOVER_MAX_ATTEMPTS` | `2` (tentativi di recupero per job prima del fallback = rimborso secondo policy + mail "interrotto" + `state=failed`). Il contatore è persistito su disco **prima** di rilanciare (crash-safe) e azzerato al primo capitolo completato di un job recuperato. | `audiobook_app.py` | — |
 | Descrittore recover — campi lingua | `_build_job_descriptor()` persiste `lang`, `opt_lang`, `gen_lang`, `browser_lang`, `platform`, `gemini_accent`; `_reenqueue_orphan()` li ripristina nel job ricostruito. Senza, il recovery post-restart perdeva la lingua e `run_optimization` cadeva sul default hardcoded `"it"` (prompt LLM italiano su libro di altra lingua) e `_audit_language` degradava accento/rate-sample Gemini. Fix v3.35.0 (incidente `kd8XQj6WWdrZJt1_z0VMPQ`: prompt `it` su libro `es` dopo restart alle 12:15). | `audiobook_app.py` | — |
@@ -121,7 +121,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `SMTP_FROM` | da `ABM_SMTP_FROM` o fallback | `audiobook_app.py` | 106 |
 | `BASE_URL` | da `ABM_BASE_URL` (con rstrip) | `audiobook_app.py` | 107 |
 | `EMAIL_FILE_RETENTION_SEC` | da `ABM_JOB_RETENTION_SEC` (default `64800` = 18 ore) — retention voci standard | `audiobook_app.py` | 311 |
-| `GEMINI_FILE_RETENTION_SEC` | da `ABM_GEMINI_JOB_RETENTION_SEC` (default `172800` = 48 ore) — retention voci PREMIUM/Gemini | `audiobook_app.py` | 312 |
+| `GEMINI_FILE_RETENTION_SEC` | da `ABM_GEMINI_JOB_RETENTION_SEC` (default `172800` = 48 ore) — retention voci PREMIUM (Gemini, Speechify, VoxCPM) | `audiobook_app.py` | 312 |
 | `ADMIN_EMAIL` | da `ABM_ADMIN_EMAIL` | `audiobook_app.py` | 114 |
 | `ADMIN_DIGEST_INTERVAL_SEC` | `86400` (24 ore) | `audiobook_app.py` | 115 |
 | `_client_emails` | `{}` dict `client_id → email`, persistito in `_client_emails.json`. Popolato da `/api/register_email`, letto da `gen._send_completion_email` come fallback se `job["notify_email"]` è vuoto | `audiobook_app.py` | 907 |
@@ -266,6 +266,9 @@ I parametri `ABM_TRANSLATE_*` hanno fallback sui corrispettivi `ABM_LLM_*`; se n
 | `ABM_TRANSLATE_MAX_RETRIES` | `4` (tentativi per chunk con backoff esponenziale) | — | `translation_core.py` | 102–103 |
 | `ABM_TRANSLATE_TEMPERATURE` | `0.3` | — | `translation_core.py` | 106–107 |
 | `ABM_TRANSLATE_REQUEST_TIMEOUT_SEC` | `300` (secondi per chiamata LLM singola) | — | `translation_core.py` | 110–111 |
+| `ABM_TRANSLATE_BLOCK_ATTEMPTS` | `2` (tentativi sullo stesso chunk quando il provider lo blocca per il contenuto, `finish_reason` content_filter/recitation/safety; poi `TranslationContentBlocked`) | — | `translation_core.py` | 129 |
+| `ABM_TRANSLATE_FALLBACK_MODEL` | `deepseek-chat` (modello di ripiego per i chunk bloccati, chiamato con `ABM_LLM_API_KEY`/`ABM_LLM_API_BASE`; `off` disabilita; nessun ripiego se manca `ABM_LLM_API_KEY` o coincide col primario) | `ABM_LLM_MODEL` | `translation_core.py` | 136 |
+| `ABM_TRANSLATE_FALLBACK_STICKY_AFTER` | `2` (chunk bloccati dopo i quali il resto del libro va direttamente al ripiego; `0` = solo chunk per chunk) | — | `translation_core.py` | 143 |
 
 **Report costi (solo CLI — `scripts/translate_abm.py`)**
 
@@ -522,7 +525,7 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 
 - `analyzed` → 3 min dopo l'ultimo heartbeat (anteprima mai avviata)
 - `optimizing` → cancellato se heartbeat perso per >60s (senza email) / tenuto in vita in batch (con email)
-- `optimized` → **retention per-job dal `opt_completed_at`**: `EMAIL_FILE_RETENTION_SEC` (default 18h, `ABM_JOB_RETENTION_SEC`) per voci standard, `GEMINI_FILE_RETENTION_SEC` (default 48h, `ABM_GEMINI_JOB_RETENTION_SEC`) quando `job["voice"]` inizia per `gemini:`. Selezione via `_retention_for_job(job)`. Indipendente dalla presenza di email registrata e dallo stato del browser. Garantisce che il bottone "Scarica progetto ottimizzato (.abm)" nell'UI continui a funzionare per il periodo configurato dalla fine dell'ottimizzazione AI, allineando lo scenario interactive a quello batch-email.
+- `optimized` → **retention per-job dal `opt_completed_at`**: `EMAIL_FILE_RETENTION_SEC` (default 18h, `ABM_JOB_RETENTION_SEC`) per voci standard, `GEMINI_FILE_RETENTION_SEC` (default 48h, `ABM_GEMINI_JOB_RETENTION_SEC`) quando `job["voice"]` è PREMIUM (Gemini, Speechify, VoxCPM). Selezione via `_retention_for_job(job)`. Indipendente dalla presenza di email registrata e dallo stato del browser. Garantisce che il bottone "Scarica progetto ottimizzato (.abm)" nell'UI continui a funzionare per il periodo configurato dalla fine dell'ottimizzazione AI, allineando lo scenario interactive a quello batch-email.
 - `generating` → tenuto in vita se email registrata; heartbeat timeout 60s altrimenti
 - `done` → 5 min dopo download diretto / `EMAIL_FILE_RETENTION_SEC` dall'invio email / 60s di heartbeat perso senza download
 - `error` → 2 min di grazia per leggere il messaggio
@@ -984,7 +987,7 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 | `ABM_S3_KEY_PREFIX` | Prefisso di namespacing nel bucket | *(vuoto)* | storage_backend.py |
 | `ABM_S3_PRESIGN_TTL_SEC` | Validità presigned URL (s) | `21600` (6h) | storage_backend.py |
 | `ABM_HOT_WINDOW_SEC` | Finestra calda locale, voci standard (s) | `64800` (18h) | storage_tiering.py |
-| `ABM_HOT_WINDOW_GEMINI_SEC` | Finestra calda locale, voci PREMIUM (s) | `172800` (48h) | storage_tiering.py |
+| `ABM_HOT_WINDOW_GEMINI_SEC` | Finestra calda locale, voci PREMIUM — Gemini, Speechify, VoxCPM (s) | `172800` (48h) | storage_tiering.py |
 | `ABM_OFFLOAD_QUIET_SEC` | Finestra di quiete (s): un output senza marker `.generation_complete` i cui file sono stati scritti da meno di N secondi è considerato in conversione e NON viene offloadato (gate anti race mid-write, vedi F1) | `180` | generation_engine.py, audiobook_app.py (`EVICT_REGEN_QUIET_SEC`, vedi F5) |
 
 **Default voluti:** la finestra calda parte uguale alla retention attuale (18h/48h),
@@ -1192,7 +1195,7 @@ Endpoint admin: `GET /api/admin/load_stats?window=24h|7d|28d|month` (richiede au
 ---
 
 ## Condivisione audiolibro (share app→app)
-- `ABM_SHARE_TTL_SEC` (default 7200): durata della disponibilità di una share (120 min).
+- `ABM_SHARE_TTL_SEC` (default 86400): durata della disponibilità di una share (24h).
 - `ABM_SHARE_MAX_BYTES` (default 524288000 = 500 MB): tetto dimensione file condivisibile (caso upload).
 - `ABM_SHARE_UPLOAD_TTL_SEC` (default 3600): validità della presigned PUT URL.
 
