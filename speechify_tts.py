@@ -12,6 +12,7 @@ import base64
 import contextlib as _contextlib
 import io
 import os
+from env_utils import env_bool as _b, env_float as _f, env_int as _i
 import threading
 import time
 import wave
@@ -137,28 +138,6 @@ SAFE_MAX_CHUNK_CHARS = ENDPOINT_MAX_INPUT_CHARS - _SSML_OVERHEAD_RESERVE  # 1850
 # Default del cap testo/chunk (override via ABM_SPEECHIFY_CHUNK_CHARS).
 CHUNK_MAX_CHARS = 1800  # cap sotto il limite ~2000 char/richiesta dell'endpoint
 _CHUNK_MIN_CHARS = 200  # floor: sotto questo il TTS perde contesto/qualita'
-
-
-def _f(env, default):
-    try:
-        return float(str(os.environ.get(env, default)).replace(",", "."))
-    except (ValueError, TypeError):
-        return float(default)
-
-
-def _i(env, default):
-    try:
-        return int(os.environ.get(env, str(default)))
-    except (ValueError, TypeError):
-        return int(default)
-
-
-def _b(env, default=False):
-    """Parsing booleano da env: 1/true/yes/on (case-insensitive) -> True."""
-    raw = os.environ.get(env)
-    if raw is None:
-        return bool(default)
-    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def api_key():

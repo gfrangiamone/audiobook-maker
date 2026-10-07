@@ -23,6 +23,7 @@ import contextlib
 import io
 import math
 import os
+from env_utils import env_float, env_int
 import subprocess
 import sys
 import tempfile
@@ -53,17 +54,11 @@ def enabled():
 
 
 def _threads():
-    try:
-        return max(1, int(os.environ.get("ABM_VOICE_CLONE_DENOISE_THREADS") or 2))
-    except ValueError:
-        return 2
+    return env_int("ABM_VOICE_CLONE_DENOISE_THREADS", 2, floor=1)
 
 
 def _timeout():
-    try:
-        return float(os.environ.get("ABM_VOICE_CLONE_DENOISE_TIMEOUT") or 900)
-    except ValueError:
-        return 900.0
+    return env_float("ABM_VOICE_CLONE_DENOISE_TIMEOUT", 900)
 
 
 def _cache_dir():

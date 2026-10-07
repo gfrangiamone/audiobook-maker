@@ -9,17 +9,11 @@ import hashlib
 import hmac
 import json
 import os
+from env_utils import env_int as _env_int
 import secrets
 import time
 
 import db
-
-
-def _env_int(name, default):
-    try:
-        return int(os.environ.get(name, "") or default)
-    except ValueError:
-        return default
 
 
 ENABLE = os.environ.get("ABM_ACCOUNT_ENABLE", "1").strip().lower() not in ("0", "false", "no", "off")

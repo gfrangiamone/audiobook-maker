@@ -12,6 +12,7 @@ Best-effort, thread-safe, scrittura atomica: nessuna eccezione propagata.
 import hashlib
 import json
 import os
+from env_utils import env_float as _env_float
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -32,13 +33,6 @@ def _quota_file():
 
 def _month():
     return datetime.now().strftime("%Y-%m")
-
-
-def _env_float(name, default):
-    try:
-        return float(str(os.environ.get(name, default)).replace(",", "."))
-    except (TypeError, ValueError):
-        return float(default)
 
 
 def limit_eur():

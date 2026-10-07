@@ -11,6 +11,7 @@ Config (env, con fallback ABM_LLM_*): vedi PARAMETRI_CONFIGURAZIONE.md.
 import io
 import json
 import os
+from env_utils import env_float, env_int, env_str
 import re
 import time
 import zipfile
@@ -55,10 +56,7 @@ class TranslationContentBlocked(TranslationError):
 # ---------------------------------------------------------------------------
 
 def _env(name, fallback_name="", default=""):
-    v = os.environ.get(name, "").strip()
-    if not v and fallback_name:
-        v = os.environ.get(fallback_name, "").strip()
-    return v or default
+    return env_str(name, default, fallback=fallback_name or None)
 
 
 def api_key():
@@ -96,18 +94,8 @@ def vertex_location():
 
 
 def _env_num(cast, name, default):
-    """Numero da env con fallback robusto: valore malformato -> default
-    (warning su stderr), virgola decimale accettata."""
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return cast(default)
-    try:
-        return cast(raw.replace(",", "."))
-    except (ValueError, TypeError):
-        import sys
-        print(f"[translation_core] WARNING: {name}={raw!r} non valido, "
-              f"uso default {default}", file=sys.stderr)
-        return cast(default)
+    """Numero da env (env_utils): malformato -> default con avviso, virgola ok."""
+    return (env_int if cast is int else env_float)(name, default)
 
 
 def chunk_chars():

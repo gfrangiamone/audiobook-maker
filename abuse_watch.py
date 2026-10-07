@@ -22,6 +22,7 @@ Spec: docs/superpowers/specs/2026-09-03-quota-containment-design.md
 import hashlib
 import json
 import os
+from env_utils import env_float as _env_float, env_int
 import queue
 import re
 import threading
@@ -90,18 +91,7 @@ _JUDGE_COOLDOWN_SEC = 300
 # ---------------------------------------------------------------------------
 
 def _env_int(name, default, floor=0):
-    try:
-        return max(floor, int(os.environ.get(name, str(default)) or default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_float(name, default):
-    try:
-        raw = str(os.environ.get(name, str(default)) or default).replace(",", ".")
-        return float(raw)
-    except (TypeError, ValueError):
-        return default
+    return env_int(name, default, floor=floor)
 
 
 def kill_enabled():

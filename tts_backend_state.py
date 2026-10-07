@@ -74,6 +74,7 @@ File di stato: <data_dir>/_tts_backend_state.json
 import json
 import math
 import os
+from env_utils import env_float as _f_env
 import threading
 import time
 from datetime import datetime, timezone
@@ -738,13 +739,6 @@ def defer_probe(model_key):
 # intacca, quindi il ledger e' globale e vive nel dict `_CREDIT`, isolato da
 # `_CACHE` (vedi `_CREDIT_KEY` / `_MODELS_KEY` e il docstring di modulo per
 # la forma su disco e perche' i due spazi non si mescolano mai).
-
-
-def _f_env(name, default):
-    try:
-        return float((os.environ.get(name, "") or "").replace(",", ".") or default)
-    except (TypeError, ValueError):
-        return float(default)
 
 
 def _warn_legacy_env(old_name, new_name, converted_usd):

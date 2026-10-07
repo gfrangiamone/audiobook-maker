@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+from env_utils import env_float as _env_float
 import re
 import time
 import traceback
@@ -115,13 +116,6 @@ def _questions():
             ),
         ),
     }
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float((os.environ.get(name) or "").strip() or default)
-    except (TypeError, ValueError):
-        return default
 
 
 # Soglia di rifiuto per motivo. Piu' alta per `gibberish`: un rifiuto sbagliato

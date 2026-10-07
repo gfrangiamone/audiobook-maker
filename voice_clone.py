@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import os
+from env_utils import env_int as _env_int
 import re
 import secrets
 import shutil
@@ -173,14 +174,6 @@ def store_path():
 
 def _now(now):
     return int(now if now is not None else time.time())
-
-
-def _env_int(name, default):
-    raw = (os.environ.get(name) or "").strip()
-    try:
-        return int(float(raw.replace(",", "."))) if raw else default
-    except ValueError:
-        return default
 
 
 def sample_ttl_sec():

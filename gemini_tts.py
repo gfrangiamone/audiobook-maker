@@ -11,6 +11,7 @@ Scope: synthesis + pricing + usage tracking + preview cap + availability.
 
 import io
 import os
+from env_utils import env_bool as _b, env_float as _f, env_int as _i
 import re
 import json
 import math
@@ -146,12 +147,6 @@ MAX_BYTES_PER_CALL = int(os.environ.get("ABM_GEMINI_MAX_BYTES_PER_CALL", "8000")
 # mentre API_HARD_BYTES_CAP protegge dall'overshoot complessivo della call.
 API_HARD_BYTES_CAP = int(os.environ.get("ABM_GEMINI_API_HARD_BYTES_CAP", "8000"))
 
-
-def _f(env, default):
-    try:
-        return float(os.environ.get(env, str(default)).replace(",", "."))
-    except (ValueError, TypeError):
-        return float(default)
 
 
 def _model_env_suffix(model_key):
@@ -942,19 +937,6 @@ PREVIEW_WINDOW_SECONDS = int(_f("ABM_GEMINI_PREVIEW_WINDOW_SEC", 300))
 # Free tier defaults qui sotto sono prudenti; alza i valori se hai billing
 # attivo (vedi .env.gemini.tier1.example). I valori vengono letti a ogni call
 # (no caching) per supportare reload a runtime durante test.
-def _i(env, default):
-    try:
-        return int(os.environ.get(env, str(default)))
-    except (ValueError, TypeError):
-        return int(default)
-
-
-def _b(env, default):
-    v = os.environ.get(env)
-    if v is None:
-        return bool(default)
-    return v.strip().lower() in ("1", "true", "yes", "on")
-
 
 # Max attempts e backoff
 SYNTH_MAX_ATTEMPTS_DEFAULT = 3

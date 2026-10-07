@@ -18,6 +18,7 @@ import collections
 import json
 import logging
 import os
+from env_utils import env_float as _f, env_int as _i
 import re
 import threading
 import time
@@ -96,20 +97,6 @@ _COLD_START_BY_GPU = (
 # rimesso in piedi in fretta da FlashBoot, e addebita un avvio di troppo al
 # primo job che si e' preso una coda lunga su un worker gia' caldo.
 _COLD_DELAY_FLOOR = 30.0
-
-
-def _f(env, default):
-    try:
-        return float(str(os.environ.get(env, default)).replace(",", "."))
-    except (ValueError, TypeError):
-        return float(default)
-
-
-def _i(env, default):
-    try:
-        return int(os.environ.get(env, str(default)))
-    except (ValueError, TypeError):
-        return int(default)
 
 
 def endpoint_id():

@@ -21,6 +21,7 @@ Configurazione (env, come tutto il resto dell'app):
 from __future__ import annotations
 
 import os
+from env_utils import env_float as _env_float, env_int as _env_int, env_str
 import threading
 import time
 
@@ -55,21 +56,7 @@ _last_error_msg = ""
 
 
 def _env(name, default=""):
-    return (os.environ.get(name) or default).strip()
-
-
-def _env_float(name, default):
-    try:
-        return float(_env(name) or default)
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_int(name, default):
-    try:
-        return int(float(_env(name) or default))
-    except (TypeError, ValueError):
-        return default
+    return env_str(name, default)
 
 
 def api_key():

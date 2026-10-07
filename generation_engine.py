@@ -22,6 +22,7 @@ import asyncio
 import html as _htmlesc
 import json
 import os
+from env_utils import env_bool as _env_bool, env_float as _env_float, env_int as _env_int
 import re
 import shutil
 import threading
@@ -89,21 +90,6 @@ from tts_split import (
 # Tutti i parametri sono override-able via ABM_LLM_* environment variables.
 # I default attuali sono tarati su DeepSeek-Chat (provider corrente). Cambiare
 # provider richiede solo di rivalorizzare le env var (no code change).
-
-def _env_int(name, default):
-    try:
-        return int(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-def _env_float(name, default):
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-def _env_bool(name, default):
-    return os.environ.get(name, "true" if default else "false").strip().lower() in ("true", "1", "yes", "on")
 
 # Connection
 LLM_API_KEY  = os.environ.get("ABM_LLM_API_KEY", "")

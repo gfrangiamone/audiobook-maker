@@ -11,23 +11,16 @@ Reference: docs/superpowers/specs/2026-05-25-cancel-gemini-floor-design.md
 from __future__ import annotations
 
 import os
+from env_utils import env_float
 from typing import Dict
 
 
 def _paypal_fee_pct() -> float:
-    try:
-        return float(os.environ.get("ABM_GEMINI_PAYPAL_PERCENT_FEE", "3.4")
-                     .replace(",", "."))
-    except (TypeError, ValueError):
-        return 3.4
+    return env_float("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
 
 
 def _paypal_fee_fixed_eur() -> float:
-    try:
-        return float(os.environ.get("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", "0.34")
-                     .replace(",", "."))
-    except (TypeError, ValueError):
-        return 0.34
+    return env_float("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 
 
 def compute_cancel_retention(provider_cost_eur: float,

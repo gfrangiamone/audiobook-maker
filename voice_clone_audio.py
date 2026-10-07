@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import os
+from env_utils import env_float as _env_float
 import wave
 from dataclasses import dataclass, field, asdict
 
@@ -254,14 +255,6 @@ class Gate:
     # la coda smorzata della frase. A 1,8 s le pause di frase passano e restano
     # fuori le interruzioni vere («mi fermo, ricomincio»), che stanno sopra i 2 s.
     max_gap: float = 1.8
-
-
-def _env_float(name, default):
-    raw = (os.environ.get(name) or "").strip().replace(",", ".")
-    try:
-        return float(raw) if raw else default
-    except ValueError:
-        return default
 
 
 def gate_from_env():
