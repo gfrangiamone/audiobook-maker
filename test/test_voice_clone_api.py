@@ -419,13 +419,25 @@ def test_discard_solo_dal_creatore_e_solo_prima_del_pagamento(client, tmp_path):
 
 def test_forget_rifiuta_il_dispositivo_proprietario(client, tmp_path):
     """m1: il dispositivo creatore non puo' essere dimenticato via API (409
-    bad_state); solo "Cancella" (delete_by_owner, /vc/<token>/delete)."""
+    bad_state) prima che la voce sia pronta: la rinuncia passa da reject."""
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], s)
+    r = client.post(f"/api/voice_clone/{rec['id']}/forget")
+    assert r.status_code == 409 and r.get_json()["error_code"] == "bad_state"
+    assert vc.get(rec["id"])["devices"][0]["cid"] == "cid-uno"
+
+
+def test_forget_del_creatore_a_voce_pronta(client, tmp_path):
+    """A voce pronta il creatore puo' togliersela: codice e link di gestione
+    restano nell'email del proprietario."""
     rec = _paid(tmp_path)
     for s in ("demos_generating", "demos_ready", "ready"):
         vc.transition(rec["id"], s)
     r = client.post(f"/api/voice_clone/{rec['id']}/forget")
-    assert r.status_code == 409 and r.get_json()["error_code"] == "bad_state"
-    assert vc.authorized(vc.voice_id_of(rec), "cid-uno")
+    assert r.status_code == 200
+    assert not vc.authorized(vc.voice_id_of(rec), "cid-uno")
+    assert vc.get(rec["id"])["state"] == "ready"
 
 
 def test_notify_rimborso_non_logga_l_email_se_l_invio_fallisce(client, tmp_path, monkeypatch, capsys):

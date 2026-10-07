@@ -288,6 +288,8 @@ def test_verdict_group_scope_restricted_to_active_cids(env, monkeypatch):
     _gen(g, "stale")
     aw.record_event(g, "stale", "quota_gate", {})
     monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400)   # oltre 7 giorni
+    aw.record_block(g, "stale")                          # blocco recente: "fresh" e' rotazione
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400 + 60)
     _gen(g, "fresh")
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "group", "cids": []})
     assert v["cids"] == ["fresh"]
@@ -438,6 +440,27 @@ def test_cid_born_after_a_block_is_evasion(env, monkeypatch):
     assert ev["cids_born_after_last_block"] == 1 and ev["quota_evasion_evidence"] is True
 
 
+def test_cid_born_days_after_an_old_block_is_not_rotation(env, monkeypatch):
+    """06/10/2026: quota esaurita a fine settembre, una sola email, cookie nuovo
+    nove giorni dopo (altro browser, quota di ottobre ancora a meta'). Il
+    blocco vecchio non spiega il cookie: niente rotazione, niente kill."""
+    g = aw.group_key("9.9.9.9", "a")
+    real_time = time.time
+    _gen(g, "a")
+    aw.record_event(g, "a", "email", {"email": "uno@example.com"})
+    aw.record_event(g, "a", "quota_gate", {})
+    aw.record_block(g, "a")
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 9 * 86400)
+    _gen(g, "b", chars=2900000)
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 9 * 86400 + 10)
+    ev = aw.evasion_for(g)
+    assert ev["cids_born_after_last_block"] == 0
+    assert ev["stable_identity"] is True and ev["quota_evasion_evidence"] is False
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "group",
+                           "cids": [], "reason": "reactive_rotation", "trigger_cid": "b"})
+    assert v["verdict"] == "inconclusive" and aw.is_blocked(g, "b") is False
+
+
 def test_admin_clear_raises_the_bar_for_reblocking(env):
     """Il ripristino da console e' un giudizio umano: i contatori del dossier
     sopravvivono, quindi senza questa guardia il gruppo tornerebbe bloccato al
@@ -489,6 +512,8 @@ def test_group_scope_does_not_cover_unknown_or_preexisting_idle_cids(env, monkey
     _gen(g, "idle")
     aw.record_event(g, "idle", "quota_gate", {})
     monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400)   # idle ora e' stale
+    aw.record_block(g, "idle")                           # blocco recente: "active" e' rotazione
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400 + 60)
     _gen(g, "active")
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
     assert v["cids"] == ["active"]

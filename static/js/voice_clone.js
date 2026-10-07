@@ -1198,7 +1198,9 @@
       var act = document.createElement('div'); act.className = 'vc-actions';
       var mk = function (key, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-outline btn-sm'; b.textContent = tt(key); b.onclick = fn; act.appendChild(b); return b; };
       if (m.pending) mk('vc_resume_btn', function () { vcResume(m.id); });
-      if (!m.owner) mk('vc_forget', function () { vcAskForget(m, act); });
+      // Il creatore la toglie solo se il backend lo consente (voce pronta con
+      // email): serve a chi ha fatto registrare un'altra persona qui.
+      if (m.can_forget) mk('vc_forget', function () { vcAskForget(m, act); });
       if (act.childNodes.length) li.appendChild(act);
       ul.appendChild(li);
     });
@@ -1256,12 +1258,13 @@
   }
 
   /* «Rimuovi da questo dispositivo» chiede conferma sul posto: per riavere
-     la voce servirebbero di nuovo il codice-voce e l'ok del proprietario. */
+     la voce servirebbero di nuovo il codice-voce e l'ok del proprietario.
+     Al creatore si dice invece che codice e gestione restano nell'email. */
   function vcAskForget(m, act) {
     if (S.busy) return;
     var box = document.createElement('div'); box.className = 'vc-forget-ask';
     var p = document.createElement('p'); p.className = 'vc-small';
-    p.textContent = tt('vc_forget_ask', {name: m.name || ''});
+    p.textContent = tt(m.owner ? 'vc_forget_ask_owner' : 'vc_forget_ask', {name: m.name || ''});
     var row = document.createElement('div'); row.className = 'vc-actions';
     var yes = document.createElement('button'); yes.type = 'button'; yes.className = 'btn btn-outline btn-sm';
     yes.textContent = tt('vc_forget_yes');

@@ -1038,11 +1038,15 @@ def test_nome_del_dispositivo_chiesto_a_ogni_autorizzazione():
 def test_rimuovi_da_questo_dispositivo_chiede_conferma():
     corpo = _estrai_funzione(VC, "vcRenderMine")
     assert "vcAskForget(m, act)" in corpo and "'forget'" not in corpo
+    # il bottone lo decide il backend: anche il creatore, a voce pronta con email
+    assert "if (m.can_forget) mk('vc_forget'" in corpo
     ask = _estrai_funzione(VC, "vcAskForget")
     assert "vc_forget_ask" in ask and "vc_forget_yes" in ask and "vc_forget_no" in ask
+    assert "vc_forget_ask_owner" in ask
     assert "vcAction2(m.id, 'forget')" in ask
     for lang in LANGS:
-        assert {"vc_forget_ask", "vc_forget_yes", "vc_forget_no"} <= _chiavi_i18n(lang), lang
+        assert {"vc_forget_ask", "vc_forget_ask_owner", "vc_forget_yes",
+                "vc_forget_no"} <= _chiavi_i18n(lang), lang
     # la voce puo' essere arrivata da un altro: la didascalia non dice «che hai registrato»
     assert 'vc_mine_sample:"Il campione vocale registrato:"' in I18N
 

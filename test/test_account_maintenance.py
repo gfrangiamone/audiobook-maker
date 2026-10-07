@@ -143,25 +143,32 @@ def _posix_bash():
 def test_backup_script_covers_sqlite():
     src = open("scripts/backup_ABM.sh", encoding="utf-8", errors="replace").read()
     # abm.db e activity.db passano entrambi dalla stessa funzione
-    # backup_sqlite() (copia coerente via API di backup di sqlite3 dal modulo
-    # python3: sul server non c'e' la CLI; fallback a cp a freddo se il
-    # backup a caldo fallisce), con quick_check sulla copia.
+    # backup_sqlite() (copia coerente via API di backup del modulo sqlite3
+    # di python3, che sul server sostituisce la CLI assente; fallback a cp
+    # a freddo se il backup a caldo fallisce).
     assert 'backup_sqlite "$DATA_DIR/abm.db"' in src
     assert 'backup_sqlite "$ACT_DIR/activity.db"' in src
-    assert "s.backup(d)" in src and "quick_check" in src
-    # Sotto `set -e` la funzione non deve mai essere fatale: il python3 e'
-    # guardato da un if/else e la funzione termina con `return 0`, cosi' un
-    # DB che non si lascia copiare non fa saltare il resto del backup
-    # giornaliero (log, chiavi, tar, rotazione).
-    fn_start = src.index("backup_sqlite() {")
-    fn_body = src[fn_start:src.index("\n}", fn_start)]
-    assert "if python3 - " in fn_body
-    assert fn_body.rstrip().endswith("return 0")
-    assert "ATTENZIONE" in fn_body, "manca il messaggio di avviso sul fallback a cp"
-    # fallback a freddo per nome generico (src/dst), non hardcoded su abm.db
-    assert 'cp "$src" "$dst"' in fn_body
+    assert "s.backup(d)" in src and "PRAGMA quick_check" in src
+    # Non basta che i token esistano da qualche parte nel file: la
+    # chiamata python3 deve essere effettivamente guardata (lo script ha
+    # `set -e` in testa, riga 8), con un fallback a `cp` a freddo visibile
+    # in un messaggio di avviso, cosi' un fallimento del backup di un DB
+    # non fa saltare il resto del backup giornaliero (log, chiavi, tar,
+    # rotazione).
+    backup_line = next(
+        line for line in src.splitlines()
+        if "python3 -" in line and '"$src"' in line
+    )
+    assert backup_line.strip().startswith("if "), (
+        "la chiamata `python3 - \"$src\" ...` non e' guardata: sotto "
+        "`set -e` un suo fallimento aborterebbe l'intero script"
+    )
+    assert "ATTENZIONE" in src, "manca il messaggio di avviso sul fallback a cp"
+    # il fallback a cp a freddo deve comparire, con il file generico della
+    # funzione, non hardcoded su abm.db
+    assert 'cp "$src" "$dst"' in src
     # copia anche il file -wal, se presente, accanto al fallback a freddo
-    assert '$src-wal' in fn_body
+    assert '$src-wal' in src
     bash = _posix_bash()
     if bash:
         # via stdin: la copia di lavoro puo' avere CRLF (autocrlf), il
