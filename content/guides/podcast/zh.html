@@ -1,0 +1,74 @@
+
+<section>
+<h2>将您的有声书转换为私人播客</h2>
+<p>Audiobook Maker在生成音频文件的同时，还会生成一个包含RSS 2.0订阅源的<strong>完整播客包</strong>。要将其作为播客使用，文件需要发布到可从互联网访问的Web服务器上。理想的解决方案是您的<strong>自己的网站</strong>或托管空间。或者，对于个人使用或与几个朋友分享，您可以使用免费解决方案，如本指南中描述的<strong>Netlify</strong>。</p>
+<div style="background:#fff3cd;border-left:4px solid #f0c040;padding:10px 14px;border-radius:6px;margin:0 0 18px;font-size:.92rem;color:#5a4510"><strong>推荐用途：</strong>此解决方案专为个人使用或与家人朋友分享而设计。Netlify提供每月100 GB的免费带宽 — 绰绰有余。对于公开发布，请考虑使用您自己的网站托管。</div>
+</section>
+
+<section>
+<h2>分步指南：将您的有声书发布为播客</h2>
+<ol>
+<li><strong>以M4B格式生成有声书</strong> — 在Audiobook Maker中，上传您的EPUB或PDF文件，选择语言和语音，然后选择<strong>M4B</strong>作为输出格式。该工具会创建一个带有嵌入章节和封面的单个M4B文件 — 这是有声书的专业标准。</li>
+<li><strong>同时生成播客RSS包</strong> — 生成M4B后，以<strong>播客RSS</strong>模式再次运行生成，获得包含RSS订阅源XML文件和各个章节MP3文件的ZIP（播客需要每集一个音频文件）。</li>
+<li><strong>创建免费Netlify账户</strong> — 访问<strong>app.netlify.com</strong>，使用邮箱或GitHub注册。无需信用卡。免费计划包括100 GB带宽、10 GB存储和自动HTTPS。</li>
+<li><strong>上传到Netlify</strong> — 在Netlify控制面板中，在<strong>Sites</strong>下，将整个解压后的文件夹拖到虚线放置区域。网站几秒钟内即可上线。然后从<em>Site configuration → Change site name</em>重命名（如<code>my-audiobook.netlify.app</code>）。</li>
+<li><strong>验证订阅源</strong> — 在浏览器中打开订阅源URL：<br><code>https://your-site-name.netlify.app/podcast.xml</code><br>如果您看到包含章节标题的XML内容，您的播客已上线并准备就绪！</li>
+</ol>
+</section>
+
+<section>
+<h2>将您的播客导入收听应用</h2>
+<table>
+<thead><tr><th>应用</th><th>平台</th><th>如何添加</th></tr></thead>
+<tbody>
+<tr><td><strong>Apple Podcasts</strong></td><td>iOS / Mac</td><td><strong>iPhone：</strong>资料库 → 更多 → 通过URL添加节目 → 粘贴订阅源URL<br><strong>Mac：</strong>文件 → 通过URL关注节目</td></tr>
+<tr><td><strong>Pocket Casts</strong></td><td>Android / iOS / Web</td><td>搜索 → 粘贴订阅源URL → 订阅</td></tr>
+<tr><td><strong>AntennaPod</strong></td><td>Android</td><td>+ → 通过URL添加播客 → 粘贴URL</td></tr>
+<tr><td><strong>Overcast</strong></td><td>iOS</td><td>+ → 添加URL → 粘贴订阅源URL</td></tr>
+<tr><td><strong>Podcast Addict</strong></td><td>Android</td><td>+ → RSS订阅源 → 粘贴URL</td></tr>
+</tbody>
+</table>
+<div style="background:#fff0f0;border-left:4px solid #e04040;padding:8px 14px;border-radius:6px;margin:12px 0;font-size:.9rem;color:#802020"><strong>注意：</strong>Spotify不支持添加私人RSS订阅源。请使用以上列出的应用。</div>
+</section>
+
+<section>
+<h2>为什么要将有声书作为播客收听？</h2>
+<ul>
+<li><strong>自动书签</strong> — 精确从您停止的位置继续，甚至跨设备同步</li>
+<li><strong>剧集排序</strong> — 章节按顺序播放，自动前进到下一集</li>
+<li><strong>完整元数据</strong> — 播客应用中可看到封面、章节标题和书籍信息</li>
+<li><strong>可调速度</strong> — 以1.5倍、2倍或任何您喜欢的速度收听，带睡眠定时器</li>
+<li><strong>流媒体播放</strong> — 无需下载所有文件；收听时流式传输每个章节</li>
+<li><strong>与家人分享</strong> — 将订阅源URL发送给家人；他们不需要Netlify账户</li>
+</ul>
+</section>
+
+<section>
+<h2>播客发布技巧</h2>
+<ul>
+<li><strong>更新剧集：</strong>将文件重新上传到Netlify以替换之前的版本。您的播客应用将在下次刷新时检测到更改。</li>
+<li><strong>多本书：</strong>为每本有声书创建单独的Netlify站点以保持订阅源整洁。</li>
+<li><strong>存储限制：</strong>Netlify免费计划包括10 GB存储（约12本完整有声书）。移除已完成的书籍以释放空间。</li>
+<li><strong>隐私：</strong>播客URL在技术上是公开的（任何有链接的人都可以订阅），但不会出现在播客目录或搜索引擎中。它是"私密的"，因为不会被收录。</li>
+<li><strong>自定义域名：</strong>如果您想要个性化URL，Netlify免费计划支持自定义域名。</li>
+</ul>
+</section>
+
+<section>
+<h2>常见问题</h2>
+<details><summary>Netlify真的免费托管我的播客吗？</summary>
+<p>是的。Netlify的免费Starter计划包括每月100 GB带宽和10 GB存储。对于典型的有声书播客（10-20集，每集约5 MB），这对个人使用绰绰有余。如果超出限制，您可以升级到Netlify Pro（$19/月）或使用自己的托管。</p>
+</details>
+<details><summary>为什么使用M4B格式而不是MP3？</summary>
+<p>M4B是有声书的专业标准。单个M4B文件包含所有章节作为导航标记、嵌入的封面和元数据。它受Apple Books、Audible和所有主要有声书应用支持。MP3适合最大兼容性，但M4B提供更好的收听体验和章节导航。</p>
+</details>
+<details><summary>我可以将我的播客提交到Apple Podcasts或Spotify目录吗？</summary>
+<p>使用私人Netlify订阅源是不行的。Apple Podcasts Connect和Spotify for Podcasters要求订阅源托管在具有特定要求（封面尺寸、类别等）的批准平台上。Netlify方法适用于<strong>个人私人播客</strong> — 非常适合收听自己的书籍或与亲密朋友和家人分享。</p>
+</details>
+<details><summary>如果我不想使用Netlify怎么办？</summary>
+<p>任何静态Web托管都可以：GitHub Pages、Cloudflare Pages、Vercel或您自己的Web服务器。只需将解压后的播客文件夹上传到任何可通过Web访问的位置，RSS订阅源URL就可以在播客应用中工作。推荐Netlify因为它免费、快速且无需配置。</p>
+</details>
+<details><summary>播客应用可以下载剧集进行离线收听吗？</summary>
+<p>可以。在播客应用中订阅订阅源后，您可以像下载任何其他播客一样下载单个剧集进行离线收听。应用会自动管理下载、播放位置和删除。</p>
+</details>
+</section>

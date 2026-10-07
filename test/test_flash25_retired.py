@@ -96,8 +96,8 @@ def test_recovery_job_pagato_con_modello_ritirato_va_a_refund(tmp_path, monkeypa
 
 
 def test_filtro_audit_admin_con_flash38():
-    import inspect
-    src = inspect.getsource(audiobook_app)
+    # La pagina admin audit vive in templates/pages (C1).
+    src = audiobook_app._page_template("admin_audit_premium")
     assert '<option value="flash38">Gemini 3.8 (PREMIUM+)</option>' in src
 
 

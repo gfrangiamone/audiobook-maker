@@ -1,0 +1,408 @@
+{
+ "voice_table": [
+  [
+   "en",
+   {
+    "it": "Inglese",
+    "en": "English",
+    "fr": "Anglais",
+    "es": "Inglés",
+    "de": "Englisch",
+    "zh": "英语",
+    "hi": "अंग्रेज़ी"
+   },
+   "14+"
+  ],
+  [
+   "it",
+   {
+    "it": "Italiano",
+    "en": "Italian",
+    "fr": "Italien",
+    "es": "Italiano",
+    "de": "Italienisch",
+    "zh": "意大利语",
+    "hi": "इतालवी"
+   },
+   "8+"
+  ],
+  [
+   "fr",
+   {
+    "it": "Francese",
+    "en": "French",
+    "fr": "Français",
+    "es": "Francés",
+    "de": "Französisch",
+    "zh": "法语",
+    "hi": "फ़्रांसीसी"
+   },
+   "8+"
+  ],
+  [
+   "es",
+   {
+    "it": "Spagnolo",
+    "en": "Spanish",
+    "fr": "Espagnol",
+    "es": "Español",
+    "de": "Spanisch",
+    "zh": "西班牙语",
+    "hi": "स्पेनिश"
+   },
+   "7+"
+  ],
+  [
+   "de",
+   {
+    "it": "Tedesco",
+    "en": "German",
+    "fr": "Allemand",
+    "es": "Alemán",
+    "de": "Deutsch",
+    "zh": "德语",
+    "hi": "जर्मन"
+   },
+   "7+"
+  ],
+  [
+   "zh",
+   {
+    "it": "Cinese",
+    "en": "Chinese",
+    "fr": "Chinois",
+    "es": "Chino",
+    "de": "Chinesisch",
+    "zh": "中文",
+    "hi": "चीनी"
+   },
+   "10+"
+  ],
+  [
+   "hi",
+   {
+    "it": "Hindi",
+    "en": "Hindi",
+    "fr": "Hindi",
+    "es": "Hindi",
+    "de": "Hindi",
+    "zh": "印地语",
+    "hi": "हिन्दी"
+   },
+   "2+"
+  ],
+  [
+   "other",
+   {
+    "it": "Altre lingue (portoghese, russo, giapponese, coreano, arabo, ecc.)",
+    "en": "Other languages (Portuguese, Russian, Japanese, Korean, Arabic, etc.)",
+    "fr": "Autres langues (portugais, russe, japonais, coréen, arabe, etc.)",
+    "es": "Otros idiomas (portugués, ruso, japonés, coreano, árabe, etc.)",
+    "de": "Weitere Sprachen (Portugiesisch, Russisch, Japanisch, Koreanisch, Arabisch, usw.)",
+    "zh": "其他语言（葡萄牙语、俄语、日语、韩语、阿拉伯语等）",
+    "hi": "अन्य भाषाएं (पुर्तगाली, रूसी, जापानी, कोरियाई, अरबी, आदि)"
+   },
+   "350+"
+  ]
+ ],
+ "table_headers": {
+  "it": [
+   "Lingua",
+   "Voci AI",
+   "Tecnologia"
+  ],
+  "en": [
+   "Language",
+   "AI Voices",
+   "Technology"
+  ],
+  "fr": [
+   "Langue",
+   "Voix IA",
+   "Technologie"
+  ],
+  "es": [
+   "Idioma",
+   "Voces IA",
+   "Tecnología"
+  ],
+  "de": [
+   "Sprache",
+   "KI-Stimmen",
+   "Technologie"
+  ],
+  "zh": [
+   "语言",
+   "AI语音",
+   "技术"
+  ],
+  "hi": [
+   "भाषा",
+   "AI आवाज़ें",
+   "तकनीक"
+  ]
+ },
+ "howto_steps": {
+  "it": [
+   [
+    "Carica il tuo ebook",
+    "Carica il tuo file EPUB, PDF o TXT su Audiobook Maker"
+   ],
+   [
+    "Scegli la voce",
+    "Seleziona una voce AI e la lingua di narrazione tra le opzioni disponibili"
+   ],
+   [
+    "Seleziona i capitoli",
+    "Scegli i capitoli da convertire o seleziona l'intero libro"
+   ],
+   [
+    "Avvia la conversione",
+    "Clicca su Genera e attendi l'elaborazione text-to-speech. Per conversioni lunghe puoi inserire la tua email per ricevere una notifica al termine"
+   ],
+   [
+    "Scarica l'audiolibro",
+    "Scarica il tuo audiolibro in formato MP3 dal browser o dal link ricevuto via email, oppure genera un feed podcast RSS"
+   ]
+  ],
+  "en": [
+   [
+    "Upload your ebook",
+    "Upload your EPUB, PDF, or TXT file to Audiobook Maker"
+   ],
+   [
+    "Choose a voice",
+    "Select an AI voice and narration language from the available options"
+   ],
+   [
+    "Select chapters",
+    "Pick the chapters to convert or select the entire book"
+   ],
+   [
+    "Start conversion",
+    "Click Generate and wait for text-to-speech processing. For long conversions you can enter your email to be notified when it is ready"
+   ],
+   [
+    "Download audiobook",
+    "Download your audiobook in MP3 format from the browser or via the email link, or generate a podcast RSS feed"
+   ]
+  ],
+  "fr": [
+   [
+    "Téléchargez votre ebook",
+    "Téléchargez votre fichier EPUB, PDF ou TXT sur Audiobook Maker"
+   ],
+   [
+    "Choisissez une voix",
+    "Sélectionnez une voix IA et la langue de narration parmi les options disponibles"
+   ],
+   [
+    "Sélectionnez les chapitres",
+    "Choisissez les chapitres à convertir ou sélectionnez le livre entier"
+   ],
+   [
+    "Lancez la conversion",
+    "Cliquez sur Générer et attendez le traitement text-to-speech. Pour les longues conversions, vous pouvez entrer votre email pour être notifié quand c'est prêt"
+   ],
+   [
+    "Téléchargez le livre audio",
+    "Téléchargez votre livre audio en MP3 depuis le navigateur ou via le lien email, ou générez un flux RSS podcast"
+   ]
+  ],
+  "es": [
+   [
+    "Sube tu ebook",
+    "Sube tu archivo EPUB, PDF o TXT a Audiobook Maker"
+   ],
+   [
+    "Elige una voz",
+    "Selecciona una voz IA y el idioma de narración entre las opciones disponibles"
+   ],
+   [
+    "Selecciona los capítulos",
+    "Elige los capítulos a convertir o selecciona el libro completo"
+   ],
+   [
+    "Inicia la conversión",
+    "Haz clic en Generar y espera el procesamiento text-to-speech. Para conversiones largas puedes introducir tu email para recibir una notificación al terminar"
+   ],
+   [
+    "Descarga el audiolibro",
+    "Descarga tu audiolibro en formato MP3 desde el navegador o mediante el enlace del email, o genera un feed podcast RSS"
+   ]
+  ],
+  "de": [
+   [
+    "E-Book hochladen",
+    "Laden Sie Ihre EPUB-, PDF- oder TXT-Datei auf Audiobook Maker hoch"
+   ],
+   [
+    "Stimme wählen",
+    "Wählen Sie eine KI-Stimme und Erzählsprache aus den verfügbaren Optionen"
+   ],
+   [
+    "Kapitel auswählen",
+    "Wählen Sie bestimmte Kapitel oder das ganze Buch"
+   ],
+   [
+    "Konvertierung starten",
+    "Klicken Sie auf Generieren und warten Sie auf die Text-to-Speech-Verarbeitung. Bei langen Konvertierungen können Sie Ihre E-Mail eingeben, um benachrichtigt zu werden"
+   ],
+   [
+    "Hörbuch herunterladen",
+    "Laden Sie Ihr Hörbuch im MP3-Format vom Browser oder über den E-Mail-Link herunter, oder erstellen Sie einen Podcast-RSS-Feed"
+   ]
+  ],
+  "zh": [
+   [
+    "上传电子书",
+    "将EPUB、PDF或TXT文件上传到Audiobook Maker"
+   ],
+   [
+    "选择语音",
+    "从可用选项中选择AI语音和朗读语言"
+   ],
+   [
+    "选择章节",
+    "选择要转换的章节或选择整本书"
+   ],
+   [
+    "开始转换",
+    "点击生成，等待文字转语音处理完成。对于较长的转换，您可以输入电子邮件以便在完成时收到通知"
+   ],
+   [
+    "下载有声书",
+    "从浏览器或通过电子邮件链接下载MP3格式的有声书，或生成播客RSS订阅源"
+   ]
+  ],
+  "hi": [
+   [
+    "अपनी ईबुक अपलोड करें",
+    "अपनी EPUB, PDF या TXT फ़ाइल Audiobook Maker पर अपलोड करें"
+   ],
+   [
+    "एक आवाज़ चुनें",
+    "उपलब्ध विकल्पों में से एक AI आवाज़ और कथन भाषा चुनें"
+   ],
+   [
+    "अध्याय चुनें",
+    "बदलने के लिए अध्याय चुनें या पूरी पुस्तक का चयन करें"
+   ],
+   [
+    "रूपांतरण शुरू करें",
+    "जनरेट पर क्लिक करें और टेक्स्ट-टू-स्पीच प्रोसेसिंग की प्रतीक्षा करें. लंबे रूपांतरणों के लिए आप अपना ईमेल दर्ज कर सकते हैं ताकि तैयार होने पर सूचित किया जाए"
+   ],
+   [
+    "ऑडियोबुक डाउनलोड करें",
+    "ब्राउज़र से या ईमेल लिंक के माध्यम से MP3 प्रारूप में अपनी ऑडियोबुक डाउनलोड करें, या पॉडकास्ट RSS फ़ीड जनरेट करें"
+   ]
+  ]
+ },
+ "ld_features": {
+  "it": [
+   "Conversione da EPUB a audiolibro MP3/M4B (con capitoli)",
+   "Conversione da PDF a audiolibro MP3/M4B (con capitoli)",
+   "Conversione da TXT a audiolibro MP3/M4B",
+   "Oltre 400 voci neurali AI (Microsoft Edge TTS)",
+   "Supporto per oltre 50 lingue",
+   "Selezione e anteprima dei capitoli",
+   "Generazione di feed RSS per podcast",
+   "Notifica via email per conversioni lunghe",
+   "Elaborazione batch",
+   "Nessuna registrazione richiesta",
+   "Nessun limite di utilizzo",
+   "Elaborazione basata su browser",
+   "Supporto per l'accessibilità (utenti ipovedenti e dislessici)"
+  ],
+  "en": [
+   "EPUB to MP3/M4B audiobook conversion (with chapters)",
+   "PDF to MP3/M4B audiobook conversion (with chapters)",
+   "TXT to MP3/M4B audiobook conversion",
+   "400+ neural AI voices (Microsoft Edge TTS)",
+   "50+ languages supported",
+   "Chapter selection and preview",
+   "Podcast RSS feed generation",
+   "Email notification for long conversions",
+   "Batch processing",
+   "No registration required",
+   "No usage limits",
+   "Browser-based processing",
+   "Accessibility support for visually impaired and dyslexic users"
+  ],
+  "fr": [
+   "Conversion d'EPUB en livre audio MP3/M4B (avec chapitres)",
+   "Conversion de PDF en livre audio MP3/M4B (avec chapitres)",
+   "Conversion de TXT en livre audio MP3/M4B",
+   "Plus de 400 voix IA neuronales (Microsoft Edge TTS)",
+   "Plus de 50 langues supportées",
+   "Sélection et aperçu des chapitres",
+   "Génération de flux RSS podcast",
+   "Notification par e-mail pour les conversions longues",
+   "Traitement par lots",
+   "Aucune inscription requise",
+   "Aucune limite d'utilisation",
+   "Traitement via le navigateur",
+   "Support d'accessibilité pour les malvoyants et les dyslexiques"
+  ],
+  "es": [
+   "Conversión de EPUB a audiolibro MP3/M4B (con capítulos)",
+   "Conversión de PDF a audiolibro MP3/M4B (con capítulos)",
+   "Conversión de TXT a audiolibro MP3/M4B",
+   "Más de 400 voces neuronales de IA (Microsoft Edge TTS)",
+   "Más de 50 idiomas compatibles",
+   "Selección de capítulos y vista previa",
+   "Generación de feed RSS de Podcast",
+   "Notificación por correo electrónico para conversiones largas",
+   "Procesamiento por lotes",
+   "No se requiere registro",
+   "Sin límites de uso",
+   "Procesamiento basado en el navegador",
+   "Soporte de accesibilidad para usuarios con discapacidad visual y dislexia"
+  ],
+  "de": [
+   "EPUB-zu-MP3/M4B-Hörbuch-Konvertierung (mit Kapiteln)",
+   "PDF-zu-MP3/M4B-Hörbuch-Konvertierung (mit Kapiteln)",
+   "TXT-zu-MP3/M4B-Hörbuch-Konvertierung",
+   "400+ neuronale KI-Stimmen (Microsoft Edge TTS)",
+   "50+ unterstützte Sprachen",
+   "Kapitelauswahl und Vorschau",
+   "Podcast RSS-Feed Generierung",
+   "E-Mail-Benachrichtigung bei langen Konvertierungen",
+   "Stapelverarbeitung",
+   "Keine Registrierung erforderlich",
+   "Keine Nutzungsbeschränkungen",
+   "Browser-basierte Verarbeitung",
+   "Barrierefreiheitsunterstützung für sehbehinderte und legasthene Nutzer"
+  ],
+  "zh": [
+   "EPUB 转 MP3/M4B 有声书转换（含章节）",
+   "PDF 转 MP3/M4B 有声书转换（含章节）",
+   "TXT 转 MP3/M4B 有声书转换",
+   "400+ 神经网络 AI 语音 (Microsoft Edge TTS)",
+   "支持 50 多种语言",
+   "章节选择和预览功能",
+   "生成播客 RSS 订阅源",
+   "长时转换邮件通知",
+   "批量处理",
+   "无需注册",
+   "无使用限制",
+   "基于浏览器的处理",
+   "为视障人士和阅读障碍用户提供辅助功能支持"
+  ],
+  "hi": [
+   "EPUB से MP3/M4B ऑडियोबुक रूपांतरण (अध्यायों के साथ)",
+   "PDF से MP3/M4B ऑडियोबुक रूपांतरण (अध्यायों के साथ)",
+   "TXT से MP3/M4B ऑडियोबुक रूपांतरण",
+   "400+ न्यूरल AI आवाज़ें (Microsoft Edge TTS)",
+   "50+ भाषाओं का समर्थन",
+   "अध्याय चयन और पूर्वावलोकन",
+   "पॉडकास्ट RSS फ़ीड जनरेशन",
+   "लंबे रूपांतरणों के लिए ईमेल सूचना",
+   "बैच प्रोसेसिंग",
+   "किसी पंजीकरण की आवश्यकता नहीं",
+   "उपयोग की कोई सीमा नहीं",
+   "ब्राउज़र-आधारित प्रोसेसिंग",
+   "दृष्टिबाधित और डिस्लेक्सिक उपयोगकर्ताओं के लिए अभिगम्यता समर्थन"
+  ]
+ }
+}

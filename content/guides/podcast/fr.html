@@ -1,0 +1,74 @@
+
+<section>
+<h2>Transformez Votre Livre Audio en Podcast Privé</h2>
+<p>Audiobook Maker génère, avec les fichiers audio, un <strong>package podcast complet</strong> avec un flux RSS 2.0. Pour le rendre disponible comme podcast, les fichiers doivent être publiés sur un serveur web accessible depuis Internet. La solution idéale est votre <strong>propre site web</strong> ou espace d'hébergement. Alternativement, pour un usage personnel ou le partage avec quelques amis, vous pouvez utiliser une solution gratuite comme <strong>Netlify</strong>, décrite dans ce guide.</p>
+<div style="background:#fff3cd;border-left:4px solid #f0c040;padding:10px 14px;border-radius:6px;margin:0 0 18px;font-size:.92rem;color:#5a4510"><strong>Usage recommandé :</strong> cette solution est conçue pour un usage personnel ou le partage avec la famille et les amis. Netlify offre 100 Go/mois de bande passante gratuite — largement suffisant. Pour une distribution publique, envisagez d'utiliser votre propre hébergement web.</div>
+</section>
+
+<section>
+<h2>Pas à Pas : Publiez Votre Livre Audio comme Podcast</h2>
+<ol>
+<li><strong>Générez le livre audio au format M4B</strong> — Dans Audiobook Maker, téléchargez votre fichier EPUB ou PDF, choisissez la langue et la voix, puis sélectionnez <strong>M4B</strong> comme format de sortie. L'outil crée un fichier M4B unique avec chapitres intégrés et couverture — le standard professionnel pour les livres audio.</li>
+<li><strong>Générez aussi le package Podcast RSS</strong> — Après avoir généré le M4B, relancez la génération en mode <strong>Podcast RSS</strong> pour obtenir un ZIP contenant le fichier XML du flux RSS et les fichiers MP3 individuels des chapitres (les podcasts nécessitent un fichier audio par épisode).</li>
+<li><strong>Créez un compte Netlify gratuit</strong> — Allez sur <strong>app.netlify.com</strong> et inscrivez-vous avec email ou GitHub. Aucune carte de crédit requise. Le forfait gratuit inclut 100 Go de bande passante, 10 Go de stockage et HTTPS automatique.</li>
+<li><strong>Téléchargez sur Netlify</strong> — Dans le tableau de bord Netlify, sous <strong>Sites</strong>, faites glisser le dossier extrait entier sur la zone de dépôt en pointillés. Le site sera en ligne en quelques secondes. Renommez-le depuis <em>Site configuration → Change site name</em> (ex. <code>mon-livre-audio.netlify.app</code>).</li>
+<li><strong>Vérifiez le flux</strong> — Ouvrez l'URL du flux dans votre navigateur : <br><code>https://votre-nom-site.netlify.app/podcast.xml</code><br>Si vous voyez du contenu XML avec les titres de vos chapitres, votre podcast est en ligne et prêt !</li>
+</ol>
+</section>
+
+<section>
+<h2>Importez Votre Podcast dans les Applications d'Écoute</h2>
+<table>
+<thead><tr><th>App</th><th>Plateforme</th><th>Comment l'Ajouter</th></tr></thead>
+<tbody>
+<tr><td><strong>Apple Podcasts</strong></td><td>iOS / Mac</td><td><strong>iPhone :</strong> Bibliothèque → Plus → Ajouter une émission par URL → collez l'URL du flux<br><strong>Mac :</strong> Fichier → Suivre une émission par URL</td></tr>
+<tr><td><strong>Pocket Casts</strong></td><td>Android / iOS / Web</td><td>Rechercher → collez l'URL du flux → S'abonner</td></tr>
+<tr><td><strong>AntennaPod</strong></td><td>Android</td><td>+ → Ajouter un Podcast par URL → collez l'URL</td></tr>
+<tr><td><strong>Overcast</strong></td><td>iOS</td><td>+ → Ajouter une URL → collez l'URL du flux</td></tr>
+<tr><td><strong>Podcast Addict</strong></td><td>Android</td><td>+ → Flux RSS → collez l'URL</td></tr>
+</tbody>
+</table>
+<div style="background:#fff0f0;border-left:4px solid #e04040;padding:8px 14px;border-radius:6px;margin:12px 0;font-size:.9rem;color:#802020"><strong>Note :</strong> Spotify ne prend pas en charge l'ajout de flux RSS privés. Utilisez l'une des applications listées ci-dessus.</div>
+</section>
+
+<section>
+<h2>Pourquoi Écouter Votre Livre Audio comme Podcast ?</h2>
+<ul>
+<li><strong>Signets automatiques</strong> — Reprenez exactement là où vous vous étiez arrêté, même entre différents appareils</li>
+<li><strong>Ordre des épisodes</strong> — Les chapitres sont lus dans l'ordre avec passage automatique au suivant</li>
+<li><strong>Métadonnées complètes</strong> — Couverture, titres des chapitres et infos sur le livre visibles dans votre app podcast</li>
+<li><strong>Vitesse réglable</strong> — Écoutez à 1,5x, 2x ou toute vitesse de votre choix, avec minuteur d'arrêt</li>
+<li><strong>Streaming</strong> — Pas besoin de télécharger tous les fichiers ; écoutez chaque chapitre en streaming</li>
+<li><strong>Partagez avec la famille</strong> — Envoyez l'URL du flux aux membres de la famille ; ils n'ont pas besoin d'un compte Netlify</li>
+</ul>
+</section>
+
+<section>
+<h2>Conseils pour la Publication de Podcast</h2>
+<ul>
+<li><strong>Mettre à jour les épisodes :</strong> Re-téléchargez les fichiers sur Netlify pour remplacer la version précédente. Votre app podcast détectera les changements à la prochaine actualisation.</li>
+<li><strong>Plusieurs livres :</strong> Créez un site Netlify séparé pour chaque livre audio afin de garder les flux organisés.</li>
+<li><strong>Limites de stockage :</strong> Le forfait gratuit Netlify inclut 10 Go de stockage (~12 livres audio complets). Supprimez les livres terminés pour libérer de l'espace.</li>
+<li><strong>Confidentialité :</strong> L'URL du podcast est techniquement publique (toute personne ayant le lien peut s'abonner), mais n'apparaîtra pas dans les annuaires de podcasts ou les moteurs de recherche. C'est "privé" dans le sens où il n'est pas indexé.</li>
+<li><strong>Domaine personnalisé :</strong> Netlify prend en charge les domaines personnalisés dans le forfait gratuit si vous souhaitez une URL personnalisée.</li>
+</ul>
+</section>
+
+<section>
+<h2>Questions Fréquentes</h2>
+<details><summary>Netlify est-il vraiment gratuit pour héberger mon podcast ?</summary>
+<p>Oui. Le forfait Starter gratuit de Netlify inclut 100 Go/mois de bande passante et 10 Go de stockage. Pour un podcast de livre audio typique (10-20 épisodes, ~5 Mo chacun), c'est plus que suffisant pour un usage personnel. Si vous dépassez les limites, vous pouvez passer à Netlify Pro (19$/mois) ou utiliser votre propre hébergement.</p>
+</details>
+<details><summary>Pourquoi utiliser le format M4B plutôt que MP3 pour le livre audio ?</summary>
+<p>Le M4B est le standard professionnel pour les livres audio. Un seul fichier M4B contient tous les chapitres comme marqueurs de navigation, la couverture intégrée et les métadonnées. Il est pris en charge par Apple Books, Audible et toutes les principales applications de livres audio. Le MP3 est excellent pour une compatibilité maximale, mais le M4B offre une bien meilleure expérience d'écoute avec la navigation par chapitres.</p>
+</details>
+<details><summary>Puis-je soumettre mon podcast aux annuaires Apple Podcasts ou Spotify ?</summary>
+<p>Pas avec un flux Netlify privé. Apple Podcasts Connect et Spotify for Podcasters exigent des flux hébergés sur des plateformes approuvées avec des exigences spécifiques (taille de la pochette, catégories, etc.). L'approche Netlify est pour des <strong>podcasts privés personnels</strong> — idéale pour écouter vos propres livres ou partager avec des amis proches et la famille.</p>
+</details>
+<details><summary>Que puis-je utiliser si je ne veux pas Netlify ?</summary>
+<p>Tout hébergement web statique fonctionne : GitHub Pages, Cloudflare Pages, Vercel ou votre propre serveur web. Téléchargez simplement le dossier du podcast extrait à n'importe quel emplacement accessible via le web et l'URL du flux RSS fonctionnera dans les applications de podcast. Netlify est recommandé car il est gratuit, rapide et ne nécessite aucune configuration.</p>
+</details>
+<details><summary>Les applications de podcast peuvent-elles télécharger des épisodes pour l'écoute hors ligne ?</summary>
+<p>Oui. Une fois abonné au flux dans une application de podcast, vous pouvez télécharger des épisodes individuels pour l'écoute hors ligne, comme n'importe quel autre podcast. L'application gère automatiquement le téléchargement, la position de lecture et la suppression.</p>
+</details>
+</section>

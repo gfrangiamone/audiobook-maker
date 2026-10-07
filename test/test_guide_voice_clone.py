@@ -79,7 +79,8 @@ def test_link_in_home_i18n_seo_e_llms():
     i18n = Path("templates/_fragments/i18n_data.js").read_text(encoding="utf-8")
     for lang in LANGS:
         assert f"Object.assign(L.{lang},{{guide_voice_clone:" in i18n
-    seo = Path("seo_content.py").read_text(encoding="utf-8")
+    # I testi SEO vivono in content/seo/content.json (C2), non nel modulo.
+    seo = Path("content/seo/content.json").read_text(encoding="utf-8").replace('\\"', '"')
     assert f'href="/guide/{GID}/"' in seo
     for lang in ["it", "fr", "es", "de", "zh", "hi"]:
         assert f'href="/guide/{GID}/{lang}/"' in seo

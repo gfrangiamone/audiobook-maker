@@ -1,0 +1,67 @@
+
+<section>
+<h2>什么是M4B格式？</h2>
+<p><strong>M4B</strong>（MPEG-4有声书）是有声书的标准文件格式。基于MPEG-4容器（与MP4视频同系列），M4B本质上是一个AAC音频文件，具有专为有声书设计的特殊功能：</p>
+<ul>
+<li><strong>章节标记</strong>：内嵌的导航点让您可以在章节之间跳转</li>
+<li><strong>封面艺术</strong>：书籍封面嵌入文件元数据中</li>
+<li><strong>书签</strong>：有声书播放器会记住您的收听位置（通过iCloud可在设备间同步）</li>
+<li><strong>元数据</strong>：标题、作者、旁白者、类型和出版日期都存储在文件中</li>
+<li><strong>变速播放</strong>：播放器可以加速或减速播放而不改变音调</li>
+</ul>
+<p>M4B是<strong>Apple Books</strong>、<strong>Audible</strong>（Aax是受DRM保护的M4B变体）以及iOS和Android上大多数有声书应用使用的格式。</p>
+</section>
+
+<section>
+<h2>M4B vs MP3有声书：全面对比</h2>
+<table>
+<thead><tr><th>功能</th><th>M4B</th><th>MP3</th></tr></thead>
+<tbody>
+<tr><td>章节导航</td><td>内建章节标记</td><td>无内建章节</td></tr>
+<tr><td>封面艺术</td><td>嵌入文件中</td><td>可嵌入（ID3）但非普遍支持</td></tr>
+<tr><td>位置保存</td><td>是（所有M4B播放器）</td><td>取决于播放器</td></tr>
+<tr><td>文件大小（相同质量）</td><td>约小30-40%（AAC编码）</td><td>同等质量下更大</td></tr>
+<tr><td>兼容性</td><td>Apple Books, Audible, BookPlayer, Listen及大多数有声书应用</td><td>通用 — 所有设备</td></tr>
+<tr><td>单一文件</td><td>是 — 整本书在一个文件中</td><td>通常每章一个文件或一个合并文件</td></tr>
+<tr><td>书签同步</td><td>是（Apple生态系统）</td><td>否</td></tr>
+<tr><td>最适合</td><td>iOS/Mac用户、有声书收藏者、长书</td><td>最大兼容性、分享、简单播放器</td></tr>
+</tbody>
+</table>
+<p><strong>总结：</strong>如果您使用Apple Books或专用有声书应用，请选择M4B。如果您需要在基本MP3播放器或不支持M4B的车载音响上播放，请选择MP3。</p>
+</section>
+
+<section>
+<h2>如何免费创建带章节的M4B文件</h2>
+<p>创建M4B文件曾经需要复杂的ffmpeg命令或付费软件。<a href="/">Audiobook Maker</a>自动化了整个流程：</p>
+<ol>
+<li><strong>上传您的电子书</strong>（EPUB、PDF或TXT）— 自动提取章节</li>
+<li><strong>选择M4B作为输出格式</strong> — 工具会处理一切：TTS配音、AAC编码、章节标记、封面嵌入</li>
+<li><strong>下载M4B文件</strong> — 即可导入Apple Books或任何M4B兼容播放器</li>
+</ol>
+<p>生成的M4B使用<strong>64 kbps AAC音频</strong>（针对语音优化），包含<strong>1400×1400封面艺术</strong>，并具有适当的iTunes兼容元数据标签。每个章节都会在您的有声书播放器中显示为导航点。</p>
+</section>
+
+<section>
+<h2>如何播放M4B文件</h2>
+<p><strong>iOS / Mac：</strong>Apple Books（内置）— 将M4B拖入Books或通过Finder/iCloud同步。</p>
+<p><strong>Android：</strong>Listen Audiobook Player、Smart Audiobook Player、Sirin — 均支持带章节的M4B。</p>
+<p><strong>Windows：</strong>Apple Books（通过iTunes）、VLC媒体播放器、BookPlayer（Microsoft Store）。</p>
+<p><strong>Linux：</strong>VLC、Cozy（GTK有声书播放器）。</p>
+<p><strong>汽车 / 基本MP3播放器：</strong>请转换为MP3 — 大多数车载音响无法读取M4B文件。</p>
+</section>
+
+<section>
+<h2>常见问题</h2>
+<details><summary>我可以将M4B转换为MP3吗？</summary>
+<p>可以。您可以使用Audiobook Maker生成MP3输出，或使用ffmpeg转换现有M4B：<code>ffmpeg -i book.m4b -acodec libmp3lame -b:a 128k book.mp3</code>。注意转换过程中章节标记会丢失。</p>
+</details>
+<details><summary>我可以将M4B按章节分割吗？</summary>
+<p>可以。如<code>m4b-tool</code>或ffmpeg等工具可以按章节标记分割M4B文件。如果您更喜欢单独的文件，Audiobook Maker也可以按章节输出单独的MP3文件。</p>
+</details>
+<details><summary>哪些有声书应用支持M4B？</summary>
+<p>Apple Books（iOS/Mac）、BookPlayer（iOS）、Listen Audiobook Player（Android）、Smart Audiobook Player（Android）、Bound（iOS）、Sirin（Android）、VLC（所有平台）以及带Audnexus插件的Plex。</p>
+</details>
+<details><summary>M4B有声书应使用什么比特率？</summary>
+<p>Audiobook Maker使用64 kbps AAC，这是语音内容的标准。语音不需要高比特率 — 64 kbps AAC对于朗读来说听起来与128 kbps MP3相同，但文件大小只有一半。</p>
+</details>
+</section>

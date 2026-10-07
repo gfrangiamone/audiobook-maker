@@ -1,0 +1,75 @@
+
+	<section>
+	<h2>Trasforma il Tuo Audiolibro in un Podcast Privato</h2>
+	<p>Audiobook Maker genera, insieme ai file audio, un <strong>pacchetto podcast completo</strong> con feed RSS 2.0. Per renderlo disponibile come podcast, i file devono essere pubblicati su un server web accessibile da Internet. La soluzione ideale è il <strong>tuo sito web</strong> o spazio hosting. In alternativa, per uso personale o condivisione con pochi amici, puoi usare una soluzione gratuita come <strong>Netlify</strong>, descritta in questa guida.</p>
+	<div style="background:#fff3cd;border-left:4px solid #f0c040;padding:10px 14px;border-radius:6px;margin:0 0 18px;font-size:.92rem;color:#5a4510"><strong>Uso consigliato:</strong> questa soluzione è pensata per uso personale o condivisione con amici e familiari. Netlify offre 100 GB/mese di banda gratuita — più che sufficiente. Per distribuzione pubblica, considera l'uso di un hosting web proprio.</div>
+	</section>
+
+	<section>
+	<h2>Passo Dopo Passo: Pubblica il Tuo Audiolibro come Podcast</h2>
+	<ol>
+	<li><strong>Genera l'audiolibro in formato M4B</strong> — In Audiobook Maker, carica il tuo file EPUB o PDF, scegli lingua e voce, poi seleziona <strong>M4B</strong> come formato di output. Lo strumento crea un singolo file M4B con capitoli incorporati e copertina — lo standard professionale per gli audiolibri.</li>
+	<li><strong>Genera anche il pacchetto Podcast RSS</strong> — Dopo aver generato l'M4B, esegui nuovamente la generazione in modalità <strong>Podcast RSS</strong> per ottenere un ZIP contenente il file XML del feed RSS e i singoli file MP3 dei capitoli (i podcast richiedono un file audio per episodio).</li>
+	<li><strong>Crea un account Netlify gratuito</strong> — Vai su <strong>app.netlify.com</strong> e registrati con email o GitHub. Nessuna carta di credito richiesta. Il piano gratuito include 100 GB di banda, 10 GB di storage e HTTPS automatico.</li>
+	<li><strong>Carica su Netlify</strong> — Nella dashboard di Netlify, sotto <strong>Sites</strong>, trascina l'intera cartella estratta sulla zona di rilascio tratteggiata. Il sito sarà online in pochi secondi. Poi rinominalo da <em>Site configuration → Change site name</em> (es. <code>mio-audiolibro.netlify.app</code>).</li>
+	<li><strong>Verifica il feed</strong> — Apri l'URL del feed nel browser: <br><code>https://tuo-nome-sito.netlify.app/podcast.xml</code><br>Se vedi contenuto XML con i titoli dei tuoi capitoli, il tuo podcast è online e pronto!</li>
+	</ol>
+	</section>
+
+	<section>
+	<h2>Importa il Tuo Podcast nelle App di Ascolto</h2>
+	<table>
+	<thead><tr><th>App</th><th>Piattaforma</th><th>Come Aggiungerlo</th></tr></thead>
+	<tbody>
+	<tr><td><strong>Apple Podcasts</strong></td><td>iOS / Mac</td><td><strong>iPhone:</strong> Libreria → Altro → Aggiungi show tramite URL → incolla URL feed<br><strong>Mac:</strong> File → Segui uno show per URL</td></tr>
+	<tr><td><strong>Pocket Casts</strong></td><td>Android / iOS / Web</td><td>Cerca → incolla URL feed → Iscriviti</td></tr>
+	<tr><td><strong>AntennaPod</strong></td><td>Android</td><td>+ → Aggiungi Podcast per URL → incolla URL</td></tr>
+	<tr><td><strong>Overcast</strong></td><td>iOS</td><td>+ → Aggiungi URL → incolla URL feed</td></tr>
+	<tr><td><strong>Podcast Addict</strong></td><td>Android</td><td>+ → Feed RSS → incolla URL</td></tr>
+	</tbody>
+	</table>
+	<div style="background:#fff0f0;border-left:4px solid #e04040;padding:8px 14px;border-radius:6px;margin:12px 0;font-size:.9rem;color:#802020"><strong>Nota:</strong> Spotify non supporta l'aggiunta di feed RSS privati. Usa una delle app elencate sopra.</div>
+	</section>
+
+	<section>
+	<h2>Perché Ascoltare il Tuo Audiolibro come Podcast?</h2>
+	<ul>
+	<li><strong>Segnalibri automatici</strong> — Riprendi esattamente dove avevi lasciato, anche tra dispositivi diversi</li>
+	<li><strong>Ordinamento episodi</strong> — I capitoli vengono riprodotti in ordine con avanzamento automatico</li>
+	<li><strong>Metadati completi</strong> — Copertina, titoli dei capitoli e info sul libro visibili nell'app podcast</li>
+	<li><strong>Velocità regolabile</strong> — Ascolta a 1,5x, 2x o qualsiasi velocità preferisci, con timer di spegnimento</li>
+	<li><strong>Streaming</strong> — Nessun bisogno di scaricare tutti i file; ascolta ogni capitolo in streaming</li>
+	<li><strong>Condividi con la famiglia</strong> — Invia l'URL del feed ai familiari; non serve un account Netlify</li>
+	</ul>
+	</section>
+
+	<section>
+	<h2>Consigli per la Pubblicazione del Podcast</h2>
+	<ul>
+	<li><strong>Aggiorna gli episodi:</strong> Ricarica i file su Netlify per sostituire la versione precedente. L'app podcast rileverà le modifiche al prossimo aggiornamento.</li>
+	<li><strong>Più libri:</strong> Crea un sito Netlify separato per ogni audiolibro per mantenere i feed organizzati.</li>
+	<li><strong>Limiti di storage:</strong> Il piano gratuito Netlify include 10 GB di storage (~12 audiolibri completi). Rimuovi i libri finiti per liberare spazio.</li>
+	<li><strong>Privacy:</strong> L'URL del podcast è tecnicamente pubblico (chiunque abbia il link può iscriversi), ma non apparirà nelle directory podcast o nei motori di ricerca. È "privato" nel senso che non è indicizzato.</li>
+	<li><strong>Dominio personalizzato:</strong> Netlify supporta domini personalizzati nel piano gratuito se desideri un URL personalizzato.</li>
+	</ul>
+	</section>
+
+	<section>
+	<h2>Domande Frequenti</h2>
+	<details><summary>Netlify è davvero gratuito per ospitare il mio podcast?</summary>
+	<p>Sì. Il piano Starter gratuito di Netlify include 100 GB/mese di banda e 10 GB di storage. Per un tipico podcast audiolibro (10-20 episodi, ~5 MB ciascuno), è più che sufficiente per uso personale. Se superi i limiti, puoi passare a Netlify Pro ($19/mese) o usare un hosting proprio.</p>
+	</details>
+	<details><summary>Perché usare il formato M4B invece di MP3 per l'audiolibro?</summary>
+	<p>M4B è lo standard professionale per gli audiolibri. Un singolo file M4B contiene tutti i capitoli come marcatori di navigazione, copertina incorporata e metadati. È supportato da Apple Books, Audible e tutte le principali app audiolibri. MP3 è ottimo per la massima compatibilità, ma M4B offre un'esperienza di ascolto molto migliore con la navigazione tra i capitoli.</p>
+	</details>
+	<details><summary>Posso inviare il mio podcast alle directory di Apple Podcasts o Spotify?</summary>
+	<p>Non con un feed Netlify privato. Apple Podcasts Connect e Spotify for Podcasters richiedono feed ospitati su piattaforme approvate con requisiti specifici (dimensioni copertina, categorie, ecc.). L'approccio Netlify è per <strong>podcast privati personali</strong> — ideale per ascoltare i propri libri o condividerli con amici e familiari stretti.</p>
+	</details>
+	<details><summary>Cosa posso usare se non voglio Netlify?</summary>
+	<p>Qualsiasi hosting web statico funziona: GitHub Pages, Cloudflare Pages, Vercel o il tuo server web. Carica semplicemente la cartella del podcast estratta in qualsiasi posizione accessibile via web e l'URL del feed RSS funzionerà nelle app podcast. Netlify è consigliato perché è gratuito, veloce e non richiede configurazione.</p>
+	</details>
+	<details><summary>Le app podcast possono scaricare episodi per l'ascolto offline?</summary>
+	<p>Sì. Una volta iscritto al feed in un'app podcast, puoi scaricare singoli episodi per l'ascolto offline, come qualsiasi altro podcast. L'app gestisce automaticamente download, posizione di riproduzione ed eliminazione.</p>
+	</details>
+	</section>
+	

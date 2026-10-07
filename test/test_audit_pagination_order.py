@@ -105,7 +105,8 @@ def test_live_records_stay_on_top(client, monkeypatch, tmp_path,
 
 
 def test_admin_page_reports_truncation():
-    src = Path("audiobook_app.py").read_text(encoding="utf-8")
+    # La pagina admin audit vive in templates/pages (C1).
+    src = Path("templates/pages/admin_audit_premium.html").read_text(encoding="utf-8")
     assert "function auditTruncNote(" in src
     # tutte e tre le tabelle devono usarla (colspan 12/13/11)
     assert "auditTruncNote(recs.length, total, 12)" in src
