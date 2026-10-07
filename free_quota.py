@@ -47,7 +47,15 @@ def limit_eur():
 
 
 def _norm_client(client_id):
-    return (client_id or "").strip() or _ANON
+    """Identita' di quota del client. Risolve gli alias device registrati da
+    free_tts_quota (app mobile che rigenera il cid): prima la quota premium
+    ripartiva da zero a ogni nuovo cid mentre quella standard no."""
+    cid = (client_id or "").strip() or _ANON
+    try:
+        import free_tts_quota  # import tardivo: evita un ciclo di import
+        return free_tts_quota.canonical(cid)
+    except Exception:
+        return cid
 
 
 def _load():
