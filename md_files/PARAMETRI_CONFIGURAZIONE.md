@@ -812,7 +812,7 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 **Parametri di tuning:** se `delta_pct_avg` si discosta sistematicamente (vedi `/admin/logs` → "Audit Gemini" → "Calcola parametri suggeriti"), valutare:
 - aumento margin_percent del modello se delta negativo (`ABM_GEMINI_<model>_MARGIN_PERCENT`)
 - riduzione tariffa utente se delta positivo eccessivo
-- adeguamento del rapporto chars/secondi (tabella `_SEC_PER_KCHARS_BY_LANG` in `gemini_tts.py`) se la stima ex-ante diverge dalla realtà
+- adeguamento del rate char/secondo per lingua (`LANG_BASELINE_RATE` in `gemini_tts.py`, fallback `CHARS_PER_AUDIO_SECOND` = 13.9) se la stima ex-ante diverge dalla realtà. Il rate empirico del log è clampato a [0.75, 1.35] × baseline della lingua (`RATE_CLAMP_LOW/HIGH`): una lingua senza baseline propria eredita la banda latina e non può scendere sotto 10.4 char/s. Valori CJK: `zh` 4.0, `ja` 5.4 (job E0d9F_TgsgtdRSwhm1HIMg, ott 2026: 5.46 reale contro 14.09 stimato, delta −80%), `ko` 6.0 provvisorio senza job reali. Valgono per tutti i modelli Gemini (il rate non dipende dal modello).
 
 **Persistenza job pagati unificata:** dalla v3.13.x, sia i pagamenti per Ottimizzazione testo AI sia quelli per voci Premium sono tracciati in `<ABM_DATA_DIR>/_paid_jobs_done.json` (campo `purpose`: `"llm"` o `"gemini"`). La migrazione del vecchio `_paid_opt_done.json` è automatica all'avvio (backup `.pre_unify_bak`).
 

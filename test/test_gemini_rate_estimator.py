@@ -62,6 +62,21 @@ def test_stima_senza_campioni_usa_baseline_di_lingua(rate_log):
     assert sec_en == pytest.approx(10000 / 13.4, rel=0.01)
 
 
+@pytest.mark.parametrize("lang", ["zh", "ja", "ko"])
+def test_scritture_cjk_hanno_baseline_propria(lang):
+    # Job E0d9F_TgsgtdRSwhm1HIMg: il giapponese ricadeva sui 13.9 globali e
+    # costava 2.6x il preventivo. Ogni lingua CJK deve stare sotto 7 char/sec.
+    assert gemini_tts.baseline_rate(lang) < 7.0
+
+
+def test_clamp_lascia_al_giapponese_il_suo_rate_reale(rate_log):
+    # 290 chunk reali del job E0d9F a ~5.5 char/sec: prima il clamp sulla
+    # banda latina li riportava a 10.4, dimezzando la stima di durata.
+    _feed(60, 440, 80.0, lang="ja", voice="Achernar", job="E0d9F")
+    rate = gemini_tts.get_empirical_rate("ja", "flash31", voice="Achernar")
+    assert rate == pytest.approx(5.5, rel=0.02)
+
+
 # ── finestra e dominanza di un singolo job ──────────────────────────────────
 
 def test_finestra_ha_un_pavimento_non_aggirabile_da_env():

@@ -51,7 +51,16 @@ LANG_BASELINE_RATE = {
     "fr": 13.9,   # n=3
     "en": 13.4,   # n=93
     "tr": 13.0,   # n=4
-    "zh": 4.0,    # n=3
+    # Scritture CJK: un carattere vale una sillaba o piu`, quindi il rate e`
+    # un terzo di quello latino. Senza voce propria ricadevano sui 13.9 globali
+    # e il clamp (x0.75) non lasciava scendere il rate empirico sotto 10.4:
+    # il job E0d9F_TgsgtdRSwhm1HIMg (ja, 122k car.) e` durato 6h13' contro
+    # le 2h25' stimate, prezzo 5,45 EUR contro 13,76 dovuti.
+    "zh": 4.0,    # n=3; audit giu-ott 2026: mediana 4.20 su n=9
+    "ja": 5.4,    # n=1 job, 290 chunk: 5.46 sul totale, p10-p90 4.92-6.01
+    # Nessun job reale: hangul sillabico con spazi fra le parole, stimato per
+    # difetto (prezzo semmai alto) finche` il rate log non ha campioni propri.
+    "ko": 6.0,
 }
 
 # Mediana globale su tutte le lingue: default per quelle senza dati propri.
