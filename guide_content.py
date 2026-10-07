@@ -3010,7 +3010,9 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
     import os as _os
     from datetime import datetime as _dt
 
-    canonical = f"{base_url}/guide/{guide_id}/"
+    # Stesso URL del <link rel=canonical> della pagina: EN su /guide/<id>/,
+    # le altre lingue su /guide/<id>/<lang>/ (prima era sempre l'URL EN).
+    canonical = f"{base_url}{_guide_path(guide_id, lang)}"
     base = base_url or "https://audiobook-maker.com"
 
     try:
