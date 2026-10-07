@@ -94,21 +94,39 @@ def test_create_order_llm_excludes_already_optimized(client):
 
 
 def test_create_order_llm_selected_subset(client):
+    """Selezione {0,1} con il cap 2 gia' ottimizzato -> addebita 0 e 1 (800k),
+    come /api/optimize_estimate (regressione sovra-addebito sul sottoinsieme)."""
     jid = "llmord3"
-    _mk_job(jid, optimized=[1])
+    _mk_job(jid, optimized=[2])
     try:
-        # Selezione {0,1}, con 1 gia' ottimizzato -> addebita solo il cap 0
         est = client.get(
             f"/api/optimize_estimate/{jid}?selected_chapters=0&selected_chapters=1"
         ).get_json()
+        assert est["requires_payment"]
         status, body, cost = _create_order(client, jid, selected=[0, 1])
         assert status == 200, body
         assert cost == pytest.approx(est["cost_eur"])
-        # L'importo addebitato include il floor minimo parametrico
-        # (ABM_LLM_MIN_COST_EUR): sopra soglia non scende sotto il minimo.
         assert cost == pytest.approx(
             audiobook_app._llm_apply_min_cost(
-                audiobook_app._estimate_llm_cost_eur(400000)))
+                audiobook_app._estimate_llm_cost_eur(2 * 400000)))
+    finally:
+        _cleanup(jid)
+
+
+def test_create_order_llm_subset_below_threshold_agrees_with_estimate(client):
+    """Selezione {0,1} con 1 gia' ottimizzato -> resta solo il cap 0 (400k,
+    ~0.44 EUR): sotto la soglia free sia la stima sia l'ordine dicono
+    "nessun pagamento". I due punti di prezzo non devono divergere."""
+    jid = "llmord3b"
+    _mk_job(jid, optimized=[1])
+    try:
+        est = client.get(
+            f"/api/optimize_estimate/{jid}?selected_chapters=0&selected_chapters=1"
+        ).get_json()
+        assert est["requires_payment"] is False
+        status, body, cost = _create_order(client, jid, selected=[0, 1])
+        assert status == 400
+        assert "not required" in (body.get("error") or "").lower()
     finally:
         _cleanup(jid)
 

@@ -36,11 +36,12 @@ def client():
 
 @pytest.fixture
 def jb():
-    # 4000 caratteri -> list_price_eur ~0.48 con la voce Zephyr/flash31
-    # (verificato empiricamente): sotto il floor 0.50 usato nel test, cosi'
-    # l'importo "quota esaurita" (floor) e quello "quota disponibile"
-    # (grezzo) sono garantiti diversi.
-    ch = Chapter(index=0, title="Cap0", text="A" * 4000)
+    # 2500 caratteri -> list_price_eur ~0.47 con la voce Zephyr/flash31
+    # (verificato empiricamente il 2026-10-07; con 4000 il listino e' salito
+    # a 0.54): sotto il floor 0.50 usato nel test, cosi' l'importo "quota
+    # esaurita" (floor) e quello "quota disponibile" (grezzo) sono garantiti
+    # diversi.
+    ch = Chapter(index=0, title="Cap0", text="A" * 2500)
     info = BookInfo(
         title="T", author="A", language="it", chapters=[ch],
         total_words=ch.word_count, total_chars=ch.char_count,

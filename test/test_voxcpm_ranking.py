@@ -186,16 +186,18 @@ def test_il_seme_legge_le_generate_da_activity_db(monkeypatch, tmp_path):
     import activity_log
     db = tmp_path / "activity.db"
     conn = activity_db.connect(db)
-    for ts, jid, op, voce in [
-        (_fa(1) + " 10:00:00", "j1", "GENERATE", CHIARA),
-        (_fa(0) + " 10:00:00", "j1", "GENERATE", CHIARA),    # rilancio: conta il primo
-        (_fa(1) + " 11:00:00", "j1", "COMPLETE", CHIARA),
-        (_fa(2) + " 10:00:00", "j2", "GENERATE", STEFANO),
+    # Il rilancio di j1 e' una ripetizione della stessa chiave di dedup
+    # (ym, job_id, op, op_arg, epoch): va distinto con seq, come fa il writer.
+    for ts, jid, op, voce, seq in [
+        (_fa(1) + " 10:00:00", "j1", "GENERATE", CHIARA, 0),
+        (_fa(0) + " 10:00:00", "j1", "GENERATE", CHIARA, 1),    # rilancio: conta il primo
+        (_fa(1) + " 11:00:00", "j1", "COMPLETE", CHIARA, 0),
+        (_fa(2) + " 10:00:00", "j2", "GENERATE", STEFANO, 0),
     ]:
         conn.execute(
             "INSERT INTO events (ym, ts, job_id, op, filename, client_id, ip,"
-            " voice, detail, lang, platform) VALUES (?,?,?,?,'','','',?,'','','')",
-            (ts[:7], ts, jid, op, voce))
+            " voice, detail, lang, platform, seq) VALUES (?,?,?,?,'','','',?,'','','',?)",
+            (ts[:7], ts, jid, op, voce, seq))
     conn.close()
     monkeypatch.setattr(activity_log, "mode", lambda: "dual")
     monkeypatch.setattr(activity_log, "db_path", lambda: db)
