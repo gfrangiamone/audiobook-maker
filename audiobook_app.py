@@ -8778,7 +8778,7 @@ def _synth_running_gemini_audit_records():
                 va = job.get("voxcpm_actual") or {}
                 chars_metered = int(va.get("chars", 0) or 0)
                 try:
-                    price = voxcpm_tts.compute_user_price_eur(chars_metered)
+                    price = voxcpm_tts.compute_user_price_eur(chars_metered, language)
                     provider_cost_actual = float(price.get("cost_usd", 0.0) or 0.0) * float(
                         speechify_tts.usd_eur_rate())
                     should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)

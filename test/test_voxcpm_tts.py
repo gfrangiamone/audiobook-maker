@@ -98,6 +98,46 @@ def test_costo_gpu_misurato_e_separato_dal_listino(configurato):
     assert p["cost_usd"] == 0.91
 
 
+def test_cinese_pesa_i_caratteri_per_la_durata(configurato, monkeypatch):
+    # Un ideogramma dura ~3,3 lettere: senza fattore un'ora di audio cinese
+    # costava all'utente un terzo di un'ora latina, alla GPU lo stesso.
+    monkeypatch.delenv("ABM_VOXCPM_LANG_FACTOR_ZH", raising=False)
+    it = voxcpm_tts.compute_user_price_eur(1_000_000, "it")
+    zh = voxcpm_tts.compute_user_price_eur(1_000_000, "zh")
+    assert it["lang_factor"] == 1.0 and it["list_price_eur"] == 4.00
+    assert zh["lang_factor"] == 3.3
+    assert zh["chars"] == 1_000_000
+    assert zh["list_price_eur"] == 13.20
+    assert zh["cost_usd"] == pytest.approx(0.91 * 3.3)
+    # Prezzo per ora di audio allineato: it a 14,8 car/s, zh a 4,43.
+    ora_it = it["list_price_eur"] / 1_000_000 * 14.8 * 3600
+    ora_zh = zh["list_price_eur"] / 1_000_000 * 4.43 * 3600
+    assert ora_zh == pytest.approx(ora_it, rel=0.05)
+
+
+def test_fattore_lingua_da_env(configurato, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_LANG_FACTOR_ZH", "2,5")
+    assert voxcpm_tts.lang_price_factor("zh-CN") == 2.5
+    monkeypatch.setenv("ABM_VOXCPM_LANG_FACTOR_JA", "2.7")
+    assert voxcpm_tts.compute_user_price_eur(1_000_000, "ja")["list_price_eur"] == 10.80
+    # illeggibile o non positivo -> default della lingua
+    monkeypatch.setenv("ABM_VOXCPM_LANG_FACTOR_ZH", "0")
+    assert voxcpm_tts.lang_price_factor("zh") == 3.3
+    assert voxcpm_tts.lang_price_factor(None) == 1.0
+
+
+def test_stima_libro_cinese_applica_il_fattore(configurato, monkeypatch):
+    monkeypatch.delenv("ABM_VOXCPM_LANG_FACTOR_ZH", raising=False)
+
+    class Cap:
+        def __init__(self, text):
+            self.text = text
+    s = voxcpm_tts.estimate_book_cost([Cap("字" * 250_000)], language="zh")
+    assert s["chars_total"] == 250_000
+    assert s["lang_factor"] == 3.3
+    assert s["list_price_eur"] == 3.30
+
+
 def test_stima_libro_somma_i_capitoli(configurato):
     class Cap:
         def __init__(self, text):

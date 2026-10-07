@@ -5564,7 +5564,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         should_have_been = 0.0
         cost_usd_mchar = 0.0
         try:
-            price = voxcpm_tts.compute_user_price_eur(chars)
+            price = voxcpm_tts.compute_user_price_eur(chars, language)
             cost_usd_mchar = voxcpm_tts.cost_usd_per_mchar()
             cost_usd = float(price.get("cost_usd", 0.0) or 0.0)
             should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)

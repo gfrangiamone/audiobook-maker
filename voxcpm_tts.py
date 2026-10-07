@@ -36,6 +36,18 @@ MODEL_LABEL = voxcpm_catalog.MODEL_LABEL
 # del margine reale: il prezzo all'utente e' la tariffa, non questo numero.
 _COST_USD_PER_MCHAR = 0.91
 
+# Fattore che moltiplica i caratteri fatturati, per lingua. La tariffa e' per
+# carattere, ma il costo GPU segue i secondi di audio: un ideogramma si legge
+# in ~3x il tempo di una lettera, quindi a parita' di tariffa un'ora di audio
+# cinese costava all'utente un terzo di un'ora latina e alla GPU lo stesso.
+# Il fattore riporta il prezzo per ora di audio in linea con le lingue latine.
+# Audit VoxCPM giu-ott 2026: latine ~14,8 car/s (en/it/es, 355 job), zh 4,43
+# (un solo job di 2.085 car.; Gemini conferma 4,2 su 9 job) -> 14,8/4,43 = 3,3.
+# Override per lingua: ABM_VOXCPM_LANG_FACTOR_<LANG> (es. _ZH, _JA).
+_LANG_PRICE_FACTOR = {
+    "zh": 3.3,
+}
+
 # Tariffa oraria della fascia GPU su cui gira l'endpoint. Default 0,69 $/h: la
 # RTX PRO 6000 Blackwell MIG 1g.24gb (4 vCPU, 47 GB RAM), l'unica fascia
 # selezionata. Da riverificare quando cambia la selezione: i listini cambiano.
@@ -218,6 +230,19 @@ def gpu_cost_usd(rows):
     }
 
 
+def lang_price_factor(language=None):
+    """Moltiplicatore dei caratteri fatturati per la lingua (1.0 = nessuno).
+
+    Valori non positivi o non numerici nell'env ricadono sul default.
+    """
+    lang = (language or "")[:2].lower()
+    if not lang:
+        return 1.0
+    default = _LANG_PRICE_FACTOR.get(lang, 1.0)
+    val = _f(f"ABM_VOXCPM_LANG_FACTOR_{lang.upper()}", default)
+    return val if val > 0 else default
+
+
 def free_threshold_eur():
     return _f("ABM_VOXCPM_FREE_THRESHOLD_EUR", 0.50)
 
@@ -280,13 +305,14 @@ def is_available():
     return bool(voxcpm_catalog.voices())
 
 
-def compute_user_price_eur(chars):
-    """Prezzo di listino per `chars` caratteri.
+def compute_user_price_eur(chars, language=None):
+    """Prezzo di listino per `chars` caratteri nella lingua `language`.
 
     Tariffa diretta EUR/Mchar (D4), non la catena costo-USD + margine +
     fee PayPal di Gemini e Speechify: li' il costo provider e' una fattura,
     qui e' tempo di GPU, e il listino e' una decisione commerciale a se'.
-    Le fee sono percio' gia' dentro la tariffa.
+    Le fee sono percio' gia' dentro la tariffa. I caratteri sono pesati con
+    `lang_price_factor`, e la stima del costo GPU con loro.
 
     Chiavi di ritorno allineate a `speechify_tts.compute_user_price_eur`,
     cosi' i chiamanti a valle non distinguono i due motori.
@@ -297,12 +323,15 @@ def compute_user_price_eur(chars):
         chars = 0
     if chars < 0:
         chars = 0
-    list_price = round(chars / 1_000_000.0 * rate_eur_per_mchar(), 2)
+    factor = lang_price_factor(language)
+    mchars = chars * factor / 1_000_000.0
+    list_price = round(mchars * rate_eur_per_mchar(), 2)
     threshold = free_threshold_eur()
     is_free = list_price < threshold
     return {
         "chars": chars,
-        "cost_usd": round(chars / 1_000_000.0 * cost_usd_per_mchar(), 6),
+        "lang_factor": factor,
+        "cost_usd": round(mchars * cost_usd_per_mchar(), 6),
         "list_price_eur": list_price,
         "user_price_eur": 0.0 if is_free else list_price,
         "is_free": is_free,
@@ -319,7 +348,8 @@ def estimate_book_cost(chapters, language="it"):
 
     Args:
         chapters: lista di oggetti con attributo `.text` (e `.title`).
-        language: ISO 639-1 della voce scelta (informativo).
+        language: ISO 639-1 della voce scelta (pesa i caratteri, vedi
+            `lang_price_factor`).
     """
     from tts_split import spoken_title_prefix
 
@@ -332,10 +362,11 @@ def estimate_book_cost(chapters, language="it"):
             n += len(spoken_title_prefix(ch, testo))
         chars_per_chapter.append(n)
         chars_total += n
-    price = compute_user_price_eur(chars_total)
+    price = compute_user_price_eur(chars_total, language)
     return {
         "chars_total": chars_total,
         "chars_per_chapter": chars_per_chapter,
+        "lang_factor": price["lang_factor"],
         "cost_usd": price["cost_usd"],
         "list_price_eur": price["list_price_eur"],
         "user_price_eur": price["user_price_eur"],
