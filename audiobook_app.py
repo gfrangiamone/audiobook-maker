@@ -1253,12 +1253,17 @@ def _mask_email(email):
     return f"{local[0]}***@{domain}"
 
 
-def _get_client_ip():
-    """Return client IP address, respecting reverse proxy headers."""
-    # X-Forwarded-For: client, proxy1, proxy2  →  take the first
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+def client_ip() -> str:
+    """IP del client: `request.remote_addr`, gia' risolto da ProxyFix(x_for=1)
+    sull'ULTIMO hop di X-Forwarded-For (quello scritto da nginx).
+
+    Mai rileggere X-Forwarded-For a mano: nginx fa append
+    ($proxy_add_x_forwarded_for) e non ha trusted proxy a monte
+    (docs/FORENSICS_PLAYBOOK.md), quindi il primo elemento dell'header e'
+    scritto dal client e con esso si aggiravano rate limit per IP, limiti
+    voucher e hash IP dei dossier abuso. Unica funzione per tutto il modulo
+    (REGOLE_CODICE.md §8.1).
+    """
     return request.remote_addr or ""
 
 
@@ -6976,7 +6981,7 @@ def admin_api_vouchers():
         time.sleep(0.5)  # rallenta brute-force
         return jsonify({"error": "Unauthorized"}), 401
 
-    ip = _get_client_ip()
+    ip = client_ip()
 
     if request.method == "GET":
         items = []
@@ -7101,7 +7106,7 @@ def admin_api_voucher_revoke(code):
         v["revoked"] = True
         v["revoke_reason"] = reason or "admin revoke"
         _save_vouchers()
-    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "...", reason[:40])
+    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", client_ip(), code[:8] + "...", reason[:40])
     print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
 
@@ -7136,7 +7141,7 @@ def admin_api_voucher_notify(code):
     )
     if not ok:
         return jsonify({"error": "send failed"}), 502
-    _log_activity("", "", "ADMIN_VOUCHER_NOTIFY", "", _get_client_ip(), code[:8] + "...", email)
+    _log_activity("", "", "ADMIN_VOUCHER_NOTIFY", "", client_ip(), code[:8] + "...", email)
     print(f"[admin] voucher notification email sent: {code} -> {email}")
     return jsonify({"ok": True, "code": code, "email": email})
 
@@ -9245,7 +9250,7 @@ def admin_api_gemini_kill_switch():
         # Invalida la cache voci cosi` la prossima /api/voices riflette subito
         # il cambio (rimozione/aggiunta dell'optgroup PREMIUM).
         _invalidate_voices_cache()
-        _log_activity("", "", "ADMIN_GEMINI_KILLSWITCH", "", _get_client_ip(),
+        _log_activity("", "", "ADMIN_GEMINI_KILLSWITCH", "", client_ip(),
                       "disabled" if disabled else "enabled", reason[:80])
         print(f"[admin] Gemini PREMIUM kill-switch: "
               f"{'DISABLED' if disabled else 'ENABLED'} reason={reason!r}")
@@ -9559,7 +9564,7 @@ def admin_api_tts_backend():
             # che la sonda esiste proprio per evitare.
             avviata = _manual_probe_start(model_key)
             _log_activity("", "", "ADMIN_TTS_PROBE", "",
-                          _get_client_ip(), model_key,
+                          client_ip(), model_key,
                           f"avviata={avviata}")
             print(f"[admin] Sonda di rientro manuale richiesta per "
                   f"{model_key} (avviata: {avviata})")
@@ -9591,7 +9596,7 @@ def admin_api_tts_backend():
                           "non dichiarato")
             tts_backend_state.reset_spend()
             _log_activity("", "", "ADMIN_TTS_CREDIT_TOPUP", "",
-                          _get_client_ip(), model_key,
+                          client_ip(), model_key,
                           f"ledger azzerato ({before})")
             print(f"[admin] Ledger spesa Cloudflare azzerato ({before}) - "
                   f"pre-allarme credito riarmato")
@@ -9607,7 +9612,7 @@ def admin_api_tts_backend():
                 for known_key in gemini_tts.GEMINI_MODELS:
                     gemini_tts._BACKEND.pop(known_key, None)
             _log_activity("", "", "ADMIN_TTS_BACKEND_RESET", "",
-                          _get_client_ip(), model_key, f"had_trip={had_trip}")
+                          client_ip(), model_key, f"had_trip={had_trip}")
             print(f"[admin] Backend TTS {model_key} riportato su Cloudflare "
                   f"(aveva trip: {had_trip})")
 
@@ -9632,7 +9637,7 @@ def admin_api_gemini_model_availability():
             return jsonify({"error": "bad request"}), 400
         gemini_availability.clear(mk)
         _invalidate_voices_cache()
-        _log_activity("", "", "ADMIN_TTS_MODEL_RESET", "", _get_client_ip(), mk, "")
+        _log_activity("", "", "ADMIN_TTS_MODEL_RESET", "", client_ip(), mk, "")
     return jsonify({"models": gemini_availability.snapshot(),
                     "cooldown_sec": gemini_availability.cooldown_sec()})
 
@@ -10292,7 +10297,7 @@ def _vc_view(rec):
 def _vc_log(rec_or_id, op, extra=""):
     cid_pub = rec_or_id["id"] if isinstance(rec_or_id, dict) else rec_or_id
     try:
-        _log_activity(cid_pub, extra, op, client_id=_get_client_id(), client_ip=_client_ip())
+        _log_activity(cid_pub, extra, op, client_id=_get_client_id(), client_ip=client_ip())
     except Exception:
         pass
 
@@ -10400,7 +10405,7 @@ def api_vc_sample():
         return gate
     from werkzeug.utils import secure_filename
     cid = _get_client_id()
-    ip = _client_ip()
+    ip = client_ip()
     ok, retry = _ip_rl_check("vc_sample", ip, 10, 30)
     if ok:
         ok, retry = _ip_rl_check("vc_sample_cid", cid or ip, 10, 10)
@@ -10748,7 +10753,7 @@ def api_vc_claim():
     if gate:
         return gate
     cid = _get_client_id()
-    ok, retry = _ip_rl_check("vc_claim_cid", cid or _client_ip(), 5, 5)
+    ok, retry = _ip_rl_check("vc_claim_cid", cid or client_ip(), 5, 5)
     if not ok:
         return _vc_err("rate_limited", "Too many attempts, try later", 429, retry_after=retry)
     data = request.get_json(silent=True) or {}
@@ -11613,14 +11618,6 @@ _ip_rl_lock = threading.Lock()
 _ip_rl_buckets: dict[str, dict[str, list[float]]] = {}
 
 
-def _client_ip() -> str:
-    """Estrae IP client (rispetta X-Forwarded-For del reverse proxy)."""
-    xff = request.headers.get("X-Forwarded-For", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.remote_addr or ""
-
-
 def _ip_rl_check(bucket: str, ip: str, limit_per_min: int, limit_per_hour: int):
     """Sliding-window rate limit IP-based. Ritorna (allowed, retry_after_sec).
     bucket: identificativo logico (es. 'analyze', 'preview').
@@ -11777,7 +11774,7 @@ def _acct_log(op, email, extra=""):
     """Business log senza email in chiaro: sid = acct-<hash8>."""
     try:
         sid = "acct-" + accounts.email_hash(email)[:8]
-        _log_activity(sid, extra, op, client_id=_get_client_id(), client_ip=_client_ip())
+        _log_activity(sid, extra, op, client_id=_get_client_id(), client_ip=client_ip())
     except Exception as e:  # noqa: BLE001
         print(f"WARNING _acct_log: {e}", flush=True)
 
@@ -11811,7 +11808,7 @@ def _acct_html(html_doc, status=200):
 def _acct_send_code(email, purpose, lang):
     """Genera e spedisce il codice. Sempre silenzioso: risposta neutra a monte."""
     try:
-        out = accounts.request_code(email, purpose, lang, ip_hash=_hash_ip(_client_ip()),
+        out = accounts.request_code(email, purpose, lang, ip_hash=_hash_ip(client_ip()),
                                     ua=request.headers.get("User-Agent", ""))
         if out is None:
             return
@@ -11855,7 +11852,7 @@ def _acct_login_response(acct, payload=None, device_name=None):
     device_name = _acct_device_name(device_name)
     token = accounts.open_session(acct["id"],
                                   device_name=device_name,
-                                  ip_hash=_hash_ip(_client_ip()))
+                                  ip_hash=_hash_ip(client_ip()))
     _acct_log("ACCOUNT_LOGIN", acct["email"])
     body = {"ok": True, "email": acct["email"], "lang": acct.get("lang") or "en",
             "plan": acct.get("plan") or "free"}
@@ -11873,7 +11870,7 @@ def api_auth_request():
     gate = _acct_gate()
     if gate:
         return gate
-    ip = _client_ip()
+    ip = client_ip()
     allowed, retry = _ip_rl_check("auth_request", ip, 5, 30)
     if not allowed:
         return _acct_err("rate_limited", "Too many requests", 429, retry_after=retry)
@@ -11951,7 +11948,7 @@ def auth_magic_link(token):
         _acct_clear_csrf_cookie(resp)
         return resp
     session_token = accounts.open_session(
-        acct["id"], device_name=_acct_device_name(), ip_hash=_hash_ip(_client_ip()))
+        acct["id"], device_name=_acct_device_name(), ip_hash=_hash_ip(client_ip()))
     _acct_log("ACCOUNT_LOGIN", acct["email"])
     resp = redirect("/account", code=302)
     _acct_set_cookie(resp, session_token)
@@ -12276,7 +12273,7 @@ def api_account_delete_request():
     acct = _current_account()
     if not acct:
         return _acct_err("unauthorized", "Sign in required", 401)
-    ip = _client_ip()
+    ip = client_ip()
     allowed, retry = _ip_rl_check("auth_request", ip, 5, 30)
     if not allowed:
         return _acct_err("rate_limited", "Too many requests", 429, retry_after=retry)
@@ -12482,8 +12479,7 @@ def api_community_feedback_create():
     name = _sanitize_text(raw_name, 100)
     comment = _sanitize_text(raw_comment, 500)
     # rate limit
-    ip = (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-          or request.remote_addr or "")
+    ip = client_ip()
     ip_hash = _hash_ip(ip)
     if not _feedback_check_rate(ip_hash):
         return jsonify({"error": "rate_limit"}), 429
@@ -12554,7 +12550,7 @@ def api_support_contact():
         return jsonify({"error": "missing_message"}), 400
     link = _sanitize_text(body.get("download_link"), 500)
     ui_lang = (body.get("lang") or "").strip().lower()[:5]
-    ip = _client_ip()
+    ip = client_ip()
     allowed, retry = _ip_rl_check("support", ip,
                                   _SUPPORT_RL_PER_MIN, _SUPPORT_RL_PER_HOUR)
     if not allowed:
@@ -13276,7 +13272,7 @@ def _derive_language_source(language, language_detected):
 def api_analyze():
     # Rate-limit IP-based: previene spam upload / DoS.
     _allowed, _retry = _ip_rl_check(
-        "analyze", _client_ip(), _ANALYZE_RL_PER_MIN, _ANALYZE_RL_PER_HOUR
+        "analyze", client_ip(), _ANALYZE_RL_PER_MIN, _ANALYZE_RL_PER_HOUR
     )
     if not _allowed:
         return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
@@ -13451,7 +13447,7 @@ def api_analyze():
     with _jobs_lock:
         jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
                          "last_poll": time.time(), "original_filename": file.filename,
-                         "client_id": _get_client_id(), "client_ip": _get_client_ip(),
+                         "client_id": _get_client_id(), "client_ip": client_ip(),
                          "browser_lang": _get_browser_lang(),
                          "optimized_chapters": [], "file_hash": file_hash,
                          "language_detected": language_detected,
@@ -13616,7 +13612,7 @@ def api_preview_audio(job_id):
     # Rate-limit IP-based: anteprime sono costose (genera TTS sample),
     # impedisce abuso e burst di generazione voci diverse.
     _allowed, _retry = _ip_rl_check(
-        "preview", _client_ip(), _PREVIEW_RL_PER_MIN, _PREVIEW_RL_PER_HOUR
+        "preview", client_ip(), _PREVIEW_RL_PER_MIN, _PREVIEW_RL_PER_HOUR
     )
     if not _allowed:
         return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
@@ -15984,7 +15980,7 @@ def api_transfer_claim(token):
                         if cid not in _lst:
                             _lst.append(cid)
                 _log_activity(job_id, "", "ADMIN_COPY_PENDING", client_id=cid,
-                              client_ip=_get_client_ip(), platform=_client_platform())
+                              client_ip=client_ip(), platform=_client_platform())
                 print(f"[transfer] admin copy PENDING (job in corso) {job_id} cid {cid}")
                 return jsonify({"ok": True, "job_id": job_id, "admin_copy": True,
                                 "pending": True})
@@ -16008,7 +16004,7 @@ def api_transfer_claim(token):
             _download_tokens.pop(created_temp, None)
         _save_tokens()
         _log_activity(job_id, "", "ADMIN_COPY", client_id=cid,
-                      client_ip=_get_client_ip(), platform=_client_platform())
+                      client_ip=client_ip(), platform=_client_platform())
         print(f"[transfer] admin copy claimed for job {job_id} by cid {cid}")
         return jsonify({"ok": True, "job_id": job_id, "admin_copy": True})
 
@@ -16062,7 +16058,7 @@ def api_transfer_claim(token):
         return jsonify({"error": "job_unavailable", "error_code": "job_unavailable"}), 410
     if moved or changed:
         _log_activity(job_id, _job_original_filename(job_id), "TRANSFER",
-                      client_id=cid, client_ip=_get_client_ip(),
+                      client_id=cid, client_ip=client_ip(),
                       platform=_client_platform())
     return jsonify({"ok": True, "job_id": job_id})
 
@@ -16752,7 +16748,7 @@ def api_voucher_validate():
     data = request.json or {}
     code = (data.get("code") or "").strip().upper()
     email = (data.get("email") or "").strip().lower()
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    ip = client_ip()
     purpose = (data.get("purpose") or "any")
     try:
         amount_required = float(data.get("amount_eur") or 0)
