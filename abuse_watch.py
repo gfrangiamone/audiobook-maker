@@ -29,7 +29,7 @@ import threading
 import time
 from pathlib import Path
 
-from community_store import atomic_write_json
+from fileio import atomic_write_json, data_dir, load_json
 import semantic_judge as sj
 
 _lock = threading.RLock()
@@ -158,7 +158,7 @@ def _max_cids_per_group():
 
 
 def _data_dir():
-    return Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data"))
+    return data_dir()
 
 
 def _dossier_file():
@@ -190,16 +190,12 @@ def group_key(ip, cid=""):
 
 
 def _load():
-    try:
-        with open(_dossier_file(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict) or not isinstance(d.get("groups"), dict):
-            return {"groups": {}, "meta": {}}
-        if not isinstance(d.get("meta"), dict):
-            d["meta"] = {}
-        return d
-    except Exception:
+    d = load_json(_dossier_file(), {})
+    if not isinstance(d.get("groups"), dict):
         return {"groups": {}, "meta": {}}
+    if not isinstance(d.get("meta"), dict):
+        d["meta"] = {}
+    return d
 
 
 def _save(d):

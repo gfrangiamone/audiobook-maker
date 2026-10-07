@@ -27,7 +27,7 @@ LEAVES = {
     "voice_utils", "cost_carry", "db", "load_metrics", "storage_tiering",
     "semantic_judge", "secure_archive", "text_reflow", "gemini_transport",
     "gemini_availability", "chunk_reuse", "assembly_queue", "cancel_policy",
-    "activity_log", "activity_db", "user_stats", "env_utils",
+    "activity_log", "activity_db", "user_stats", "env_utils", "fileio",
 }
 
 # Moduli di servizio che non devono importare generation_engine (§2.1).
@@ -43,7 +43,7 @@ SERVICES_NO_ENGINE = {
 PATTERNS = [
     ("env_inline", r"os\.environ\.get\(", {"env_utils"}),
     ("env_helper_def", r"def _env(_int|_float|_bool|_str|_num)?\(|def _f\(|def _i\(|def _b\(|def _f_env\(", {"env_utils"}),
-    ("atomic_write_by_hand", r"os\.replace\(", {"fileio", "community_store"}),
+    ("atomic_write_by_hand", r"os\.replace\(", {"fileio"}),
     ("retry_loop_by_hand", r"for _?attempt in range\(", {"retry_util"}),
     ("llm_call_by_hand", r"chat\.completions\.create\(", {"llm_client"}),
     ("import_generation_engine", r"^\s*(import generation_engine|from generation_engine import)", set()),

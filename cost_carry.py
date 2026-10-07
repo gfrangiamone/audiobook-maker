@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+from fileio import load_json, write_json_safe
 import threading
 
 CARRY_NAME = ".cost_carry.json"
@@ -56,12 +57,7 @@ def carry_path(work_dir) -> str:
 
 def read_all(work_dir) -> dict:
     """Tutti i riporti del job, per motore. `{}` se non c'e' o e' illeggibile."""
-    try:
-        with open(carry_path(work_dir), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    return load_json(carry_path(work_dir), {})
 
 
 def read(work_dir, engine: str) -> dict:
@@ -86,18 +82,7 @@ def write(work_dir, engine: str, actual) -> bool:
 
 def _write_atomic(path, data) -> bool:
     """tmp + os.replace; False (mai eccezione) se il disco dice di no."""
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, path)
-        return True
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except Exception:
-            pass
-        return False
+    return write_json_safe(path, data)
 
 
 def clear(work_dir, engine=None) -> bool:

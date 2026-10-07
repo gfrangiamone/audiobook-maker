@@ -108,7 +108,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
 | `SCRIPT_DIR` | `Path(__file__).parent.resolve()` | `audiobook_app.py` | 33 |
-| `UPLOAD_DIR` | `Path(_DATA_DIR)` (derivato da `ABM_DATA_DIR`) | `audiobook_app.py` | 78 |
+| `fileio.DEFAULT_DATA_DIR` | `/var/lib/audiobook-maker/data`: default di `ABM_DATA_DIR`, in un posto solo; ogni modulo lo prende da `fileio.data_dir()` (letto a ogni chiamata) | `fileio.py` | — |
+| `UPLOAD_DIR` | `Path(_DATA_DIR)`, con `_DATA_DIR = str(fileio.data_dir())` | `audiobook_app.py` | 78 |
 | `_TOKENS_FILE` | `UPLOAD_DIR / "_download_tokens.json"` | `audiobook_app.py` | 168 |
 | `_CLIENT_EMAILS_FILE` | `UPLOAD_DIR / "_client_emails.json"` | `audiobook_app.py` | 905 |
 

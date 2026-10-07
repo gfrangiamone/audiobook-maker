@@ -140,7 +140,7 @@ def test_save_failure_is_logged_loudly_and_does_not_break_in_memory_state(monkey
     def _boom(*args, **kwargs):
         raise OSError("disco pieno (simulato)")
 
-    monkeypatch.setattr(st.community_store, "atomic_write_json", _boom)
+    monkeypatch.setattr(st.fileio, "atomic_write_json", _boom)
     capsys.readouterr()  # scarta eventuale output precedente
 
     # Anche se la persistenza fallisce, il primo chiamante deve comunque

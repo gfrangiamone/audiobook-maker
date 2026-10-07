@@ -28,7 +28,7 @@ from voice_utils import premium_model_enabled as _premium_model_enabled
 # Primitivo condiviso di scrittura JSON atomica (tmp + fsync + os.replace).
 # NB: set_admin_disabled (kill-switch) NON lo usa di proposito: ha un proprio
 # protocollo write+verifica+retry (hardening incidente 2026-06).
-from community_store import atomic_write_json as _atomic_write_json
+from fileio import atomic_write_json as _atomic_write_json, write_json_safe as _write_json_safe
 from gemini_transport import TransportError
 import gemini_transport as _transport
 import tts_backend_state as _backend_state
@@ -2819,13 +2819,8 @@ def _rpd_load():
 def _rpd_save():
     if _rpd_file_path is None or _rpd_cache is None:
         return
-    try:
-        _rpd_file_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _rpd_file_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(_rpd_cache), encoding="utf-8")
-        tmp.replace(_rpd_file_path)
-    except Exception as e:
-        print(f"[gemini-tts] RPD save failed: {e}")
+    _write_json_safe(_rpd_file_path, _rpd_cache,
+                     on_error=lambda e: print(f"[gemini-tts] RPD save failed: {e}"))
 
 
 def _rpd_increment(model_key):

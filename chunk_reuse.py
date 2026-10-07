@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from fileio import load_json, write_json_safe
 
 MANIFEST_NAME = ".chunks_manifest.json"
 
@@ -69,29 +70,12 @@ def manifest_path(work_dir) -> str:
 
 
 def read_manifest(work_dir):
-    try:
-        with open(manifest_path(work_dir), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except Exception:
-        return None
+    return load_json(manifest_path(work_dir), None)
 
 
 def write_manifest(work_dir, fp: dict) -> bool:
     """Scrive il manifest (tmp+rename). Non solleva: il riuso e' best-effort."""
-    path = manifest_path(work_dir)
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(fp, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
-        return True
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except Exception:
-            pass
-        return False
+    return write_json_safe(manifest_path(work_dir), fp, indent=2)
 
 
 def matches(work_dir, fp: dict) -> bool:

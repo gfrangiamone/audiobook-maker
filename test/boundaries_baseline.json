@@ -1,11 +1,7 @@
 {
  "atomic_write_by_hand": {
   "audio_utils.py": 1,
-  "chunk_reuse.py": 1,
-  "cost_carry.py": 1,
-  "gemini_availability.py": 1,
   "generation_engine.py": 2,
-  "load_metrics.py": 1,
   "storage_backend.py": 1,
   "voice_clone.py": 5,
   "voxcpm_tts.py": 3
@@ -22,15 +18,15 @@
   "voice_language_guard.py": 1
  },
  "env_inline": {
-  "abuse_watch.py": 4,
+  "abuse_watch.py": 3,
   "accounts.py": 3,
   "activity_log.py": 1,
   "assembly_queue.py": 3,
-  "audiobook_app.py": 17,
+  "audiobook_app.py": 16,
   "cost_carry.py": 1,
   "email_service.py": 10,
-  "free_quota.py": 2,
-  "free_tts_quota.py": 5,
+  "free_quota.py": 1,
+  "free_tts_quota.py": 3,
   "gemini_availability.py": 1,
   "gemini_cost_audit.py": 1,
   "gemini_transport.py": 2,
@@ -38,13 +34,13 @@
   "generation_engine.py": 13,
   "load_metrics.py": 5,
   "optimization_cost_audit.py": 1,
-  "output_reuse.py": 2,
-  "payment.py": 23,
+  "output_reuse.py": 1,
+  "payment.py": 22,
   "push_service.py": 1,
   "secure_archive.py": 3,
   "speechify_tts.py": 1,
   "storage_backend.py": 11,
-  "storage_tiering.py": 3,
+  "storage_tiering.py": 2,
   "templates/index_page.py": 2,
   "translation_core.py": 2,
   "translation_cost_audit.py": 1,
@@ -56,7 +52,6 @@
   "voice_utils.py": 1,
   "voxcpm_catalog.py": 1,
   "voxcpm_digest.py": 1,
-  "voxcpm_ranking.py": 1,
   "voxcpm_tts.py": 4
  },
  "ffmpeg_outside_audio_utils": {

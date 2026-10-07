@@ -29,6 +29,7 @@ nessuna funzione pubblica solleva mai.
 """
 import json
 import os
+from fileio import atomic_write_text
 import threading
 import time
 from datetime import datetime, timezone
@@ -562,17 +563,11 @@ def _strip_voxcpm_gauges(data_dir, now):
             out.append(line)
         if not changed:
             continue
-        tmp = path.with_name(path.name + ".tmp")
         try:
-            with open(tmp, "w", encoding="utf-8") as fh:
-                fh.writelines(out)
-            os.replace(tmp, path)
+            atomic_write_text(path, "".join(out), fsync=False)
             stripped += changed
         except OSError:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+            pass
     return stripped
 
 

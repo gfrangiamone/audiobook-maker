@@ -27,7 +27,7 @@ import threading
 import time
 from pathlib import Path
 
-from community_store import atomic_write_json
+from fileio import atomic_write_json, data_dir
 
 _lock = threading.RLock()
 SCHEMA_VERSION = 1
@@ -46,7 +46,7 @@ _SCALAR_FIELDS = ("output_name", "bytes_generated", "podcast_ready",
 
 
 def _index_file():
-    return Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")) / "_output_reuse.json"
+    return data_dir() / "_output_reuse.json"
 
 
 def enabled():

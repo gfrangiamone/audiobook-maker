@@ -35,7 +35,7 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from community_store import atomic_write_json
+from fileio import atomic_write_json, data_dir, load_json
 from voice_utils import is_voxcpm_voice
 
 _lock = threading.RLock()
@@ -47,7 +47,7 @@ _KEEP_JOB_GIORNI = 60
 def _file():
     # Letto a ogni chiamata: ABM_DATA_DIR e' definito all'avvio del processo,
     # ma i test lo cambiano per isolare lo stato.
-    return Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")) \
+    return data_dir() \
         / "_voxcpm_voice_points.json"
 
 
@@ -118,13 +118,7 @@ def _load():
     global _cache
     if _cache is not None:
         return _cache
-    try:
-        with open(_file(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-    except Exception:
-        d = {}
-    if not isinstance(d, dict):
-        d = {}
+    d = load_json(_file(), {})
     if not isinstance(d.get("mesi"), dict):
         d["mesi"] = {}
     if not isinstance(d.get("jobs"), dict):

@@ -10,6 +10,7 @@ Non importa nulla del progetto.
 """
 import json
 import os
+from fileio import load_json, write_json_safe
 import threading
 import time
 from pathlib import Path
@@ -31,26 +32,16 @@ def init(data_dir):
     global _path, _state
     with _lock:
         _path = Path(data_dir) / _FILE_NAME
-        _state = {}
-        if _path.exists():
-            try:
-                data = json.loads(_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    _state = {k: v for k, v in data.items() if isinstance(v, dict)}
-            except Exception as e:
-                print(f"[gemini-availability] stato illeggibile, ignorato: {e}")
+        data = load_json(_path, {}, on_error=lambda e: print(
+            f"[gemini-availability] stato illeggibile, ignorato: {e}"))
+        _state = {k: v for k, v in data.items() if isinstance(v, dict)}
 
 
 def _save_locked():
     if _path is None:
         return
-    try:
-        _path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(_state), encoding="utf-8")
-        os.replace(tmp, _path)
-    except Exception as e:
-        print(f"[gemini-availability] salvataggio fallito: {e}")
+    write_json_safe(_path, _state, on_error=lambda e: print(
+        f"[gemini-availability] salvataggio fallito: {e}"))
 
 
 def _active(entry, now):

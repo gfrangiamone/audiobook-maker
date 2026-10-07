@@ -55,7 +55,8 @@ def test_foglia_senza_import_di_progetto():
     tree = ast.parse(pathlib.Path(ga.__file__).read_text(encoding="utf-8"))
     nomi = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     nomi |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
-    assert nomi <= {"json", "os", "threading", "time", "pathlib"}
+    # fileio e' una foglia (REGOLE_CODICE.md §2.2): una foglia puo' importarla.
+    assert nomi <= {"json", "os", "threading", "time", "pathlib", "fileio"}
 
 
 # --- integrazione con gemini_tts -------------------------------------------

@@ -38,7 +38,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from community_store import atomic_write_json
+from fileio import atomic_write_json, data_dir, load_json
 
 _lock = threading.RLock()
 _KEEP_MONTHS = 3
@@ -52,7 +52,7 @@ _MAIL_PREFIX = "mail:"  # prefisso delle chiavi per-email nel bucket del mese
 def _quota_file():
     # Letto a ogni chiamata: ABM_DATA_DIR e' definito all'avvio del processo,
     # ma i test lo cambiano per isolare lo stato.
-    return Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")) / "_free_tts_quota.json"
+    return data_dir() / "_free_tts_quota.json"
 
 
 def _month():
@@ -95,18 +95,12 @@ def mail_key(email):
 
 
 def _ids_file():
-    return Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")) / "_free_tts_quota_ids.json"
+    return data_dir() / "_free_tts_quota_ids.json"
 
 
 def _load_ids():
     """{"devices": {hash: {"cid", "ts"}}, "aliases": {cid: {"cid", "ts"}}}."""
-    try:
-        with open(_ids_file(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-    except Exception:
-        d = {}
-    if not isinstance(d, dict):
-        d = {}
+    d = load_json(_ids_file(), {})
     for k in ("devices", "aliases"):
         if not isinstance(d.get(k), dict):
             d[k] = {}
@@ -231,12 +225,7 @@ def _norm_client(client_id):
 
 
 def _load():
-    try:
-        with open(_quota_file(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
+    return load_json(_quota_file(), {})
 
 
 def _save(d):

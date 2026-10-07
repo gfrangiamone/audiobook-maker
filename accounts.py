@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import os
+from fileio import load_json
 from env_utils import env_int as _env_int
 import secrets
 import time
@@ -429,15 +430,10 @@ MONTH_SEC = 2629800  # 30.44 giorni
 
 
 def _load_payments_file():
-    if not _payments_path or not os.path.exists(_payments_path):
+    if not _payments_path:
         return {}
-    try:
-        with open(_payments_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:  # noqa: BLE001
-        _log(f"WARNING accounts: _payments.json non leggibile: {e}")
-        return {}
-    return data if isinstance(data, dict) else {}
+    return load_json(_payments_path, {}, on_error=lambda e: _log(
+        f"WARNING accounts: _payments.json non leggibile: {e}"))
 
 
 def record_job(account_id, job_id, *, kind, book_title="", output_format="", voice="",

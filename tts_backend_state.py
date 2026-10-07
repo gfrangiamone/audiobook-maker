@@ -74,12 +74,12 @@ File di stato: <data_dir>/_tts_backend_state.json
 import json
 import math
 import os
+import fileio
 from env_utils import env_float as _f_env
 import threading
 import time
 from datetime import datetime, timezone
 
-import community_store
 
 _STATE_PATH = None
 _LOCK = threading.RLock()
@@ -359,7 +359,7 @@ def _save():
     last_err = None
     for attempt in range(3):
         try:
-            community_store.atomic_write_json(_STATE_PATH, snapshot,
+            fileio.atomic_write_json(_STATE_PATH, snapshot,
                                                fsync=True, indent=2)
             with open(_STATE_PATH, "r", encoding="utf-8") as f:
                 check = json.load(f)

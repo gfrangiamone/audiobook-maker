@@ -25,7 +25,7 @@ from pathlib import Path
 
 # Primitivo condiviso di scrittura JSON atomica (tmp + fsync + os.replace).
 # L'alias conserva il nome storico usato da call-site e test.
-from community_store import atomic_write_json as _atomic_write_json
+from fileio import atomic_write_json as _atomic_write_json, data_dir, load_json
 
 # ---------------------------------------------------------------------------
 # PayPal + payment config
@@ -236,7 +236,7 @@ def _optimization_provider_cost_eur(prompt_tokens, completion_tokens):
 # File paths (derivati da ABM_DATA_DIR)
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data"))
+_DATA_DIR = data_dir()
 _PAYMENTS_FILE = _DATA_DIR / "_payments.json"
 _VOUCHERS_FILE = _DATA_DIR / "_vouchers.json"
 _PAID_OPT_DONE_FILE = _DATA_DIR / "_paid_opt_done.json"
@@ -405,8 +405,7 @@ def _load_payments():
     if not _PAYMENTS_FILE.exists():
         return
     try:
-        with open(_PAYMENTS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = load_json(_PAYMENTS_FILE, {})
         # Retention: drop payments older than PAYMENT_RETENTION_DAYS
         now = time.time()
         cutoff = now - PAYMENT_RETENTION_DAYS * 86400

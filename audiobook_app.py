@@ -16,6 +16,7 @@ import logging
 import re
 import json
 import os
+from fileio import atomic_write_json, data_dir, load_json
 from env_utils import env_bool, env_float, env_int
 import shutil
 import sys
@@ -396,8 +397,8 @@ def add_security_headers(response):
     return response
 
 # Directory di lavoro persistente (sopravvive ai restart del servizio)
-# Configurabile via ABM_DATA_DIR, default: /var/lib/audiobook-maker/data
-_DATA_DIR = os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")
+# Configurabile via ABM_DATA_DIR (default in fileio.DEFAULT_DATA_DIR).
+_DATA_DIR = str(data_dir())
 UPLOAD_DIR = Path(_DATA_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -2133,20 +2134,16 @@ _transfer_lock = threading.Lock()
 
 def _load_transfer_tokens():
     global _transfer_tokens
-    try:
-        if _TRANSFER_TOKENS_FILE.exists():
-            with open(_TRANSFER_TOKENS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                _transfer_tokens = data
-    except Exception as e:
-        print(f"[transfer] load failed: {e}")
+    data = load_json(_TRANSFER_TOKENS_FILE, None,
+                     on_error=lambda e: print(f"[transfer] load failed: {e}"))
+    if data is not None:
+        _transfer_tokens = data
 
 
 def _save_transfer_tokens():
     try:
         with _transfer_lock:
-            community_store.atomic_write_json(_TRANSFER_TOKENS_FILE,
+            atomic_write_json(_TRANSFER_TOKENS_FILE,
                                               _transfer_tokens, indent=2)
     except Exception as e:
         print(f"[transfer] save failed: {e}")
@@ -2159,20 +2156,16 @@ _share_lock = threading.Lock()
 
 def _load_share_tokens():
     global _share_tokens
-    try:
-        if _SHARE_TOKENS_FILE.exists():
-            with open(_SHARE_TOKENS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                _share_tokens = data
-    except Exception as e:
-        print(f"[share] load failed: {e}")
+    data = load_json(_SHARE_TOKENS_FILE, None,
+                     on_error=lambda e: print(f"[share] load failed: {e}"))
+    if data is not None:
+        _share_tokens = data
 
 
 def _save_share_tokens():
     try:
         with _share_lock:
-            community_store.atomic_write_json(_SHARE_TOKENS_FILE,
+            atomic_write_json(_SHARE_TOKENS_FILE,
                                               _share_tokens, indent=2)
     except Exception as e:
         print(f"[share] save failed: {e}")
@@ -2627,15 +2620,8 @@ def _token_cold_available(token_info):
 
 def _read_tokens_file():
     """Read raw token dict from disk. Returns {} on missing/invalid file."""
-    if not _TOKENS_FILE.exists():
-        return {}
-    try:
-        with open(_TOKENS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception as e:
-        print(f"[tokens] Failed to read tokens file: {e}")
-        return {}
+    return load_json(_TOKENS_FILE, {},
+                     on_error=lambda e: print(f"[tokens] Failed to read tokens file: {e}"))
 
 
 def _merge_tokens_from_disk():
@@ -2727,7 +2713,7 @@ def _save_tokens():
                     "client_id": info.get("client_id", ""),
                 }
             # Atomic write (tmp + fsync + rename) per evitare corruzione su crash
-            community_store.atomic_write_json(_TOKENS_FILE, data, indent=2)
+            atomic_write_json(_TOKENS_FILE, data, indent=2)
     except Exception as e:
         print(f"[tokens] Failed to save tokens: {e}")
 
@@ -2777,21 +2763,17 @@ _device_tokens_lock = threading.Lock()
 
 def _load_device_tokens():
     global _device_tokens
-    try:
-        if _DEVICE_TOKENS_FILE.exists():
-            with open(_DEVICE_TOKENS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                _device_tokens = data
-                print(f"[device] Loaded FCM tokens for {len(_device_tokens)} clients")
-    except Exception as e:
-        print(f"[device] Failed to load device tokens: {e}")
+    data = load_json(_DEVICE_TOKENS_FILE, None,
+                     on_error=lambda e: print(f"[device] Failed to load device tokens: {e}"))
+    if data is not None:
+        _device_tokens = data
+        print(f"[device] Loaded FCM tokens for {len(_device_tokens)} clients")
 
 
 def _save_device_tokens():
     """Caller MUST hold _device_tokens_lock."""
     try:
-        community_store.atomic_write_json(_DEVICE_TOKENS_FILE,
+        atomic_write_json(_DEVICE_TOKENS_FILE,
                                           _device_tokens, indent=2)
     except Exception as e:
         print(f"[device] Failed to save device tokens: {e}")
@@ -2928,21 +2910,19 @@ def _load_client_emails():
     global _client_emails
     if not _CLIENT_EMAILS_FILE.exists():
         return
-    try:
-        with open(_CLIENT_EMAILS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            _client_emails = {k: v for k, v in data.items() if k and v}
-        print(f"[client_emails] Loaded {len(_client_emails)} entries")
-    except Exception as e:
-        print(f"[client_emails] Failed to load: {e}")
+    data = load_json(_CLIENT_EMAILS_FILE, None,
+                     on_error=lambda e: print(f"[client_emails] Failed to load: {e}"))
+    if data is None:
+        return
+    _client_emails = {k: v for k, v in data.items() if k and v}
+    print(f"[client_emails] Loaded {len(_client_emails)} entries")
 
 
 def _save_client_emails():
     """Persiste la mappatura client_id → email in scrittura atomica."""
     try:
         with _client_emails_lock:
-            community_store.atomic_write_json(_CLIENT_EMAILS_FILE,
+            atomic_write_json(_CLIENT_EMAILS_FILE,
                                               _client_emails, indent=2)
     except Exception as e:
         print(f"[client_emails] Failed to save: {e}")

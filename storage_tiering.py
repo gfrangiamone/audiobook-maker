@@ -7,9 +7,10 @@
 - is_offloadable: estensioni dei file di output da spostare su cold.
 """
 import os
+from fileio import data_dir
 from pathlib import Path
 
-_DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")).resolve()
+_DATA_DIR = data_dir().resolve()
 _HOT_SEC = int(os.environ.get("ABM_HOT_WINDOW_SEC", "64800"))
 _HOT_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "172800"))
 

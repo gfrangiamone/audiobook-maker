@@ -6,7 +6,7 @@ import json, threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from community_store import atomic_write_json
+from fileio import atomic_write_json, load_json
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _METRICS_FILE = _SCRIPT_DIR / "_metrics.json"
@@ -24,12 +24,7 @@ def _norm_platform(p):
 
 
 def _load():
-    try:
-        with open(_METRICS_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-            return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
+    return load_json(_METRICS_FILE, {})
 
 
 def _save(d):

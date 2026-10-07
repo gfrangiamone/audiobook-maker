@@ -18,6 +18,7 @@ pagamento incassato sulla sessione. Nota: i pagamenti con buono non lasciano
 Solo stdlib piu' la foglia voice_utils (predicati sui prefissi voce).
 """
 import json
+from fileio import load_json
 from collections import Counter, OrderedDict
 from datetime import datetime
 
@@ -350,11 +351,7 @@ def language_stats(sessions, payments, ym=""):
 
 def load_payments(path):
     """Legge `_payments.json` (order_id -> record). File assente/illeggibile: []."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return []
+    data = load_json(path, None, expect=None)
     if isinstance(data, dict):
         return list(data.values())
     return list(data) if isinstance(data, list) else []

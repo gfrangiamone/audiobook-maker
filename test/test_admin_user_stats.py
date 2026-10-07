@@ -103,7 +103,7 @@ def test_user_stats_resta_un_modulo_foglia():
     # voice_utils e' a sua volta una foglia (solo stdlib): una foglia puo'
     # importare un'altra foglia (REGOLE_CODICE.md §2.2), non moduli di
     # servizio ne' il motore.
-    assert mods <= {"json", "collections", "datetime", "voice_utils"}
+    assert mods <= {"json", "collections", "datetime", "voice_utils", "fileio"}
 
 
 def test_concentration_quantili_su_distribuzione_nota():

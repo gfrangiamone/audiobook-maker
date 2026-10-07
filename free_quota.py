@@ -17,7 +17,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from community_store import atomic_write_json
+from fileio import atomic_write_json, data_dir, load_json
 from voice_utils import is_speechify_voice, is_voxcpm_voice
 
 _lock = threading.RLock()
@@ -28,7 +28,7 @@ _ANON = "_anon"
 def _quota_file():
     # Letto a ogni chiamata: ABM_DATA_DIR e' definito all'avvio del processo,
     # ma i test lo cambiano per isolare lo stato.
-    return Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")) / "_free_quota.json"
+    return data_dir() / "_free_quota.json"
 
 
 def _month():
@@ -53,12 +53,7 @@ def _norm_client(client_id):
 
 
 def _load():
-    try:
-        with open(_quota_file(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
+    return load_json(_quota_file(), {})
 
 
 def used_eur(client_id):
