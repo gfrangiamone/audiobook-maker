@@ -453,10 +453,6 @@ Rules:
 Output ONLY a JSON object keyed by language code:
 {{ {skeleton} }}"""
 
-_LANG_NAMES = {
-    "it": "Italian", "en": "English", "fr": "French", "es": "Spanish",
-    "de": "German", "zh": "Chinese", "hi": "Hindi",
-}
 
 
 def _retry_missing_slots(data: dict, payload: dict[str, str], src: str,
@@ -478,8 +474,8 @@ def _retry_missing_slots(data: dict, payload: dict[str, str], src: str,
     )
     prompt = _RETRY_SYSTEM_PROMPT.format(
         src=src or "unknown",
-        src_name=_LANG_NAMES.get(src, "an unknown language"),
-        targets=", ".join(f"{_LANG_NAMES.get(lg, lg)} ({lg})" for lg in missing_langs),
+        src_name=_LANG_NAMES_FULL.get(src, "an unknown language"),
+        targets=", ".join(f"{_LANG_NAMES_FULL.get(lg, lg)} ({lg})" for lg in missing_langs),
         skeleton=skeleton,
     )
     try:

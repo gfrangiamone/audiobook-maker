@@ -397,6 +397,11 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
     return chunks if chunks else [text.strip()]
 
 
+# Terminatore + eventuali virgolette/chiuse + whitespace obbligatorio
+# (precompilata: prima veniva ricompilata a ogni chiamata).
+_TTS_SENT_SPLIT_RE = re.compile(r'(?<=[.?!\u2026])[\'"»\u201c\u201d\)\]]*\s+')
+
+
 def _split_sentences_for_tts(text: str):
     """Split un chunk in frasi, accorpando quelle troppo corte per dare contesto
     sufficiente al motore TTS Multilingual.
@@ -405,9 +410,7 @@ def _split_sentences_for_tts(text: str):
     """
     if not text:
         return []
-    # Terminatore + eventuali virgolette/chiuse + whitespace obbligatorio
-    pattern = re.compile(r'(?<=[.?!\u2026])[\'"»\u201c\u201d\)\]]*\s+')
-    raw = pattern.split(text)
+    raw = _TTS_SENT_SPLIT_RE.split(text)
     raw = [s for s in (s.strip() for s in raw) if s]
     if not raw:
         return [text.strip()] if text.strip() else []

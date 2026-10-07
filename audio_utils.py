@@ -420,7 +420,6 @@ def _include_cover_in_dir(job, target_dir):
 def _generate_silence_mp3(output_path, duration_sec=3):
     """Genera un file MP3 di silenzio della durata specificata."""
     try:
-        import subprocess
         result = subprocess.run(
             ["ffmpeg", "-y", "-f", "lavfi", "-i",
              f"anullsrc=r=24000:cl=mono",
@@ -453,7 +452,6 @@ def _concatenate_mp3(parts, output, extra_tags=None):
     scrivere ID3, e la concat grezza e' gia' un ripiego.
     """
     try:
-        import subprocess
         list_file = output + ".filelist.txt"
         with open(list_file, "w") as f:
             for p in parts:
@@ -480,7 +478,6 @@ def _concatenate_mp3(parts, output, extra_tags=None):
 def _get_audio_duration_ms(file_path):
     """Restituisce la durata del file audio in millisecondi usando ffprobe."""
     try:
-        import subprocess
         cmd = [
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
@@ -502,7 +499,6 @@ def _get_audio_bitrate(file_path):
     Fallback: 48 kbps.
     """
     try:
-        import subprocess
         cmd = [
             "ffprobe", "-v", "error", "-show_entries", "format=bit_rate",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
@@ -544,7 +540,6 @@ def _validate_m4b_file(file_path):
         print(f"[_validate_m4b_file] file troppo piccolo: {os.path.getsize(file_path)} bytes")
         return False
     try:
-        import subprocess
         # Show format + streams in un'unica chiamata
         cmd = [
             "ffprobe", "-v", "error",
@@ -877,7 +872,6 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
     metadati invalidi che causerebbero il fallimento di ffmpeg.
     """
     try:
-        import subprocess
 
         # Rileva bitrate sorgente per mantenere dimensioni M4B ≈ somma MP3 originali
         source_kbps = _get_audio_bitrate(mp3_path)
@@ -1366,7 +1360,6 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
 
     def _mp3_duration_seconds(path):
         try:
-            import subprocess
             r = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],

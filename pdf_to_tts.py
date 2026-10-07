@@ -36,7 +36,6 @@ import argparse
 import os
 import re
 import sys
-import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,80 +57,14 @@ from text_reflow import (
     lines_to_paragraphs as _lines_to_paragraphs,
 )
 
-# Importa strutture dati e funzioni di pulizia dal modulo EPUB
-# (evita duplicazione di logica — stessa interfaccia BookInfo/Chapter)
-try:
-    from epub_to_tts import (
-        BookInfo, Chapter, clean_text_for_tts, is_content_chapter,
-        _title_is_non_content,
-        is_chapter_marker_line as _is_chapter_marker_line,
-    )
-except ImportError:
-    # Fallback: definisci localmente se epub_to_tts non è disponibile
-    from dataclasses import field
-
-    @dataclass
-    class Chapter:
-        index: int
-        title: str
-        text: str
-        word_count: int = 0
-        char_count: int = 0
-        source_file: str = ""
-
-        def __post_init__(self):
-            self.word_count = len(self.text.split())
-            self.char_count = len(self.text)
-
-    @dataclass
-    class BookInfo:
-        title: str = "Sconosciuto"
-        author: str = "Sconosciuto"
-        language: str = ""
-        publisher: str = ""
-        description: str = ""
-        chapters: list = field(default_factory=list)
-        total_words: int = 0
-        total_chars: int = 0
-        estimated_duration_minutes: float = 0.0
-
-    def clean_text_for_tts(text, expand_abbr=True):
-        """Fallback minimale se epub_to_tts non è disponibile."""
-        text = unicodedata.normalize("NFC", text)
-        text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        text = text.strip()
-        if text and text[-1] not in ".!?…":
-            text += "."
-        return text
-
-    def is_content_chapter(text, title=""):
-        if len(text.strip()) < 100 or len(text.split()) < 30:
-            return False
-        return True
-
-    def _title_is_non_content(title, phrases):
-        """Fallback: match per parola intera (confini \\w Unicode)."""
-        tl = (title or "").lower()
-        for skip in phrases:
-            if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
-                return True
-        return False
-
-    _FALLBACK_MARKER_RE = re.compile(
-        r"^\s*(?:chapter|chapitre|capitolo|cap[íi]tulo|kapitel|part|partie|parte"
-        r"|teil|глава|часть|अध्याय)\s+(?:\d{1,3}|[ivxlcdm]{1,7})\b",
-        re.IGNORECASE | re.UNICODE,
-    )
-
-    def _is_chapter_marker_line(text):
-        """Fallback minimale: keyword + numero su riga breve isolata."""
-        if not text:
-            return False
-        text = text.strip()
-        if len(text) >= 80 or len(text.split()) > 12:
-            return False
-        return bool(_FALLBACK_MARKER_RE.match(text))
+# Strutture dati e funzioni di pulizia condivise con il parser EPUB
+# (stessa interfaccia BookInfo/Chapter). epub_to_tts e' una dipendenza
+# obbligatoria: nessun fallback locale (era una copia stantia).
+from epub_to_tts import (
+    BookInfo, Chapter, clean_text_for_tts, is_content_chapter,
+    _title_is_non_content,
+    is_chapter_marker_line as _is_chapter_marker_line,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════

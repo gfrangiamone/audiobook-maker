@@ -31,11 +31,12 @@ if __name__ == "__main__":
 import threading
 import time
 import uuid
+import hashlib
 import hmac
 import secrets
 import html as html_mod
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from copy import copy
 from pathlib import Path
 
@@ -1193,9 +1194,8 @@ def _new_job_id():
     loop skips all dirs starting with it.  ``_`` occurs in 1/64
     url-safe-base64 IDs; this loop keeps rolling until we get one
     without it."""
-    import secrets as _secrets
     while True:
-        jid = _secrets.token_urlsafe(16)
+        jid = secrets.token_urlsafe(16)
         if not jid.startswith("_"):
             return jid
 
@@ -2800,7 +2800,6 @@ def _save_device_tokens():
 def _device_hash(fcm_token):
     """Impronta dell'installazione: il token push non finisce mai nei file di
     quota, solo il suo digest."""
-    import hashlib
     return hashlib.sha256((fcm_token or "").encode("utf-8")).hexdigest()[:16]
 
 
@@ -3984,8 +3983,7 @@ def get_app_page():
 def _render_transfer_landing(token):
     # Fallback per il deep link /t/<token>: mostrato nel browser quando l'app NON
     # è installata. Riusa la pagina install (bottoni store).
-    import html as _html
-    _html.escape(str(token or ""), quote=True)  # token non riflesso, ma validato
+    html_mod.escape(str(token or ""), quote=True)  # token non riflesso, ma validato
     try:
         al = (request.headers.get("Accept-Language") or "").strip().lower()
         lang = "it" if al.startswith("it") else "en"
@@ -4305,7 +4303,6 @@ def _parse_log_sessions(ym):
     """Sessioni del business log del mese YYYY-MM.
 
     Ritorna (sessions OrderedDict job_id -> dict, client_session_count dict)."""
-    from datetime import datetime
     from collections import OrderedDict
 
     sessions = OrderedDict()
@@ -4483,7 +4480,6 @@ def _session_in_progress(s, sid):
 
 
 def _last_n_days(n):
-    from datetime import datetime, timedelta
     today = datetime.now().date()
     return [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
 
@@ -4515,7 +4511,6 @@ def _power_users_data():
     il precedente a cavallo del mese) + quota caratteri del mese."""
     if POWER_USER_JOBS_PER_DAY <= 0:
         return None
-    from datetime import datetime, timedelta
     now = datetime.now()
     since = now - timedelta(hours=24)
     # Dall'inizio del mese di `since`: i contatori mensili (books_month,
@@ -6428,7 +6423,6 @@ def admin_logs_export():
     if not ADMIN_TOKEN: return "Export disabled.", 404
     token = _admin_auth_from_request()
     if not _admin_auth_ok(token): return "Unauthorized", 401
-    from datetime import datetime
     import io, csv
 
     ym = None
@@ -6639,7 +6633,6 @@ def admin_api_suspend():
 
 def _admin_auth_ok(provided):
     """Costante-time check del token admin."""
-    import hmac
     if not ADMIN_TOKEN or not provided:
         return False
     return hmac.compare_digest(str(provided), ADMIN_TOKEN)
@@ -7050,12 +7043,11 @@ def admin_api_vouchers():
     # Codice con prefisso a seconda del tipo
     prefix = "PROMO-" if kind == "promo" else ("GIFT-" if kind == "gift" else "")
     # _generate_voucher_code dà core XXXX-XXXX-XXXX; per prefisso lo componiamo manualmente
-    import secrets as _sec
     _alpha = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     custom_code = None
     if prefix:
         for _ in range(20):
-            core = "-".join("".join(_sec.choice(_alpha) for _ in range(4)) for _ in range(3))
+            core = "-".join("".join(secrets.choice(_alpha) for _ in range(4)) for _ in range(3))
             cand = prefix + core
             if cand not in payment._vouchers:
                 custom_code = cand
@@ -9969,7 +9961,6 @@ def admin_api_accounts_audit():
     except (TypeError, ValueError):
         return jsonify({"error": "invalid limit/offset"}), 400
 
-    from datetime import timedelta
 
     def _epoch(name, end=False):
         raw = (request.args.get(name) or "").strip()
@@ -11605,8 +11596,6 @@ def admin_api_news_list():
 
 
 # ─── COMMUNITY: FEEDBACK ────────────────────────────────────────────
-import hashlib
-
 _feedback_rate_lock = threading.Lock()
 _feedback_rate: dict[str, list[float]] = {}  # ip_hash -> list[ts]
 _FB_LIMIT_HOUR = 1
@@ -13236,7 +13225,6 @@ def api_admin_user_stats():
 
 def _file_hash(path):
     """Return MD5 hex digest of a file, streaming in chunks."""
-    import hashlib
     h = hashlib.md5()
     with open(path, "rb") as f:
         while True:
@@ -13547,12 +13535,11 @@ def api_analyze():
         Le parentesi qui restano: i flag di lettura li sceglie l'utente dopo,
         e li applica l'endpoint dell'anteprima.
         """
-        import re as _re
         text = prepare_tts_text(text, strip_round=False, strip_square=False)
         if len(text) <= max_chars:
             return text
         window = text[min_chars:max_chars]
-        m = _re.search(r'[.!?]["""»\)\s]', window)
+        m = re.search(r'[.!?]["""»\)\s]', window)
         cut = (min_chars + m.start() + 1) if m else text.rfind(' ', min_chars, max_chars)
         if cut <= 0:
             cut = max_chars
@@ -13682,7 +13669,6 @@ def api_preview_audio(job_id):
                 valid = [c for c in sel_chs if _pv_text(c).strip()]
             if valid:
                 target = valid[1] if len(valid) > 1 else valid[0]
-                import re as _re_pv
                 # Prepara qui, sul testo con i suoi a-capo: il troncamento a
                 # 600 char lavora poi su cio` che il motore leggera` davvero.
                 raw = prepare_tts_text(
@@ -13693,7 +13679,7 @@ def api_preview_audio(job_id):
                 # Tronca tra 400 e 600 char a fine frase (riallinea a _trim_preview).
                 if len(raw) > 600:
                     _win = raw[400:600]
-                    _m = _re_pv.search(r'[.!?]["”“»\)\s]', _win)
+                    _m = re.search(r'[.!?]["”“»\)\s]', _win)
                     _cut = (400 + _m.start() + 1) if _m else raw.rfind(" ", 400, 600)
                     if _cut <= 0:
                         _cut = 600
@@ -13720,11 +13706,10 @@ def api_preview_audio(job_id):
     # Per Gemini e Speechify riduciamo il testo a ~20-30 sec di audio (250-400
     # char) per contenere il costo per-token/per-carattere fatturato.
     if _is_gemini_voice(voice) or _is_speechify_voice(voice):
-        import re as _re
-        _t = _re.sub(r'\s+', ' ', preview_text).strip()
+        _t = re.sub(r'\s+', ' ', preview_text).strip()
         if len(_t) > 400:
             _window = _t[250:400]
-            _m = _re.search(r'[.!?]["”“»\)\s]', _window)
+            _m = re.search(r'[.!?]["”“»\)\s]', _window)
             _cut = (250 + _m.start() + 1) if _m else _t.rfind(' ', 250, 400)
             if _cut <= 0:
                 _cut = 400
@@ -14064,7 +14049,6 @@ def api_export_abm(job_id):
 
     import zipfile
     import io
-    from datetime import datetime, timezone
 
     buf = io.BytesIO()
     safe_title = _safe_filename(info.title) or "project"
@@ -17515,8 +17499,7 @@ def api_optimize():
     # consumato (stranded). L'assegnazione dei campi notify resta piu' sotto,
     # dopo il pagamento andato a buon fine.
     if batch:
-        import re as _re
-        if not email or not _re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+        if not email or not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
             with _jobs_lock:
                 if job.get("status") == "optimizing":
                     job["status"] = "analyzed"
@@ -18730,7 +18713,6 @@ def api_active_jobs():
     if not _admin_auth_ok(_admin_auth_from_request()):
         return jsonify({"error": "Unauthorized"}), 401
 
-    from datetime import datetime
     with _jobs_lock:
         snapshot = list(jobs.items())
     active = []
@@ -19325,9 +19307,6 @@ def _serve_audio_download(token_info, job, job_id):
     print(f"[dl]   UPLOAD_DIR: {UPLOAD_DIR}")
     return "File non più disponibili", 410
 
-    print(f"[dl] No files found for job {job_id}")
-    return "File non più disponibili", 410
-
 
 def _generate_podcast_index_html(podcast_dir, title, author, cover_file, rss_fname, mp3_files, language="en"):
     """Generate an index.html landing page for the podcast folder (required by Netlify)."""
@@ -19553,8 +19532,7 @@ def _serve_podcast_download(token_info, job, job_id):
                          download_name=f"{safe_name}_podcast.zip")
 
     # Build podcast package in a unique temp dir to avoid race conditions
-    import uuid as _uuid
-    podcast_dir = epoch_dir / f"podcast_{_uuid.uuid4().hex[:8]}"
+    podcast_dir = epoch_dir / f"podcast_{uuid.uuid4().hex[:8]}"
     podcast_dir.mkdir(parents=True, exist_ok=True)
     try:
         for mp3 in mp3_files:
@@ -19733,9 +19711,8 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     # Sec (XSS): book_title proviene dai metadati EPUB/PDF (controllati dall'autore del file).
     # Tutte le interpolazioni nel template devono passare per html.escape, altrimenti un
     # `<dc:title>` malevolo iniettato lato uploader produce XSS sulla pagina /dl/<token>.
-    import html as _html
-    book_title = _html.escape(str(book_title or ""), quote=True)
-    remaining_str = _html.escape(str(remaining_str or ""), quote=True)
+    book_title = html_mod.escape(str(book_title or ""), quote=True)
+    remaining_str = html_mod.escape(str(remaining_str or ""), quote=True)
 
     # Single audio button matching post-generation page style
     # SVG download icon for single-file formats, emoji for ZIP
@@ -19953,7 +19930,7 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
                 _btn_label = _transfer_cta.get(lang, _transfer_cta["en"])
             # href escapato per difesa in profondità: l'URL deriva da ABM_BASE_URL
             # (config fidata) + token server-side, ma non lo riflettiamo mai grezzo.
-            _safe_url = _html.escape(_open_url, quote=True)
+            _safe_url = html_mod.escape(_open_url, quote=True)
             transfer_html = (
                 '<div style="text-align:center;margin:28px auto;max-width:320px;">'
                 f'<h3 style="font-size:1rem;margin:0 0 12px;">{_title}</h3>'
@@ -21174,9 +21151,8 @@ def _notify_duplicate_capture_refund(job_id, dup_refunds, reason=""):
         try:
             if not ADMIN_EMAIL or not _smtp_available():
                 return
-            import html as _html
             def _e(v):
-                return _html.escape(str(v if v is not None else ""))
+                return html_mod.escape(str(v if v is not None else ""))
             rows = ""
             for r in dup_refunds:
                 vc = r.get("voucher_code")
@@ -21281,9 +21257,8 @@ def _reconcile_unused_capture_for_job(job_id, reason=""):
         try:
             if not ADMIN_EMAIL or not _smtp_available():
                 return
-            import html as _html
             def _e(v):
-                return _html.escape(str(v if v is not None else ""))
+                return html_mod.escape(str(v if v is not None else ""))
             rows = ""
             for r in results:
                 vc = r.get("voucher_code")

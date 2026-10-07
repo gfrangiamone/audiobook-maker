@@ -133,8 +133,9 @@ NON_CONTENT_FILENAMES_SUBSTR = {
 }
 
 # Frasi che identificano sezioni di apparato critico (non narrative). Lista
-# canonica condivisa da is_content_chapter e _is_title_content (e importata
-# da pdf_to_tts) per evitare divergenze. Il match e' per PAROLA INTERA (vedi
+# canonica condivisa da is_content_chapter e _is_title_content. pdf_to_tts
+# ha ancora una propria NON_CONTENT_TITLES (divergente: vedi
+# md_files/RAZIONALIZZAZIONE_CODICE.md §5.1). Il match e' per PAROLA INTERA (vedi
 # _title_is_non_content): un token corto come "note"/"toc"/"cover"/"index"
 # NON deve scartare titoli legittimi ("Notevole...", "Autocrazia",
 # "Discovering...", "Indexed...").
