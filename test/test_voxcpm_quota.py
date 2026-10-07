@@ -116,6 +116,39 @@ def test_cap_disattivabile(quota_pulita, monkeypatch):
     assert d["is_free"] is True
 
 
+def test_cap_pesato_per_lingua_come_il_listino(quota_pulita, monkeypatch):
+    """Il cap e' in caratteri latini: il cinese lo divide per il fattore del
+    listino (3,3), cosi' vale le stesse ore di audio."""
+    monkeypatch.delenv("ABM_VOXCPM_FREE_MAX_CHARS", raising=False)
+    monkeypatch.delenv("ABM_VOXCPM_LANG_FACTOR_ZH", raising=False)
+    assert free_quota._premium_free_max_chars(VOCE, "zh") == 30303
+    assert free_quota._premium_free_max_chars(VOCE, "zh-CN") == 30303
+    assert free_quota._premium_free_max_chars(VOCE, "it") == 100000
+    assert free_quota._premium_free_max_chars(VOCE, None) == 100000
+    d = free_quota.decision(quota_pulita, VOCE, 0.10, "job-zh", book_chars=40_000,
+                            language="zh")
+    assert d["is_free"] is False
+    assert d["free_cap_exceeded"] is True
+    assert d["free_cap_chars"] == 30303
+    assert d["book_chars"] == 40_000
+
+
+def test_cap_lingua_latina_invariato(quota_pulita):
+    d = free_quota.decision(quota_pulita, VOCE, 0.10, "job-it", book_chars=40_000,
+                            language="it")
+    assert d["is_free"] is True
+
+
+def test_cap_segue_il_fattore_da_env(quota_pulita, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "100000")
+    monkeypatch.setenv("ABM_VOXCPM_LANG_FACTOR_ZH", "2")
+    assert free_quota._premium_free_max_chars(VOCE, "zh") == 50000
+    monkeypatch.setenv("ABM_VOXCPM_LANG_FACTOR_JA", "4")
+    assert free_quota._premium_free_max_chars(VOCE, "ja") == 25000
+    # Gemini resta senza cap qualunque sia la lingua.
+    assert free_quota._premium_free_max_chars("gemini:flash31:Zephyr", "zh") == 0
+
+
 def test_chiave_per_generazione():
     """charge_key: stesso job + stessa voce + stessi capitoli = stessa chiave;
     capitolo o voce diversi = chiave diversa; senza voce ne' capitoli = job_id

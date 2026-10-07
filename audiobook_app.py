@@ -1828,7 +1828,8 @@ def _recovery_generate_gate(job_id, rec, info):
     _fq_key = (rec.get("free_quota_key") or "").strip() or job_id
     dec = _premium_quota_decision((rec.get("client_id") or "").strip(),
                                   voice, list_total, _fq_key,
-                                  book_chars=_free_quota_book_chars(info, all_chs))
+                                  book_chars=_free_quota_book_chars(info, all_chs),
+                                  language=lang)
     _free_quota_log(job_id, dec)
     if not dec["is_free"]:
         raise _RecoveryRejected(
@@ -14559,6 +14560,7 @@ def api_generate():
         _quota_dec = _premium_quota_decision(
             _quota_client_id(job), voice, _list_total_pre, _fq_key_pre,
             book_chars=_free_quota_book_chars(info_pre, all_chs_pre),
+            language=lang_pre,
         )
         total_eur_pre = _quota_dec["due_eur"]
         threshold_pre = _quota_dec["threshold_eur"]
@@ -14755,6 +14757,7 @@ def api_generate():
         _quota_dec = _premium_quota_decision(
             _quota_client_id(job), voice, _list_total_pre, _fq_key_pre,
             book_chars=_free_quota_book_chars(info_pre, all_chs_pre),
+            language=job.get("gen_lang"),
         )
         total_eur_pre = _quota_dec["due_eur"]
         threshold_pre = _quota_dec["threshold_eur"]
@@ -17021,6 +17024,7 @@ def api_combined_estimate():
             _quota_cid, voice_id, round(_premium_list_eur + llm_eur, 2),
             _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None)),
             book_chars=_free_quota_book_chars(info),
+            language=lang,
         )
         total = _quota_dec["due_eur"]
         # Quote lock (D2): l'importo che l'utente sta per vedere nel modale e'
@@ -17249,6 +17253,7 @@ def api_paypal_create_order_gemini():
             round(_premium_list_eur + llm_eur, 2),
             _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None)),
             book_chars=_free_quota_book_chars(info),
+            language=lang,
         )["due_eur"]
 
     # Quote lock (D2): se il client chiede esattamente l'importo che gli e'
@@ -18004,6 +18009,7 @@ def api_optimize():
             _quota_cid_vox, _voice_vox,
             round(_voxcpm_list_quota + estimated_cost, 2), _fq_key_vox,
             book_chars=_free_quota_book_chars(info, _all_chs_vox),
+            language=_lang_for_vox,
         )
         _expected_total_vox = _quota_dec_vox["due_eur"]
         _threshold_vox = _quota_dec_vox["threshold_eur"]

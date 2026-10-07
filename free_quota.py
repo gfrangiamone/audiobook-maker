@@ -201,7 +201,7 @@ def _premium_floor_eur(voice_id):
     return _env_float("ABM_PREMIUM_MIN_COST_EUR", "0.50")
 
 
-def _premium_free_max_chars(voice_id):
+def _premium_free_max_chars(voice_id, language=None):
     """Cap di caratteri del LIBRO (non della selezione) oltre il quale la voce
     non e' mai gratuita, per motore. 0 = nessun cap.
 
@@ -209,16 +209,30 @@ def _premium_free_max_chars(voice_id):
     pezzi (un capitolo per generazione, ognuno sotto soglia) resta un libro
     grande. Il cap guarda il testo intero del job, cosi' la selezione dei
     capitoli non lo aggira.
+
+    `ABM_VOXCPM_FREE_MAX_CHARS` e' espresso in caratteri latini: per la lingua
+    TTS `language` si divide per lo stesso fattore del listino
+    (`voxcpm_tts.lang_price_factor`), cosi' il tetto vale le stesse ore di
+    audio in ogni lingua (zh: 100.000 / 3,3 = 30.303 ideogrammi).
     """
     if is_voxcpm_voice(voice_id):
         try:
-            return max(0, int(float(os.environ.get("ABM_VOXCPM_FREE_MAX_CHARS", "100000"))))
+            cap = max(0, int(float(os.environ.get("ABM_VOXCPM_FREE_MAX_CHARS", "100000"))))
         except (TypeError, ValueError):
-            return 100000
+            cap = 100000
+        try:
+            # Import locale: il fattore vive col listino, e free_quota resta
+            # importabile senza il client RunPod.
+            import voxcpm_tts
+            factor = voxcpm_tts.lang_price_factor(language)
+        except Exception:
+            factor = 1.0
+        return int(cap / factor) if factor > 0 else cap
     return 0
 
 
-def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None):
+def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
+             language=None):
     """Prezzo dovuto per un job premium, applicando la quota gratuita.
 
     `list_total_eur` e' il prezzo di LISTINO (TTS premium + eventuale quota LLM
@@ -232,7 +246,8 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None):
 
     `book_chars` (opzionale) e' il numero di caratteri del libro INTERO: sopra
     `_premium_free_max_chars(voice_id)` la voce non e' gratuita neanche sotto
-    soglia (`free_cap_exceeded`), e si paga il floor.
+    soglia (`free_cap_exceeded`), e si paga il floor. `language` e' la lingua
+    TTS della stima: pesa il cap come pesa il listino.
     """
     try:
         list_total = round(float(list_total_eur or 0.0), 2)
@@ -253,7 +268,7 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None):
     if list_total > threshold:
         # Job gia' a pagamento: la quota non c'entra, percorso invariato.
         return out
-    cap = _premium_free_max_chars(voice_id)
+    cap = _premium_free_max_chars(voice_id, language)
     try:
         book = int(book_chars or 0)
     except (TypeError, ValueError):
