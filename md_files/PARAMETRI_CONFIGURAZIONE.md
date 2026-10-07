@@ -156,6 +156,7 @@ Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()
 | `_PREVIEW_RL_PER_HOUR` | `200` preview `/api/preview_audio` / IP / ora | `audiobook_app.py` | — |
 | `_SUPPORT_RL_PER_MIN` | `2` richieste `/api/support/contact` / IP / minuto | `audiobook_app.py` | 8478 |
 | `_SUPPORT_RL_PER_HOUR` | `6` richieste `/api/support/contact` / IP / ora | `audiobook_app.py` | 8479 |
+| `metrics_store._KEEP_DAYS` | `400` giorni di retention dei contatori anonimi del funnel app→web (`_metrics.json`): le chiavi giorno piu' vecchie vengono potate a ogni incremento (prima il file cresceva per sempre) | `metrics_store.py` | — |
 
 Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREVIEW_RL_PER_MIN`, `ABM_PREVIEW_RL_PER_HOUR`, `ABM_SUPPORT_RL_PER_MIN`, `ABM_SUPPORT_RL_PER_HOUR`. Oltre soglia risponde `429` con `retry_after` in secondi.
 
@@ -672,11 +673,11 @@ Sovrascrivibili in caso di adeguamento listino Google. **`flash25` ritirato il 2
 
 ### 7.4.2 Allarmi di margine a consuntivo (post-mortem, non bloccanti)
 
-Rilevatore in `generation_engine._check_margin_anomalies()`, invocato dopo la scrittura dell'audit di `_write_gemini_audit()` e `_write_speechify_audit()`. Non interrompe mai un job: quando parte, il job e' gia' terminato. Email via `email_service.admin_notify_margin_anomaly()`, throttle 60s per `job_id+kind`, richiede `ABM_ADMIN_EMAIL`.
+Rilevatore in `generation_engine._check_margin_anomalies()`, invocato dopo la scrittura dell'audit di `_write_gemini_audit()`, `_write_speechify_audit()` e `_write_voxcpm_audit()` (VoxCPM dal 2026-10-07, v3.78.2: prima era l'unico motore a saltarlo). Non interrompe mai un job: quando parte, il job e' gia' terminato. Email via `email_service.admin_notify_margin_anomaly()`, throttle 60s per `job_id+kind`, richiede `ABM_ADMIN_EMAIL`.
 
 Due condizioni indipendenti:
 
-- **`free_over_threshold`** (email URGENTE) — job servito **gratis** perche' quotato sotto la soglia di gratuita', ma costato a consuntivo piu' della soglia stessa. Confronto sul maggiore fra costo provider reale (`google_cost_eur_actual`) e listino sui consumi reali (`user_price_eur_should_have_been`); il secondo e' la grandezza omogenea alla soglia e scatta per primo. Soglia di riferimento: `ABM_GEMINI_FREE_THRESHOLD_EUR` / `ABM_SPEECHIFY_FREE_THRESHOLD_EUR`. E' il rilevatore dell'incidente `Q9lQN3RrapCvGLSonVnzmA` (stima falsata su testi spillati → listino 0,35 € → gratis → costo reale a doppia cifra).
+- **`free_over_threshold`** (email URGENTE) — job servito **gratis** perche' quotato sotto la soglia di gratuita', ma costato a consuntivo piu' della soglia stessa. Confronto sul maggiore fra costo provider reale (`google_cost_eur_actual`) e listino sui consumi reali (`user_price_eur_should_have_been`); il secondo e' la grandezza omogenea alla soglia e scatta per primo. Soglia di riferimento: la stessa del listino del motore (`gemini_tts.FREE_THRESHOLD_EUR`, `speechify_tts.free_threshold_eur()`, `voxcpm_tts.free_threshold_eur()`, cioe' `ABM_<MOTORE>_FREE_THRESHOLD_EUR` con default `0.50`; fino alla v3.78.1 l'audit Speechify leggeva l'env con un default proprio di `0.40`). E' il rilevatore dell'incidente `Q9lQN3RrapCvGLSonVnzmA` (stima falsata su testi spillati → listino 0,35 € → gratis → costo reale a doppia cifra).
 - **`margin_drop`** — margine reale sceso a meta' o meno di quello atteso ex-ante. Ricavo di riferimento: l'incassato se > 0, altrimenti il listino **quotato** ex-ante (un job in quota gratuita ha ricavo contabile zero: senza questa convenzione il margine atteso sarebbe sempre negativo e il confronto insensato). Un job che soddisfa gia' `free_over_threshold` non produce anche questa seconda email.
 
 | Variabile | Default | Descrizione |
