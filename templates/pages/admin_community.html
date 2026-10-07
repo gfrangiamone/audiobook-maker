@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin · Community</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1200px;margin:0 auto}
+h1{margin:0 0 20px;font-size:1.5rem}
+.tabs{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid #334155}
+.tab{padding:10px 18px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px}
+.panel h2{margin:0 0 14px;font-size:1.05rem;color:var(--accent)}
+label{display:block;font-size:.85rem;color:var(--muted);margin:8px 0 4px}
+input,select,textarea{width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font:inherit;font-size:.95rem}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:.9rem}
+button:hover{filter:brightness(1.1)}
+button.sm{padding:5px 10px;font-size:.75rem;font-weight:500}
+button.secondary{background:#334155}
+button.danger{background:var(--err)}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:700px){.row3{grid-template-columns:1fr}}
+.msg{padding:8px 12px;border-radius:6px;margin:10px 0;font-size:.85rem}
+.msg.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid var(--ok)}
+.msg.err{background:rgba(239,68,68,.15);color:var(--err);border:1px solid var(--err)}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+td{padding:8px;border-bottom:1px solid #1e293b;vertical-align:top}
+tr.archived{opacity:.45}
+.tag-feature{background:#8b5cf6;color:#fff;padding:2px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
+.tag-fix{background:#10b981;color:#fff;padding:2px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
+.tag-info{background:#64748b;color:#fff;padding:2px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
+.stars{color:#e6a92a;letter-spacing:1px}
+.kpis{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:18px}
+.kpi{flex:1;min-width:140px;background:var(--panel);border-radius:8px;padding:12px}
+.kpi-label{font-size:.75rem;color:var(--muted)}
+.kpi-val{font-size:1.4rem;font-weight:700;color:var(--ink)}
+.section{display:none}
+.section.active{display:block}
+.toolbar{display:flex;gap:10px;align-items:center;margin:10px 0}
+.toolbar label{margin:0;display:flex;align-items:center;gap:6px;font-size:.85rem}
+.toolbar input[type=checkbox]{width:auto}
+.banner-pill{background:var(--warn);color:#000;padding:1px 6px;border-radius:999px;font-size:.7rem;font-weight:700}
+.reply-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:999}
+.reply-modal-overlay[hidden]{display:none}
+.reply-modal{background:var(--panel);border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto}
+.reply-modal h3{margin:0 0 16px;font-size:1.1rem;color:var(--accent)}
+.reply-modal textarea{width:100%;min-height:120px;resize:vertical;font:inherit}
+.reply-modal .chars{margin-top:6px;font-size:.75rem;color:var(--muted);text-align:right}
+.reply-modal .err{color:var(--err);margin:10px 0;font-size:.85rem}
+.reply-modal-btns{display:flex;gap:10px;margin-top:14px;justify-content:flex-end}
+.md-help{font-size:.78rem;color:var(--muted);margin-top:6px;line-height:1.5}
+.md-help code{background:#0f172a;border:1px solid #334155;border-radius:4px;padding:1px 5px;font-size:.75rem}
+.md-preview{margin-top:10px;background:#0f172a;border:1px dashed #334155;border-radius:6px;padding:10px 12px;font-size:.9rem;line-height:1.55;min-height:1.55em}
+.md-preview:empty::before{content:'(anteprima)';color:var(--muted);font-style:italic}
+.md-preview p{margin:0 0 8px}
+.md-preview p:last-child,.md-preview ul:last-child{margin-bottom:0}
+.md-preview ul{margin:0 0 8px;padding-left:20px}
+.md-preview li{margin:2px 0}
+.md-preview a{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>Admin · Community</h1>
+<div class="tabs">
+  <button class="tab active" data-tab="feedback">Feedback</button>
+  <button class="tab" data-tab="news">News</button>
+</div>
+
+<section class="section active" id="sectFeedback">
+  <div class="kpis" id="fbKpis"></div>
+  <div class="toolbar">
+    <label><input type="checkbox" id="fbShowArch"> Mostra archiviati</label>
+    <button class="secondary sm" onclick="loadFb()">Aggiorna</button>
+  </div>
+  <table>
+    <thead><tr><th>Data</th><th>★</th><th>Nome</th><th>Commento</th><th>IP</th><th></th></tr></thead>
+    <tbody id="fbBody"></tbody>
+  </table>
+</section>
+
+<section class="section" id="sectNews">
+  <div class="panel">
+    <h2>Nuova news</h2>
+    <div class="row3">
+      <div>
+        <label>Tag</label>
+        <select id="nTag"><option value="feature">feature</option><option value="fix">fix</option><option value="info">info</option></select>
+      </div>
+      <div>
+        <label>Lingua</label>
+        <select id="nLang"><option>it</option><option>en</option><option>fr</option><option>es</option><option>de</option><option>zh</option><option>hi</option></select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="nBanner"> Mostra come banner</label>
+      </div>
+    </div>
+    <label>Titolo</label>
+    <input id="nTitle" maxlength="200">
+    <label>Testo</label>
+    <textarea id="nBody" rows="6" maxlength="2000"></textarea>
+    <div class="md-help">
+      Formattazione ammessa: <code>**grassetto**</code> · <code>*corsivo*</code> ·
+      <code>[testo](https://esempio.com)</code> o <code>[testo](/pagina-interna)</code> ·
+      elenco con <code>- </code> a inizio riga · riga vuota = nuovo paragrafo.
+      Nient'altro: l'HTML viene rimosso.
+    </div>
+    <label>Anteprima</label>
+    <div id="nPreview" class="md-preview"></div>
+    <div style="margin-top:10px"><button id="nPublish" onclick="createNews()">Pubblica</button></div>
+    <div id="nMsg"></div>
+  </div>
+  <div class="toolbar">
+    <label><input type="checkbox" id="nShowArch"> Mostra archiviate</label>
+    <button class="secondary sm" onclick="loadNews()">Aggiorna</button>
+  </div>
+  <table>
+    <thead><tr><th>Data</th><th>Lang</th><th>Tag</th><th>Titolo</th><th>Banner</th><th></th></tr></thead>
+    <tbody id="nBody2"></tbody>
+  </table>
+</section>
+
+<script src="/static/js/news_md.js"></script>
+<script>
+const TOKEN=localStorage.getItem('abm_admin_token')||new URLSearchParams(location.search).get('token')||'';
+if(!TOKEN){alert('Admin token mancante');}else{localStorage.setItem('abm_admin_token',TOKEN);}
+const HDR={'X-Admin-Token':TOKEN,'Content-Type':'application/json'};
+function esc(s){return (s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
+function fmtDate(ts){return new Date(ts*1000).toLocaleString();}
+
+/* Anteprima news: stesso renderer Markdown-lite del sito pubblico, cosi'
+   quello che si vede qui e' esattamente quello che vedra' il visitatore. */
+function renderNewsPreview(){
+  const el=document.getElementById('nPreview');
+  const src=document.getElementById('nBody');
+  if(!el||!src) return;
+  if(window.ABMNewsMd) ABMNewsMd.render(el,src.value);
+  else el.textContent=src.value;
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  const src=document.getElementById('nBody');
+  if(src) src.addEventListener('input',renderNewsPreview);
+  renderNewsPreview();
+});
+
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('sect'+t.dataset.tab[0].toUpperCase()+t.dataset.tab.slice(1)).classList.add('active');
+  if(t.dataset.tab==='feedback') loadFb();
+  else loadNews();
+}));
+
+async function loadFb(){
+  const r=await fetch('/admin/api/feedback/list',{headers:HDR});
+  if(!r.ok){document.getElementById('fbBody').innerHTML='<tr><td colspan=6>Errore</td></tr>';return;}
+  const d=await r.json();
+  const showArch=document.getElementById('fbShowArch').checked;
+  let items=d.items||[];
+  window._fbItems = items;
+  if(!showArch) items=items.filter(it=>!it.archived);
+  // KPI
+  const all=d.items||[];
+  const tot=all.length;
+  const avg=tot?(all.reduce((a,it)=>a+(it.rating||0),0)/tot).toFixed(2):'—';
+  const hist=[0,0,0,0,0]; all.forEach(it=>{const r=it.rating||0;if(r>=1&&r<=5) hist[r-1]++;});
+  document.getElementById('fbKpis').innerHTML=`
+    <div class="kpi"><div class="kpi-label">Totale</div><div class="kpi-val">${tot}</div></div>
+    <div class="kpi"><div class="kpi-label">Media</div><div class="kpi-val">${avg}</div></div>
+    <div class="kpi"><div class="kpi-label">5★</div><div class="kpi-val">${hist[4]}</div></div>
+    <div class="kpi"><div class="kpi-label">4★</div><div class="kpi-val">${hist[3]}</div></div>
+    <div class="kpi"><div class="kpi-label">≤3★</div><div class="kpi-val">${hist[0]+hist[1]+hist[2]}</div></div>`;
+  const tb=document.getElementById('fbBody');
+  tb.innerHTML='';
+  for(const it of items){
+    const tr=document.createElement('tr');
+    if(it.archived) tr.className='archived';
+    const stars='★'.repeat(it.rating||0)+'☆'.repeat(5-(it.rating||0));
+    tr.innerHTML=`<td>${fmtDate(it.created_at)}</td>
+      <td><span class="stars">${stars}</span></td>
+      <td>${esc(it.name||'')}</td>
+      <td>
+        <div class="fb-it">${esc(((it.comment_i18n||{}).it)||it.comment||'')}</div>
+        <div class="fb-orig" style="display:none;font-size:.85rem;color:var(--muted);margin-top:4px;">
+          <span style="font-size:.7rem;text-transform:uppercase;border:1px solid var(--muted);padding:1px 4px;border-radius:4px;">${esc(it.comment_lang||'orig')}</span>
+          ${esc(it.comment||'')}
+        </div>
+        <button class="sm secondary fb-toggle" style="margin-top:6px;">Originale</button>
+      </td>
+      <td><code style="font-size:.75rem">${esc(it.ip_hash||'')}</code></td>
+      <td>
+        ${it.admin_reply_at > 0
+          ? `<button class="sm secondary" data-id="${it.id}" onclick="openReplyModal(this)" title="${fmtDate(it.admin_reply_edited_at||it.admin_reply_at)}">Modifica risposta</button>`
+          : `<button class="sm" style="background:var(--accent)" data-id="${it.id}" onclick="openReplyModal(this)">Rispondi</button>`
+        }
+        <button class="sm secondary" data-id="${it.id}" data-act="${it.archived?'unarchive':'archive'}">${it.archived?'Riattiva':'Archivia'}</button>
+        <button class="sm danger" data-id="${it.id}" data-act="delete">Elimina</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',async()=>{
+    if(b.dataset.act==='delete'&&!confirm('Eliminare definitivamente?')) return;
+    const r=await fetch('/admin/api/feedback/'+b.dataset.id,{method:'POST',headers:HDR,body:JSON.stringify({action:b.dataset.act})});
+    if(r.ok) loadFb(); else alert('Errore');
+  }));
+  tb.querySelectorAll('.fb-toggle').forEach(b=>b.addEventListener('click',()=>{
+    const wrap=b.closest('td').querySelector('.fb-orig');
+    const hidden=wrap.style.display==='none';
+    wrap.style.display=hidden?'block':'none';
+    b.textContent=hidden?'Nascondi originale':'Originale';
+  }));
+}
+
+async function loadNews(){
+  const r=await fetch('/admin/api/news/list',{headers:HDR});
+  if(!r.ok){document.getElementById('nBody2').innerHTML='<tr><td colspan=6>Errore</td></tr>';return;}
+  const d=await r.json();
+  const showArch=document.getElementById('nShowArch').checked;
+  let items=d.items||[];
+  if(!showArch) items=items.filter(it=>!it.archived);
+  const tb=document.getElementById('nBody2');
+  tb.innerHTML='';
+  for(const it of items){
+    const tr=document.createElement('tr');
+    if(it.archived) tr.className='archived';
+    tr.innerHTML=`<td>${fmtDate(it.created_at)}</td>
+      <td>${esc(it.lang||'')}</td>
+      <td><span class="tag-${esc(it.tag)}">${esc(it.tag)}</span></td>
+      <td>${esc(it.title||'')}</td>
+      <td>${it.banner?'<span class="banner-pill">BANNER</span>':''}</td>
+      <td>
+        <button class="sm secondary" data-id="${it.id}" data-act="toggle_banner">Toggle banner</button>
+        <button class="sm secondary" data-id="${it.id}" data-act="${it.archived?'unarchive':'archive'}">${it.archived?'Riattiva':'Archivia'}</button>
+        <button class="sm danger" data-id="${it.id}" data-act="delete">Elimina</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',async()=>{
+    if(b.dataset.act==='delete'&&!confirm('Eliminare definitivamente?')) return;
+    const r=await fetch('/admin/api/news/'+b.dataset.id,{method:'POST',headers:HDR,body:JSON.stringify({action:b.dataset.act})});
+    if(r.ok) loadNews(); else alert('Errore');
+  }));
+}
+
+async function createNews(){
+  const body={
+    tag:document.getElementById('nTag').value,
+    lang:document.getElementById('nLang').value,
+    banner:document.getElementById('nBanner').checked,
+    title:document.getElementById('nTitle').value,
+    body:document.getElementById('nBody').value,
+  };
+  const msg=document.getElementById('nMsg');
+  if(!body.title.trim()){msg.innerHTML='<div class="msg err">Titolo richiesto</div>';return;}
+  const btn=document.getElementById('nPublish');
+  const origLabel=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='⏳ Pubblicazione…';}
+  msg.innerHTML='<div class="msg">Pubblicazione in corso…</div>';
+  try{
+    const r=await fetch('/admin/api/news',{method:'POST',headers:HDR,body:JSON.stringify(body)});
+    if(r.ok){
+      msg.innerHTML='<div class="msg ok">Pubblicata</div>';
+      document.getElementById('nTitle').value='';
+      document.getElementById('nBody').value='';
+      document.getElementById('nBanner').checked=false;
+      loadNews();
+    } else {
+      const e=await r.json().catch(()=>({error:'errore'}));
+      msg.innerHTML='<div class="msg err">'+esc(e.error||'errore')+'</div>';
+    }
+  } finally {
+    if(btn){btn.disabled=false;btn.textContent=origLabel;}
+  }
+}
+
+document.getElementById('fbShowArch').addEventListener('change',loadFb);
+document.getElementById('nShowArch').addEventListener('change',loadNews);
+
+let _replyItemId = null;
+let _replyIsEdit = false;
+function openReplyModal(btn){
+  const id = btn.dataset.id;
+  _replyItemId = id;
+  const item = (window._fbItems || []).find(it => it.id === id);
+  if(!item){return;}
+  _replyIsEdit = (item.admin_reply_at||0) > 0;
+  document.getElementById('replyOriginal').textContent =
+    ((item.comment_i18n||{}).it)||item.comment||'(senza commento)';
+  const txt = document.getElementById('replyText');
+  txt.value = _replyIsEdit ? (item.admin_reply_text || '') : '';
+  document.getElementById('replyCharCount').textContent = String(txt.value.length);
+  document.getElementById('replyErr').hidden = true;
+  document.getElementById('replyTitle').textContent = _replyIsEdit ? 'Modifica risposta' : 'Rispondi al commento';
+  document.getElementById('replySubmit').textContent = _replyIsEdit ? 'Salva modifiche' : 'Invia risposta';
+  document.getElementById('replyDelete').hidden = !_replyIsEdit;
+  document.getElementById('replyModal').hidden = false;
+  txt.focus();
+  txt.addEventListener('input', function(){document.getElementById('replyCharCount').textContent=this.value.length;}, {once: true});
+  document.getElementById('replyCancel').addEventListener('click', closeReplyModal);
+}
+function closeReplyModal(){
+  const modal = document.getElementById('replyModal');
+  if(modal){ modal.hidden = true; }
+  _replyItemId = null;
+  _replyIsEdit = false;
+}
+async function submitReply(){
+  if(!_replyItemId) return;
+  const text = document.getElementById('replyText').value.trim();
+  if(!text){document.getElementById('replyErr').textContent='Testo richiesto';document.getElementById('replyErr').hidden=false;return;}
+  if(text.length > 2000){document.getElementById('replyErr').textContent='Max 2000 caratteri';document.getElementById('replyErr').hidden=false;return;}
+  const btn = document.getElementById('replySubmit');
+  const origLabel = btn ? btn.textContent : '';
+  btn.disabled = true;
+  btn.textContent = '⏳ Traduzione in corso…';
+  const errEl = document.getElementById('replyErr');
+  errEl.hidden = true;
+  try {
+    const r = await fetch('/admin/api/feedback/'+_replyItemId+'/reply',{
+      method:'POST', headers:HDR,
+      body:JSON.stringify({reply:text})
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      errEl.textContent = d.error || ('Errore '+r.status);
+      errEl.hidden = false;
+    } else {
+      closeReplyModal();
+      loadFb();
+    }
+  } catch(e){
+    errEl.textContent = 'Errore di rete';
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+}
+async function deleteReply(){
+  if(!_replyItemId) return;
+  if(!confirm('Eliminare la risposta? L\'azione non è reversibile.')) return;
+  const btn = document.getElementById('replyDelete');
+  const origLabel = btn ? btn.textContent : '';
+  btn.disabled = true;
+  btn.textContent = '⏳ Eliminazione…';
+  const errEl = document.getElementById('replyErr');
+  errEl.hidden = true;
+  try {
+    const r = await fetch('/admin/api/feedback/'+_replyItemId+'/reply',{
+      method:'DELETE', headers:HDR
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      errEl.textContent = d.error || ('Errore '+r.status);
+      errEl.hidden = false;
+    } else {
+      closeReplyModal();
+      loadFb();
+    }
+  } catch(e){
+    errEl.textContent = 'Errore di rete';
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+}
+
+loadFb();
+</script>
+<div class="reply-modal-overlay" id="replyModal" hidden>
+  <div class="reply-modal">
+    <h3 id="replyTitle">Rispondi al commento</h3>
+    <div id="replyOriginal" style="font-size:.85rem;color:var(--muted);margin-bottom:12px;padding:8px;background:#0f172a;border-radius:6px;max-height:100px;overflow-y:auto"></div>
+    <textarea id="replyText" maxlength="2000" placeholder="Scrivi la risposta in italiano..." rows="5"></textarea>
+    <div class="chars"><span id="replyCharCount">0</span>/2000</div>
+    <div class="err" id="replyErr" hidden></div>
+    <div class="reply-modal-btns" style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+      <button class="danger" id="replyDelete" onclick="deleteReply()" hidden>Elimina risposta</button>
+      <div style="display:flex;gap:8px;margin-left:auto;">
+        <button class="secondary" id="replyCancel">Annulla</button>
+        <button id="replySubmit" onclick="submitReply()">Invia risposta</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

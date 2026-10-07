@@ -241,8 +241,8 @@ def test_riga_con_motivo_del_rifiuto():
 
 
 def test_pagina_admin_ha_la_colonna_motivo_rifiuto():
-    import inspect
-    src = inspect.getsource(audiobook_app)
+    # La pagina admin vive in templates/pages/admin_audit_premium.html (C1).
+    src = audiobook_app._page_template("admin_audit_premium")
     assert ">Motivo rifiuto</th>" in src and "reject_note_it" in src
     assert 'auditTruncNote(recs.length, total, 15)' in src
     assert 'colspan="14" class="empty-msg">Nessuna voce' not in src

@@ -226,7 +226,8 @@ def test_css_styles_news_body_markup():
 
 
 def test_admin_page_has_markdown_help_and_preview():
-    src = Path("audiobook_app.py").read_text(encoding="utf-8")
+    # La pagina admin community vive in templates/pages (C1).
+    src = Path("templates/pages/admin_community.html").read_text(encoding="utf-8")
     i = src.index("Nuova news")
     block = src[i:i + 4000]
     assert "news_md.js" in src[i - 4000:i + 4000]

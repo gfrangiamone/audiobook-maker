@@ -1,0 +1,69 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin Auth - __P0__</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f3f4f6;color:#1f2937}
+.card{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);width:100%;max-width:360px}
+h2{margin:0 0 1.5rem;font-size:1.5rem;text-align:center}
+.field{margin-bottom:1rem}
+label{display:block;font-size:.875rem;font-weight:600;margin-bottom:.375rem}
+input[type=password]{width:100%;padding:.625rem;border:1px solid #d1d5db;border-radius:.375rem;box-sizing:border-box}
+.btn{width:100%;padding:.75rem;background:#2563eb;color:#fff;border:none;border-radius:.375rem;font-weight:600;cursor:pointer}
+.btn:hover{background:#1d4ed8}
+.hint{font-size:.75rem;color:#6b7280;margin-top:1rem;text-align:center}
+</style>
+<script>
+// Sec: il token admin non viaggia più nell'URL. POSTa a /admin/login che imposta
+// un cookie HttpOnly+Secure+SameSite=Strict; per le fetch API la pagina admin usa
+// header X-Admin-Token da sessionStorage (cookie non leggibile da JS).
+(function(){
+    const tok = sessionStorage.getItem('abm_admin_token') || localStorage.getItem('abm_admin_token');
+    if(tok && !sessionStorage.getItem('abm_admin_gate_retry')){
+        sessionStorage.setItem('abm_admin_gate_retry', '1');
+        fetch('/admin/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token: tok}),
+            credentials: 'same-origin',
+        }).then(r => {
+            if(r.ok){ window.location.reload(); }
+        }).catch(()=>{});
+    }
+})();
+
+function doLogin(){
+    const tok = document.getElementById('pw').value;
+    const remember = document.getElementById('rem').checked;
+    if(!tok) return;
+    fetch('/admin/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token: tok, remember: remember}),
+        credentials: 'same-origin',
+    }).then(r => {
+        if(!r.ok){ alert('Token non valido'); return; }
+        sessionStorage.setItem('abm_admin_token', tok);
+        if(remember){
+            localStorage.setItem('abm_admin_token', tok);
+            localStorage.setItem('abm_admin_expiry', (Date.now() + 30 * 86400000).toString());
+        }
+        sessionStorage.removeItem('abm_admin_gate_retry');
+        window.location.reload();
+    }).catch(()=>{ alert('Errore di rete'); });
+}
+</script>
+</head><body>
+<div class="card">
+    <h2>Admin Access</h2>
+    <div class="field">
+        <label for="pw">Admin Token</label>
+        <input type="password" id="pw" placeholder="Enter token..." onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div class="field" style="display:flex;align-items:center;gap:.5rem">
+        <input type="checkbox" id="rem">
+        <label for="rem" style="margin:0;font-weight:400">Rimani connesso (30 giorni)</label>
+    </div>
+    <button class="btn" onclick="doLogin()">Entra</button>
+    <div class="hint">Autenticazione richiesta per accedere a questa risorsa.</div>
+</div>
+</body></html>

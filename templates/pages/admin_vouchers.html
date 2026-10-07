@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin  -  Voucher</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1200px;margin:0 auto}
+  h1{margin:0 0 20px;font-size:1.5rem;display:flex;align-items:center;gap:10px}
+  h1 .lock{font-size:1.2rem}
+  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
+  label{display:block;font-size:.85rem;color:var(--muted);margin:8px 0 4px}
+  input,select,textarea{width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.95rem;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  button{padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:.95rem}
+  button:hover{filter:brightness(1.1)}
+  button.secondary{background:#334155}
+  button.danger{background:var(--err)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  @media(max-width:600px){.row,.row3{grid-template-columns:1fr}}
+  .msg{padding:10px 14px;border-radius:6px;margin:12px 0;font-size:.9rem}
+  .msg.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid var(--ok)}
+  .msg.err{background:rgba(239,68,68,.15);color:var(--err);border:1px solid var(--err)}
+  table{width:100%;border-collapse:collapse;font-size:.85rem}
+  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+  td{padding:8px;border-bottom:1px solid #1e293b;vertical-align:top}
+  tr:hover{background:rgba(139,92,246,.05)}
+  code{font-family:ui-monospace,monospace;background:#0f172a;padding:2px 6px;border-radius:3px;font-size:.85em}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:600}
+  .badge.promo{background:rgba(139,92,246,.2);color:#c4b5fd}
+  .badge.gift{background:rgba(245,158,11,.2);color:#fbbf24}
+  .badge.refund{background:rgba(148,163,184,.2);color:var(--muted)}
+  .badge.ACTIVE{background:rgba(16,185,129,.2);color:var(--ok)}
+  .badge.PARTIAL{background:rgba(245,158,11,.2);color:var(--warn)}
+  .badge.USED{background:rgba(148,163,184,.2);color:var(--muted)}
+  .badge.EXPIRED{background:rgba(239,68,68,.2);color:var(--err)}
+  .btn-sm{padding:4px 10px;font-size:.8rem}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end}
+  .toolbar > div{flex:1;min-width:150px}
+  #tokenGate{max-width:420px;margin:80px auto}
+  .hint{font-size:.8rem;color:var(--muted);margin-top:4px}
+</style>
+</head><body>
+
+<div id="tokenGate" class="panel" style="display:none">
+  <h1><span class="lock">&#x1F512;</span> Admin Voucher</h1>
+  <label>Admin token</label>
+  <input id="tokenInput" type="password" autocomplete="off" placeholder="ABM_ADMIN_TOKEN">
+  <div class="hint">Il token viene memorizzato solo in questa scheda del browser (sessionStorage).</div>
+  <div style="margin-top:14px"><button onclick="saveToken()">Sblocca</button></div>
+  <div id="tokenMsg"></div>
+</div>
+
+<div id="app" style="display:none">
+  <h1><span class="lock">&#x1F512;</span> Admin Voucher <button class="secondary btn-sm" style="margin-left:auto" onclick="logout()">Logout</button></h1>
+
+  <div class="panel">
+    <h2>Crea nuovo voucher</h2>
+    <div class="row">
+      <div><label>Email destinatario *</label><input id="cEmail" type="email" placeholder="user@example.com"></div>
+      <div><label>Tipo</label>
+        <select id="cKind">
+          <option value="promo">promo (promozionale)</option>
+          <option value="gift">gift (regalo)</option>
+          <option value="refund">refund (rimborso)</option>
+        </select>
+      </div>
+    </div>
+    <div class="row3">
+      <div><label>Importo (EUR) *</label><input id="cAmount" type="number" step="0.01" min="0.01" placeholder="2.00"></div>
+      <div><label>Validità (giorni)</label><input id="cDays" type="number" min="1" value="180"></div>
+      <div><label>&nbsp;</label><button onclick="createVoucher()" style="width:100%">Crea voucher</button></div>
+    </div>
+    <div class="row">
+      <div><label>Job ID d'origine (solo refund)</label><input id="cJobId" placeholder="es. 9dmJT_I3lHSeD2Vwz0Bu1A">
+        <div class="hint">Collega il rimborso al job: evita che il rimborso automatico ne emetta un secondo. Se vuoto, viene cercato nella nota.</div>
+      </div>
+      <div><label>Order ID PayPal (opzionale)</label><input id="cOrderId" placeholder="ricavato dal job se vuoto"></div>
+    </div>
+    <label>Nota (causale interna)</label>
+    <textarea id="cNote" rows="2" placeholder="Es: campagna lancio, influencer X, compenso collaboratore..."></textarea>
+    <div id="createMsg"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Voucher esistenti</h2>
+    <div class="toolbar">
+      <div><label>Filtra email</label><input id="fEmail" placeholder="contiene..." oninput="renderList()"></div>
+      <div><label>Filtra tipo</label>
+        <select id="fKind" onchange="renderList()">
+          <option value="">tutti</option><option value="promo">promo</option><option value="gift">gift</option><option value="refund">refund</option>
+        </select>
+      </div>
+      <div><label>Stato</label>
+        <select id="fStatus" onchange="renderList()">
+          <option value="">tutti</option><option value="ACTIVE">attivi</option><option value="PARTIAL">parziali</option><option value="USED">usati</option><option value="EXPIRED">scaduti</option>
+        </select>
+      </div>
+      <div style="flex:0"><button class="secondary" onclick="loadList()">&#x21BB; Ricarica</button></div>
+    </div>
+    <div style="overflow-x:auto">
+      <table id="tbl">
+        <thead><tr>
+          <th>Codice</th><th>Tipo</th><th>Saldo / Iniziale</th><th>Email</th><th>Creato</th><th>Scade</th><th>Stato</th><th>Nota</th><th></th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="listMsg"></div>
+  </div>
+</div>
+
+<script>
+var TK=sessionStorage.getItem('abm_admin_tok')||'';
+var VOUCHERS=[];
+
+function show(el){document.getElementById(el).style.display=''}
+function hide(el){document.getElementById(el).style.display='none'}
+function msg(id,txt,cls){var e=document.getElementById(id);e.innerHTML='<div class="msg '+cls+'">'+txt+'</div>';setTimeout(function(){e.innerHTML=''},5000)}
+
+async function api(path,opts){
+  opts=opts||{};
+  opts.headers=opts.headers||{};
+  opts.headers['X-Admin-Token']=TK;
+  if(opts.body&&typeof opts.body==='object'){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(opts.body)}
+  var r=await fetch(path,opts);
+  var j=await r.json().catch(function(){return{}});
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+
+function saveToken(){
+  var t=document.getElementById('tokenInput').value.trim();
+  if(!t){document.getElementById('tokenMsg').innerHTML='<div class="msg err">Token richiesto</div>';return}
+  TK=t;sessionStorage.setItem('abm_admin_tok',t);
+  tryEnter();
+}
+
+function logout(){TK='';sessionStorage.removeItem('abm_admin_tok');location.reload()}
+
+async function tryEnter(){
+  try{
+    await loadList();
+    hide('tokenGate');show('app');
+  }catch(e){
+    TK='';sessionStorage.removeItem('abm_admin_tok');
+    show('tokenGate');hide('app');
+    document.getElementById('tokenMsg').innerHTML='<div class="msg err">Token non valido: '+e.message+'</div>';
+  }
+}
+
+async function loadList(){
+  var j=await api('/admin/api/vouchers');
+  VOUCHERS=j.vouchers||[];
+  renderList();
+}
+
+function fmtTs(ts){if(!ts)return'-';var d=new Date(ts*1000);return d.toLocaleString('it-IT',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+
+function statusOf(v){
+  var rem=(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:v.amount_eur);
+  if(rem<0.01)return'USED';
+  if((v.expires_at||0)*1000<Date.now())return'EXPIRED';
+  if(rem<(v.amount_eur||0)-0.01)return'PARTIAL';
+  return'ACTIVE';
+}
+
+function escapeHtml(s){return(s||'').replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+
+function renderList(){
+  var fe=(document.getElementById('fEmail').value||'').toLowerCase();
+  var fk=document.getElementById('fKind').value;
+  var fs=document.getElementById('fStatus').value;
+  var rows=VOUCHERS.filter(function(v){
+    if(fe&&(v.email||'').toLowerCase().indexOf(fe)<0)return false;
+    if(fk&&(v.kind||'refund')!==fk)return false;
+    if(fs&&statusOf(v)!==fs)return false;
+    return true;
+  }).sort(function(a,b){return(b.created_at||0)-(a.created_at||0)});
+  var tb=document.getElementById('tbody');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Nessun voucher</td></tr>';return}
+  tb.innerHTML=rows.map(function(v){
+    var st=statusOf(v);var k=v.kind||'refund';
+    var rem=(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:(v.amount_eur||0));
+    var tot=v.amount_eur||0;
+    var balCell='<strong>'+rem.toFixed(2)+'</strong> / '+tot.toFixed(2);
+    if(v.uses&&v.uses.length){balCell+=' <span style="color:var(--muted);font-size:.8em">('+v.uses.length+' us'+(v.uses.length===1?'o':'i')+')</span>';}
+    var revBtn=(rem<0.01)?'':('<button class="danger btn-sm" onclick="revokeVoucher(\''+v.code+'\')">Revoca</button>');
+    var mailBtn=(v.email)?('<button class="secondary btn-sm" style="margin-right:6px" onclick="notifyVoucher(\''+v.code+'\')" title="Invia email al destinatario">&#x2709; Email</button>'):'';
+    var btn=mailBtn+revBtn;
+    return '<tr>'+
+      '<td><code>'+escapeHtml(v.code)+'</code></td>'+
+      '<td><span class="badge '+k+'">'+k+'</span></td>'+
+      '<td>'+balCell+'</td>'+
+      '<td>'+escapeHtml(v.email||'')+'</td>'+
+      '<td>'+fmtTs(v.created_at)+'</td>'+
+      '<td>'+fmtTs(v.expires_at)+'</td>'+
+      '<td><span class="badge '+st+'">'+st+'</span></td>'+
+      '<td style="max-width:240px;font-size:.8em;color:var(--muted)">'+escapeHtml(v.note||'')+'</td>'+
+      '<td>'+btn+'</td>'+
+    '</tr>';
+  }).join('');
+}
+
+async function createVoucher(){
+  var email=document.getElementById('cEmail').value.trim();
+  var amount=parseFloat(document.getElementById('cAmount').value);
+  var days=parseInt(document.getElementById('cDays').value||'180');
+  var kind=document.getElementById('cKind').value;
+  var note=document.getElementById('cNote').value.trim();
+  var jobId=document.getElementById('cJobId').value.trim();
+  var orderId=document.getElementById('cOrderId').value.trim();
+  if(!email||!amount||amount<=0){msg('createMsg','Email e importo > 0 obbligatori','err');return}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){msg('createMsg','Indirizzo email non valido','err');return}
+  try{
+    var j=await api('/admin/api/vouchers',{method:'POST',body:{email:email,amount_eur:amount,days:days,kind:kind,note:note,job_id:jobId,order_id:orderId}});
+    var origin=j.origin_job_id?(' - collegato al job '+escapeHtml(j.origin_job_id)):(kind==='refund'?' - <b>nessun job collegato</b>':'');
+    msg('createMsg','Creato <code>'+j.code+'</code> per '+escapeHtml(email)+' ('+j.amount_eur.toFixed(2)+' EUR)'+origin,'ok');
+    document.getElementById('cEmail').value='';document.getElementById('cAmount').value='';document.getElementById('cNote').value='';
+    document.getElementById('cJobId').value='';document.getElementById('cOrderId').value='';
+    await loadList();
+  }catch(e){msg('createMsg','Errore: '+e.message,'err')}
+}
+
+async function notifyVoucher(code){
+  var v=VOUCHERS.filter(function(x){return x.code===code})[0];
+  var em=v?v.email:'';
+  if(!em){msg('listMsg','Voucher senza email destinatario','err');return}
+  if(!confirm('Inviare email di notifica a '+em+' per il voucher '+code+' ?'))return;
+  try{
+    var j=await api('/admin/api/vouchers/'+encodeURIComponent(code)+'/notify',{method:'POST',body:{}});
+    msg('listMsg','Email inviata a '+escapeHtml(j.email||em),'ok');
+  }catch(e){msg('listMsg','Errore invio email: '+e.message,'err')}
+}
+
+async function revokeVoucher(code){
+  if(!confirm('Revocare il voucher '+code+' ?'))return;
+  var reason=prompt('Motivo (opzionale):','')||'';
+  try{
+    await api('/admin/api/vouchers/'+encodeURIComponent(code)+'/revoke',{method:'POST',body:{reason:reason}});
+    msg('listMsg','Voucher '+code+' revocato','ok');
+    await loadList();
+  }catch(e){msg('listMsg','Errore: '+e.message,'err')}
+}
+
+// bootstrap
+if(TK){tryEnter()}else{show('tokenGate')}
+</script>
+</body></html>

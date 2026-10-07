@@ -1,0 +1,62 @@
+
+
+## Supported Formats
+
+- **EPUB**: standard ebook format with automatic chapter extraction.
+- **PDF**: document format with layout-aware text extraction and chapter detection via outline, font size, or visual TOC.
+- **TXT**: plain text with automatic paragraph and chapter splitting.
+- **ABM**: Audiobook Maker project archive (ZIP + manifest) for re-import and revision.
+
+## Languages
+
+- **UI languages**: Italian, English, French, Spanish, German, Chinese (Simplified).
+- **TTS languages**: 50+ including Italian, English, French, Spanish, German, Chinese, Portuguese, Russian, Japanese, Korean, Arabic, Hindi, Dutch, Polish, Turkish, Swedish, Greek, Hebrew, Thai, Vietnamese, and more.
+
+## Application (homepage)
+
+- [Audiobook Maker — English](__P0__/en/): Main app, English UI.
+- [Audiobook Maker — Italian](__P0__/it/): App in italiano.
+- [Audiobook Maker — French](__P0__/fr/): App en français.
+- [Audiobook Maker — Spanish](__P0__/es/): App en español.
+- [Audiobook Maker — German](__P0__/de/): App auf Deutsch.
+- [Audiobook Maker — Chinese](__P0__/zh/): 中文界面.
+- [Audiobook Maker — Hindi](__P0__/hi/): हिन्दी इंटरफ़ेस.
+
+## Guides
+
+- [How to Convert EPUB to Audiobook](__P0__/guide/epub-to-audiobook/): Step-by-step EPUB-to-audiobook conversion tutorial.
+- [M4B Format Guide](__P0__/guide/m4b-format/): What M4B is, M4B vs MP3, creating M4B with embedded chapters.
+- [Text-to-Speech for Audiobooks](__P0__/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
+- [Publish Audiobook as Podcast](__P0__/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
+- [Gemini TTS Guide](__P0__/guide/gemini-tts/): All Gemini TTS voices, supported languages, and prompting guide for the PREMIUM neural voices.
+- [Where to Find Free Ebooks](__P0__/guide/free-ebooks/): The best sites to download free public-domain and open-license ebooks, and how to turn them into audiobooks.
+- [Create an Audiobook in Your Own Voice](__P0__/guide/voice-cloning-audiobook/): How to clone your voice from a 25-second sample, approve two test clips and narrate any EPUB, PDF or TXT with it; sharing with other devices, refund voucher, privacy.
+- [Frequently Asked Questions](__P0__/faq/en/): Comprehensive FAQ covering conversion, formats, voices, AI optimization, and PREMIUM voice options.
+
+## How it works
+
+1. Upload an EPUB, PDF or TXT file.
+2. Choose a neural TTS voice and language (50+ languages).
+3. Optionally enable AI text optimization for more natural narration (acronym expansion, number-to-word, sentence splitting, punctuation cleanup).
+4. Select chapters or convert the entire book.
+5. Generate audio — download MP3, M4B (with chapters), or get a podcast RSS feed.
+6. For long books, register an email to be notified when generation completes.
+
+## Comparison
+
+- vs **Speechify**: Audiobook Maker is fully free with no subscription, no character limits, supports M4B output and podcast feeds.
+- vs **ElevenLabs**: Audiobook Maker uses Microsoft Edge TTS (free, unlimited) instead of paid ElevenLabs API. No voice cloning but no usage cost.
+- vs **Play.ht**: No subscription, no watermarks, supports chapter-based audiobook output (M4B).
+- vs **NaturalReader**: Free without account, server-side processing, batch chapter generation.
+
+## Resources
+
+- [GitHub repository](https://github.com/gfrangiamone/audiobook-maker): Source code, AGPL-3.0.
+- [AlternativeTo listing](https://alternativeto.net/software/audiobook-maker/): Community reviews and comparisons.
+- [Sitemap](__P0__/sitemap.xml): Full URL index.
+- [Privacy & data handling](__P0__/en/#privacy): Data retention, cookies, consent.
+__P1__
+## Contact
+
+- Author: Giuseppe Frangiamone
+- Project: open-source community project, contributions via GitHub issues/PRs.

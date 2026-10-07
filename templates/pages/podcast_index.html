@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="__P0__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__P1__ - __P2__</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f7fa;color:#333;line-height:1.6}
+.hero{background:linear-gradient(135deg,#1a3c5e 0%,#2c7bb6 100%);color:#fff;padding:50px 20px 40px;text-align:center}
+.hero h1{font-size:1.8rem;margin:16px 0 4px}
+.hero .author{opacity:.8;font-size:1rem}
+.container{max-width:680px;margin:0 auto;padding:20px}
+.feed-box{background:#fff;border-radius:12px;padding:24px;margin:-30px auto 24px;box-shadow:0 2px 12px rgba(0,0,0,.08);position:relative;z-index:1}
+.feed-box h2{font-size:1.1rem;margin-bottom:8px;color:#1a3c5e}
+.feed-url{display:flex;gap:8px;margin:12px 0}
+.feed-url input{flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:8px;font-family:monospace;font-size:.85rem;background:#f8f8f8;color:#333}
+.feed-url button{padding:10px 20px;background:#2c7bb6;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;font-size:.85rem;white-space:nowrap;transition:background .2s}
+.feed-url button:hover{background:#1a5a8a}
+.instructions{font-size:.88rem;color:#666;margin-top:8px}
+.episodes{background:#fff;border-radius:12px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:24px}
+.episodes h2{font-size:1.1rem;margin-bottom:16px;color:#1a3c5e}
+.episodes table{width:100%;border-collapse:collapse}
+.footer{text-align:center;color:#aaa;font-size:.8rem;padding:20px}
+</style>
+</head>
+<body>
+<div class="hero">
+__P3__
+<h1>__P1__</h1>
+__P4__
+</div>
+<div class="container">
+<div class="feed-box">
+<h2>&#x1F399;&#xFE0F; __P5__</h2>
+<div class="feed-url">
+<input type="text" id="feedUrl" value="__P6__" readonly onclick="this.select()">
+<button onclick="copyFeed()">__P7__</button>
+</div>
+<div class="instructions">__P8__</div>
+</div>
+<div class="episodes">
+<h2>__P9__ (__P10__)</h2>
+<table>__P11__</table>
+</div>
+<div class="footer">__P12__</div>
+</div>
+<script>
+function copyFeed(){
+  const inp=document.getElementById('feedUrl');
+  navigator.clipboard.writeText(inp.value).then(()=>{
+    const btn=document.querySelector('.feed-url button');
+    btn.textContent='__P13__';
+    setTimeout(()=>btn.textContent='__P7__',2000);
+  });
+}
+// Update feed URL with full path on load
+window.addEventListener('load',()=>{
+  const inp=document.getElementById('feedUrl');
+  const base=window.location.href.replace(/\/[^\/]*$/,'/');
+  inp.value=base+'__P6__';
+});
+</script>
+</body>
+</html>

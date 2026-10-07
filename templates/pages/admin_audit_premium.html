@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin - Audit Premium Services</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1400px;margin:0 auto}
+  h1{margin:0 0 20px;font-size:1.5rem}
+  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px}
+  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
+  .tab-bar{display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #334155}
+  .tab-btn{padding:10px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent;margin-bottom:-2px}
+  .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+  @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}}
+  label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+  input,select{width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.9rem}
+  button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}
+  button.secondary{background:#334155}
+  table{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:12px}
+  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+  td{padding:6px 8px;border-bottom:1px solid #1e293b}
+  .agg-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}
+  .agg-grid-6{grid-template-columns:repeat(6,1fr)}
+  @media(max-width:900px){.agg-grid,.agg-grid-6{grid-template-columns:1fr 1fr}}
+  .agg-box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px;text-align:center}
+  .agg-label{font-size:.75rem;color:var(--muted);text-transform:uppercase}
+  .agg-value{font-size:1.3rem;font-weight:600;color:var(--ink);margin-top:4px}
+  .delta-positive{color:var(--ok)}
+  .delta-negative{color:var(--err)}
+  .empty-msg{text-align:center;color:var(--muted);padding:20px}
+  pre{background:#0f172a;padding:12px;border-radius:6px;overflow:auto;font-size:.8rem}
+  tr.row-refund{background:rgba(239,68,68,0.10)}
+  tr.row-refund td{border-bottom-color:rgba(239,68,68,0.35)}
+  tr.row-preflight{background:rgba(37,99,235,0.10)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+  .badge-ok{background:rgba(16,185,129,.18);color:#10b981}
+  .badge-err{background:rgba(239,68,68,.18);color:#ef4444}
+  .badge-warn{background:rgba(245,158,11,.18);color:#f59e0b}
+  .badge-info{background:rgba(59,130,246,.18);color:#60a5fa}
+  .badge-muted{background:rgba(148,163,184,.18);color:var(--muted)}
+  .badge-live{background:rgba(139,92,246,.22);color:var(--accent);animation:livePulse 1.8s ease-in-out infinite}
+  @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.55}}
+  tr.row-live{background:rgba(139,92,246,.10)}
+  tr.row-live td{border-bottom-color:rgba(139,92,246,.30)}
+  .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
+  .toggle-row input{width:auto}
+  .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(139,92,246,.18);color:var(--accent);margin-left:6px}
+</style></head>
+<body>
+<div style="margin-bottom:16px">
+  <div style="text-align:right;margin-bottom:8px">
+    <a href="/admin/log-activity" id="backToLog" style="font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <h1 style="margin:0">Admin - Audit Premium Services <span id="periodLabel" style="font-size:.85rem;color:var(--muted);font-weight:500"></span></h1>
+    <div title="Somma dei margini netti dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
+      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Margine netto totale</div>
+      <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
+    </div>
+  </div>
+  <label class="toggle-row" style="margin:12px 0 0;cursor:pointer"
+         title="Nasconde in tutte le tab le righe senza addebito all'utente (voci standard, ottimizzazioni sotto la soglia gratuita, voci campionate omaggio). Un job rimborsato resta visibile: l'addebito c'e' stato. Anche gli aggregati escludono le righe nascoste.">
+    <input type="checkbox" id="hideZeroAmount">
+    <span>Nascondi transazioni a importo zero</span>
+  </label>
+</div>
+
+<div class="panel" id="killSwitchPanel" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
+  <div style="flex:1;min-width:280px">
+    <h2 style="margin:0 0 4px">Voci PREMIUM</h2>
+    <div id="ksStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
+    <div id="ksReason" style="font-size:.8rem;color:var(--muted);margin-top:4px;display:none"></div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <input type="text" id="ksReasonInput" placeholder="Motivo (facoltativo)"
+           maxlength="200" style="width:240px;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.85rem">
+    <button type="button" id="ksToggleBtn" disabled>...</button>
+  </div>
+</div>
+
+<div class="panel" id="ttsBackendPanel">
+  <h3 style="margin:0 0 4px">Backend TTS</h3>
+  <div id="tbStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
+  <div id="tbDetail" style="font-size:.85rem;color:var(--muted);display:none;margin-top:4px"></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+    <button type="button" id="tbResetBtn" disabled>...</button>
+    <button type="button" id="tbProbeBtn" disabled title="Esegue subito una sonda di rientro invece di aspettare l'appuntamento automatico: sintetizza una parola su Cloudflare e butta l'audio. Se Cloudflare risponde, il rientro avviene da solo; se fallisce, l'appuntamento automatico resta dov'e'.">Sonda ora</button>
+    <button type="button" id="tbTopupBtn" disabled title="Da premere dopo aver ricaricato il credito Cloudflare e aggiornato ABM_CF_CREDIT_BALANCE_USD: azzera la spesa accumulata e riarma il pre-allarme per il ciclo successivo.">Ho ricaricato il credito</button>
+  </div>
+  <div id="gaBox" style="margin-top:12px;font-size:.9rem"></div>
+</div>
+
+<div class="tab-bar">
+  <button type="button" class="tab-btn active" data-tab="tts">Audit TTS</button>
+  <button type="button" class="tab-btn" data-tab="translations">Audit Traduzioni</button>
+  <button type="button" class="tab-btn" data-tab="optimization">Audit AI Optimization</button>
+  <button type="button" class="tab-btn" data-tab="voices">Voci campionate</button>
+  <button type="button" class="tab-btn" data-tab="accounts">Utenti registrati</button>
+</div>
+
+<div class="tab-panel active" id="tab_tts">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="tts_auditModelFilter">Modello</label>
+        <select id="tts_auditModelFilter">
+          <option value="all">Tutti</option>
+          <option value="flash31">Gemini 3.1 Flash TTS</option>
+          <option value="flash38">Gemini 3.8 (PREMIUM+)</option>
+          <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
+          <option value="v2">VoxCPM2 (PREMIUM)</option>
+        </select>
+      </div>
+      <div>
+        <label for="tts_auditLangFilter">Lingua</label>
+        <select id="tts_auditLangFilter">
+          <option value="all">Tutte</option>
+        </select>
+      </div>
+      <div>
+        <label for="tts_auditOutcomeFilter">Esito</label>
+        <select id="tts_auditOutcomeFilter">
+          <option value="all">Tutti</option>
+          <option value="running">In corso</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito generico (rimborsato)</option>
+          <option value="failed_quota_refunded">Fallito quota (rimborsato)</option>
+          <option value="failed_budget_refunded">Fallito budget (rimborsato)</option>
+          <option value="failed_quality_refunded">Fallito qualit&agrave; (rimborsato)</option>
+          <option value="failed_quality_free">Fallito qualit&agrave; (gratuito, nessun rimborso)</option>
+          <option value="failed_no_output_refunded">Fallito nessun output (rimborsato)</option>
+          <option value="failed_all_chunks_refunded">Fallito tutti i segmenti (rimborsato)</option>
+          <option value="preflight_blocked_refunded">Bloccato preventivamente</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
+          <option value="cancelled_partial">Annullato (parziale)</option>
+        </select>
+      </div>
+      <div>
+        <label for="tts_auditDateFrom">Dal</label>
+        <input type="date" id="tts_auditDateFrom">
+      </div>
+      <div>
+        <label for="tts_auditDateTo">Al</label>
+        <input type="date" id="tts_auditDateTo">
+      </div>
+    </div>
+    <button type="button" id="tts_auditRefreshBtn">Aggiorna</button>
+    <button type="button" id="tts_auditRecalcBtn" class="btn">Calcola parametri suggeriti</button>
+    <pre id="tts_auditRecalcOutput" class="recalc-output" style="display:none;white-space:pre-wrap;margin-top:10px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem;line-height:1.5"></pre>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6" id="tts_auditAggregates">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="tts_aggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="tts_aggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label">Costo provider TTS</div><div class="agg-value" id="tts_aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi (somma dei prezzi pagati) - Costo provider TTS. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="tts_aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo - fee PayPal totali. Per i job pagati con voucher la fee e zero (PayPal non coinvolto), quindi margine netto = margine lordo.">Margine netto</div><div class="agg-value" id="tts_aggNetMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % medio = Margine netto totale / Costo provider TTS totale x 100. E il ricarico netto medio pesato sul costo del provider (non la media aritmetica delle percentuali dei singoli job).">Margine % medio</div><div class="agg-value" id="tts_aggDelta">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Record (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
+        <th>Char</th><th>Sec audio</th><th title="Costo del provider TTS per questo job">Costo TTS</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine - fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue x % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo provider TTS - markup applicato">Margine %</th><th>Esito</th>
+      </tr></thead>
+      <tbody id="tts_auditRecordsBody">
+        <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_translations">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="tr_auditModelFilter">Backend / Modello</label>
+        <select id="tr_auditModelFilter"><option value="all">Tutti</option></select>
+      </div>
+      <div>
+        <label for="tr_auditSrcFilter">Lingua origine</label>
+        <select id="tr_auditSrcFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="tr_auditDstFilter">Lingua destinazione</label>
+        <select id="tr_auditDstFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="tr_auditOutcomeFilter">Esito</label>
+        <select id="tr_auditOutcomeFilter">
+          <option value="all">Tutti</option>
+          <option value="running">In corso</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito (rimborsato)</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
+        </select>
+      </div>
+      <div>
+        <label for="tr_auditDateFrom">Dal</label>
+        <input type="date" id="tr_auditDateFrom">
+      </div>
+      <div>
+        <label for="tr_auditDateTo">Al</label>
+        <input type="date" id="tr_auditDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="tr_auditRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6" id="tr_auditAggregates">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="tr_aggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="tr_aggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Costo provider LLM (token reali)">Costo LLM</div><div class="agg-value" id="tr_aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi - Costo LLM (include fee PayPal)">Margine</div><div class="agg-value" id="tr_aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine - fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="tr_aggNetMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="tr_aggDelta">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Record (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Modello</th><th>Origine</th><th>Dest.</th>
+        <th>Char</th><th title="Token prompt + completion (reali o stimati)">Token</th>
+        <th title="Costo provider LLM">Costo LLM</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo LLM (lordo, include fee PayPal)">Margine &euro;</th>
+        <th title="Margine netto = Margine - fee PayPal. Zero per voucher.">Margine netto &euro;</th>
+        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
+      </tr></thead>
+      <tbody id="tr_auditRecordsBody">
+        <tr><td colspan="13" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_optimization">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="optLangFilter">Lingua</label>
+        <select id="optLangFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="optOutcomeFilter">Esito</label>
+        <select id="optOutcomeFilter">
+          <option value="all">Tutti</option>
+          <option value="running">In corso</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito (rimborsato)</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
+        </select>
+      </div>
+      <div>
+        <label for="optDateFrom">Dal</label>
+        <input type="date" id="optDateFrom">
+      </div>
+      <div>
+        <label for="optDateTo">Al</label>
+        <input type="date" id="optDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="optRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="optAggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="optAggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label">Costo provider LLM</div><div class="agg-value" id="optAggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi - Costo provider LLM. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="optAggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo - fee PayPal (fissa ripartita proporzionalmente sui pagamenti combinati; zero per voucher).">Margine netto</div><div class="agg-value" id="optAggNet">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % = Margine netto / Costo provider LLM x 100.">Margine %</div><div class="agg-value" id="optAggPct">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Record (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Lingua</th><th>Char</th><th>Token</th>
+        <th title="Prezzo pagato dall'utente per l'ottimizzazione AI">Prezzo &euro;</th>
+        <th title="Costo del provider LLM per questo job">Costo LLM &euro;</th>
+        <th title="Margine = Prezzo - Costo LLM (lordo)">Margine &euro;</th>
+        <th title="Margine netto = Margine - fee PayPal">Margine netto &euro;</th>
+        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
+      </tr></thead>
+      <tbody id="optRecordsBody">
+        <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_voices">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="vcaStateFilter">Stato</label>
+        <select id="vcaStateFilter">
+          <option value="paid">Pagate (tutte)</option>
+          <option value="ready">Attive</option>
+          <option value="demos">In demo</option>
+          <option value="refunded">Rimborsate</option>
+          <option value="expired">Scadute</option>
+          <option value="deleted">Cancellate</option>
+          <option value="drafts">Bozze (campioni non confermati)</option>
+          <option value="all">Tutte, bozze comprese</option>
+        </select>
+      </div>
+      <div>
+        <label for="vcaLangFilter">Lingua</label>
+        <select id="vcaLangFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="vcaDateFrom" title="Data di pagamento (per le bozze: data di creazione)">Pagata dal</label>
+        <input type="date" id="vcaDateFrom">
+      </div>
+      <div>
+        <label for="vcaDateTo">Al</label>
+        <input type="date" id="vcaDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="vcaRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6">
+      <div class="agg-box"><div class="agg-label">Voci</div><div class="agg-value" id="vcaAggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Incassato meno i rimborsi (voucher o riaccredito).">Ricavi</div><div class="agg-value" id="vcaAggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="GPU delle demo (ritentativi compresi). La generazione dei libri e' nella tab Audit TTS.">Costo GPU demo</div><div class="agg-value" id="vcaAggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Ricavi - Costo GPU demo - fee PayPal (zero per voucher e voci gratuite).">Margine netto</div><div class="agg-value" id="vcaAggNet">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Rimborsi riconosciuti sulle voci del periodo.">Rimborsi</div><div class="agg-value" id="vcaAggRefund">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Libri completati con le voci del periodo.">Libri generati</div><div class="agg-value" id="vcaAggBooks">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Voci (ultime 200)</h2>
+    <table>
+      <thead><tr>
+        <th title="Data di pagamento (bozze: creazione)">Data</th><th>Voce</th><th>Lingua</th><th>Proprietario</th>
+        <th>Pagamento</th>
+        <th title="Incassato meno i rimborsi">Ricavo &euro;</th>
+        <th title="GPU delle demo">Costo GPU &euro;</th>
+        <th title="Margine = Ricavo - Costo GPU (lordo)">Margine &euro;</th>
+        <th title="Margine netto = Margine - fee PayPal">Margine netto &euro;</th>
+        <th title="Dispositivi che la usano (passa sopra per i nomi)">Dispositivi</th>
+        <th>Attivazione</th><th>Scadenza</th>
+        <th title="Libri completati con questa voce">Libri</th><th>Stato</th>
+        <th title="Motivo scritto dall'utente che ha rifiutato la voce, tradotto in italiano (passa sopra per l'originale)">Motivo rifiuto</th>
+      </tr></thead>
+      <tbody id="vcaRecordsBody">
+        <tr><td colspan="15" class="empty-msg">Premi "Aggiorna" per caricare le voci.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_accounts">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="accStateFilter">Stato</label>
+        <select id="accStateFilter">
+          <option value="all">Tutti</option>
+          <option value="active">Attivi (sessione aperta)</option>
+          <option value="dormant">Senza sessione attiva</option>
+          <option value="never">Mai entrati</option>
+          <option value="deleted">Cancellati</option>
+        </select>
+      </div>
+      <div>
+        <label for="accQuery" title="Gli account cancellati non hanno piu' l'email: si cercano per id.">Email o id</label>
+        <input type="text" id="accQuery" placeholder="parte dell'indirizzo">
+      </div>
+      <div>
+        <label for="accDateFrom">Registrati dal</label>
+        <input type="date" id="accDateFrom">
+      </div>
+      <div>
+        <label for="accDateTo">Al</label>
+        <input type="date" id="accDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="accRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid">
+      <div class="agg-box"><div class="agg-label" title="Tutti gli account mai registrati, cancellati compresi.">Account totali</div><div class="agg-value" id="accAggTotal">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Account vivi con almeno una sessione non scaduta ne' revocata.">Con sessione attiva</div><div class="agg-value" id="accAggOnline">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Registrazione avviata ma nessun accesso completato.">Mai entrati</div><div class="agg-value" id="accAggNever">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Cancellazione self-service: email sostituita da un segnaposto, storico rimosso.">Cancellati</div><div class="agg-value" id="accAggDeleted">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Registrazioni negli ultimi 30 giorni.">Nuovi 30 gg</div><div class="agg-value" id="accAggNew">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Utenti (ultimi 500)</h2>
+    <table>
+      <thead><tr>
+        <th title="Data della prima registrazione">Registrato</th>
+        <th>Email</th><th>Lingua</th><th>Piano</th>
+        <th title="Ultimo accesso completato (magic link o codice)">Ultimo accesso</th>
+        <th title="Ultima attivita' vista su una sessione">Ultima attivita'</th>
+        <th title="Sessioni non scadute ne' revocate">Sessioni</th>
+        <th title="Job nello storico dell'area personale">Job</th>
+        <th title="Somma degli importi pagati sui job dello storico">Speso &euro;</th>
+        <th>Stato</th>
+        <th title="Data della cancellazione self-service">Cancellato</th>
+      </tr></thead>
+      <tbody id="accRecordsBody">
+        <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare gli utenti.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
+                      localStorage.getItem('abm_admin_token') || '';
+  const $ = (id) => document.getElementById(id);
+
+  function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
+  // Filtro "importo zero": vale per tutte e quattro le tab e viaggia al
+  // server (hide_zero=1), cosi' anche gli aggregati escludono le righe
+  // nascoste. La scelta resta fra una visita e l'altra.
+  const HIDE_ZERO_KEY = "abm_audit_hide_zero";
+  function hideZeroOn(){
+    const el = $("hideZeroAmount");
+    return !!(el && el.checked);
+  }
+  function applyHideZero(params){
+    if (hideZeroOn()) params.set("hide_zero", "1");
+    return params;
+  }
+  function fmtPct(n){
+    const v = Number(n)||0;
+    const cls = v >= 0 ? "delta-positive" : "delta-negative";
+    return `<span class="${cls}">${v.toFixed(2)}%</span>`;
+  }
+  // Le tabelle audit chiedono al server le prime `limit` righe piu' RECENTI.
+  // Se il filtro ne seleziona di piu', dirlo esplicitamente: una tabella
+  // troncata in silenzio si legge come "questo e' tutto".
+  function auditTruncNote(shown, total, colspan){
+    if (!total || total <= shown) return "";
+    return `<tr><td colspan="${colspan}" class="empty-msg">`
+      + `Mostrati i ${shown} record piu' recenti su ${total}. `
+      + `Restringi l'intervallo di date per vedere gli altri.</td></tr>`;
+  }
+  const LANG_NAMES = {
+    "it":"Italiano","en":"Inglese","fr":"Francese","es":"Spagnolo",
+    "de":"Tedesco","pt":"Portoghese","ru":"Russo","ja":"Giapponese",
+    "ko":"Coreano","zh":"Cinese","hi":"Hindi","ar":"Arabo",
+    "id":"Indonesiano","nl":"Olandese","pl":"Polacco","th":"Thai",
+    "tr":"Turco","vi":"Vietnamita","ro":"Rumeno","uk":"Ucraino",
+    "bn":"Bengalese","mr":"Marathi","ta":"Tamil","te":"Telugu",
+  };
+  function langLabel(code){
+    const c = (code||"").toLowerCase();
+    return LANG_NAMES[c] ? `${LANG_NAMES[c]} (${c})` : c;
+  }
+  // Chiave modello persistita -> etichetta di colonna. "v2" e' la chiave
+  // storica del catalogo VoxCPM (resta nel JSONL e nei filtri), ma a video
+  // il modello si chiama voxcpm2, sia per le voci di catalogo sia campionate.
+  const MODEL_DISPLAY = {"v2": "voxcpm2"};
+  function modelLabel(k){ return MODEL_DISPLAY[k] || k; }
+  function esc(s){
+    const d = document.createElement('div');
+    d.textContent = (s == null ? "" : String(s));
+    return d.innerHTML;
+  }
+  // I timestamp ISO che arrivano dal server sono SEMPRE in UTC
+  // (`tts_backend_state._now()`, `gemini_cost_audit`): stamparli grezzi
+  // togliendo la "Z" li faceva leggere all'admin come ora locale, cioe' due
+  // ore indietro in CEST. Il 21/09/2026 il pannello Backend TTS ha mostrato
+  // «Dal 11:07:58» per un failover scattato alle 13:07:58, facendolo
+  // sembrare vecchio di due ore mentre era appena avvenuto, e contraddiceva
+  // i log dell'AI Gateway (richieste riuscite fino alle 13:05).
+  //
+  // Un ISO SENZA designatore di fuso viene interpretato da JS come ora
+  // LOCALE: prima di parsare si aggiunge "Z", altrimenti un record vecchio
+  // scritto naive verrebbe spostato al contrario. Il formato di uscita resta
+  // «YYYY-MM-DD HH:MM:SS» (costruito a mano, non da toLocaleString, che con
+  // 'it-IT' darebbe «21/09/2026, 13:07:58»): cambia il valore, non la forma
+  // delle colonne. L'ordinamento delle tabelle usa `r.ts` grezzo, non questa
+  // stringa, e non e' toccato.
+  function fmtIso(s){
+    const raw = (s == null ? "" : String(s));
+    if (!raw) return "";
+    const norm = /(Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw : raw + "Z";
+    const d = new Date(norm);
+    if (isNaN(d.getTime())) return raw.slice(0, 19).replace("T", " ");
+    const p = n => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+           " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function fillSelect(sel, values, labeler){
+    if (!sel) return;
+    const prev = sel.value;
+    Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o => o.remove());
+    for (const v of values) {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = labeler ? labeler(v) : v;
+      sel.appendChild(opt);
+    }
+    if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+  }
+
+  // ===================== Tab TTS =====================
+  const TTS_OUTCOME_BADGE = {
+    "running":                    ["badge-live", "In corso"],
+    "completed":                  ["badge-ok",   "Completato"],
+    "failed_refunded":            ["badge-err",  "Fallito (rimborso)"],
+    "failed_quota_refunded":      ["badge-err",  "Quota esaurita"],
+    "failed_budget_refunded":     ["badge-err",  "Budget superato"],
+    "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
+    "failed_quality_free":        ["badge-warn", "Qualità ins. (free)"],
+    "failed_no_output_refunded":  ["badge-err",  "Nessun output"],
+    "failed_all_chunks_refunded": ["badge-err",  "Tutti segmenti falliti"],
+    "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
+    "cancelled_refunded":         ["badge-muted","Annullato"],
+    "cancelled_partial":          ["badge-muted","Annullato (parz.)"],
+    "cancelled":                  ["badge-muted","Annullato"],
+  };
+  async function ttsLoadLanguages(){
+    let codes = [];
+    try {
+      const r = await fetch("/admin/api/gemini_cost_audit/languages",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (r.ok) {
+        const d = await r.json();
+        codes = Array.isArray(d.languages) ? d.languages : [];
+      }
+    } catch(e) {}
+    codes = codes.slice().sort((a,b) => langLabel(a).localeCompare(langLabel(b), "it"));
+    fillSelect($("tts_auditLangFilter"), codes, langLabel);
+  }
+  // ---- Totale margine netto: somma dei servizi premium ----
+  // Ogni tab, dopo il suo fetch, deposita qui il proprio net_margin_eur; il
+  // box in alto a destra mostra la somma dei valori gia' caricati.
+  const netMarginByService = { tts: null, translations: null, optimization: null, voices: null };
+  function updateTotalNetMargin(){
+    const el = $("totalNetMarginValue");
+    if (!el) return;
+    const loaded = [netMarginByService.tts, netMarginByService.translations,
+                    netMarginByService.optimization, netMarginByService.voices].filter(v => v != null);
+    if (!loaded.length) { el.textContent = "-"; el.style.color = ""; return; }
+    const total = loaded.reduce((s, v) => s + Number(v || 0), 0);
+    el.textContent = fmtEur(total);
+    el.style.color = total >= 0 ? "var(--ok)" : "var(--err)";
+  }
+
+  async function ttsFetch(){
+    const params = new URLSearchParams();
+    const m = $("tts_auditModelFilter").value;
+    const l = $("tts_auditLangFilter").value;
+    const o = $("tts_auditOutcomeFilter").value;
+    const df = $("tts_auditDateFrom").value;
+    const dt = $("tts_auditDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (l && l !== "all") params.set("language", l);
+    if (o && o !== "all") params.set("outcome", o);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "200");
+    applyHideZero(params);
+    const r = await fetch("/admin/api/gemini_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
+    const d = await r.json();
+    ttsRenderAggregates(d.aggregates || {});
+    ttsRenderRecords(d.records || [], d.count || 0);
+  }
+  function ttsRenderAggregates(agg){
+    $("tts_aggCount").textContent = agg.count ?? 0;
+    $("tts_aggRevenue").textContent = fmtEur(agg.revenue_eur);
+    $("tts_aggCost").textContent = fmtEur(agg.google_cost_eur);
+    $("tts_aggMargin").textContent = fmtEur(agg.margin_eur);
+    const netMargin = (agg.net_margin_eur != null) ? Number(agg.net_margin_eur)
+                      : ((Number(agg.margin_eur)||0) - (Number(agg.paypal_fees_eur)||0));
+    const netEl = $("tts_aggNetMargin");
+    if (netEl) {
+      netEl.textContent = fmtEur(netMargin);
+      netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
+    }
+    netMarginByService.tts = netMargin; updateTotalNetMargin();
+    const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
+      ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
+      : 0;
+    $("tts_aggDelta").innerHTML = fmtPct(_margPctAvg);
+  }
+  function ttsRenderRecords(recs, total){
+    const tbody = $("tts_auditRecordsBody");
+    if (!recs.length) {
+      tbody.innerHTML = '<tr><td colspan="12" class="empty-msg">Nessun record trovato.</td></tr>';
+      return;
+    }
+    recs = recs.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tbody.innerHTML = recs.map(r => {
+      const ts = esc(fmtIso(r.ts));
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      const gCost = Number(r.google_cost_eur_actual || 0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(gCost - vat)} + IVA ${fmtEur(vat)}` : "";
+      const margEur = revenue - gCost;
+      const fee = Number(r._paypal_fee_eur || 0);
+      const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur)
+                                                  : (margEur - fee);
+      const method = (r.payment_method || "").toLowerCase();
+      const netTip = method === "paypal"
+        ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
+        : (method === "voucher" ? "Voucher: nessuna fee PayPal"
+            : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
+      const margPct = gCost > 0 ? (netMarg / gCost * 100) : 0;
+      const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
+      const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
+      const isLive = !!r._live;
+      const rowCls = isLive ? "row-live" : "";
+      const [bcls, blab] = TTS_OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
+      const rerunBadge = r._rerun
+        ? ' <span class="badge badge-warn" title="Job ri-lanciato (recovery): esiti precedenti dello stesso job_id nelle righe storiche">re-run</span>'
+        : "";
+      const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
+        ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
+        : "";
+      return `<tr class="${rowCls}">
+        <td>${ts}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td>${esc(modelLabel(r.model_key))}</td>
+        <td>${esc(langLabel(r.language))}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
+        <td title="${esc(costTip)}">${fmtEur(gCost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
+        <td${cancelTip}>${fmtEur(revenue)}</td>
+        <td class="${dCls}">${fmtEur(margEur)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
+        <td class="${dCls}">${margPct.toFixed(2)}%</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 12);
+  }
+  $("tts_auditRefreshBtn").addEventListener("click", ttsFetch);
+  async function ttsRecalcParams(){
+    const out = $("tts_auditRecalcOutput");
+    out.style.display = "block";
+    out.textContent = "Caricamento...";
+    try {
+      const r = await fetch("/admin/api/gemini_cost_audit/recalc-params",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) { out.textContent = "Errore: " + r.status; return; }
+      const d = await r.json();
+      const sugg = d.suggestions || [];
+      out.textContent = sugg.length ? sugg.join("\n")
+                                    : "Nessun suggerimento (campioni insufficienti).";
+    } catch (e) {
+      out.textContent = "Errore: " + e;
+    }
+  }
+  $("tts_auditRecalcBtn").addEventListener("click", ttsRecalcParams);
+
+  // ---- Kill-switch voci PREMIUM (solo TTS) ----
+  async function ksRefresh(){
+    try {
+      const r = await fetch("/admin/api/gemini_kill_switch",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) { $("ksStatus").textContent = "Errore caricamento stato (" + r.status + ")"; return; }
+      const s = await r.json();
+      ksApply(s);
+    } catch (e) {
+      $("ksStatus").textContent = "Errore: " + e;
+    }
+  }
+  function ksApply(s){
+    const btn = $("ksToggleBtn");
+    const status = $("ksStatus");
+    const reasonRow = $("ksReason");
+    btn.disabled = false;
+    if (!s.capability_ok && !s.disabled) {
+      status.innerHTML = '<span style="color:var(--muted)">Gemini TTS non configurato (nessun backend valido).</span>';
+      btn.textContent = "Non disponibile";
+      btn.disabled = true;
+      reasonRow.style.display = "none";
+      return;
+    }
+    if (s.disabled) {
+      status.innerHTML = '<span style="color:var(--err);font-weight:600">DISATTIVO</span> · pannello voci PREMIUM nascosto agli utenti';
+      btn.textContent = "Riattiva voci PREMIUM";
+      btn.style.background = "var(--ok)";
+      if (s.reason) {
+        reasonRow.textContent = "Motivo: " + s.reason + (s.updated_at ? " (" + fmtIso(s.updated_at) + ")" : "");
+        reasonRow.style.display = "block";
+      } else {
+        reasonRow.style.display = "none";
+      }
+    } else {
+      status.innerHTML = '<span style="color:var(--ok);font-weight:600">ATTIVO</span> · voci PREMIUM offerte agli utenti';
+      btn.textContent = "Disattiva voci PREMIUM";
+      btn.style.background = "var(--err)";
+      reasonRow.style.display = "none";
+    }
+    btn.dataset.targetDisabled = s.disabled ? "0" : "1";
+  }
+  async function ksToggle(){
+    const btn = $("ksToggleBtn");
+    const target = btn.dataset.targetDisabled === "1";
+    const reason = $("ksReasonInput").value.trim();
+    if (target && !confirm("Disattivare il pannello Voci PREMIUM per tutti gli utenti?\n\nLe stime e i pagamenti Premium risponderanno 503 finché non viene riattivato.")) {
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/gemini_kill_switch", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({disabled: target, reason: reason}),
+      });
+      if (!r.ok) { alert("Errore: " + r.status); await ksRefresh(); return; }
+      const s = await r.json();
+      if (s.persisted === false) {
+        alert("ATTENZIONE: stato kill-switch NON salvato su disco (disco pieno?).\n" +
+              "Vale solo fino al prossimo restart: liberare spazio e ripetere l'operazione.");
+      }
+      ksApply(s);
+      if (!target) $("ksReasonInput").value = "";
+    } catch (e) {
+      alert("Errore: " + e);
+      await ksRefresh();
+    }
+  }
+  $("ksToggleBtn").addEventListener("click", ksToggle);
+
+  // ---- Backend TTS: stato del failover Cloudflare/Vertex e rientro manuale ----
+  async function tbRefresh(){
+    try {
+      const r = await fetch("/admin/api/tts_backend",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) { $("tbStatus").textContent = "Errore caricamento stato (" + r.status + ")"; return null; }
+      const s = await r.json();
+      tbApply(s);
+      return s;
+    } catch (e) {
+      $("tbStatus").textContent = "Errore: " + e;
+      return null;
+    }
+  }
+  // Con la ricarica automatica attiva sul pannello del fornitore il residuo
+  // stimato non descrive piu' nulla di azionabile: al suo posto si mostra la
+  // spesa cumulata, l'unica meta' del conto che significa ancora qualcosa.
+  // Una sola definizione per entrambi i rami di tbApply: due copie divergono
+  // al primo ritocco.
+  function tbCreditLine(s){
+    if (s.credit_check_enabled === false) {
+      return "spesa Cloudflare: $" + esc(s.credit_spent_usd) +
+             " (&asymp; " + esc(s.credit_spent_eur) + " &euro;)" +
+             ' <span style="color:var(--muted)">&middot; controllo credito disattivato</span>';
+    }
+    return "credito residuo (stima): $" + esc(s.credit_left_usd) +
+           " (&asymp; " + esc(s.credit_left_eur) + " &euro;)";
+  }
+  // Riga del rientro automatico, mostrata solo a failover in corso: dice se
+  // c'e' un appuntamento e quando, cosi' l'admin sa se aspettare o premere il
+  // pulsante. Senza appuntamento lo dice, invece di tacere: un pannello che
+  // non nomina la sonda lascia credere che il rientro sia ancora solo manuale.
+  function tbProbeFra(sec){
+    if (sec < 60) return sec + " s";
+    if (sec < 3600) return Math.round(sec/60) + " min";
+    const h = Math.floor(sec/3600), m = Math.round((sec%3600)/60);
+    return m ? (h + " h " + m + " min") : (h + " h");
+  }
+  function tbProbeLine(s){
+    if (s.probe_running) {
+      // Precede ogni altra informazione: mentre la misura e' in corso, il
+      // "fra quanto" dell'appuntamento automatico e' il dato meno utile.
+      return '<br><span style="color:var(--warn,#f59e0b)">sonda manuale in corso...</span>';
+    }
+    if (!s.probe_enabled) {
+      return '<br><span style="color:var(--muted)">rientro automatico disattivato (<code>ABM_CF_PROBE_ENABLE=0</code>)</span>';
+    }
+    const n = s.probe_attempts || 0;
+    const coda = n ? (" · " + n + " sond" + (n === 1 ? "a fallita" : "e fallite") +
+                      (s.probe_last_error ? ": " + esc(s.probe_last_error) : "")) : "";
+    if (s.probe_in_sec === null || s.probe_in_sec === undefined) {
+      return '<br><span style="color:var(--muted)">nessuna sonda di rientro armata per questa causa</span>' + coda;
+    }
+    return "<br>prossima sonda di rientro fra " + esc(tbProbeFra(s.probe_in_sec)) + coda;
+  }
+  function tbApply(s){
+    const btn = $("tbResetBtn");
+    const topupBtn = $("tbTopupBtn");
+    const probeBtn = $("tbProbeBtn");
+    const status = $("tbStatus");
+    const detail = $("tbDetail");
+    const cfConfigured = (s.configured_backend === "cloudflare");
+    // Il topup dipende SOLO dalla configurazione, mai da `tripped_at`: e'
+    // l'unica via che riarma il pre-allarme sul credito, e il ciclo normale
+    // del credito (residuo sotto soglia -> ricarica -> topup) avviene con
+    // Cloudflare ancora sano, cioe' senza alcun trip. Legarlo al trip lo
+    // rendeva irraggiungibile proprio quando serve, e l'allarme partiva una
+    // volta sola nella vita dell'installazione.
+    topupBtn.disabled = !cfConfigured;
+    topupBtn.textContent = "Ho ricaricato il credito";
+    // La sonda ha senso solo a failover aperto: senza trip non c'e' nulla da
+    // riguadagnare e il backend e' gia' Cloudflare. Durante una sonda in
+    // corso il pulsante resta spento perche' la seconda richiesta verrebbe
+    // comunque respinta con 409 dal guard lato server.
+    probeBtn.disabled = !cfConfigured || !s.tripped_at || !!s.probe_running;
+    probeBtn.textContent = s.probe_running ? "Sonda in corso..." : "Sonda ora";
+    if (!cfConfigured) {
+      // Mai stampare `active` come se fosse il backend in esecuzione: qui e'
+      // solo il ripiego sulla configurazione dichiarata, e `auto` e' un
+      // selettore, non un backend. Dopo un rollback documentato lo stato su
+      // disco puo' contenere `active: "cloudflare"` (lo scrive reset()), che
+      // stampato qui contraddirebbe la riga stessa.
+      status.innerHTML = '<span style="color:var(--muted)">Cloudflare non configurato · <code>ABM_GEMINI_BACKEND</code> = ' + esc(s.configured_backend) + '</span>';
+      btn.disabled = true;
+      btn.textContent = "Non applicabile";
+      detail.style.display = "none";
+      return;
+    }
+    if (s.tripped_at) {
+      // trip_reason/trip_detail/trip_job_id sono persistiti SENZA redazione
+      // (vedi tts_backend_state) e non sono testo fidato: passano sempre da
+      // esc() prima di finire in innerHTML, mai concatenati crudi.
+      status.innerHTML = '<span style="color:var(--err);font-weight:600">SU VERTEX</span> · margine quasi azzerato';
+      detail.innerHTML = "Causa: " + esc(s.trip_reason || "?") + " · " + esc(s.trip_detail || "") +
+                         "<br>Dal " + esc(fmtIso(s.tripped_at)) +
+                         " · job " + esc(s.trip_job_id || "?") +
+                         "<br>" + tbCreditLine(s) +
+                         tbProbeLine(s);
+      detail.style.display = "block";
+      btn.disabled = false;
+      btn.textContent = "Riporta su Cloudflare";
+      btn.style.background = "var(--ok)";
+    } else {
+      status.innerHTML = '<span style="color:var(--ok);font-weight:600">SU CLOUDFLARE</span> · ' + tbCreditLine(s);
+      detail.style.display = "none";
+      btn.disabled = true;
+      btn.textContent = "Nessun failover attivo";
+    }
+  }
+  async function tbReset(){
+    const btn = $("tbResetBtn");
+    if (!confirm("Riportare il TTS su Cloudflare?\n\nFallo solo dopo aver risolto la causa del guasto: se il problema persiste il failover riscatta subito, e ogni ricaduta costa un job.")) return;
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/tts_backend", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({action: "reset"}),
+      });
+      if (!r.ok) { alert("Errore: " + r.status); await tbRefresh(); return; }
+      tbApply(await r.json());
+    } catch (e) {
+      alert("Errore: " + e);
+      await tbRefresh();
+    }
+  }
+  async function tbTopup(){
+    const btn = $("tbTopupBtn");
+    if (!confirm("Azzerare il contatore di spesa Cloudflare?\n\nFallo solo dopo aver ricaricato davvero il credito e aggiornato ABM_CF_CREDIT_BALANCE_USD nell'unit systemd: l'azzeramento e' irreversibile e, premuto per sbaglio, falsa la stima del residuo fino alla prossima ricarica.")) return;
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/tts_backend", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({action: "topup"}),
+      });
+      if (!r.ok) { alert("Errore: " + r.status); await tbRefresh(); return; }
+      tbApply(await r.json());
+    } catch (e) {
+      alert("Errore: " + e);
+      await tbRefresh();
+    }
+  }
+  // Attende la fine della sonda rileggendo lo stato: la misura vive nel
+  // thread di servizio, non nella risposta HTTP che l'ha avviata. Il tetto di
+  // giri esiste perche' un `probe_running` rimasto appeso (processo riavviato
+  // nel mezzo) non deve lasciare il pannello a girare per sempre.
+  async function tbProbeWatch(){
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const s = await tbRefresh();
+      if (!s) continue;
+      if (!s.probe_running) {
+        if (!s.tripped_at) alert("Sonda riuscita: il TTS e' rientrato su Cloudflare.");
+        return;
+      }
+    }
+  }
+  async function tbProbe(){
+    const btn = $("tbProbeBtn");
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/tts_backend", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({action: "probe"}),
+      });
+      // 409 = sonda gia' in corso: non e' un errore da mostrare come tale,
+      // l'esito della prima vale anche per questo click.
+      if (!r.ok && r.status !== 409) { alert("Errore: " + r.status); await tbRefresh(); return; }
+      tbApply(await r.json());
+      await tbProbeWatch();
+    } catch (e) {
+      alert("Errore: " + e);
+      await tbRefresh();
+    }
+  }
+  $("tbResetBtn").addEventListener("click", tbReset);
+  $("tbProbeBtn").addEventListener("click", tbProbe);
+  $("tbTopupBtn").addEventListener("click", tbTopup);
+
+  // ---- Modelli Gemini senza failover: stato "non disponibile" e riattivazione ----
+  async function gaRefresh(){
+    try {
+      const r = await fetch("/admin/api/gemini_model_availability",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) return;
+      const s = await r.json();
+      const rows = Object.entries(s.models || {}).filter(([, v]) => v.unavailable);
+      const box = $("gaBox");
+      if (!rows.length) { box.textContent = ""; return; }
+      box.innerHTML = rows.map(([mk, v]) =>
+        `<div><strong>${esc(mk)}</strong> non disponibile (rientro fra ${Math.ceil(v.retry_in_sec/60)} min): `
+        + `<code>${esc(v.reason)}</code> <button type="button" data-ga-reset="${esc(mk)}">Riattiva</button></div>`).join("");
+      box.querySelectorAll("[data-ga-reset]").forEach(b => b.addEventListener("click", async () => {
+        await fetch("/admin/api/gemini_model_availability", {method: "POST",
+          headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+          body: JSON.stringify({action: "reset", model_key: b.dataset.gaReset})});
+        gaRefresh();
+      }));
+    } catch (e) { /* pannello informativo: nessun alert */ }
+  }
+
+  // ===================== Tab Traduzioni =====================
+  const TR_OUTCOME_BADGE = {
+    "running":            ["badge-live",  "In corso"],
+    "completed":          ["badge-ok",    "Completato"],
+    "failed_refunded":    ["badge-err",   "Fallito (rimborso)"],
+    "cancelled_refunded": ["badge-muted", "Annullato (rimborso)"],
+  };
+  async function trLoadFilters(){
+    let src = [], dst = [], models = [];
+    try {
+      const r = await fetch("/admin/api/translation_cost_audit/languages",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (r.ok) {
+        const d = await r.json();
+        src = Array.isArray(d.source_langs) ? d.source_langs : [];
+        dst = Array.isArray(d.target_langs) ? d.target_langs : [];
+        models = Array.isArray(d.models) ? d.models : [];
+      }
+    } catch(e) {}
+    const byLabel = (a,b) => langLabel(a).localeCompare(langLabel(b), "it");
+    src = src.slice().sort(byLabel);
+    dst = dst.slice().sort(byLabel);
+    models = models.slice().sort();
+    fillSelect($("tr_auditSrcFilter"), src, langLabel);
+    fillSelect($("tr_auditDstFilter"), dst, langLabel);
+    fillSelect($("tr_auditModelFilter"), models, null);
+  }
+  async function trFetch(){
+    const params = new URLSearchParams();
+    const m = $("tr_auditModelFilter").value;
+    const s = $("tr_auditSrcFilter").value;
+    const t = $("tr_auditDstFilter").value;
+    const o = $("tr_auditOutcomeFilter").value;
+    const df = $("tr_auditDateFrom").value;
+    const dt = $("tr_auditDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (s && s !== "all") params.set("source_lang", s);
+    if (t && t !== "all") params.set("target_lang", t);
+    if (o && o !== "all") params.set("outcome", o);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "200");
+    applyHideZero(params);
+    const r = await fetch("/admin/api/translation_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
+    const d = await r.json();
+    trRenderAggregates(d.aggregates || {});
+    trRenderRecords(d.records || [], d.count || 0);
+  }
+  function trRenderAggregates(agg){
+    $("tr_aggCount").textContent = agg.count ?? 0;
+    $("tr_aggRevenue").textContent = fmtEur(agg.revenue_eur);
+    $("tr_aggCost").textContent = fmtEur(agg.google_cost_eur);
+    $("tr_aggMargin").textContent = fmtEur(agg.margin_eur);
+    const netMargin = (agg.net_margin_eur != null) ? Number(agg.net_margin_eur)
+                      : ((Number(agg.margin_eur)||0) - (Number(agg.paypal_fees_eur)||0));
+    const netEl = $("tr_aggNetMargin");
+    if (netEl) {
+      netEl.textContent = fmtEur(netMargin);
+      netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
+    }
+    netMarginByService.translations = netMargin; updateTotalNetMargin();
+    const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
+      ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
+      : 0;
+    $("tr_aggDelta").innerHTML = fmtPct(_margPctAvg);
+  }
+  function trRenderRecords(recs, total){
+    const tbody = $("tr_auditRecordsBody");
+    if (!recs.length) {
+      tbody.innerHTML = '<tr><td colspan="13" class="empty-msg">Nessun record trovato.</td></tr>';
+      return;
+    }
+    recs = recs.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tbody.innerHTML = recs.map(r => {
+      const ts = esc(fmtIso(r.ts));
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      const cost = Number(r.google_cost_eur_actual || 0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(cost - vat)} + IVA ${fmtEur(vat)}` : "";
+      const margEur = revenue - cost;
+      const fee = Number(r._paypal_fee_eur || 0);
+      const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur) : (margEur - fee);
+      const method = (r.payment_method || "").toLowerCase();
+      const netTip = method === "paypal"
+        ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
+        : (method === "voucher" ? "Voucher: nessuna fee PayPal"
+            : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
+      const margPct = cost > 0 ? (netMarg / cost * 100) : 0;
+      const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
+      const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
+      const rowCls = r._live ? "row-live" : "";
+      const [bcls, blab] = TR_OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
+      const rerunBadge = r._rerun
+        ? ' <span class="badge badge-warn" title="Job ri-lanciato (recovery)">re-run</span>'
+        : "";
+      const aiFlag = r.optimize ? '<span class="ai-flag" title="Ottimizzazione AI attiva">AI</span>' : "";
+      const tokIn = Number(r.prompt_tokens || 0), tokOut = Number(r.completion_tokens || 0);
+      const tokTip = r.tokens_estimated ? ' title="Token stimati (usage non riportato)"' : "";
+      const tokStar = r.tokens_estimated ? "*" : "";
+      return `<tr class="${rowCls}">
+        <td>${ts}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td>${esc(r.model_key || r.backend)}${aiFlag}</td>
+        <td>${esc(langLabel(r.source_lang))}</td>
+        <td>${esc(langLabel(r.target_lang))}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td${tokTip}>${(tokIn + tokOut).toLocaleString()}${tokStar}</td>
+        <td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
+        <td>${fmtEur(revenue)}</td>
+        <td class="${dCls}">${fmtEur(margEur)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
+        <td class="${dCls}">${margPct.toFixed(2)}%</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 13);
+  }
+  $("tr_auditRefreshBtn").addEventListener("click", trFetch);
+
+  // ===================== Tab AI Optimization =====================
+  const OPT_OUTCOME_BADGE = {
+    "running":["badge-live","in corso"],
+    "completed":["badge-ok","completato"],
+    "failed_refunded":["badge-err","fallito (rimborsato)"],
+    "cancelled_refunded":["badge-warn","annullato (rimborsato)"],
+  };
+  async function optLoadLanguages(){
+    try {
+      const r = await fetch("/admin/api/optimization_cost_audit/languages",
+                            {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+      if (!r.ok) return;
+      const d = await r.json();
+      const sel = $("optLangFilter"); if (!sel) return;
+      const prev = sel.value;
+      Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o=>o.remove());
+      (d.languages||[]).slice().sort((a,b)=>langLabel(a).localeCompare(langLabel(b),"it"))
+        .forEach(code=>{const o=document.createElement("option");o.value=code;o.textContent=langLabel(code);sel.appendChild(o);});
+      if (prev && Array.from(sel.options).some(o=>o.value===prev)) sel.value=prev;
+    } catch(e){}
+  }
+  async function optFetch(){
+    const p = new URLSearchParams();
+    const l=$("optLangFilter").value, o=$("optOutcomeFilter").value;
+    const df=$("optDateFrom").value, dt=$("optDateTo").value;
+    if (l && l!=="all") p.set("language",l);
+    if (o && o!=="all") p.set("outcome",o);
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","200");
+    applyHideZero(p);
+    const r = await fetch("/admin/api/optimization_cost_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento audit: "+r.status); return; }
+    const d = await r.json();
+    const a = d.aggregates||{};
+    $("optAggCount").textContent = a.count ?? 0;
+    $("optAggRevenue").textContent = fmtEur(a.revenue_eur);
+    $("optAggCost").textContent = fmtEur(a.provider_cost_eur);
+    $("optAggMargin").textContent = fmtEur(a.margin_eur);
+    $("optAggNet").textContent = fmtEur(a.net_margin_eur);
+    $("optAggPct").innerHTML = fmtPct(a.margin_pct_avg);
+    netMarginByService.optimization = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
+    optRender(d.records||[], d.count||0);
+  }
+  function optRender(recs, total){
+    const tb = $("optRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="11" class="empty-msg">Nessun record trovato.</td></tr>'; return; }
+    recs = recs.slice().sort((a,b)=>{
+      const la=a._live?1:0, lb=b._live?1:0;
+      if (la!==lb) return lb-la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tb.innerHTML = recs.map(r=>{
+      const ts = esc(fmtIso(r.ts));
+      const revenue = (r._eff_revenue_eur!=null)?Number(r._eff_revenue_eur):Number(r.user_price_eur_charged||0);
+      const cost = Number(r.google_cost_eur_actual||0);
+      const vat = Number(r.vat_eur_actual || 0);
+      const costTip = vat > 0 ? `netto ${fmtEur(cost - vat)} + IVA ${fmtEur(vat)}` : "";
+      const marg = revenue - cost;
+      const fee = Number(r._paypal_fee_eur||0);
+      const net = (r._net_margin_eur!=null)?Number(r._net_margin_eur):(marg-fee);
+      const pct = cost>0?(net/cost*100):0;
+      const method = (r.payment_method||"").toLowerCase();
+      const netTip = method==="paypal"
+        ? `PayPal fee: ${fmtEur(fee)} (fissa ripartita per pagamenti combinati)`
+        : (method==="voucher"?"Voucher: nessuna fee PayPal":(revenue>0?"Nessuna fee":"Free"));
+      const tok = (Number(r.prompt_tokens||0)+Number(r.completion_tokens||0));
+      const tokTip = r.tokens_estimated?" title=\"token stimati (usage non disponibile)\"":"";
+      const dCls = marg>=0?"delta-positive":"delta-negative";
+      const nCls = net>=0?"delta-positive":"delta-negative";
+      const rowCls = r._live?"row-live":"";
+      const [bcls,blab] = OPT_OUTCOME_BADGE[r.outcome]||["badge-muted", r.outcome||"?"];
+      return `<tr class="${rowCls}">
+        <td>${ts}</td><td><code>${esc(r.job_id)}</code></td>
+        <td>${esc(langLabel(r.language))}</td>
+        <td>${(Number(r.chars_total)||0).toLocaleString()}</td>
+        <td${tokTip}>${tok.toLocaleString()}</td>
+        <td>${fmtEur(revenue)}</td><td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
+        <td class="${dCls}">${fmtEur(marg)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
+        <td class="${dCls}">${pct.toFixed(2)}%</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 11);
+  }
+  $("optRefreshBtn").addEventListener("click", optFetch);
+
+  // ===================== Tab Voci campionate =====================
+  const VCA_STATE_BADGE = {
+    "sample_ok":["badge-muted","bozza"],
+    "paid":["badge-live","pagata"],
+    "demos_generating":["badge-live","demo in corso"],
+    "demos_ready":["badge-info","demo pronte"],
+    "demo_failed":["badge-warn","demo fallite"],
+    "ready":["badge-ok","attiva"],
+    "refunded":["badge-err","rimborsata"],
+    "expired":["badge-muted","scaduta"],
+    "deleted":["badge-muted","cancellata"],
+  };
+  const VCA_METHOD = {"paypal":"PayPal","voucher":"Voucher","free":"Gratis"};
+  function vcaDate(ts){
+    if (!ts) return "-";
+    const d = new Date(Number(ts) * 1000);
+    if (isNaN(d.getTime())) return "-";
+    const p = (n) => String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  async function vcaFetch(){
+    const p = new URLSearchParams();
+    const st=$("vcaStateFilter").value, l=$("vcaLangFilter").value;
+    const df=$("vcaDateFrom").value, dt=$("vcaDateTo").value;
+    if (st) p.set("state",st);
+    if (l && l!=="all") p.set("language",l);
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","200");
+    applyHideZero(p);
+    const r = await fetch("/admin/api/voice_clone_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento audit voci: "+r.status); return; }
+    const d = await r.json();
+    fillSelect($("vcaLangFilter"), (d.languages||[]).slice()
+      .sort((a,b)=>langLabel(a).localeCompare(langLabel(b),"it")), langLabel);
+    const a = d.aggregates||{};
+    $("vcaAggCount").textContent = a.count ?? 0;
+    $("vcaAggRevenue").textContent = fmtEur(a.revenue_eur);
+    $("vcaAggCost").textContent = fmtEur(a.gpu_cost_eur);
+    $("vcaAggNet").textContent = fmtEur(a.net_margin_eur);
+    $("vcaAggRefund").textContent = fmtEur(a.refund_eur);
+    $("vcaAggBooks").textContent = a.books ?? 0;
+    netMarginByService.voices = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
+    vcaRender(d.records||[], d.count||0);
+  }
+  function vcaRender(recs, total){
+    const tb = $("vcaRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="15" class="empty-msg">Nessuna voce trovata.</td></tr>'; return; }
+    tb.innerHTML = recs.map(r=>{
+      const marg = Number(r.margin_eur||0), net = Number(r.net_margin_eur||0);
+      const fee = Number(r.paypal_fee_eur||0);
+      const dCls = marg>=0?"delta-positive":"delta-negative";
+      const nCls = net>=0?"delta-positive":"delta-negative";
+      const method = VCA_METHOD[r.payment_method] || (r.payment_method ? r.payment_method : "-");
+      let pay = r.payment_method ? `${esc(method)} ${fmtEur(r.charged_eur)}` : "-";
+      if (Number(r.refund_eur||0) > 0 || r.state === "refunded")
+        pay += `<br><small title="${esc(r.refund_reason)}">rimborso ${fmtEur(r.refund_eur)}</small>`;
+      const netTip = r.payment_method==="paypal" ? `PayPal fee: ${fmtEur(fee)}`
+        : (r.payment_method==="voucher" ? "Voucher: nessuna fee PayPal" : "Nessuna fee");
+      const costTip = `${Number(r.gpu_seconds||0).toFixed(1)} s GPU, ${r.gpu_jobs||0} job, ${Number(r.gpu_cost_usd||0).toFixed(4)} $`;
+      const names = (r.device_names||[]).filter(Boolean).join(", ");
+      const gender = r.gender==="f"?"F":(r.gender==="m"?"M":"");
+      let end = vcaDate(r.expires_at);
+      if (["refunded","expired","deleted"].includes(r.state))
+        end = `<span title="fine: ${esc(r.state)}${r.delete_reason?" ("+esc(r.delete_reason)+")":""}">${vcaDate(r.ended_at)}</span>`;
+      const [bcls,blab] = VCA_STATE_BADGE[r.state]||["badge-muted", r.state||"?"];
+      const fails = r.demo_fail_count ? ` title="demo fallite ${r.demo_fail_count} volte"` : "";
+      let why = "-";
+      if (r.reject_note_original){
+        const tip = `Originale${r.reject_note_lang?" ("+r.reject_note_lang+")":""}: ${r.reject_note_original}`;
+        why = r.reject_note_it
+          ? `<span class="vca-why" title="${esc(tip)}">${esc(r.reject_note_it)}</span>`
+          : `<span class="vca-why" title="${esc(tip)}"><i>traduzione in corso…</i><br><small>${esc(r.reject_note_original)}</small></span>`;
+      }
+      return `<tr>
+        <td>${vcaDate(r.ref_ts)}</td>
+        <td><b>${esc(r.name||"-")}</b><br><code>${esc(r.id)}</code></td>
+        <td>${esc(langLabel(r.lang))}<br><small>${esc(r.locale)} ${esc(gender)}${r.demo_extra_id?" · "+esc(r.demo_extra_id):""}</small></td>
+        <td>${esc(r.owner_email||"-")}</td>
+        <td>${pay}</td>
+        <td>${fmtEur(r.revenue_eur)}</td>
+        <td title="${esc(costTip)}">${fmtEur(r.gpu_cost_eur)}</td>
+        <td class="${dCls}">${fmtEur(marg)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
+        <td title="${esc(names)}">${Number(r.devices||0)}</td>
+        <td>${vcaDate(r.ready_at)}</td>
+        <td>${end}</td>
+        <td>${Number(r.books||0)}</td>
+        <td><span class="badge ${bcls}"${fails}>${esc(blab)}</span></td>
+        <td style="min-width:14rem;max-width:24rem;white-space:normal">${why}</td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 15);
+  }
+  $("vcaRefreshBtn").addEventListener("click", vcaFetch);
+
+  // ===================== Utenti registrati =====================
+  const ACC_STATE_BADGE = {
+    "active":  ["badge-ok", "Attivo"],
+    "dormant": ["badge-muted", "Senza sessione"],
+    "never":   ["badge-warn", "Mai entrato"],
+    "deleted": ["badge-err", "Cancellato"],
+  };
+  function accDate(ts){
+    if (!ts) return "-";
+    const d = new Date(Number(ts)*1000);
+    return d.toLocaleString("it-IT", {day:"2-digit",month:"2-digit",year:"numeric",
+                                      hour:"2-digit",minute:"2-digit"});
+  }
+  async function accFetch(){
+    const p = new URLSearchParams();
+    const st=$("accStateFilter").value, q=$("accQuery").value.trim();
+    const df=$("accDateFrom").value, dt=$("accDateTo").value;
+    if (st && st!=="all") p.set("state",st);
+    if (q) p.set("q",q);
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","500");
+    const r = await fetch("/admin/api/accounts_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento utenti: "+r.status); return; }
+    const d = await r.json();
+    const a = d.aggregates||{};
+    $("accAggTotal").textContent = a.total ?? 0;
+    $("accAggOnline").textContent = a.with_session ?? 0;
+    $("accAggNever").textContent = a.never_logged ?? 0;
+    $("accAggDeleted").textContent = a.deleted ?? 0;
+    $("accAggNew").textContent = a.last30 ?? 0;
+    accRender(d.records||[], d.count||0);
+  }
+  function accRender(recs, total){
+    const tb = $("accRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="11" class="empty-msg">Nessun utente trovato.</td></tr>'; return; }
+    tb.innerHTML = recs.map(r=>{
+      const [bcls,blab] = ACC_STATE_BADGE[r.state]||["badge-muted", r.state||"?"];
+      // Cancellato: l'indirizzo non esiste piu' nel DB, resta solo l'id.
+      const mail = r.email ? esc(r.email) : '<span style="color:var(--muted)">(rimossa)</span>';
+      const plan = esc(r.plan||"free") + (r.plan_until ? `<br><small>fino al ${accDate(r.plan_until)}</small>` : "");
+      const del = r.deleted_at
+        ? `<span class="delta-negative">${accDate(r.deleted_at)}</span>` : "-";
+      return `<tr>
+        <td>${accDate(r.created_at)}</td>
+        <td>${mail}<br><code>${esc(r.id)}</code></td>
+        <td>${esc((r.lang||"").toUpperCase())}</td>
+        <td>${plan}</td>
+        <td>${accDate(r.last_login_at)}</td>
+        <td>${accDate(r.last_seen_at)}</td>
+        <td>${Number(r.sessions_active||0)}</td>
+        <td>${Number(r.jobs||0)}</td>
+        <td>${fmtEur(r.paid_eur)}</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+        <td>${del}</td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 11);
+  }
+  $("accRefreshBtn").addEventListener("click", accFetch);
+  $("accQuery").addEventListener("keydown", (e)=>{ if (e.key==="Enter") accFetch(); });
+
+  // ===================== Tab switching =====================
+  function showTab(name){
+    document.querySelectorAll(".tab-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.tab === name);
+    });
+    document.querySelectorAll(".tab-panel").forEach(p => {
+      p.classList.toggle("active", p.id === "tab_" + name);
+    });
+    if (name === "translations" && !window._trLoaded) {
+      window._trLoaded = true;
+      trLoadFilters().finally(trFetch);
+    }
+    if (name === "optimization" && !window._optLoaded) {
+      window._optLoaded = true;
+      optLoadLanguages().finally(optFetch);
+    }
+    if (name === "voices" && !window._vcaLoaded) {
+      window._vcaLoaded = true;
+      vcaFetch();
+    }
+    if (name === "accounts" && !window._accLoaded) {
+      window._accLoaded = true;
+      accFetch();
+    }
+    if (location.hash !== "#tab-" + name) location.hash = "#tab-" + name;
+  }
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    b.addEventListener("click", () => showTab(b.dataset.tab));
+  });
+
+  // Default periodo: il mese arrivato in query string dal pannello Activity
+  // Log (`/admin/audit-premium?2026-08`, stessa convenzione dell'export),
+  // altrimenti il mese corrente. Su un mese chiuso si fissa anche il "Al":
+  // senza, il pannello mostrerebbe tutto da quel mese a oggi.
+  (function setDefaultDates(){
+    const now = new Date();
+    const cur = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
+    let ym = cur;
+    for (const k of new URLSearchParams(location.search).keys()) {
+      if (/^\d{4}-\d{2}$/.test(k)) { ym = k; break; }
+    }
+    const [y, m] = ym.split("-").map(Number);
+    const firstDay = ym + "-01";
+    const lastDay = (ym === cur)
+      ? "" : ym + "-" + String(new Date(y, m, 0).getDate()).padStart(2,"0");
+    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom","vcaDateFrom"].forEach(id => {
+      const el = $(id); if (el && !el.value) el.value = firstDay;
+    });
+    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo","vcaDateTo"].forEach(id => {
+      const el = $(id); if (el && !el.value) el.value = lastDay;
+    });
+    const per = $("periodLabel");
+    if (per) per.textContent = ym;
+    // Il ritorno all'Activity Log resta sullo stesso mese.
+    const back = $("backToLog");
+    if (back) back.href = "/admin/log-activity?" + ym;
+  })();
+
+  // Filtro "importo zero": ripristina la scelta precedente PRIMA del primo
+  // fetch, poi ricarica tutte le tab a ogni cambio (gli aggregati e il
+  // margine netto totale devono restare coerenti con le tabelle).
+  (function initHideZero(){
+    const el = $("hideZeroAmount");
+    if (!el) return;
+    try { el.checked = localStorage.getItem(HIDE_ZERO_KEY) === "1"; } catch(e) {}
+    el.addEventListener("change", () => {
+      try { localStorage.setItem(HIDE_ZERO_KEY, el.checked ? "1" : "0"); } catch(e) {}
+      ttsFetch(); trFetch(); optFetch(); vcaFetch();
+    });
+  })();
+
+  // Auto-load: TTS (tab di default) + kill-switch.
+  ttsLoadLanguages().finally(ttsFetch);
+  ksRefresh();
+  tbRefresh();
+  gaRefresh();
+  // Traduzioni e Optimization vengono caricate anche in background all'avvio,
+  // cosi' il "Margine netto totale" in alto somma tutti e tre i servizi senza
+  // dover aprire le rispettive tab. Le marchiamo come gia' caricate per non
+  // rifare il fetch al primo click.
+  window._trLoaded = true;
+  trLoadFilters().finally(trFetch);
+  window._optLoaded = true;
+  optLoadLanguages().finally(optFetch);
+  window._vcaLoaded = true;
+  vcaFetch();
+
+  // Deep-link hash: apre direttamente la tab richiesta dai vecchi URL redirected.
+  const _h = location.hash;
+  if (_h === "#tab-translations") showTab("translations");
+  else if (_h === "#tab-optimization") showTab("optimization");
+  else if (_h === "#tab-voices") showTab("voices");
+  else if (_h === "#tab-accounts") showTab("accounts");
+})();
+</script>
+</body></html>
