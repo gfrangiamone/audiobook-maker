@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 
 CARRY_NAME = ".cost_carry.json"
 
@@ -41,6 +42,12 @@ def flush_every() -> int:
                           DEFAULT_FLUSH_EVERY))
     except (TypeError, ValueError):
         return DEFAULT_FLUSH_EVERY
+
+
+# Un solo scrittore alla volta per processo: write() e clear() fanno
+# read-modify-write dello stesso file e senza lock due motori (o il flush
+# periodico e il clear finale) potevano perdersi a vicenda un riporto.
+_lock = threading.Lock()
 
 
 def carry_path(work_dir) -> str:
@@ -71,9 +78,14 @@ def write(work_dir, engine: str, actual) -> bool:
     """
     if not isinstance(actual, dict):
         return False
-    data = read_all(work_dir)
-    data[str(engine)] = actual
-    path = carry_path(work_dir)
+    with _lock:
+        data = read_all(work_dir)
+        data[str(engine)] = actual
+        return _write_atomic(carry_path(work_dir), data)
+
+
+def _write_atomic(path, data) -> bool:
+    """tmp + os.replace; False (mai eccezione) se il disco dice di no."""
     tmp = path + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -94,6 +106,11 @@ def clear(work_dir, engine=None) -> bool:
     Senza `engine` cancella l'intero file. Con `engine`, toglie solo quel
     motore e riscrive il resto (l'ultimo motore rimasto porta via il file).
     """
+    with _lock:
+        return _clear_unlocked(work_dir, engine)
+
+
+def _clear_unlocked(work_dir, engine) -> bool:
     path = carry_path(work_dir)
     if engine is None:
         try:
@@ -108,19 +125,8 @@ def clear(work_dir, engine=None) -> bool:
         return True
     data.pop(str(engine), None)
     if not data:
-        return clear(work_dir)
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, path)
-        return True
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except Exception:
-            pass
-        return False
+        return _clear_unlocked(work_dir, None)
+    return _write_atomic(path, data)
 
 
 def _combine(vecchio, nuovo):

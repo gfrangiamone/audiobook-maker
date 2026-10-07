@@ -3,7 +3,7 @@ Struttura: {"YYYY-MM-DD": {"app_open": {"android": N, ...}, "web_visit_from_app"
 Nessun dato personale. Best-effort, thread-safe, scrittura atomica.
 """
 import json, threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from community_store import atomic_write_json
@@ -12,6 +12,10 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _METRICS_FILE = _SCRIPT_DIR / "_metrics.json"
 _lock = threading.Lock()
 _VALID_EVENTS = ("app_open", "web_visit_from_app", "payment_from_app")
+# Retention: i giorni piu' vecchi di cosi' vengono potati a ogni incremento
+# (prima il file cresceva per sempre). Il funnel admin legge al massimo
+# l'ultimo anno.
+_KEEP_DAYS = 400
 
 
 def _norm_platform(p):
@@ -41,8 +45,19 @@ def incr(event, platform, day=None):
         d = _load()
         bucket = d.setdefault(day, {}).setdefault(event, {})
         bucket[plat] = int(bucket.get(plat, 0)) + 1
+        _prune(d)
         try: _save(d)
         except Exception: pass
+
+
+def _prune(d, today=None):
+    """Rimuove in place le chiavi giorno piu' vecchie di _KEEP_DAYS. Le chiavi
+    sono 'YYYY-MM-DD', quindi il confronto lessicale coincide con quello
+    cronologico; chiavi di altra forma restano intatte."""
+    today = today or datetime.now()
+    cutoff = (today - timedelta(days=_KEEP_DAYS)).strftime("%Y-%m-%d")
+    for k in [k for k in d if isinstance(k, str) and len(k) == 10 and k < cutoff]:
+        d.pop(k, None)
 
 
 def read_range(days):

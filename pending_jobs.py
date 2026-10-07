@@ -32,10 +32,7 @@ def register(job_id: str, phase: str, descriptor: dict) -> None:
     rec["phase"] = phase
     rec["attempts"] = 0
     rec["state"] = "pending"
-    if s.get(job_id) is not None:
-        s.update(job_id, rec)
-    else:
-        s.add(rec)
+    s.upsert(rec)
 
 
 def patch(job_id: str, fields: dict) -> bool:
@@ -52,10 +49,15 @@ def mark_running_bump(job_id: str) -> int:
     """Incrementa attempts e marca running. Persiste PRIMA del run (crash-safe).
     Ritorna il nuovo valore di attempts."""
     s = _require()
-    rec = s.get(job_id)
-    n = (rec.get("attempts", 0) if rec else 0) + 1
-    s.update(job_id, {"attempts": n, "state": "running"})
-    return n
+    out = {"n": 1}
+
+    def _bump(it):
+        out["n"] = int(it.get("attempts", 0) or 0) + 1
+        it["attempts"] = out["n"]
+        it["state"] = "running"
+
+    s.modify(job_id, _bump)
+    return out["n"]
 
 
 def reset_attempts(job_id: str) -> None:

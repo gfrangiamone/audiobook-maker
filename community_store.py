@@ -150,6 +150,36 @@ class JsonStore:
                     return it
         return None
 
+    def upsert(self, item: dict) -> dict:
+        """Sostituisce i campi dell'item con lo stesso id, o lo aggiunge:
+        un solo lock, nessuna finestra fra `get` e `add`/`update`."""
+        item = dict(item)
+        with self._lock:
+            data = self._read_unlocked()
+            for it in data.get("items", []):
+                if it.get("id") == item.get("id"):
+                    it.update(item)
+                    self._write_unlocked(data)
+                    return it
+            item.setdefault("created_at", int(time.time()))
+            item.setdefault("archived", False)
+            data.setdefault("items", []).insert(0, item)
+            self._write_unlocked(data)
+            return item
+
+    def modify(self, item_id: str, fn) -> dict | None:
+        """Applica `fn(item)` all'item sotto il lock e persiste. None se l'id
+        non esiste. Per gli incrementi (attempts += 1) che con get+update
+        separati potevano perdersi fra due thread."""
+        with self._lock:
+            data = self._read_unlocked()
+            for it in data.get("items", []):
+                if it.get("id") == item_id:
+                    fn(it)
+                    self._write_unlocked(data)
+                    return it
+        return None
+
     def archive(self, item_id: str) -> bool:
         return self.update(item_id, {"archived": True}) is not None
 

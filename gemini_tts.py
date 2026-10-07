@@ -2082,12 +2082,13 @@ def set_admin_disabled(disabled, reason=""):
             for _attempt in range(3):
                 try:
                     _admin_state_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(_admin_state_path, "w", encoding="utf-8") as f:
-                        json.dump({
-                            "disabled": _admin_disabled,
-                            "reason": _admin_disabled_reason,
-                            "updated_at": _admin_disabled_at,
-                        }, f, ensure_ascii=False, indent=2)
+                    # tmp + os.replace: una write troncata (disco pieno) non
+                    # lascia un JSON a meta' che il boot leggerebbe come corrotto.
+                    _atomic_write_json(_admin_state_path, {
+                        "disabled": _admin_disabled,
+                        "reason": _admin_disabled_reason,
+                        "updated_at": _admin_disabled_at,
+                    }, ensure_ascii=False, indent=2)
                     # Verifica re-leggendo: write su disco pieno puo' troncare.
                     with open(_admin_state_path, "r", encoding="utf-8") as f:
                         _check = json.load(f)
