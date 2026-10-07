@@ -6,6 +6,7 @@ ultimi 30 giorni, poi per punti assoluti, poi per nome. Un job conta una
 volta sola.
 """
 import json
+from datetime import datetime
 import os
 import sys
 
@@ -192,10 +193,14 @@ def test_il_seme_legge_le_generate_da_activity_db(monkeypatch, tmp_path):
         (_fa(1) + " 11:00:00", "j1", "COMPLETE", CHIARA),
         (_fa(2) + " 10:00:00", "j2", "GENERATE", STEFANO),
     ]:
+        # epoch distinto per riga, come negli eventi veri: senza, i due
+        # GENERATE di j1 nello stesso mese collidono su events_dedup
+        epoch = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").timestamp()
         conn.execute(
             "INSERT INTO events (ym, ts, job_id, op, filename, client_id, ip,"
-            " voice, detail, lang, platform) VALUES (?,?,?,?,'','','',?,'','','')",
-            (ts[:7], ts, jid, op, voce))
+            " voice, detail, lang, platform, epoch)"
+            " VALUES (?,?,?,?,'','','',?,'','','',?)",
+            (ts[:7], ts, jid, op, voce, epoch))
     conn.close()
     monkeypatch.setattr(activity_log, "mode", lambda: "dual")
     monkeypatch.setattr(activity_log, "db_path", lambda: db)

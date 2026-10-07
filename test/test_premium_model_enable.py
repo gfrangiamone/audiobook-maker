@@ -82,6 +82,7 @@ def test_catalogo_gemini_completo_di_default(monkeypatch):
 def test_catalogo_gemini_vuoto_con_tutti_i_modelli_spenti(monkeypatch):
     monkeypatch.setenv("ABM_FLASH25_ENABLE", "0")
     monkeypatch.setenv("ABM_FLASH31_ENABLE", "0")
+    monkeypatch.delenv("ABM_FLASH38_ENABLE", raising=False)
     assert gemini_tts.enabled_model_keys() == []
     assert all(not lst for lst in gemini_tts.get_voices().values())
 
