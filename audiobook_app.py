@@ -16,6 +16,7 @@ import logging
 import re
 import json
 import os
+from env_utils import env_bool, env_float, env_int
 import shutil
 import sys
 
@@ -281,7 +282,7 @@ app = Flask(__name__)
 # Reverse proxy (nginx) sits in front: trust one hop of X-Forwarded-* so request.remote_addr
 # reflects the real client IP instead of 127.0.0.1 (needed for logs, rate limiting, fail2ban).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("ABM_MAX_UPLOAD_MB", "50")) * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = env_int("ABM_MAX_UPLOAD_MB", 50) * 1024 * 1024
 # Static assets are cache-busted via ?v=__APP_VERSION__ so a 1-year max-age is safe.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # 1 year
 
@@ -558,28 +559,27 @@ from email_service import (
     VOXCPM_DIGEST
 )
 
-EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))  # 18h default
+EMAIL_FILE_RETENTION_SEC = env_int("ABM_JOB_RETENTION_SEC", 64800)  # 18h default
 # Override per job con voce PREMIUM (Gemini): retention piu' lunga perche'
 # i pagamenti Premium meritano una finestra di download/email piu' ampia.
-GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800"))  # 48h default
+GEMINI_FILE_RETENTION_SEC = env_int("ABM_GEMINI_JOB_RETENTION_SEC", 172800)  # 48h default
 # Condivisione audiolibro app->app: la risorsa share scade dopo questo TTL
 # (default 24 h). Il file upload (caso senza job) ha un tetto di dimensione.
-ABM_SHARE_TTL_SEC = int(os.environ.get("ABM_SHARE_TTL_SEC", "86400"))
-ABM_SHARE_MAX_BYTES = int(os.environ.get("ABM_SHARE_MAX_BYTES", str(500 * 1024 * 1024)))
-ABM_SHARE_UPLOAD_TTL_SEC = int(os.environ.get("ABM_SHARE_UPLOAD_TTL_SEC", "3600"))
+ABM_SHARE_TTL_SEC = env_int("ABM_SHARE_TTL_SEC", 86400)
+ABM_SHARE_MAX_BYTES = env_int("ABM_SHARE_MAX_BYTES", 500 * 1024 * 1024)
+ABM_SHARE_UPLOAD_TTL_SEC = env_int("ABM_SHARE_UPLOAD_TTL_SEC", 3600)
 # Hard cap caratteri per audiolibro completo (taglia output audio):
 # - standard (edge-tts/Google): ABM_MAX_TEXT_CHARS
 # - PREMIUM (gemini:): ABM_MAX_GEMINI_TEXT_CHARS, tipicamente piu' basso perche'
 #   le voci Gemini hanno cost-per-char piu' alto e RPM/RPD piu' restrittive.
-MAX_TEXT_CHARS = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
-MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"))
+MAX_TEXT_CHARS = env_int("ABM_MAX_TEXT_CHARS", 1500000)
+MAX_GEMINI_TEXT_CHARS = env_int("ABM_MAX_GEMINI_TEXT_CHARS", 800000)
 # Voci Speechify (PREMIUM, solo inglese): stesso cap di Gemini per default,
 # override indipendente disponibile.
-MAX_SPEECHIFY_TEXT_CHARS = int(os.environ.get("ABM_MAX_SPEECHIFY_TEXT_CHARS", str(MAX_GEMINI_TEXT_CHARS)))
+MAX_SPEECHIFY_TEXT_CHARS = env_int("ABM_MAX_SPEECHIFY_TEXT_CHARS", MAX_GEMINI_TEXT_CHARS)
 # Cap caratteri VoxCPM. Allineato a quello Speechify: il limite non e' del
 # motore ma del portafoglio dell'utente e del tempo di attesa.
-MAX_VOXCPM_TEXT_CHARS = int(os.environ.get("ABM_MAX_VOXCPM_TEXT_CHARS",
-                                           str(MAX_SPEECHIFY_TEXT_CHARS)))
+MAX_VOXCPM_TEXT_CHARS = env_int("ABM_MAX_VOXCPM_TEXT_CHARS", MAX_SPEECHIFY_TEXT_CHARS)
 
 # Whitelist charset per gli id voce ricevuti dal client (edge
 # "it-IT-IsabellaNeural", google "it-IT-Chirp3-HD-Zephyr", gemini
@@ -604,13 +604,7 @@ _YM_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 # enforced in /api/optimize e /api/optimize_estimate sul testo originale) puo'
 # superare il cap fino a questa frazione DOPO l'espansione LLM ed essere
 # comunque generato, invece di essere rifiutato a valle. Default 5%.
-try:
-    LLM_OPT_GROWTH_TOLERANCE = float(
-        os.environ.get("ABM_LLM_OPT_GROWTH_TOLERANCE", "0.05").replace(",", ".")
-    )
-except (TypeError, ValueError):
-    LLM_OPT_GROWTH_TOLERANCE = 0.05
-LLM_OPT_GROWTH_TOLERANCE = max(0.0, LLM_OPT_GROWTH_TOLERANCE)
+LLM_OPT_GROWTH_TOLERANCE = env_float("ABM_LLM_OPT_GROWTH_TOLERANCE", 0.05, floor=0.0)
 
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
@@ -820,18 +814,18 @@ ADMIN_TOKEN = os.environ.get("ABM_ADMIN_TOKEN", "").strip()
 #  -  -  Client tracking & rate limiting  -  - 
 # Max concurrent generating jobs per client device (cookie-based).
 # Set via ABM_MAX_CONCURRENT_PER_CLIENT env var; default 2.
-MAX_CONCURRENT_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_PER_CLIENT", "2"))
+MAX_CONCURRENT_PER_CLIENT = env_int("ABM_MAX_CONCURRENT_PER_CLIENT", 2)
 
 # Max concurrent LLM optimization jobs per client device.
 # Set via ABM_MAX_CONCURRENT_LLM_PER_CLIENT env var; default 1.
-MAX_CONCURRENT_LLM_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_LLM_PER_CLIENT", "1"))
+MAX_CONCURRENT_LLM_PER_CLIENT = env_int("ABM_MAX_CONCURRENT_LLM_PER_CLIENT", 1)
 
 # Tetto GLOBALE di generazioni simultanee sull'istanza (tutti i client).
 # Incidente 2026-08-21: il solo cap per-client non limita nulla lato server —
 # 19 generazioni contemporanee (77 avviate in 3 ore) da client diversi hanno
 # saturato RAM+swap fino al thrash livelock. Set via ABM_MAX_CONCURRENT_GLOBAL;
 # 0 = illimitato (comportamento pre-fix).
-MAX_CONCURRENT_GLOBAL = int(os.environ.get("ABM_MAX_CONCURRENT_GLOBAL", "6"))
+MAX_CONCURRENT_GLOBAL = env_int("ABM_MAX_CONCURRENT_GLOBAL", 6)
 
 # Cookie name and max-age for client identification
 _CLIENT_COOKIE_NAME = "abm_cid"
@@ -1003,7 +997,7 @@ def _free_quota_book_chars(info, all_chs=None):
 # prezzo (voce, capitoli, velocita', lingua, AI on/off) e' registrata insieme
 # all'importo: se l'utente cambia qualcosa fra pagamento e conferma la firma non
 # combacia, il lock non si applica e il ricalcolo torna a essere quello vivo.
-_PRICE_LOCK_TTL_SEC = int(os.environ.get("ABM_PRICE_LOCK_TTL_SEC", "1800") or 1800)
+_PRICE_LOCK_TTL_SEC = env_int("ABM_PRICE_LOCK_TTL_SEC", 1800)
 _PRICE_LOCK_MAX_PER_JOB = 8
 
 
@@ -1094,7 +1088,7 @@ def _price_lock_lookup(job, token, sig):
 # velocita', lingua o AI on/off la firma non combacia piu' e il ricalcolo torna
 # a essere quello vivo. TTL breve: oltre la finestra il prezzo di mezz'ora fa
 # non e' piu' difendibile e si riparte dalla stima corrente.
-_QUOTE_LOCK_TTL_SEC = int(os.environ.get("ABM_QUOTE_LOCK_TTL_SEC", "1800") or 1800)
+_QUOTE_LOCK_TTL_SEC = env_int("ABM_QUOTE_LOCK_TTL_SEC", 1800)
 _QUOTE_LOCK_MAX_PER_JOB = 8
 
 
@@ -2071,7 +2065,7 @@ def _orphan_fallback(job_id, rec):
 def _recover_orphan_jobs():
     """Eseguito UNA volta al boot: il dict jobs è vuoto, ogni descrittore non
     finalizzato è orfano. Incrementa attempts su disco PRIMA di rilanciare."""
-    if os.environ.get("ABM_RECOVER_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
+    if not env_bool("ABM_RECOVER_ENABLED", True):
         return
     try:
         orphans = pending_jobs.orphans()
@@ -2080,7 +2074,7 @@ def _recover_orphan_jobs():
         return
     if not orphans:
         return
-    max_attempts = int(os.environ.get("ABM_RECOVER_MAX_ATTEMPTS", "2"))
+    max_attempts = env_int("ABM_RECOVER_MAX_ATTEMPTS", 2)
     print(f"[recover] {len(orphans)} job batch orfani da recuperare (cap={max_attempts})")
     for rec in orphans:
         job_id = rec.get("id")
@@ -2817,10 +2811,7 @@ def _has_fresh_device(cid):
     """
     if not cid:
         return False
-    try:
-        days = int(float(str(os.environ.get("ABM_QUOTA_DEVICE_MAX_AGE_DAYS", "90")).replace(",", ".")))
-    except (TypeError, ValueError):
-        days = 90
+    days = env_int("ABM_QUOTA_DEVICE_MAX_AGE_DAYS", 90)
     cutoff = (time.time() - days * 86400) if days > 0 else 0
     with _device_tokens_lock:
         entries = list(_device_tokens.get(cid) or [])
@@ -2844,7 +2835,7 @@ def _push_ack_possible(job):
     registrato di recente per questo client. `ABM_FREE_TTS_QUOTA_APP_PUSH_ACK=0`
     spegne la deroga e riporta tutti al gate email.
     """
-    if str(os.environ.get("ABM_FREE_TTS_QUOTA_APP_PUSH_ACK", "1")).strip().lower() not in ("1", "true", "yes", "on"):
+    if not env_bool("ABM_FREE_TTS_QUOTA_APP_PUSH_ACK", True):
         return False
     plat = (job or {}).get("platform") or _client_platform()
     if plat not in ("android", "ios"):
@@ -4505,10 +4496,7 @@ def _funnel_data(days):
 
 # Soglia di avvii a voce standard nelle 24h oltre cui un client compare nella
 # sezione "power user" del digest admin (0 = sezione disattivata).
-try:
-    POWER_USER_JOBS_PER_DAY = int(os.environ.get("ABM_ADMIN_POWER_USER_JOBS_PER_DAY", "5") or 5)
-except (TypeError, ValueError):
-    POWER_USER_JOBS_PER_DAY = 5
+POWER_USER_JOBS_PER_DAY = env_int("ABM_ADMIN_POWER_USER_JOBS_PER_DAY", 5)
 
 
 def _power_users_data():
@@ -11644,10 +11632,10 @@ def _ip_rl_check(bucket: str, ip: str, limit_per_min: int, limit_per_hour: int):
 
 
 # Default limits (override via env per ops emergency)
-_ANALYZE_RL_PER_MIN = int(os.environ.get("ABM_ANALYZE_RL_PER_MIN", "5"))
-_ANALYZE_RL_PER_HOUR = int(os.environ.get("ABM_ANALYZE_RL_PER_HOUR", "30"))
-_PREVIEW_RL_PER_MIN = int(os.environ.get("ABM_PREVIEW_RL_PER_MIN", "20"))
-_PREVIEW_RL_PER_HOUR = int(os.environ.get("ABM_PREVIEW_RL_PER_HOUR", "200"))
+_ANALYZE_RL_PER_MIN = env_int("ABM_ANALYZE_RL_PER_MIN", 5)
+_ANALYZE_RL_PER_HOUR = env_int("ABM_ANALYZE_RL_PER_HOUR", 30)
+_PREVIEW_RL_PER_MIN = env_int("ABM_PREVIEW_RL_PER_MIN", 20)
+_PREVIEW_RL_PER_HOUR = env_int("ABM_PREVIEW_RL_PER_HOUR", 200)
 
 
 def _hash_ip(ip: str) -> str:
@@ -12523,8 +12511,8 @@ def api_community_feedback_delete(item_id: str):
 # ─── Form "Contatta supporto" (footer del sito) ────────────────────
 # Inoltra la richiesta alla casella di assistenza. Nessuna persistenza:
 # la richiesta vive nella mailbox, non nei nostri store.
-_SUPPORT_RL_PER_MIN = int(os.environ.get("ABM_SUPPORT_RL_PER_MIN", "2"))
-_SUPPORT_RL_PER_HOUR = int(os.environ.get("ABM_SUPPORT_RL_PER_HOUR", "6"))
+_SUPPORT_RL_PER_MIN = env_int("ABM_SUPPORT_RL_PER_MIN", 2)
+_SUPPORT_RL_PER_HOUR = env_int("ABM_SUPPORT_RL_PER_HOUR", 6)
 _SUPPORT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 _SUPPORT_MSG_MIN = 10
 
@@ -15465,10 +15453,7 @@ def api_cancel(job_id):
         # email_registered. Usato da scripts/kill_job.sh.
         is_admin_kill = force and _admin_auth_ok(_admin_auth_from_request())
         if is_gemini and not is_admin_kill:
-            try:
-                lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
-            except (TypeError, ValueError):
-                lock_pct = 70
+            lock_pct = env_int("ABM_GEMINI_CANCEL_LOCK_PCT", 70)
             if 0 < lock_pct < 100:
                 from generation_engine import _progress_pct
                 pct = _progress_pct(job)
@@ -15544,10 +15529,7 @@ def api_cancel_preview(job_id):
             _tt = job.get("tr_progress_total", 0) or 0
             if _tt > 0:
                 pct = max(0, min(100, int(job.get("tr_progress_current", 0) / _tt * 100)))
-        try:
-            lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
-        except (TypeError, ValueError):
-            lock_pct = 70
+        lock_pct = env_int("ABM_GEMINI_CANCEL_LOCK_PCT", 70)
         # Il lock anti-abuso è una soglia sul cancel volontario delle voci
         # PREMIUM (TTS Gemini): non si applica alla traduzione, il cui cancel
         # non ha alcun lock. Evita la nota fuorviante nella modale admin.
@@ -17041,9 +17023,9 @@ def api_combined_estimate():
     if _is_voxcpm_voice(voice_id):
         threshold = free_quota._premium_threshold_eur(voice_id)
     elif _is_speechify_voice(voice_id):
-        threshold = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
+        threshold = speechify_tts.free_threshold_eur()
     elif _is_gemini_voice(voice_id):
-        threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+        threshold = gemini_tts.FREE_THRESHOLD_EUR if gemini_tts is not None else 0.50
     else:
         # Ottimizzazione AI standalone (voce standard): la gratuita' e' governata
         # dalla soglia LLM, non da quella PREMIUM, coerente con l'addebito reale
@@ -20675,7 +20657,7 @@ def _assembly_purge_hold(job, now):
 
 # Quiete richiesta prima di considerare "finito" un file locale rigenerato dopo
 # l'offload (stesso valore usato dall'offload in generation_engine).
-EVICT_REGEN_QUIET_SEC = int(os.environ.get("ABM_OFFLOAD_QUIET_SEC", "180"))
+EVICT_REGEN_QUIET_SEC = env_int("ABM_OFFLOAD_QUIET_SEC", 180)
 # Dedup dei log di mismatch sospetto: la condizione persiste per tutta la
 # retention e senza dedup riempirebbe syslog con una riga ogni 60s per file.
 _EVICT_MISMATCH_LOGGED = {}
@@ -20935,7 +20917,7 @@ EMAIL_PENDING_MAX_AGE_SEC = 48 * 3600  # cap di sicurezza se la lavorazione si i
 # ABM_GEMINI_FORENSIC_RETENTION_DAYS (default 7; 0 = disabilita).
 FORENSIC_MARKER_FILENAME = ".forensic_retain.json"
 try:
-    FORENSIC_RETENTION_DAYS = int(os.environ.get("ABM_GEMINI_FORENSIC_RETENTION_DAYS", "7"))
+    FORENSIC_RETENTION_DAYS = env_int("ABM_GEMINI_FORENSIC_RETENTION_DAYS", 7)
 except (TypeError, ValueError):
     FORENSIC_RETENTION_DAYS = 7
 FORENSIC_RETENTION_DAYS = max(0, FORENSIC_RETENTION_DAYS)
@@ -21392,9 +21374,9 @@ def _cleanup_expired_shares(now=None):
 # invisibile fino al blocco. Campionamento leggero da /proc (solo Linux), ogni
 # MEM_LOG_INTERVAL_SEC, piu' un WARN quando la memoria disponibile scende sotto
 # soglia o lo swap e' quasi pieno.
-MEM_LOG_INTERVAL_SEC = int(os.environ.get("ABM_MEM_LOG_INTERVAL_SEC", "300"))
-MEM_WARN_AVAIL_MB = int(os.environ.get("ABM_MEM_WARN_AVAIL_MB", "300"))
-MEM_WARN_SWAP_PCT = int(os.environ.get("ABM_MEM_WARN_SWAP_PCT", "80"))
+MEM_LOG_INTERVAL_SEC = env_int("ABM_MEM_LOG_INTERVAL_SEC", 300)
+MEM_WARN_AVAIL_MB = env_int("ABM_MEM_WARN_AVAIL_MB", 300)
+MEM_WARN_SWAP_PCT = env_int("ABM_MEM_WARN_SWAP_PCT", 80)
 _last_mem_log = [0.0]
 
 
@@ -21605,7 +21587,7 @@ def _load_metrics_supervisor():
             time.sleep(5)
 
 
-MALLOC_TRIM_INTERVAL_SEC = int(os.environ.get("ABM_MALLOC_TRIM_INTERVAL_SEC", "1800"))
+MALLOC_TRIM_INTERVAL_SEC = env_int("ABM_MALLOC_TRIM_INTERVAL_SEC", 1800)
 _last_malloc_trim = [0.0]
 _libc_trim = []      # [] = non ancora risolto, [None] = non disponibile
 
@@ -22128,10 +22110,7 @@ def _cf_probe_tick_sec():
     """Cadenza con cui il sorvegliante guarda l'orologio. Non e' l'intervallo
     fra una sonda e l'altra - quello lo tiene lo stato persistito e raddoppia
     da solo - ma solo la granularita' con cui l'appuntamento viene notato."""
-    try:
-        return max(10, int(os.environ.get("ABM_CF_PROBE_TICK_SEC", "60") or 60))
-    except (TypeError, ValueError):
-        return 60
+    return env_int("ABM_CF_PROBE_TICK_SEC", 60, floor=10)
 
 
 def _cf_probe_supervisor():
@@ -22337,8 +22316,8 @@ activity_log.init_dedup()
 _ensure_background_threads()
 
 if __name__ == "__main__":
-    PORT = int(os.environ.get("ABM_PORT", "5601"))
-    DEBUG = os.environ.get("ABM_DEBUG", "0").strip().lower() in ("1", "true", "yes", "on")
+    PORT = env_int("ABM_PORT", 5601)
+    DEBUG = env_bool("ABM_DEBUG", False)
     print(f"\n{'='*50}")
     print(f"  Audiobook Maker v{__version__}")
     print(f"  http://localhost:{PORT}")

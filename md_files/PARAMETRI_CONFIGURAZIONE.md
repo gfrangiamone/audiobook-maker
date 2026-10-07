@@ -6,6 +6,8 @@ Raccolta completa di tutti i parametri di funzionamento dell'applicazione, con i
 
 ## 1. Variabili d'ambiente (prefisso `ABM_`)
 
+Lettura unica tramite `env_utils` (`env_str/env_int/env_float/env_bool`, dal 2026-10-07): stringa vuota = default, virgola decimale accettata nei numeri (`0,5`), `env_int` accetta anche `3.0`, valore malformato = default con un avviso su stderr una volta per nome (prima alcune copie locali crashavano all'import, altre tacevano). Alcuni moduli leggono ancora `os.environ` inline: sono in migrazione (piano, blocco B1).
+
 Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore default | File | Riga |
@@ -1283,8 +1285,13 @@ comunque sotto osservazione) se manca **ogni** traccia di evasione. Dal
 previsto del gate, cioè consegnare un'email; ad aggirarlo è cambiare
 l'identità con cui lo si supera. C'è rotazione quando vale almeno una fra:
 
-- almeno un cid nato dopo l'ultimo blocco/kill del gruppo (rotazione reattiva,
-  dove come «blocco» conta anche il primo `quota_gate`/`quota_block`);
+- almeno un cid nato entro `_REACTIVE_WINDOW_SEC` (48 h) dopo l'ultimo
+  blocco/kill del gruppo (rotazione reattiva, dove come «blocco» conta anche
+  il primo `quota_gate`/`quota_block`). Oltre la finestra il blocco non spiega
+  più il cookie nuovo: il 06/10/2026 un gruppo con una sola email è stato
+  bloccato per un cookie nato nove giorni dopo la quota esaurita di settembre,
+  con la quota di ottobre ancora a metà (`_reactive_birth`, usata anche da
+  `_born_after_last_block`);
 - almeno `_DISPOSABLE_MIN` (2) cid *usa-e-getta*, cioè vissuti meno di
   `_DISPOSABLE_LIFE_SEC` (2 h) e fermi da oltre `_DISPOSABLE_IDLE_SEC` (6 h)
   — è la rotazione preventiva, che elude il gate senza mai toccarlo;
