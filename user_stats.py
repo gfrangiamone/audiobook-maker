@@ -15,14 +15,15 @@ Definizione di coorte (variante B, allineata a
 pagamento incassato sulla sessione. Nota: i pagamenti con buono non lasciano
 `PAYMENT_CAPTURED` nel log, quindi restano visibili solo se la voce e' premium.
 
-Solo stdlib, nessun import dal progetto.
+Solo stdlib piu' la foglia voice_utils (predicati sui prefissi voce).
 """
 import json
 from collections import Counter, OrderedDict
 from datetime import datetime
 
-GEMINI_VOICE_PREFIX = "gemini:"
-SPEECHIFY_VOICE_PREFIX = "speechify:"
+# Unica fonte per "voce PREMIUM": Gemini, Speechify e VoxCPM. La copia locale
+# precedente ignorava VoxCPM e classificava quei job come standard.
+from voice_utils import is_premium_voice  # noqa: F401  (riesportato)
 
 # Evento che marca una generazione TTS portata a termine.
 COMPLETE_OP = "COMPLETE"
@@ -44,11 +45,6 @@ QUANTILI = (0.50, 0.70, 0.90)
 FASCE_SPESA = ((1.0, "< 1"), (3.0, "1-3"), (10.0, "3-10"), (30.0, "10-30"),
                (None, "> 30"))
 COORTI = ("premium", "free", "totale")
-
-
-def is_premium_voice(voice):
-    return bool(voice) and (voice.startswith(GEMINI_VOICE_PREFIX)
-                            or voice.startswith(SPEECHIFY_VOICE_PREFIX))
 
 
 def parse_sessions(rows):
