@@ -1,0 +1,142 @@
+{
+ "atomic_write_by_hand": {
+  "audio_utils.py": 1,
+  "chunk_reuse.py": 1,
+  "cost_carry.py": 1,
+  "gemini_availability.py": 1,
+  "generation_engine.py": 2,
+  "load_metrics.py": 1,
+  "storage_backend.py": 1,
+  "voice_clone.py": 5,
+  "voxcpm_tts.py": 3
+ },
+ "env_helper_def": {
+  "abuse_watch.py": 2,
+  "accounts.py": 1,
+  "community_moderator.py": 1,
+  "free_quota.py": 1,
+  "gemini_tts.py": 3,
+  "generation_engine.py": 3,
+  "llm_output_judge.py": 3,
+  "section_judge.py": 3,
+  "semantic_judge.py": 3,
+  "speechify_tts.py": 3,
+  "transcript_judge.py": 3,
+  "translation_core.py": 2,
+  "translation_judge.py": 3,
+  "tts_backend_state.py": 1,
+  "voice_clone.py": 1,
+  "voice_clone_audio.py": 1,
+  "voice_clone_audit.py": 1,
+  "voice_language_guard.py": 3,
+  "voxcpm_tts.py": 2
+ },
+ "env_inline": {
+  "abuse_watch.py": 6,
+  "accounts.py": 4,
+  "activity_log.py": 1,
+  "assembly_queue.py": 3,
+  "audiobook_app.py": 57,
+  "cancel_policy.py": 2,
+  "community_moderator.py": 1,
+  "cost_carry.py": 1,
+  "email_service.py": 10,
+  "free_quota.py": 3,
+  "free_tts_quota.py": 5,
+  "gemini_availability.py": 1,
+  "gemini_cost_audit.py": 1,
+  "gemini_transport.py": 2,
+  "gemini_tts.py": 34,
+  "generation_engine.py": 16,
+  "llm_output_judge.py": 1,
+  "load_metrics.py": 5,
+  "optimization_cost_audit.py": 1,
+  "output_reuse.py": 2,
+  "payment.py": 23,
+  "push_service.py": 1,
+  "section_judge.py": 1,
+  "secure_archive.py": 3,
+  "semantic_judge.py": 1,
+  "speechify_tts.py": 4,
+  "storage_backend.py": 11,
+  "storage_tiering.py": 3,
+  "templates/index_page.py": 2,
+  "transcript_judge.py": 1,
+  "translation_core.py": 5,
+  "translation_cost_audit.py": 1,
+  "translation_judge.py": 1,
+  "tts_backend_state.py": 6,
+  "tts_split.py": 1,
+  "voice_clone.py": 2,
+  "voice_clone_audio.py": 5,
+  "voice_denoise.py": 4,
+  "voice_language_guard.py": 1,
+  "voice_utils.py": 1,
+  "voxcpm_catalog.py": 1,
+  "voxcpm_digest.py": 1,
+  "voxcpm_ranking.py": 1,
+  "voxcpm_tts.py": 6
+ },
+ "ffmpeg_outside_audio_utils": {
+  "audiobook_app.py": 2,
+  "load_metrics.py": 2,
+  "tts_split.py": 1,
+  "voice_clone_audio.py": 4,
+  "voice_clone_demo.py": 1,
+  "voxcpm_tts.py": 1
+ },
+ "html_doctype_in_py": {
+  "audiobook_app.py": 13,
+  "email_service.py": 1,
+  "guide_content.py": 1,
+  "privacy_content.py": 1,
+  "support_content.py": 1,
+  "voxcpm_digest.py": 1
+ },
+ "import_generation_engine": {
+  "abuse_watch.py": 2,
+  "community_moderator.py": 1,
+  "community_translator.py": 1
+ },
+ "lang_split_by_hand": {
+  "audiobook_app.py": 30,
+  "email_service.py": 3,
+  "gemini_tts.py": 2,
+  "generation_engine.py": 13,
+  "tts_split.py": 2,
+  "voice_language_guard.py": 2,
+  "voxcpm_tts.py": 1
+ },
+ "llm_call_by_hand": {
+  "abuse_watch.py": 1,
+  "community_moderator.py": 1,
+  "community_translator.py": 1,
+  "generation_engine.py": 2,
+  "translation_core.py": 1
+ },
+ "mirror_comment": {
+  "audiobook_app.py": 3,
+  "generation_engine.py": 2,
+  "templates/seo_i18n.py": 1
+ },
+ "naive_utc": {
+  "audiobook_app.py": 2,
+  "guide_content.py": 4
+ },
+ "retry_loop_by_hand": {
+  "audiobook_app.py": 1,
+  "community_moderator.py": 1,
+  "gemini_tts.py": 1,
+  "generation_engine.py": 4,
+  "push_service.py": 1,
+  "speechify_tts.py": 1,
+  "tts_backend_state.py": 1,
+  "tts_split.py": 4
+ },
+ "voice_prefix_literal": {
+  "generation_engine.py": 4,
+  "speechify_tts.py": 1,
+  "voice_clone.py": 1,
+  "voxcpm_tts.py": 1
+ }
+}
