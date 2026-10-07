@@ -615,6 +615,7 @@ from voice_utils import is_speechify_voice as _is_speechify_voice
 # Interruttore per modello PREMIUM (ABM_<MODELLO>_ENABLE, default abilitato).
 from voice_utils import voice_model_enabled as _voice_model_enabled
 from voice_utils import voice_model_key as _voice_model_key
+from voice_utils import parse_rate_pct as _parse_rate_pct
 
 
 def _premium_model_gate(voice):
@@ -8717,10 +8718,7 @@ def _synth_running_gemini_audit_records():
                 charged = generation_engine._tts_share_eur(
                     job.get("payment_amount_eur", 0), payment.get("llm_eur"))
             rate_raw = job.get("rate", "+0%")
-            try:
-                rate_pct = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
-            except Exception:
-                rate_pct = 0
+            rate_pct = int(_parse_rate_pct(rate_raw))
             if is_gem:
                 if gemini_tts is None:
                     continue

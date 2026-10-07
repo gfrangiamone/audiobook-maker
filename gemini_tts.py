@@ -23,6 +23,7 @@ from pathlib import Path
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import parse_rate_pct as _parse_rate_pct, rate_step as _rate_step
 # Interruttore per modello (ABM_<MODELLO>_ENABLE, default abilitato).
 from voice_utils import premium_model_enabled as _premium_model_enabled
 # Primitivo condiviso di scrittura JSON atomica (tmp + fsync + os.replace).
@@ -1463,19 +1464,9 @@ def estimate_input_tokens(text, language="it"):
 
 
 def _rate_pct_to_step(rate_pct):
-    """Converte percentuale (-30..+30) o stringa ('+10%') a step intero [-3, +3]."""
-    if rate_pct is None or rate_pct == "":
-        return 0
-    if isinstance(rate_pct, str):
-        try:
-            rate_pct = int(rate_pct.replace("%", "").replace("+", ""))
-        except ValueError:
-            return 0
-    try:
-        n = int(rate_pct)
-    except (TypeError, ValueError):
-        return 0
-    return max(-3, min(3, round(n / 10)))
+    """Converte percentuale (-30..+30) o stringa ('+10%') a step intero [-3, +3].
+    Alias di `voice_utils.rate_step` (nome storico usato da audit e test)."""
+    return _rate_step(rate_pct)
 
 
 def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0, voice=None):
@@ -1509,14 +1500,7 @@ def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0, voic
         rate = baseline_rate(language)
     base_seconds = len(norm) / rate
     # Converti rate_pct ("+10%", 10, "+0%", ecc.) a fattore moltiplicativo.
-    try:
-        if isinstance(rate_pct, str):
-            rp = int(rate_pct.replace("%", "").replace("+", ""))
-        else:
-            rp = int(rate_pct) if rate_pct is not None else 0
-    except (TypeError, ValueError):
-        rp = 0
-    rp = max(-50, min(50, rp))
+    rp = max(-50, min(50, int(_parse_rate_pct(rate_pct))))
     speed_factor = max(0.5, 1.0 + (rp / 100.0))
     return base_seconds / speed_factor
 
@@ -3127,7 +3111,7 @@ def build_final_text(text, style_instruction=None, rate=None,
             pct = str(rate).replace("%", "").replace("+", "")
             try:
                 n = int(pct)
-                step = max(-3, min(3, round(n / 10)))
+                step = _rate_step(n)
                 directive = _GEMINI_RATE_DIRECTIVES.get(step, "")
                 if directive:
                     style_parts.append(directive)

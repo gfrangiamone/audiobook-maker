@@ -18,6 +18,7 @@ import collections
 import json
 import logging
 import os
+from voice_utils import clone_token as _clone_token, parse_rate_pct as _parse_rate_pct
 from env_utils import env_float as _f, env_int as _i
 import re
 import threading
@@ -991,11 +992,7 @@ def invalidate_clone_cache():
 def voice_clone_token(voice_id):
     """Il token se `voice_id` e' una voce campionata (`voxcpm:mine:<token>`),
     altrimenti None. Non apre lo store: e' solo sintassi."""
-    prefix = "voxcpm:mine:"
-    if not isinstance(voice_id, str) or not voice_id.startswith(prefix):
-        return None
-    tok = voice_id[len(prefix):]
-    return tok if tok else None
+    return _clone_token(voice_id, strict=False)
 
 
 def _lingua_voce(voice_id):
@@ -1047,10 +1044,7 @@ def speed_effettiva(passo_voce, rate):
     non ha mai sentito (decisione dell'utente, 14 settembre 2026). Un cursore
     illeggibile vale zero. Il risultato sta nell'intervallo del worker.
     """
-    try:
-        pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
-    except (TypeError, ValueError):
-        pct = 0.0
+    pct = _parse_rate_pct(rate)
     return max(0.5, min(2.0, round(float(passo_voce) * (1.0 + pct / 100.0), 3)))
 
 
@@ -1876,9 +1870,8 @@ def apply_rate(pcm_path, rate, sample_rate):
     questa funzione: resta per stirare un PCM gia' su disco. Lo stiramento e'
     un `atempo` di ffmpeg sul PCM grezzo.
     """
-    try:
-        pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
-    except (TypeError, ValueError):
+    pct = _parse_rate_pct(rate, default=None)
+    if pct is None:
         return False
     tempo = 1.0 + pct / 100.0
     if abs(tempo - 1.0) < 0.005:

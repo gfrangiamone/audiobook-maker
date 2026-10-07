@@ -11,11 +11,12 @@ indice in memoria. Il dialogo col worker sta in `voxcpm_tts.py`.
 """
 import json
 import os
+from voice_utils import VOXCPM_CATALOG_PREFIX, VOXCPM_CATALOG_SCHEMA
 import threading
 
 # Schema degli id di catalogo: `voxcpm:v2:<locale>/<Nome>` (§12.2).
-CATALOG_SCHEMA = "v2"
-_ID_PREFIX = "voxcpm:" + CATALOG_SCHEMA + ":"
+CATALOG_SCHEMA = VOXCPM_CATALOG_SCHEMA
+_ID_PREFIX = VOXCPM_CATALOG_PREFIX
 # Passo di lettura per una voce che non dichiara `speed` (catalogo consegnato
 # prima del campo): lo stesso SPEED del banco del worker.
 SPEED_DEFAULT = 0.93

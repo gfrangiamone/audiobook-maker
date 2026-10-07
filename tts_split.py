@@ -27,6 +27,7 @@ import edge_tts
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
+from voice_utils import rate_speed_factor as _rate_speed_factor_vu
 
 from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
@@ -75,13 +76,7 @@ def _rate_speed_factor(rate):
     anti-troncamento in proporzione per non generare falsi positivi. Clamp a
     0.25 per evitare divisioni instabili su rate estremi.
     """
-    try:
-        m = re.match(r'\s*([+-]?\d+)\s*%', str(rate))
-        if m:
-            return max(0.25, 1.0 + int(m.group(1)) / 100.0)
-    except (TypeError, ValueError):
-        pass
-    return 1.0
+    return _rate_speed_factor_vu(rate, floor=0.25)
 
 
 def _edge_output_looks_truncated(output_path, text, rate="+0%"):

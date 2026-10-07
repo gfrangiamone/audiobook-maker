@@ -20,6 +20,7 @@ import wave
 # Interruttore per modello (ABM_SIMBA32_ENABLE, default abilitato).
 # voice_utils e' modulo foglia: nessun rischio di import circolare.
 from voice_utils import premium_model_enabled as _premium_model_enabled
+from voice_utils import is_speechify_voice as _is_speechify_voice, parse_rate_pct as _parse_rate_pct
 
 # === Gate di concorrenza globale (limite abbonamento) =======================
 # Un permesso per chiamata API. Ogni synthesize acquisisce/rilascia uno slot;
@@ -269,7 +270,7 @@ def parse_voice_id(voice_id):
 
     Raises ValueError se formato non valido, modello != simba-3.2 o voce ignota.
     """
-    if not isinstance(voice_id, str) or not voice_id.startswith("speechify:"):
+    if not _is_speechify_voice(voice_id):
         raise ValueError(f"Invalid Speechify voice ID: {voice_id!r}")
     parts = voice_id.split(":")
     if len(parts) != 3:
@@ -337,13 +338,9 @@ def build_ssml(text, emotion=None, rate="+0%"):
     """Costruisce l'SSML con emozione (se valida) e rate (se != +0%)."""
     inner = text
     if rate and rate not in ("+0%", "0%", "+0", 0):
-        pct = str(rate).replace("%", "").replace("+", "")
-        try:
-            n = int(pct)
-            if n != 0:
-                inner = f'<prosody rate="{n:+d}%">{inner}</prosody>'
-        except ValueError:
-            pass
+        pct = _parse_rate_pct(rate, default=None)
+        if pct is not None and int(pct) != 0:
+            inner = f'<prosody rate="{int(pct):+d}%">{inner}</prosody>'
     emo = (emotion or "").strip().lower()
     if emo and emo in EMOTIONS:
         inner = f'<speechify:style emotion="{emo}">{inner}</speechify:style>'

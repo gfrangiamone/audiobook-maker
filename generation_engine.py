@@ -249,6 +249,7 @@ from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 from voice_utils import is_premium_voice as _is_premium_voice
+from voice_utils import is_cloned_voice as _is_cloned_voice, parse_rate_pct as _parse_rate_pct, rate_step as _rate_step
 
 
 def _retention_for_job(job):
@@ -4068,7 +4069,7 @@ def _engine_for_voice(voice):
 def _ranking_point_allowed(voice):
     """Le voci personali (voxcpm:mine:) non entrano nella classifica d'uso:
     e' una voce campione di un solo utente, non una voce del catalogo."""
-    return _is_voxcpm_voice(voice) and not (voice or "").startswith("voxcpm:mine:")
+    return _is_voxcpm_voice(voice) and not _is_cloned_voice(voice)
 
 
 def _pcm_sample_rate(job, use_speechify, use_voxcpm):
@@ -4726,9 +4727,8 @@ def _speed_label(rate):
     raw = (str(rate) or "").strip()
     if not raw:
         return ""
-    try:
-        pct = float(raw.replace("%", "").replace("+", "").strip())
-    except (TypeError, ValueError):
+    pct = _parse_rate_pct(raw, default=None)
+    if pct is None:
         return raw
     return "%.2fx (%s)" % (1.0 + pct / 100.0, raw if raw.startswith(("+", "-")) else "+" + raw)
 
@@ -4789,7 +4789,7 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
             # `abm_language` e lasciava `abm_model` vuoto (M4B consegnati il
             # 15/09/2026 con `abm_language=voxcpm:v2:it-IT/Lorenzo`).
             model_label = getattr(voxcpm_tts, "MODEL_LABEL", "") or model_label
-            if voice_id.startswith("voxcpm:mine:"):
+            if _is_cloned_voice(voice_id):
                 # Voce campione: non e' nel catalogo e il suo nome e' roba del
                 # proprietario. Nei tag va un'etichetta neutra, e la lingua la
                 # sa solo il record (vedi voice_clone.py).
@@ -4838,7 +4838,7 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
         # Voce campione: l'id completo porta il token, un segreto (vedi
         # voice_clone.py) - nei metadati del file consegnato (ri-condivisibile
         # dall'utente) va solo il prefisso, mai il token.
-        if voice_id.startswith("voxcpm:mine:"):
+        if _is_cloned_voice(voice_id):
             tags["abm_voice_id"] = "voxcpm:mine"
         else:
             tags["abm_voice_id"] = voice_id
@@ -5083,20 +5083,8 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         # velocità, quindi va tracciato per consentire calibrazione per
         # rate_step (vedi recalc-params, raggruppato anche su rate_step).
         rate_raw = job.get("rate", "+0%")
-        try:
-            if isinstance(rate_raw, str):
-                rate_pct_val = int(rate_raw.replace("%", "").replace("+", "").strip() or 0)
-            else:
-                rate_pct_val = int(rate_raw or 0)
-        except Exception:
-            rate_pct_val = 0
-        try:
-            if gemini_tts is not None and hasattr(gemini_tts, "_rate_pct_to_step"):
-                rate_step_val = int(gemini_tts._rate_pct_to_step(rate_pct_val))
-            else:
-                rate_step_val = max(-3, min(3, round(rate_pct_val / 10.0)))
-        except Exception:
-            rate_step_val = 0
+        rate_pct_val = int(_parse_rate_pct(rate_raw))
+        rate_step_val = _rate_step(rate_raw)
         rec = {
             "job_id": job_id,
             "model_key": model_key,
@@ -5344,14 +5332,8 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         except Exception:
             provider_cost_eur_est = 0.0
         rate_raw = job.get("rate", "+0%")
-        try:
-            if isinstance(rate_raw, str):
-                rate_pct_val = int(rate_raw.replace("%", "").replace("+", "").strip() or 0)
-            else:
-                rate_pct_val = int(rate_raw or 0)
-        except Exception:
-            rate_pct_val = 0
-        rate_step_val = max(-3, min(3, round(rate_pct_val / 10.0)))
+        rate_pct_val = int(_parse_rate_pct(rate_raw))
+        rate_step_val = _rate_step(rate_raw)
         rec = {
             "job_id": job_id,
             "provider": "speechify",
@@ -5610,15 +5592,12 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         delta_pct = (round((delta_eur / provider_cost_eur * 100), 2)
                      if provider_cost_eur > 0 else 0.0)
         rate_raw = job.get("rate", "+0%")
-        try:
-            rate_pct_val = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
-        except (TypeError, ValueError):
-            rate_pct_val = 0
+        rate_pct_val = int(_parse_rate_pct(rate_raw))
 
         # Voce campionata: l'id `vc_...` (mai il token, che e' segreto) e il
         # libro consegnato contato sulla voce per la tab admin.
         voice_clone_id = ""
-        if str(voice_id or "").startswith("voxcpm:mine:"):
+        if _is_cloned_voice(voice_id):
             try:
                 import voice_clone
                 voice_clone_id = voice_clone.clone_id_of(voice_id) or ""
@@ -5634,7 +5613,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "model_key": "v2",
             "language": language or "",
             "rate_pct": rate_pct_val,
-            "rate_step": max(-3, min(3, round(rate_pct_val / 10.0))),
+            "rate_step": _rate_step(rate_raw),
             "chars_total": chars,
             "billable_chars": chars,
             "input_tokens_est": 0,

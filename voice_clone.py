@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import os
+from voice_utils import VOXCPM_MINE_PREFIX, clone_token as _clone_token
 from env_utils import env_int as _env_int
 import re
 import secrets
@@ -37,7 +38,7 @@ import voice_clone_prompts
 import voice_denoise
 import voxcpm_catalog
 
-VOICE_ID_PREFIX = "voxcpm:mine:"
+VOICE_ID_PREFIX = VOXCPM_MINE_PREFIX
 # La cartella dei campioni e delle demo delle voci clonate dentro il data dir,
 # con lo stesso nome come prefisso su R2. Ha un nome tutto suo (e non
 # l'ambiguo 'voices') perche' nel data dir ogni altra cartella e' di un job:
@@ -227,10 +228,7 @@ def voice_id_of(rec):
 
 
 def token_of(voice_id):
-    if not isinstance(voice_id, str) or not voice_id.startswith(VOICE_ID_PREFIX):
-        return None
-    tok = voice_id[len(VOICE_ID_PREFIX):]
-    return tok if len(tok) == 32 and all(c in "0123456789abcdef" for c in tok) else None
+    return _clone_token(voice_id)
 
 
 def email_hash(email):
