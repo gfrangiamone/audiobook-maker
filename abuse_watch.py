@@ -73,6 +73,11 @@ _STABLE_MAX_EMAILS = 1
 # (cid vissuti piu' di `_DISPOSABLE_LIFE_SEC` e quindi non contati la').
 _ROTATION_MIN_CIDS = 4
 _ROTATION_MAX_MEDIAN_LIFE_SEC = 24 * 3600
+# Rotazione *reattiva*: il cookie nuovo arriva minuti o ore dopo il blocco, per
+# ripartire da zero. Nove giorni dopo, a quota del mese gia' azzerata, e' un
+# altro browser della stessa persona (caso del 06/10/2026, gruppo bloccato con
+# una sola email e la quota di ottobre ancora a meta').
+_REACTIVE_WINDOW_SEC = 2 * _DAY_SEC
 _CLEARED_WINDOW_SEC = 30 * _DAY_SEC   # quanto vale il ripristino admin come garanzia
 _CLEARED_MIN_CONF = 0.95              # confidenza minima per ri-bloccare dopo un ripristino
 # Due job dello stesso gruppo che arrivano a pochi secondi l'uno dall'altro
@@ -388,18 +393,22 @@ def _last_block_ts(g):
                + [float(x.get("ts") or 0) for x in (g.get("kills") or [])])
 
 
+def _reactive_birth(first, last_block):
+    """Vero se un cid nato a `first` e' comparso entro `_REACTIVE_WINDOW_SEC`
+    dopo il blocco: oltre, il blocco non spiega piu' il cookie nuovo."""
+    return bool(first and last_block
+                and last_block < first <= last_block + _REACTIVE_WINDOW_SEC)
+
+
 def _born_after_last_block(g, cid):
-    """Vero se `cid` e' comparso dopo l'ultimo blocco del gruppo: e' il profilo
-    del cookie creato per ripartire da zero, non quello del vicino di NAT che
-    era gia' li'."""
-    last_block = _last_block_ts(g)
-    if not last_block:
-        return False
+    """Vero se `cid` e' comparso a ridosso dell'ultimo blocco del gruppo: e' il
+    profilo del cookie creato per ripartire da zero, non quello del vicino di
+    NAT che era gia' li'."""
     try:
         first = float((((g or {}).get("cids") or {}).get(cid) or {}).get("first_ts") or 0)
     except (TypeError, ValueError):
         return False
-    return bool(first and first > last_block)
+    return _reactive_birth(first, _last_block_ts(g))
 
 
 def _evasion_features(g, now):
@@ -437,7 +446,7 @@ def _evasion_features(g, now):
         first, last = float(c.get("first_ts") or 0), float(c.get("last_ts") or 0)
         if not first:
             continue
-        if last_block and first > last_block:
+        if _reactive_birth(first, last_block):
             born_after += 1
         life = max(0.0, last - first)
         lifespans.append(life)
@@ -774,7 +783,7 @@ Signals: S1 = quota exhausted this month; S2 = two or more cids in the group; S3
 
 The offence is EVADING THE QUOTA, not consuming it. High volume alone is not abuse: a researcher converting their own bibliography produces as many characters as a harvester. Evasion leaves its own traces, reported in the "group" block:
 - "quota_gate_ever": whether this group ever hit the quota at all. FALSE means the group has never even reached the limit, so there is nothing it could be evading. TRUE is NOT evidence of anything: the gate exists to be passed, and passing it means handing over an email.
-- "cids_born_after_last_block": cookies created after the group's last block — reactive rotation.
+- "cids_born_after_last_block": cookies created within 48 hours after the group's last block — reactive rotation.
 - "disposable_cids": cookies used for a couple of hours and then abandoned — pre-emptive rotation that dodges the gate without ever touching it.
 - "median_cid_lifespan_hours" / "oldest_cid_age_hours": stable, long-lived cookies are what real users have.
 - "distinct_emails": how many identities this group has ever used. Evading the gate in series requires fresh ones; ONE email behind any number of gate acceptances is one person using the service as designed.
