@@ -179,14 +179,46 @@ def test_is_owner_solo_il_dispositivo_creatore(tmp_path):
 
 
 def test_forget_rifiuta_il_dispositivo_proprietario(tmp_path):
-    """m1: il creatore non puo' essere dimenticato (perderebbe per sempre il
-    voice_code). Deve usare "Cancella" (delete_by_owner)."""
+    """m1: il creatore senza email non puo' essere dimenticato (perderebbe per
+    sempre il voice_code). Deve usare "Cancella" (delete_by_owner)."""
     rec = _pronta(tmp_path)
+    assert not rec.get("owner_email")
+    assert vc.can_forget(rec, "cid-owner") is False
     with pytest.raises(vc.BadTransition):
         vc.forget(rec["id"], "cid-owner")
     assert vc.authorized(vc.voice_id_of(rec), "cid-owner")
     got = vc.get(rec["id"])
     assert any(d.get("cid") == "cid-owner" for d in got["devices"])
+
+
+def test_forget_del_creatore_con_email_a_voce_pronta(tmp_path):
+    """Chi ha fatto registrare un'altra persona sul proprio dispositivo deve
+    poter togliere la voce: codice e gestione restano nell'email."""
+    rec = vc.store().update(_pronta(tmp_path)["id"], {"owner_email": "altro@example.com"})
+    assert vc.can_forget(rec, "cid-owner") is True
+    assert vc.forget(rec["id"], "cid-owner") is True
+    assert not vc.authorized(vc.voice_id_of(rec), "cid-owner")
+    got = vc.get(rec["id"])
+    assert got["state"] == "ready" and got["voice_code"] == rec["voice_code"]
+    assert vc.mine("cid-owner") == []
+
+
+def test_forget_del_creatore_rifiutato_prima_di_ready(tmp_path):
+    rec = _pronta(tmp_path)
+    rec = vc.store().update(rec["id"], {"owner_email": "altro@example.com", "state": "demos_ready"})
+    assert vc.can_forget(rec, "cid-owner") is False
+    with pytest.raises(vc.BadTransition):
+        vc.forget(rec["id"], "cid-owner")
+
+
+def test_mine_espone_can_forget(tmp_path):
+    rec = _pronta(tmp_path)
+    _, _, code = _claim(rec["voice_code"], "cid-b", now=1000)
+    vc.confirm(rec["voice_code"], "cid-b", code, now=1001)
+    assert vc.mine("cid-owner")[0]["can_forget"] is False
+    assert vc.mine("cid-b")[0]["can_forget"] is True
+    vc.store().update(rec["id"], {"owner_email": "altro@example.com"})
+    assert vc.mine("cid-owner")[0]["can_forget"] is True
 
 
 def test_confirm_locks_scaduti_vengono_potati(tmp_path):

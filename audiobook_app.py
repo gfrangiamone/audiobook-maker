@@ -10843,8 +10843,7 @@ def api_vc_forget(clone_id):
     try:
         ok = voice_clone.forget(clone_id, _get_client_id())
     except voice_clone.BadTransition:
-        # m1: il dispositivo creatore non puo' essere dimenticato (perderebbe
-        # per sempre il voice_code) - va cancellato con "Cancella" (delete_by_owner).
+        # m1: il creatore si toglie solo da voce pronta con email (voice_clone.can_forget).
         return _vc_err("bad_state", "The owner device cannot be forgotten; delete the voice instead", 409)
     if not ok:
         return _vc_err("voice_not_found", "Voice not found", 404)

@@ -1098,6 +1098,7 @@ def mine(cid, now=None):
             continue
         pub = public_view(rec)
         pub["owner"] = is_owner(rec, cid)
+        pub["can_forget"] = can_forget(rec, cid)
         pub["pending"] = rec.get("state") != "ready"
         pub["speed"] = speed_of(rec)
         # Il nome con cui questo dispositivo e' gia' registrato: il wizard lo
@@ -1429,17 +1430,30 @@ def _drop_device(rec, cid):
     return True
 
 
+def can_forget(rec, cid):
+    """Il dispositivo puo' togliere la voce da se' con «Rimuovi»?
+
+    Gli altri dispositivi sempre. Il creatore (m1) solo a voce pronta e con
+    l'email del proprietario: codice-voce e link di gestione restano
+    nell'email di consegna, come dopo la revoca dal link di gestione. Serve a
+    chi ha prestato il proprio dispositivo a un'altra persona per registrare:
+    senza, la voce di quella resterebbe qui per sempre."""
+    if not is_owner(rec, cid):
+        return True
+    return rec.get("state") == "ready" and bool(rec.get("owner_email"))
+
+
 def forget(clone_id, cid):
     """«Rimuovi da questo dispositivo»: solo il legame, la voce sopravvive.
 
-    m1: il dispositivo creatore non puo' essere rimosso qui, altrimenti il
-    proprietario perderebbe per sempre il voice_code (nessun altro modo di
-    recuperarlo). Chi vuole liberarsene usa "Cancella" (delete_by_owner)."""
+    Il creatore passa da `can_forget`: senza email non avrebbe altro modo di
+    recuperare il voice_code, e prima di `ready` la rinuncia passa da
+    discard/reject."""
     with _lock:
         rec = get(clone_id)
         if rec is None:
             return False
-        if is_owner(rec, cid):
+        if not can_forget(rec, cid):
             raise BadTransition("il dispositivo proprietario non puo' essere dimenticato")
         return _drop_device(rec, cid)
 
