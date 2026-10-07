@@ -3533,6 +3533,21 @@ def run_optimization(job_id, selected_chapters=None):
                 except Exception as _e_est_spx_ag:
                     print(f"[{job_id}] auto-gen speechify_estimate persist failed (non-fatal): {_e_est_spx_ag}")
 
+            # Idem per VoxCPM: senza questa stima l'audit (_write_voxcpm_audit)
+            # e il rilevatore di margine lavoravano con *_est = 0 sui job
+            # auto-gen, e il tetto gratuito non aveva un listino da confrontare.
+            if (_is_voxcpm_voice(voice) and voxcpm_tts.is_available()
+                    and not job.get("voxcpm_estimate")):
+                try:
+                    job["voxcpm_estimate"] = voxcpm_tts.estimate_book_cost(
+                        info.chapters,
+                        language=((job.get("opt_lang") or "").lower()
+                                  or (getattr(info, "language", "") or "").split("-")[0].lower()
+                                  or "it"),
+                    )
+                except Exception as _e_est_vox_ag:
+                    print(f"[{job_id}] auto-gen voxcpm_estimate persist failed (non-fatal): {_e_est_vox_ag}")
+
             # Tracking nell'Activity Log: il flusso auto-gen bypassa
             # /api/generate (dove l'evento GENERATE viene scritto con voice),
             # quindi la voce non comparirebbe nella UI admin. Mirroriamo qui
@@ -5156,10 +5171,8 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         # stasha job["payment"], oppure stima divergente fra frontend/server
         # che salta il branch payment). Stampa WARNING esplicito cosi' la
         # prossima occorrenza emerge nei log senza dover scavare nel JSONL.
-        try:
-            _free_thr = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
-        except (TypeError, ValueError):
-            _free_thr = 0.50
+        # Stessa soglia del listino (gemini_tts), non una copia dell'env.
+        _free_thr = gemini_tts.FREE_THRESHOLD_EUR if gemini_tts is not None else 0.50
         # Rilevatore a consuntivo su margine e job gratuiti sopra soglia.
         # Dopo append_record: l'audit deve essere scritto anche se l'invio
         # dell'email fallisce.
@@ -5396,10 +5409,9 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
         _clear_cost_carry(job_id, "speechify")
-        try:
-            _free_thr = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.40"))
-        except (TypeError, ValueError):
-            _free_thr = 0.40
+        # Stessa soglia del listino (speechify_tts): la copia locale aveva
+        # default 0.40 contro 0.50 e divergeva dal prezzo applicato.
+        _free_thr = speechify_tts.free_threshold_eur()
         # Rilevatore a consuntivo (mirror del ramo Gemini).
         _check_margin_anomalies(job_id, job, rec, _spx_est, "speechify", _free_thr)
         if (outcome == "completed"
@@ -5745,6 +5757,10 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         # secondo non deve poter far mancare il primo.
         _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome)
         _free_thr = voxcpm_tts.free_threshold_eur()
+        # Rilevatore a consuntivo su margine e job gratuiti sopra soglia: il
+        # record VoxCPM usa gli stessi campi di Gemini e Speechify, ma era
+        # l'unico motore a saltarlo.
+        _check_margin_anomalies(job_id, job, rec, _vox_est, "voxcpm", _free_thr)
         if outcome == "completed" and charged <= 0.0 and should_have_been > _free_thr:
             print(f"[{job_id}] AUDIT WARNING: completed VoxCPM job sopra soglia "
                   f"({should_have_been:.2f}€) senza pagamento registrato "
@@ -7897,7 +7913,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                            chapters=m4b_chapters or None,
                                                            extra_tags=gen_tags,
                                                            title=info.title, author=info.author or None,
-                                                           cover_path=cover_path):
+                                                           cover_path=cover_path,
+                                                           date=getattr(info, "date", None),
+                                                           language=getattr(info, "language", None),
+                                                           description=getattr(info, "description", None)):
                                 job["output_m4b"] = final_m4b
                                 job["m4b_failed"] = False
                                 break
