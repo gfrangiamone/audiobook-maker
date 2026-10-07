@@ -1012,8 +1012,18 @@ def _send_voucher_email(code, email, amount_eur, book_title, kind="optimization"
 # Voce campionata: email transazionali in sette lingue (spec \u00a78)
 # ---------------------------------------------------------------------------
 
+def _i18n_table(table, lang):
+    """Testi della lingua con fallback PER CHIAVE su `en`: una chiave mancante
+    in una traduzione prende l'inglese invece di far saltare l'invio con
+    KeyError dentro `.format` (l'email non partiva, in silenzio)."""
+    code = (lang or "").split("-")[0].lower()
+    base = table.get("en") or {}
+    loc = table.get(code) if code != "en" else None
+    return {**base, **loc} if loc else dict(base)
+
+
 def _vc_t(lang):
-    return _VC_I18N.get((lang or "").split("-")[0].lower()) or _VC_I18N.get("en") or {}
+    return _i18n_table(_VC_I18N, lang)
 
 
 def _vc_num(value, kind="float"):
@@ -1092,7 +1102,7 @@ except Exception as _e:      # noqa: BLE001
 
 
 def _acct_t(lang):
-    return _ACCT_I18N.get((lang or "").split("-")[0].lower()) or _ACCT_I18N.get("en") or {}
+    return _i18n_table(_ACCT_I18N, lang)
 
 
 def _acct_send(email, lang, subject_key, body_key, **values):
@@ -1203,7 +1213,7 @@ def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None
     """
     if not (email and _smtp_available()):
         return
-    title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
+    title_safe = _esc_html(_sanitize_header(book_title or "il tuo libro", max_len=120))
     subject = (f"Audiobook Maker — Generazione non avviata, rimborso emesso "
                f"({amount_eur:.2f} EUR)")
     if voucher_code:
@@ -1215,7 +1225,7 @@ def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None
     <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
     <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
   </div>
-  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>"""
+  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{_esc_html(email)}</strong>.</p>"""
     else:
         refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
     <p style="margin:0"><strong>Rimborso accreditato:</strong> {amount_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
@@ -1836,7 +1846,7 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     """
     if not (email and _smtp_available()):
         return
-    title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
+    title_safe = _esc_html(_sanitize_header(book_title or "il tuo libro", max_len=120))
     if auto_cancel:
         subject = (f"Audiobook Maker — Generazione interrotta, audio parziale "
                    f"disponibile ({refund_eur:.2f} EUR rimborsati)")
@@ -1866,7 +1876,7 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     <div style="margin-top:12px">Valore: <strong>{refund_eur:.2f} EUR</strong></div>
     <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
   </div>
-  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>"""
+  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{_esc_html(email)}</strong>.</p>"""
     elif refund_eur > 0:
         refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
     <p style="margin:0"><strong>Rimborso accreditato:</strong> {refund_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
@@ -1910,7 +1920,7 @@ def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label
     """
     if not (email and _smtp_available()):
         return
-    title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
+    title_safe = _esc_html(_sanitize_header(book_title or "il tuo libro", max_len=120))
     subject = f"Audiobook Maker \u2014 Generazione interrotta, rimborso emesso ({amount_eur:.2f} EUR)"
     if voucher_code:
         from datetime import datetime, timedelta
@@ -1921,7 +1931,7 @@ def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label
     <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
     <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
   </div>
-  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>"""
+  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{_esc_html(email)}</strong>.</p>"""
     else:
         refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
     <p style="margin:0"><strong>Rimborso accreditato:</strong> {amount_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
@@ -1930,7 +1940,7 @@ def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label
   <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio interrotta</h2>
   <p>Ciao,</p>
   <p>la generazione delle voci PREMIUM per <strong>{title_safe}</strong> non &egrave; stata completata.</p>
-  <p><strong>Motivo:</strong> {reason_label}</p>
+  <p><strong>Motivo:</strong> {_esc_html(reason_label)}</p>
   <p>L'operazione &egrave; considerata <strong>fallita</strong> e abbiamo emesso il <strong>rimborso integrale</strong> della cifra che avevi versato.</p>
   {refund_block}
   <p>Ti chiediamo scusa per il disagio. Puoi ritentare la generazione tra qualche ora, quando la quota del servizio si sar&agrave; rinnovata.</p>
