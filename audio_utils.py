@@ -742,14 +742,34 @@ def _sanitize_extra_tags(extra_tags):
 
 
 def _extra_tag_args(extra_tags):
-    """Opzioni CLI `-metadata k=v` per i tag custom (lista vuota se non ce ne sono)."""
+    """Opzioni CLI `-metadata k=v` per i tag custom (lista vuota se non ce ne sono).
+
+    Oltre ai TXXX, una copia impacchettata va nel commento (COMM): e' il campo
+    che Esplora risorse di Windows mostra in "Commenti", i TXXX non li mostra.
+    """
     args = []
     for k, v in _sanitize_extra_tags(extra_tags):
         args += ["-metadata", f"{k}={v}"]
+    packed = _pack_extra_tags(extra_tags)
+    if packed:
+        args += ["-metadata", "comment=" + packed]
     return args
 
 
-def _extra_tag_args_mp4(extra_tags):
+def _pack_extra_tags(extra_tags):
+    """Tag custom in una riga sola `k=v; k=v`, entro _EXTRA_TAG_PACK_MAX_CHARS."""
+    pezzi, usati = [], 0
+    for k, v in _sanitize_extra_tags(extra_tags):
+        # il ';' separa le coppie: dentro un valore diventa ','
+        pezzo = "%s=%s" % (k, v.replace(";", ","))
+        if usati + len(pezzo) > _EXTRA_TAG_PACK_MAX_CHARS:
+            break
+        pezzi.append(pezzo)
+        usati += len(pezzo) + 2
+    return "; ".join(pezzi)
+
+
+def _extra_tag_args_mp4(extra_tags, description=""):
     """Come `_extra_tag_args`, ma per il container MP4/M4B: una chiave sola.
 
     Il muxer MP4 conosce due modi di scrivere i metadati, e sono alternativi:
@@ -768,18 +788,17 @@ def _extra_tag_args_mp4(extra_tags):
     generazione restano nel file impacchettati in `keywords` (atomo `keyw`),
     chiave standard che convive con `covr`, che il file FFMETADATA1 non usa e
     che nessun lettore di audiolibri mostra al posto di qualcos'altro.
+
+    `keyw` pero' Esplora risorse di Windows non lo mostra: la stessa riga va
+    anche in `comment` (©cmt, "Commenti" in Windows), davanti alla descrizione
+    del libro (`description`, gia' troncata dal chiamante) che il commento
+    portava da solo. L'atomo `desc` resta la sola descrizione.
     """
-    pezzi, usati = [], 0
-    for k, v in _sanitize_extra_tags(extra_tags):
-        # il ';' separa le coppie: dentro un valore diventa ','
-        pezzo = "%s=%s" % (k, v.replace(";", ","))
-        if usati + len(pezzo) > _EXTRA_TAG_PACK_MAX_CHARS:
-            break
-        pezzi.append(pezzo)
-        usati += len(pezzo) + 2
-    if not pezzi:
+    packed = _pack_extra_tags(extra_tags)
+    if not packed:
         return []
-    return ["-metadata", "keywords=" + "; ".join(pezzi)]
+    comment = packed + (" | " + description if description else "")
+    return ["-metadata", "keywords=" + packed, "-metadata", "comment=" + comment]
 
 
 def _build_ffmetadata_text(chapters=None, title=None, author=None,
@@ -839,8 +858,9 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
       - album_artist    ← autore (campo "autore" in Apple Books)
       - date            ← anno di pubblicazione (YYYY, estratto da date string)
       - genre           ← "Audiobook" di default (parametrizzabile)
-      - comment         ← breve descrizione del libro (troncata a 1000 char)
-      - description     ← alias di comment per compat (Apple Books)
+      - comment         ← breve descrizione del libro (troncata a 1000 char),
+                          preceduta dai parametri di generazione se ci sono
+      - description     ← la sola descrizione del libro (Apple Books)
       [format-level, -metadata CLI]
       - media_type=2    ← iTunes stik atom: Apple Books classifica come "Audiobook"
       [stream-level, -metadata:s:a:0 CLI]
@@ -851,7 +871,8 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
                           velocità, stile) impacchettati in una riga sola:
                           chiavi non standard il muxer MP4 non ne accetta, e
                           il flag che gliele farebbe accettare gli toglie la
-                          copertina (vedi `_extra_tag_args_mp4`).
+                          copertina (vedi `_extra_tag_args_mp4`). Stessa riga
+                          in testa a `comment`, visibile da Windows.
 
     Nota: il tag `encoder` NON viene impostato perché ffmpeg lo sovrascrive sempre
     con il proprio valore (es. "Lavf62.3.100").
@@ -949,7 +970,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
             # Tag custom: dopo -map_metadata per non essere sovrascritti, e in
             # una chiave standard sola perche' il ramo che accetta le chiavi
             # custom non scrive la copertina (vedi _extra_tag_args_mp4).
-            c += _extra_tag_args_mp4(extra_tags)
+            c += _extra_tag_args_mp4(extra_tags, desc_trunc)
             c += ["-f", "ipod", m4b_path]
             return c
 
@@ -1995,7 +2016,7 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         # Tag custom: DOPO -map_metadata (che altrimenti li sovrascriverebbe) e
         # in una chiave standard sola, perche' il ramo che accetta le chiavi
         # custom lascerebbe il file senza copertina (vedi _extra_tag_args_mp4).
-        cmd.extend(_extra_tag_args_mp4(extra_tags))
+        cmd.extend(_extra_tag_args_mp4(extra_tags, desc_trunc))
         cmd.extend(["-f", "ipod", output_path])
 
         # ffmpeg stampa per primi banner di versione + 'configuration: ...' che

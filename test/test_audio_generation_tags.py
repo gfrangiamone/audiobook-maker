@@ -257,9 +257,11 @@ def test_m4b_senza_tag_custom_resta_con_la_copertina(tmp_path):
 def test_pacchetto_mp4_sta_in_una_chiave_sola_e_ha_un_tetto():
     args = audio_utils._extra_tag_args_mp4(
         {"abm_voice": "Diego", "abm_speed": "1.10x"})
-    assert args[0] == "-metadata"
-    assert len(args) == 2
-    assert args[1] == "keywords=abm_voice=Diego; abm_speed=1.10x"
+    assert args == ["-metadata", "keywords=abm_voice=Diego; abm_speed=1.10x",
+                    "-metadata", "comment=abm_voice=Diego; abm_speed=1.10x"]
+    # Con la descrizione del libro, il commento la porta dopo i parametri.
+    args = audio_utils._extra_tag_args_mp4({"abm_voice": "Diego"}, "Un libro.")
+    assert args[3] == "comment=abm_voice=Diego | Un libro."
     # Il ';' dentro un valore non deve fingersi separatore di coppie.
     args = audio_utils._extra_tag_args_mp4({"abm_style": "calma; lenta"})
     assert args[1] == "keywords=abm_style=calma, lenta"
@@ -291,6 +293,24 @@ def test_m4b_non_incide_i_tag_html_della_descrizione(tmp_path):
     tags = _format_tags(out)
     assert tags["comment"] == "Un bel libro."
     assert tags["description"] == "Un bel libro."
+
+
+@requires_ffmpeg
+def test_parametri_visibili_nei_commenti_di_windows(tmp_path):
+    # Esplora risorse mostra `comment` ("Commenti"), non `keywords` ne' i TXXX.
+    pcm = _silence_pcm(tmp_path, seconds=2)
+    m4b = str(tmp_path / "out.m4b")
+    assert audio_utils.pcm_to_aac_m4b(
+        [pcm], m4b, title="Il Libro", cover_path=_cover_jpg(tmp_path),
+        description="<p>Un bel libro.</p>",
+        extra_tags={"abm_voice": "Puck", "abm_speed": "1.00x"})
+    tags = _format_tags(m4b)
+    assert tags["comment"] == "abm_voice=Puck; abm_speed=1.00x | Un bel libro."
+    assert tags["description"] == "Un bel libro."
+    assert _ha_copertina(m4b)
+    mp3 = str(tmp_path / "out.mp3")
+    assert audio_utils.pcm_to_mp3([pcm], mp3, extra_tags={"abm_voice": "Puck"})
+    assert _format_tags(mp3)["comment"] == "abm_voice=Puck"
 
 
 @requires_ffmpeg
