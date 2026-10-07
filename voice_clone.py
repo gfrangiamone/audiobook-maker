@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import os
+from client_identity import email_hash as _ci_email_hash, norm_email as _norm_email
 from voice_utils import VOXCPM_MINE_PREFIX, clone_token as _clone_token
 from env_utils import env_int as _env_int
 import re
@@ -232,7 +233,7 @@ def token_of(voice_id):
 
 
 def email_hash(email):
-    return hashlib.sha256((email or "").strip().lower().encode("utf-8")).hexdigest()
+    return _ci_email_hash(email)
 
 
 # ---------------------------------------------------------------------------
@@ -1215,10 +1216,6 @@ def unlink_account(clone_id):
         return False
     store().update(clone_id, {"account_id": None})
     return True
-
-
-def _norm_email(email):
-    return (email or "").strip().lower()
 
 
 def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,

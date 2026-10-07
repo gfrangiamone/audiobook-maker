@@ -33,6 +33,7 @@ lista degli alias: tutte le letture e i consumi del mese passano dal canonico.
 import hashlib
 import json
 import os
+from client_identity import ip_salt as _ip_salt, norm_email as _norm_email, salted_hash as _salted_hash
 import threading
 import time
 from datetime import datetime
@@ -87,11 +88,11 @@ def mail_key(email):
     Hash salato con ABM_IP_SALT e troncato: non consente di risalire
     all'indirizzo, ma e' stabile fra un cookie e il successivo.
     """
-    e = (email or "").strip().lower()
+    e = _norm_email(email)
     if not e or "@" not in e:
         return ""
-    salt = str(os.environ.get("ABM_IP_SALT", ""))
-    return _MAIL_PREFIX + hashlib.sha256((salt + e).encode("utf-8")).hexdigest()[:16]
+    # Forma storica: sha256(salt + email)[:16] con salt di default VUOTO.
+    return _MAIL_PREFIX + _salted_hash(e, salt=_ip_salt(default=""))
 
 
 def _ids_file():

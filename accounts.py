@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import os
+from client_identity import email_hash as _ci_email_hash, norm_email as _norm
 from fileio import load_json
 from env_utils import env_int as _env_int
 import secrets
@@ -148,10 +149,6 @@ def _sha(s):
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-def _norm(email):
-    return (email or "").strip().lower()
-
-
 def is_review_login(email, purpose="login"):
     """True per il login dell'account demo di revisione (codice fisso, nessuna
     email). Solo `login`: la cancellazione account resta col codice casuale."""
@@ -161,7 +158,7 @@ def is_review_login(email, purpose="login"):
 
 
 def email_hash(email):
-    return _sha(_norm(email))
+    return _ci_email_hash(email)
 
 
 def _now(now):

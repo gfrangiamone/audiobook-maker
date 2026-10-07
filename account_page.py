@@ -4,6 +4,7 @@ errori, account cancellato e, dal Task 6, lo storico. Solo stdlib: i testi
 arrivano gia' scelti per lingua (dict `t`), l'escaping e' fatto qui.
 """
 import html
+from client_identity import mask_email as _ci_mask_email
 
 import page_brand
 
@@ -57,13 +58,7 @@ def _e(s):
 
 def mask_email(email):
     """`a@b.it` -> `a***@b.it`. Input vuoto o senza `@` -> stringa vuota."""
-    email = str(email or "")
-    if "@" not in email:
-        return ""
-    local, _, domain = email.partition("@")
-    if not local:
-        return ""
-    return f"{local[0]}***@{domain}"
+    return _ci_mask_email(email, strip=False, invalid="")
 
 
 def page_html(t, lang, title, body_html, h1=True, tools_html=""):

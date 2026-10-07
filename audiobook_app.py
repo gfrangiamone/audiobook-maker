@@ -16,6 +16,8 @@ import logging
 import re
 import json
 import os
+from ratelimit import cooldown_counter as _cooldown_counter, sliding_check as _sliding_check
+from client_identity import EMAIL_RE as _ACCT_EMAIL_RE, ip_salt as _ip_salt, mask_email as _mask_email_ci, salted_hash as _salted_hash
 from fileio import atomic_write_json, data_dir, load_json
 from env_utils import env_bool, env_float, env_int
 import shutil
@@ -1240,13 +1242,7 @@ def _mask_email(email):
     Mostra solo la prima lettera della parte locale + il dominio. Best-effort:
     su input malformato ritorna l'input invariato.
     """
-    email = (email or "").strip()
-    if "@" not in email:
-        return email
-    local, _, domain = email.partition("@")
-    if not local:
-        return email
-    return f"{local[0]}***@{domain}"
+    return _mask_email_ci(email, invalid=None)
 
 
 def client_ip() -> str:
@@ -2346,16 +2342,10 @@ def _check_download_throttle(file_path):
     """
     if not file_path or not os.path.exists(file_path):
         return ("ok", None)
-    now = time.time()
-    rec = _download_tracking.get(file_path)
-
-    if rec:
-        elapsed = now - rec["last_download"]
-        if elapsed < _DL_THROTTLE_SEC:
-            return ("cooldown", int(_DL_THROTTLE_SEC - elapsed))
-
-    current = rec["count"] if rec else 0
-    if current >= _DL_MAX_DOWNLOADS:
+    status, info = _cooldown_counter(_download_tracking, file_path,
+                                     cooldown_sec=_DL_THROTTLE_SEC,
+                                     max_count=_DL_MAX_DOWNLOADS, now=time.time())
+    if status == "exhausted":
         try:
             os.remove(file_path)
             print(f"[throttle] Deleted {file_path} after {_DL_MAX_DOWNLOADS} downloads")
@@ -2363,17 +2353,7 @@ def _check_download_throttle(file_path):
             print(f"[throttle] Error deleting {file_path}: {e}")
         _download_tracking.pop(file_path, None)
         return ("deleted", None)
-
-    new_count = current + 1
-    if rec:
-        rec["count"] = new_count
-        rec["last_download"] = now
-    else:
-        _download_tracking[file_path] = {"count": new_count, "last_download": now}
-
-    if new_count >= _DL_MAX_DOWNLOADS:
-        return ("last", 0)
-    return ("ok", _DL_MAX_DOWNLOADS - new_count)
+    return (status, info)
 
 
 def _check_cold_throttle(key):
@@ -2381,29 +2361,17 @@ def _check_cold_throttle(key):
     non esiste più). Su max download ritorna 'deleted' (cap per-worker) ma NON
     cancella l'oggetto cold condiviso: la rimozione cold è di competenza solo
     della retention cleanup. Mantiene la semantica anti-redistribuzione per-worker."""
-    now = time.time()
-    rec = _download_tracking.get(key)
-    if rec:
-        elapsed = now - rec["last_download"]
-        if elapsed < _DL_THROTTLE_SEC:
-            return ("cooldown", int(_DL_THROTTLE_SEC - elapsed))
-    current = rec["count"] if rec else 0
-    if current >= _DL_MAX_DOWNLOADS:
+    status, info = _cooldown_counter(_download_tracking, key,
+                                     cooldown_sec=_DL_THROTTLE_SEC,
+                                     max_count=_DL_MAX_DOWNLOADS, now=time.time())
+    if status == "exhausted":
         # cap per-worker raggiunto; NON cancellare l'oggetto cold condiviso
         # (lo fa solo la retention cleanup _delete_cold_for_job). Il counter è
         # per-worker (Gunicorn multi-process): cancellare qui distruggerebbe lo
         # stato durevole condiviso sotto gli altri worker. Mantieni il record
         # così le richieste successive continuano a ritornare 'deleted'.
         return ("deleted", None)
-    new_count = current + 1
-    if rec:
-        rec["count"] = new_count
-        rec["last_download"] = now
-    else:
-        _download_tracking[key] = {"count": new_count, "last_download": now}
-    if new_count >= _DL_MAX_DOWNLOADS:
-        return ("last", 0)
-    return ("ok", _DL_MAX_DOWNLOADS - new_count)
+    return (status, info)
 
 
 def _apply_no_cache(response):
@@ -11575,7 +11543,7 @@ _feedback_email_lock = threading.Lock()
 _feedback_email_last = 0.0
 _FB_EMAIL_THROTTLE = 1800.0  # 30 min
 
-_IP_SALT = os.environ.get("ABM_IP_SALT") or "abm-default-salt-v1"
+_IP_SALT = _ip_salt()
 
 
 # ─── Rate limit generico IP-based (sliding window) ─────────────────
@@ -11590,23 +11558,11 @@ def _ip_rl_check(bucket: str, ip: str, limit_per_min: int, limit_per_hour: int):
     """
     if not ip:
         return True, 0
-    now = time.time()
     with _ip_rl_lock:
-        per_bucket = _ip_rl_buckets.setdefault(bucket, {})
-        hits = per_bucket.get(ip, [])
-        hits = [t for t in hits if now - t < 3600]
-        last_min = [t for t in hits if now - t < 60]
-        if len(last_min) >= limit_per_min:
-            retry = 60 - int(now - last_min[0])
-            per_bucket[ip] = hits
-            return False, max(1, retry)
-        if len(hits) >= limit_per_hour:
-            retry = 3600 - int(now - hits[0])
-            per_bucket[ip] = hits
-            return False, max(1, retry)
-        hits.append(now)
-        per_bucket[ip] = hits
-    return True, 0
+        ok, retry, _idx = _sliding_check(
+            _ip_rl_buckets.setdefault(bucket, {}), ip,
+            [(60, limit_per_min), (3600, limit_per_hour)], time.time())
+    return ok, retry
 
 
 # Default limits (override via env per ops emergency)
@@ -11617,8 +11573,8 @@ _PREVIEW_RL_PER_HOUR = env_int("ABM_PREVIEW_RL_PER_HOUR", 200)
 
 
 def _hash_ip(ip: str) -> str:
-    h = hashlib.sha256((_IP_SALT + ":" + (ip or "")).encode("utf-8")).hexdigest()
-    return h[:16]
+    # Forma storica: sha256(salt + ":" + ip)[:16] (chiavi di rate limit e log).
+    return _salted_hash(ip or "", salt=_IP_SALT, sep=":")
 
 
 # ===========================================================================
@@ -11626,7 +11582,7 @@ def _hash_ip(ip: str) -> str:
 # ===========================================================================
 
 _ACCOUNT_SESSION_COOKIE = "abm_session"
-_ACCT_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+# _ACCT_EMAIL_RE: client_identity.EMAIL_RE (import in testa).
 
 
 def _acct_err(code, msg, status, **extra):
@@ -15619,7 +15575,7 @@ def api_register_email():
     if err is not None:
         return err, sc
 
-    if not email or not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+    if not email or not _ACCT_EMAIL_RE.match(email):
         return jsonify({"error": "Invalid email address"}), 400
 
     # Con sessione attiva la notifica e' vincolata all'email dell'account.
@@ -17459,7 +17415,7 @@ def api_optimize():
     # consumato (stranded). L'assegnazione dei campi notify resta piu' sotto,
     # dopo il pagamento andato a buon fine.
     if batch:
-        if not email or not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+        if not email or not _ACCT_EMAIL_RE.match(email):
             with _jobs_lock:
                 if job.get("status") == "optimizing":
                     job["status"] = "analyzed"
@@ -18345,8 +18301,7 @@ def api_translate():
     email = (data.get("email") or "").strip()
     batch, email = _acct_forced_batch(batch, email)
     if batch:
-        if not email or not re.match(
-                r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+        if not email or not _ACCT_EMAIL_RE.match(email):
             _release_claim()
             return jsonify({"error": "Valid email required for batch mode"}), 400
         if not _smtp_available():

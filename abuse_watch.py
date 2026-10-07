@@ -22,6 +22,7 @@ Spec: docs/superpowers/specs/2026-09-03-quota-containment-design.md
 import hashlib
 import json
 import os
+from client_identity import DEFAULT_IP_SALT as _DEFAULT_SALT, ip_salt as _ip_salt, salted_hash as _salted_hash
 from env_utils import env_float as _env_float, env_int
 import queue
 import re
@@ -54,7 +55,7 @@ _EMAILS_KEEP = 50
 _JUDGEMENTS_KEEP = 20
 _KILLS_KEEP = 50
 _BLOCKS_KEEP = 200
-_DEFAULT_SALT = "abm-default-salt-v1"
+# _DEFAULT_SALT: client_identity.DEFAULT_IP_SALT (import in testa).
 _PII_RE = re.compile(
     r"[\w.+-]+@[\w-]+\.[\w.-]+|\b\d{1,3}(?:\.\d{1,3}){3}\b"
     r"|\b(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b"
@@ -170,8 +171,8 @@ def _dossier_file():
 # ---------------------------------------------------------------------------
 
 def _hash(value):
-    salt = os.environ.get("ABM_IP_SALT", _DEFAULT_SALT) or _DEFAULT_SALT
-    return hashlib.sha256((salt + str(value)).encode("utf-8")).hexdigest()[:16]
+    # Forma storica dei dossier su disco: sha256(salt + valore)[:16].
+    return _salted_hash(value, salt=_ip_salt())
 
 
 def group_key(ip, cid=""):

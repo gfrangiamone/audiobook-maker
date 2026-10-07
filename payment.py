@@ -18,6 +18,8 @@ Dipende solo dalla stdlib, da os.environ e dal modulo foglia community_store
 
 import json
 import os
+from ratelimit import lockout_record as _lockout_record, lockout_remaining as _lockout_remaining, sliding_check as _sliding_check, window_record as _window_record
+from client_identity import norm_email as _norm_email
 import shutil
 import threading
 import time
@@ -337,55 +339,40 @@ def _voucher_rl_check(ip, email):
     now = time.time()
     with _voucher_rl_lock:
         # Global burst safety net (taglia attacker con rotating IP+email)
-        _voucher_attempts_global = [t for t in _voucher_attempts_global if now - t < 3600]
-        gmin = [t for t in _voucher_attempts_global if now - t < 60]
-        if len(gmin) >= VOUCHER_GLOBAL_PER_MIN:
-            retry = 60 - int(now - gmin[0])
-            return False, max(1, retry), "rate_limit_global_minute"
-        if len(_voucher_attempts_global) >= VOUCHER_GLOBAL_PER_HOUR:
-            retry = 3600 - int(now - _voucher_attempts_global[0])
-            return False, max(1, retry), "rate_limit_global_hour"
+        g = {"*": _voucher_attempts_global}
+        ok, retry, idx = _sliding_check(
+            g, "*", [(60, VOUCHER_GLOBAL_PER_MIN), (3600, VOUCHER_GLOBAL_PER_HOUR)],
+            now, record=False)
+        _voucher_attempts_global = g["*"]
+        if not ok:
+            return False, retry, ("rate_limit_global_minute", "rate_limit_global_hour")[idx]
         # IP sliding window
-        hits = _voucher_attempts_ip.get(ip, [])
-        hits = [t for t in hits if now - t < 3600]
-        last_min = [t for t in hits if now - t < 60]
-        if len(last_min) >= VOUCHER_RL_PER_MIN:
-            retry = 60 - int(now - last_min[0])
-            _voucher_attempts_ip[ip] = hits
-            return False, max(1, retry), "rate_limit_ip_minute"
-        if len(hits) >= VOUCHER_RL_PER_HOUR:
-            retry = 3600 - int(now - hits[0])
-            _voucher_attempts_ip[ip] = hits
-            return False, max(1, retry), "rate_limit_ip_hour"
+        ok, retry, idx = _sliding_check(
+            _voucher_attempts_ip, ip, [(60, VOUCHER_RL_PER_MIN), (3600, VOUCHER_RL_PER_HOUR)],
+            now, record=False)
+        if not ok:
+            return False, retry, ("rate_limit_ip_minute", "rate_limit_ip_hour")[idx]
         # Email lockout
-        em = (email or "").lower().strip()
+        em = _norm_email(email)
         if em:
-            info = _voucher_attempts_email.get(em)
-            if info and info.get("lockout_until", 0) > now:
-                return False, int(info["lockout_until"] - now), "email_locked"
+            left = _lockout_remaining(_voucher_attempts_email, em, now)
+            if left > 0:
+                return False, left, "email_locked"
         # Record hit for IP + global — caller can trigger email-fail separately
-        hits.append(now)
-        _voucher_attempts_ip[ip] = hits
+        _window_record(_voucher_attempts_ip, ip, now)
         _voucher_attempts_global.append(now)
     return True, 0, None
 
 
 def _voucher_rl_record_result(email, success):
     """Aggiorna contatore fallimenti per email; reset on success."""
-    em = (email or "").lower().strip()
+    em = _norm_email(email)
     if not em:
         return
-    now = time.time()
     with _voucher_rl_lock:
-        if success:
-            _voucher_attempts_email.pop(em, None)
-            return
-        info = _voucher_attempts_email.get(em) or {"fail_count": 0, "lockout_until": 0}
-        info["fail_count"] = info.get("fail_count", 0) + 1
-        if info["fail_count"] >= VOUCHER_EMAIL_FAIL_LIMIT:
-            info["lockout_until"] = now + VOUCHER_EMAIL_LOCKOUT_SEC
-            info["fail_count"] = 0  # reset contatore dopo lockout
-        _voucher_attempts_email[em] = info
+        _lockout_record(_voucher_attempts_email, em, success,
+                        max_fails=VOUCHER_EMAIL_FAIL_LIMIT,
+                        lock_sec=VOUCHER_EMAIL_LOCKOUT_SEC, now=time.time())
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +465,7 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
     days = VOUCHER_EXPIRY_DAYS if expiry_days is None else int(expiry_days)
     _vouchers[code] = {
         "code": code,
-        "email": (email or "").lower().strip(),
+        "email": _norm_email(email),
         "amount_eur": bonus_amount,
         "base_amount_eur": amount_eur,
         "remaining_eur": bonus_amount,   # Saldo residuo (decresce ad ogni uso)

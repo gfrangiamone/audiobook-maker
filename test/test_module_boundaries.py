@@ -28,6 +28,7 @@ LEAVES = {
     "semantic_judge", "secure_archive", "text_reflow", "gemini_transport",
     "gemini_availability", "chunk_reuse", "assembly_queue", "cancel_policy",
     "activity_log", "activity_db", "user_stats", "env_utils", "fileio",
+    "client_identity", "ratelimit",
 }
 
 # Moduli di servizio che non devono importare generation_engine (§2.1).

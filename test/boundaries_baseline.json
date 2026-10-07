@@ -18,15 +18,15 @@
   "voice_language_guard.py": 1
  },
  "env_inline": {
-  "abuse_watch.py": 3,
+  "abuse_watch.py": 2,
   "accounts.py": 3,
   "activity_log.py": 1,
   "assembly_queue.py": 3,
-  "audiobook_app.py": 16,
+  "audiobook_app.py": 15,
   "cost_carry.py": 1,
   "email_service.py": 10,
   "free_quota.py": 1,
-  "free_tts_quota.py": 3,
+  "free_tts_quota.py": 2,
   "gemini_availability.py": 1,
   "gemini_cost_audit.py": 1,
   "gemini_transport.py": 2,

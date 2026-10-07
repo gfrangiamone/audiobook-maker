@@ -17,6 +17,8 @@ Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 import html
 import json
 import os
+from ratelimit import throttle_ok as _throttle_ok
+from client_identity import EMAIL_RE as _EMAIL_RE
 import threading
 import time
 
@@ -367,8 +369,7 @@ def _send_email(to_addr, subject, html_body, reply_to=None, from_addr=None,
     subject_clean = _sanitize_header(subject, max_len=200)
     # Validazione di base sull'indirizzo destinatario (i chiamanti già filtrano con regex,
     # ma applichiamo un check di sicurezza centrale).
-    import re as _re_email
-    if not _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', to_addr_clean):
+    if not _EMAIL_RE.match(to_addr_clean):
         print(f"[email] Refused invalid recipient: {to_addr_clean!r}", flush=True)
         return False
 
@@ -377,7 +378,7 @@ def _send_email(to_addr, subject, html_body, reply_to=None, from_addr=None,
     from_header = SMTP_FROM
     if from_addr:
         from_clean = _sanitize_header(from_addr, max_len=320)
-        if _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', from_clean):
+        if _EMAIL_RE.match(from_clean):
             from_header = from_clean
         else:
             print(f"[email] Ignored invalid From: {from_clean!r}", flush=True)
@@ -395,7 +396,7 @@ def _send_email(to_addr, subject, html_body, reply_to=None, from_addr=None,
             msg["Sender"] = SMTP_FROM
         if reply_to:
             reply_clean = _sanitize_header(reply_to, max_len=320)
-            if _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', reply_clean):
+            if _EMAIL_RE.match(reply_clean):
                 msg["Reply-To"] = reply_clean
             else:
                 print(f"[email] Ignored invalid Reply-To: {reply_clean!r}", flush=True)
@@ -1269,14 +1270,10 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
         return
     # Throttle per job+kind
     key = f"{job_id}::{kind}"
-    now = time.time()
     with _admin_failure_lock:
-        last = _admin_failure_last.get(key, 0.0)
-        if (now - last) < 60.0:
-            print(f"[admin] Failure alert throttled for {key} "
-                  f"(last sent {now - last:.0f}s ago)")
+        if not _throttle_ok(_admin_failure_last, key, 60.0):
+            print(f"[admin] Failure alert throttled for {key}")
             return
-        _admin_failure_last[key] = now
 
     kind_label = {
         "quota":     "QUOTA esaurita",
@@ -1403,13 +1400,10 @@ def admin_notify_margin_anomaly(job_id, kind, provider, book_title="",
     if not ADMIN_EMAIL or not _smtp_available():
         return
     key = f"{job_id}::margin::{kind}"
-    now = time.time()
     with _admin_failure_lock:
-        last = _admin_failure_last.get(key, 0.0)
-        if (now - last) < 60.0:
+        if not _throttle_ok(_admin_failure_last, key, 60.0):
             print(f"[admin] Margin alert throttled for {key}")
             return
-        _admin_failure_last[key] = now
 
     urgent = (kind == "free_over_threshold")
     if urgent:
