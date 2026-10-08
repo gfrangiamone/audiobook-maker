@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from content_store import content_json
 from i18n import pick as _i18n_pick
+import seo_ld as _seo_ld
 import html as _html
-import json as _json
 import re as _re
 
 GUIDE_ID = "voice-cloning-audiobook"
@@ -61,38 +61,18 @@ def _plain(s: str) -> str:
     return " ".join(_html.unescape(_TAG_RE.sub("", s)).split())
 
 
-def _ld_json(obj) -> str:
-    # "</" chiuderebbe il tag <script> che ospita il JSON-LD.
-    return _json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
-
-
 def extra_ld(lang: str, canonical: str, meta: dict) -> list:
     """JSON-LD HowTo + FAQPage, generati dagli stessi dati del testo visibile."""
     t = _i18n_pick(_T, lang, merge=False)
-    in_lang = {"zh": "zh-Hans"}.get(lang, lang if lang in _T else "en")
-    howto = {
-        "@context": "https://schema.org",
-        "@type": "HowTo",
-        "name": meta.get("h1", meta.get("title", "")),
-        "description": meta.get("desc", ""),
-        "inLanguage": in_lang,
-        "totalTime": "PT15M",
-        "supply": [{"@type": "HowToSupply", "name": "EPUB, PDF, TXT"}],
-        "tool": [{"@type": "HowToTool", "name": "Microphone"}],
-        "step": [
-            {"@type": "HowToStep", "position": i, "name": _plain(name), "text": _plain(text),
-             **({"url": f"{canonical}#step-{i}"} if canonical else {})}
-            for i, (name, text) in enumerate(t["steps"], 1)
-        ],
-    }
-    faq = {
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        "inLanguage": in_lang,
-        "mainEntity": [
-            {"@type": "Question", "name": _plain(q),
-             "acceptedAnswer": {"@type": "Answer", "text": _plain(a)}}
-            for q, a in t["faq"]
-        ],
-    }
-    return [_ld_json(howto), _ld_json(faq)]
+    in_lang = _seo_ld.in_language(lang if lang in _T else "en")
+    howto = _seo_ld.howto_ld(
+        meta.get("h1", meta.get("title", "")), meta.get("desc", ""),
+        [{"@type": "HowToStep", "position": i, "name": _plain(name), "text": _plain(text),
+          **({"url": f"{canonical}#step-{i}"} if canonical else {})}
+         for i, (name, text) in enumerate(t["steps"], 1)],
+        in_lang=in_lang,
+        before_steps={"totalTime": "PT15M",
+                      "supply": [{"@type": "HowToSupply", "name": "EPUB, PDF, TXT"}],
+                      "tool": [{"@type": "HowToTool", "name": "Microphone"}]})
+    faq = _seo_ld.faq_ld([(_plain(q), _plain(a)) for q, a in t["faq"]], in_lang=in_lang)
+    return [_seo_ld.ld_json(howto), _seo_ld.ld_json(faq)]

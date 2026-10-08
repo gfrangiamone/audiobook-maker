@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from content_store import content_json, content_text, content_exists
 from i18n import pick as _i18n_pick
+import page_brand as _brand
+import seo_ld as _seo_ld
 
 
 def _guide_bodies(lang):
@@ -20,19 +22,6 @@ def _guide_bodies(lang):
     return {gid: content_text("guides", gid, f"{lang}.html")
             for gid in content_json("guides", "meta.json")
             if content_exists("guides", gid, f"{lang}.html")}
-
-_HREFLANG_MAP = {
-    "it": "it", "en": "en", "fr": "fr",
-    "es": "es", "de": "de", "zh": "zh-Hans",
-    "hi": "hi",
-}
-_OG_LOCALE_MAP = {
-    "it": "it_IT", "en": "en_US", "fr": "fr_FR",
-    "es": "es_ES", "de": "de_DE", "zh": "zh_CN",
-    "hi": "hi_IN",
-}
-_SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
-
 
 def _guide_path(guide_id: str, lang: str) -> str:
     """URL path di una guida in una lingua (schema path-based).
@@ -113,14 +102,13 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
     Include datePublished/dateModified/image/keywords per AI citation engines
     (ChatGPT, Perplexity, Google AI Overview) e ranking E-E-A-T.
     """
-    import json as _json
     import os as _os
     from datetime import datetime as _dt
 
     # Stesso URL del <link rel=canonical> della pagina: EN su /guide/<id>/,
     # le altre lingue su /guide/<id>/<lang>/ (prima era sempre l'URL EN).
     canonical = f"{base_url}{_guide_path(guide_id, lang)}"
-    base = base_url or "https://audiobook-maker.com"
+    base = base_url or _seo_ld.SITE_URL
 
     try:
         _mtime = _os.path.getmtime(__file__)
@@ -135,7 +123,7 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
         "headline": meta.get("h1", meta["title"]),
         "description": meta["desc"],
         "url": canonical,
-        "inLanguage": _HREFLANG_MAP.get(lang, "en"),
+        "inLanguage": _seo_ld.in_language(lang),
         "datePublished": date_published,
         "dateModified": date_modified,
         "image": {
@@ -144,24 +132,10 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
             "width": 1200,
             "height": 630,
         },
-        "author": {
-            "@type": "Person",
-            "name": "Giuseppe Frangiamone",
-            "url": "https://github.com/gfrangiamone",
-        },
-        "publisher": {
-            "@type": "Organization",
-            "name": "Audiobook Maker",
-            "url": base,
-            "logo": {
-                "@type": "ImageObject",
-                "url": f"{base}/favicon-192.png",
-                "width": 192,
-                "height": 192,
-            },
-        },
+        "author": _seo_ld.AUTHOR,
+        "publisher": _seo_ld.publisher(base, logo_size=192),
         "isAccessibleForFree": True,
-        "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+        "license": _seo_ld.LICENSE,
         "mainEntityOfPage": {
             "@type": "WebPage",
             "@id": canonical,
@@ -169,7 +143,7 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
         "articleSection": _GUIDE_SECTION.get(guide_id, "Guide"),
         "keywords": meta.get("kw", ""),
     }
-    return _json.dumps(ld, ensure_ascii=False)
+    return _seo_ld.ld_json(ld)
 
 
 def build_guide_html(
@@ -189,30 +163,20 @@ def build_guide_html(
     Returns:
         Complete HTML string with SEO baked in.
     """
-    import json as _json
 
     guide_meta_all = _GUIDE_META.get(guide_id)
     if not guide_meta_all:
         return f"<!-- Guide '{guide_id}' not found -->"
 
     meta = _i18n_pick(guide_meta_all, lang, merge=False)
-    html_lang = _HREFLANG_MAP.get(lang, "en")
+    html_lang = _brand.html_lang(lang)
     # Self-canonical per language, path-based: EN = x-default su /guide/<id>/,
     # le altre lingue su /guide/<id>/<lang>/. Coerente con sitemap.xml e link interni.
     canonical = f"{base_url}{_guide_path(guide_id, lang)}" if base_url else ""
 
-    # Hreflang tags
-    hreflang_lines = []
-    for lc, hl in _HREFLANG_MAP.items():
-        href = f"{base_url}{_guide_path(guide_id, lc)}" if base_url else _guide_path(guide_id, lc)
-        hreflang_lines.append(
-            f'<link rel="alternate" hreflang="{hl}" href="{href}">'
-        )
-    x_default_href = f"{base_url}/guide/{guide_id}/" if base_url else "/"
-    hreflang_lines.append(
-        f'<link rel="alternate" hreflang="x-default" href="{x_default_href}">'
-    )
-    hreflang_block = "\n    ".join(hreflang_lines)
+    hreflang_block = _brand.hreflang_links(
+        lambda lc: f"{base_url}{_guide_path(guide_id, lc)}",
+        f"{base_url}/guide/{guide_id}/" if base_url else "/", sep="\n    ")
 
     # Article JSON-LD
     article_ld = _build_article_ld(guide_id, lang, base_url, meta)
@@ -250,16 +214,8 @@ def build_guide_html(
         "hi": "गाइड",
     }
     crumb_name = crumb_names.get(lang, "Guides")
-    breadcrumb_ld = _json.dumps({
-        "@context": "https://schema.org",
-        "@type": "BreadcrumbList",
-        "itemListElement": [
-            {"@type": "ListItem", "position": 1, "name": "Audiobook Maker",
-             "item": base_url or "https://audiobook-maker.com"},
-            {"@type": "ListItem", "position": 2, "name": crumb_name,
-             "item": canonical},
-        ],
-    }, ensure_ascii=False)
+    breadcrumb_ld = _seo_ld.ld_json(_seo_ld.breadcrumb_ld(
+        [("Audiobook Maker", base_url or _seo_ld.SITE_URL), (crumb_name, canonical)]))
 
     # Body content — select by language, fall back to EN
     _body_dict = _GUIDE_BODY.get(lang, _GUIDE_BODY_EN)
@@ -280,12 +236,7 @@ def build_guide_html(
         for ld in (_extra_fn(lang, canonical, meta) if _extra_fn else [])
     )
 
-    # Open Graph locale + alternates
-    og_locale = _OG_LOCALE_MAP.get(lang, "en_US")
-    og_locale_alt_block = "\n".join(
-        f'<meta property="og:locale:alternate" content="{loc}">'
-        for loc in _OG_LOCALE_MAP.values() if loc != og_locale
-    )
+    og_locale, og_locale_alt_block = _brand.og_locale_tags(lang)
 
     return f"""<!DOCTYPE html>
 <html lang="{html_lang}">

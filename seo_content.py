@@ -22,6 +22,7 @@ Il blocco si adatta al tema della pagina usando le CSS custom properties
 
 from content_store import content_json
 from i18n import pick as _i18n_pick
+import seo_ld as _seo_ld
 from datetime import datetime
 from html import escape
 import json
@@ -90,42 +91,20 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         f"            <li>{escape(f)}</li>" for f in c["features"]
     )
 
-    # FAQ <details> items + JSON-LD data
+    # FAQ <details> items + JSON-LD (seo_ld.faq_ld dagli stessi dati)
     faqs_html = ""
-    faq_ld_items = []
     for q, a in c["faqs"]:
         faqs_html += (
             f'            <details class="seo-section"><summary>{escape(q)}</summary>\n'
             f'                <p>{_linkify(escape(a))}</p>\n'
             f'            </details>\n'
         )
-        faq_ld_items.append({
-            "@type": "Question",
-            "name": q,
-            "acceptedAnswer": {"@type": "Answer", "text": a},
-        })
-
-    faq_ld_json = json.dumps(
-        {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": faq_ld_items},
-        ensure_ascii=False,
-    )
+    faq_ld_json = _seo_ld.ld_json(_seo_ld.faq_ld(c["faqs"]))
 
     # HowTo JSON-LD
     steps = _i18n_pick(_HOWTO_STEPS, lang, merge=False)
-    howto_ld_json = json.dumps({
-        "@context": "https://schema.org",
-        "@type": "HowTo",
-        "name": escape(c["features_heading"]),
-        "description": escape(c["direct_answer"]),
-        "step": [
-            {
-                "@type": "HowToStep",
-                "name": name,
-                "text": text,
-            }
-            for name, text in steps
-        ],
-    }, ensure_ascii=False)
+    howto_ld_json = _seo_ld.ld_json(_seo_ld.howto_ld(
+        escape(c["features_heading"]), escape(c["direct_answer"]), steps))
 
     # Voice/language table
     headers = _i18n_pick(_TABLE_HEADERS, lang, merge=False)
@@ -334,6 +313,11 @@ function switchSeoLang(l){
 """
 
 
+def lang_content(lang: str) -> dict:
+    """Testi SEO della lingua (fallback en): heading, direct_answer, faqs..."""
+    return _i18n_pick(_CONTENT, lang, merge=False)
+
+
 def get_schema_ld(lang: str) -> tuple[str, str, str]:
     """Restituisce (faq_ld_json, howto_ld_json, combined_ld_json) per la lingua data.
 
@@ -345,7 +329,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
     features = _i18n_pick(_LD_FEATURES, lang, merge=False)
     c = _i18n_pick(_CONTENT, lang, merge=False)
 
-    base_url = "https://audiobook-maker.com"
+    base_url = _seo_ld.SITE_URL
 
     # ISO-8601 dateModified — refreshed at startup. Tells crawlers and AI
     # assistants when the page content was last revised, which boosts
@@ -364,21 +348,14 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "applicationSubCategory": "Text-to-Speech Converter",
         "operatingSystem": "Any (Web Browser)",
         "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
-        "inLanguage": ["it", "en", "fr", "es", "de", "zh-Hans"],
+        "inLanguage": _seo_ld.IN_LANGUAGES,
         "featureList": features,
         "isAccessibleForFree": True,
         "screenshot": f"{base_url}/og-image.png",
         "dateModified": iso_modified,
-        "author": {
-            "@type": "Person",
-            "name": "Giuseppe Frangiamone",
-            "url": "https://github.com/gfrangiamone",
-        },
-        "license": "https://www.gnu.org/licenses/agpl-3.0.html",
-        "sameAs": [
-            "https://github.com/gfrangiamone/audiobook-maker",
-            "https://alternativeto.net/software/audiobook-maker/",
-        ],
+        "author": _seo_ld.AUTHOR,
+        "license": _seo_ld.LICENSE,
+        "sameAs": _seo_ld.SAME_AS,
     }
 
     # Organization
@@ -390,15 +367,8 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "logo": f"{base_url}/favicon-192.png",
         "description": c["direct_answer"],
         "foundingDate": "2024",
-        "founder": {
-            "@type": "Person",
-            "name": "Giuseppe Frangiamone",
-            "url": "https://github.com/gfrangiamone",
-        },
-        "sameAs": [
-            "https://github.com/gfrangiamone/audiobook-maker",
-            "https://alternativeto.net/software/audiobook-maker/",
-        ],
+        "founder": _seo_ld.AUTHOR,
+        "sameAs": _seo_ld.SAME_AS,
     }
 
     # WebSite (Sitelinks Search Box). potentialAction points at the converter
@@ -413,8 +383,8 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "alternateName": "Audiobook Maker Online",
         "url": base_url,
         "description": c["direct_answer"],
-        "inLanguage": ["it", "en", "fr", "es", "de", "zh-Hans"],
-        "publisher": {"@type": "Organization", "name": "Audiobook Maker", "url": base_url},
+        "inLanguage": _seo_ld.IN_LANGUAGES,
+        "publisher": _seo_ld.publisher(base_url),
         "potentialAction": {
             "@type": "UseAction",
             "name": "Convert ebook to audiobook",
@@ -433,7 +403,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "url": f"{base_url}/{lang}/",
         "name": c.get("heading", "Audiobook Maker"),
         "description": c["direct_answer"],
-        "inLanguage": lang if lang != "zh" else "zh-Hans",
+        "inLanguage": _seo_ld.in_language(lang),
         "isPartOf": {"@type": "WebSite", "url": base_url, "name": "Audiobook Maker"},
         "primaryImageOfPage": f"{base_url}/og-image.png",
         "datePublished": "2022-06-01",
@@ -461,18 +431,18 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
     try:
         faq_obj = json.loads(faq_ld_raw)
         faq_obj["dateModified"] = iso_modified
-        faq_ld = json.dumps(faq_obj, ensure_ascii=False)
+        faq_ld = _seo_ld.ld_json(faq_obj)
     except Exception:
         faq_ld = faq_ld_raw
     try:
         howto_obj = json.loads(howto_ld_raw)
         howto_obj["dateModified"] = iso_modified
-        howto_ld = json.dumps(howto_obj, ensure_ascii=False)
+        howto_ld = _seo_ld.ld_json(howto_obj)
     except Exception:
         howto_ld = howto_ld_raw
 
     # Combine into a JSON-LD graph (array of objects)
     combined = [software_app_ld, organization_ld, website_ld, webpage_ld]
-    combined_ld_json = json.dumps(combined, ensure_ascii=False)
+    combined_ld_json = _seo_ld.ld_json(combined)
 
     return faq_ld, howto_ld, combined_ld_json

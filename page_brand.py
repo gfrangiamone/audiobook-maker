@@ -1,9 +1,49 @@
 # page_brand.py
 """Marchio condiviso dalle pagine server-side fuori dalla SPA (gestione voci
-campionate, area personale): il logo SVG e la tavolozza. Modulo foglia,
-solo stdlib: lo importano sia `audiobook_app` sia `account_page`, che non
-puo' importare l'entry point.
+campionate, area personale): il logo SVG, la tavolozza e, per le pagine
+pubbliche, le mappe lingua -> hreflang / og:locale con i relativi tag
+(`hreflang_links`, `og_locale_tags`). Modulo foglia (stdlib + `i18n`):
+lo importano `audiobook_app`, `account_page`, `guide_content`,
+`templates/index_page`, che non possono importare l'entry point.
 """
+from i18n import LANGS as SITE_LANGS
+
+# Lingua dell'interfaccia -> codice hreflang / attributo lang (BCP 47) e
+# locale Open Graph. L'ordine e' quello di SITE_LANGS: e' anche l'ordine
+# dei tag emessi in pagina e nella sitemap.
+HREFLANG = {"it": "it", "en": "en", "fr": "fr", "es": "es", "de": "de", "zh": "zh-Hans", "hi": "hi"}
+OG_LOCALE = {"it": "it_IT", "en": "en_US", "fr": "fr_FR", "es": "es_ES", "de": "de_DE",
+             "zh": "zh_CN", "hi": "hi_IN"}
+assert tuple(HREFLANG) == SITE_LANGS and tuple(OG_LOCALE) == SITE_LANGS
+
+
+def html_lang(lang):
+    """Valore di `<html lang>` / `inLanguage` per la lingua ('zh' -> 'zh-Hans')."""
+    return HREFLANG.get(lang, "en")
+
+
+def hreflang_links(path_fn, x_default, *, sep="\n", xhtml=False):
+    """Tag `<link rel="alternate" hreflang=...>` per tutte le lingue piu'
+    x-default. `path_fn(lang)` da' l'URL (assoluto o relativo) della lingua,
+    `x_default` quello di x-default. `xhtml=True` emette le righe
+    `<xhtml:link .../>` indentate della sitemap."""
+    if xhtml:
+        fmt = '      <xhtml:link rel="alternate" hreflang="{hl}" href="{href}"/>'
+    else:
+        fmt = '<link rel="alternate" hreflang="{hl}" href="{href}">'
+    lines = [fmt.format(hl=hl, href=path_fn(lc)) for lc, hl in HREFLANG.items()]
+    lines.append(fmt.format(hl="x-default", href=x_default))
+    return sep.join(lines)
+
+
+def og_locale_tags(lang, *, sep="\n"):
+    """(og:locale della lingua, blocco dei `<meta property="og:locale:alternate">`
+    per tutte le altre lingue)."""
+    current = OG_LOCALE.get(lang, "en_US")
+    alt = sep.join(f'<meta property="og:locale:alternate" content="{loc}">'
+                   for loc in OG_LOCALE.values() if loc != current)
+    return current, alt
+
 
 LOGO_SVG = (
     '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'

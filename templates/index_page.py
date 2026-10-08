@@ -63,19 +63,8 @@ _FRAGMENT_ORDER = [
     "html_tail.html",
 ]
 
-# hreflang mapping
-_HREFLANG_MAP = {
-    "it": "it", "en": "en", "fr": "fr",
-    "es": "es", "de": "de", "zh": "zh-Hans",
-    "hi": "hi",
-}
-# Open Graph locale mapping
-_OG_LOCALE_MAP = {
-    "it": "it_IT", "en": "en_US", "fr": "fr_FR",
-    "es": "es_ES", "de": "de_DE", "zh": "zh_CN",
-    "hi": "hi_IN",
-}
-_SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
+# Mappe hreflang / og:locale e relativi tag: page_brand (foglia).
+import page_brand as _brand
 
 
 def build_html_template(
@@ -119,30 +108,12 @@ def build_html_template(
 
     # ── 2. Replace <head> placeholders with server-side SEO data ──
     if seo:
-        html_lang = _HREFLANG_MAP.get(lang, "en")
+        html_lang = _brand.html_lang(lang)
         canonical = canonical_url or (f"{base_url}/{lang}/" if base_url else "")
-
-        # Build hreflang link tags
-        hreflang_lines = []
-        for lc, hl in _HREFLANG_MAP.items():
-            href = f"{base_url}/{lc}/" if base_url else f"?lang={lc}"
-            hreflang_lines.append(
-                f'<link rel="alternate" hreflang="{hl}" href="{href}">'
-            )
-        x_default_href = f"{base_url}/" if base_url else "/"
-        hreflang_lines.append(
-            f'<link rel="alternate" hreflang="x-default" href="{x_default_href}">'
-        )
-        hreflang_block = "\n".join(hreflang_lines)
-
-        # Build og:locale:alternate tags (all locales except the current one)
-        current_locale = _OG_LOCALE_MAP.get(lang, "en_US")
-        og_locale_alt_lines = [
-            f'<meta property="og:locale:alternate" content="{loc}">'
-            for code, loc in _OG_LOCALE_MAP.items()
-            if loc != current_locale
-        ]
-        og_locale_alt_block = "\n".join(og_locale_alt_lines)
+        hreflang_block = _brand.hreflang_links(
+            lambda lc: f"{base_url}/{lc}/" if base_url else f"?lang={lc}",
+            f"{base_url}/" if base_url else "/")
+        current_locale, og_locale_alt_block = _brand.og_locale_tags(lang)
 
         replacements = {
             "__HTML_LANG__":     html_lang,
