@@ -64,9 +64,6 @@
  },
  "html_doctype_in_py": {
   "email_service.py": 1,
-  "guide_content.py": 1,
-  "privacy_content.py": 1,
-  "support_content.py": 1,
   "voxcpm_digest.py": 1
  },
  "import_generation_engine": {

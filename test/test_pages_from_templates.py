@@ -17,7 +17,7 @@ EXPECTED = {
     "faq.html", "install.html", "admin_log_activity.html", "admin_gate.html",
     "admin_vouchers.html", "admin_audit_premium.html", "admin_community.html",
     "podcast_index.html", "dl_expired.html", "dl_deleted.html", "dl_cooldown.html",
-    "dl_page.html", "llms.txt", "robots.txt",
+    "dl_page.html", "llms.txt", "robots.txt", "public_shell.html",
 }
 
 
@@ -30,8 +30,9 @@ def test_every_page_file_exists_and_is_non_trivial():
 
 def test_render_page_replaces_placeholders_literally(tmp_path, monkeypatch):
     (tmp_path / "x.html").write_text("<p>__P0__ {a} % __P1__ __P10__</p>", encoding="utf-8")
-    monkeypatch.setattr(app, "_PAGES_DIR", tmp_path)
-    monkeypatch.setattr(app, "_page_cache", {})
+    import page_brand
+    monkeypatch.setattr(page_brand, "PAGES_DIR", tmp_path)
+    monkeypatch.setattr(page_brand, "_page_cache", {})
     out = app._render_page("x", {"__P0__": "A<b>", "__P1__": 7, "__P10__": "ten"})
     assert out == "<p>A<b> {a} % 7 ten</p>"
     assert app._page_template("x") == "<p>__P0__ {a} % __P1__ __P10__</p>"

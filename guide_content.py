@@ -169,14 +169,13 @@ def build_guide_html(
         return f"<!-- Guide '{guide_id}' not found -->"
 
     meta = _i18n_pick(guide_meta_all, lang, merge=False)
-    html_lang = _brand.html_lang(lang)
     # Self-canonical per language, path-based: EN = x-default su /guide/<id>/,
     # le altre lingue su /guide/<id>/<lang>/. Coerente con sitemap.xml e link interni.
     canonical = f"{base_url}{_guide_path(guide_id, lang)}" if base_url else ""
 
     hreflang_block = _brand.hreflang_links(
         lambda lc: f"{base_url}{_guide_path(guide_id, lc)}",
-        f"{base_url}/guide/{guide_id}/" if base_url else "/", sep="\n    ")
+        f"{base_url}/guide/{guide_id}/" if base_url else "/")
 
     # Article JSON-LD
     article_ld = _build_article_ld(guide_id, lang, base_url, meta)
@@ -231,86 +230,17 @@ def build_guide_html(
     }.get(lang, "Try Audiobook Maker Free")
 
     _extra_fn = _GUIDE_EXTRA_LD.get(guide_id)
-    extra_ld_block = "".join(
-        f'\n<script type="application/ld+json">{ld}</script>'
-        for ld in (_extra_fn(lang, canonical, meta) if _extra_fn else [])
-    )
+    extra_ld = _extra_fn(lang, canonical, meta) if _extra_fn else []
 
-    og_locale, og_locale_alt_block = _brand.og_locale_tags(lang)
-
-    return f"""<!DOCTYPE html>
-<html lang="{html_lang}">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-<title>{meta["title"]}</title>
-<meta name="description" content="{meta["desc"]}">
-<meta name="keywords" content="{meta["kw"]}">
-<meta name="robots" content="index, follow">
-<meta name="theme-color" content="#c29a6c">
-<link rel="canonical" href="{canonical}">
-{hreflang_block}
-<meta property="og:type" content="article">
-<meta property="og:title" content="{meta["title"]}">
-<meta property="og:description" content="{meta["desc"]}">
-<meta property="og:site_name" content="Audiobook Maker">
-<meta property="og:url" content="{canonical}">
-<meta property="og:image" content="{base_url}/og-image.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:locale" content="{og_locale}">
-{og_locale_alt_block}
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="{meta["title"]}">
-<meta name="twitter:description" content="{meta["desc"]}">
-<meta name="twitter:image" content="{base_url}/og-image.png">
-<script type="application/ld+json">{article_ld}</script>
-<script type="application/ld+json">{breadcrumb_ld}</script>{extra_ld_block}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<noscript><link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet"></noscript>
-<style>
-:root{{--bg:#f5f3ef;--srf:#ffffff;--srf2:#f0ede8;--brd:#d5d0c8;--tx:#2c2a26;--txd:#6b6760;--txm:#9e9890;--ac:#c47a2a;--ach:#d4903e;--r:12px}}
-*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans SC',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);line-height:1.7;padding:20px;max-width:720px;margin:0 auto}}
-h1{{font-family:'DM Serif Display',Georgia,serif;font-size:2rem;color:var(--ac);margin:24px 0 16px;line-height:1.25}}
-h2{{font-family:'DM Serif Display',Georgia,serif;font-size:1.4rem;margin:32px 0 12px;color:var(--tx)}}
-p,li{{margin-bottom:10px;color:var(--txd)}}
-ol,ul{{padding-left:24px;margin-bottom:16px}}
-li{{margin-bottom:6px}}
-table{{width:100%;border-collapse:collapse;margin:16px 0;font-size:0.92rem}}
-th,td{{border:1px solid var(--brd);padding:8px 12px;text-align:left}}
-th{{background:var(--srf2);font-weight:600}}
-details{{margin:12px 0;border:1px solid var(--brd);border-radius:var(--r);padding:12px 16px;background:var(--srf)}}
-details summary{{cursor:pointer;font-weight:600;color:var(--tx)}}
-details p{{margin-top:8px}}
-a{{color:var(--ac);text-decoration:none}}
-a:hover{{color:var(--ach);text-decoration:underline}}
-code{{background:var(--srf2);padding:2px 6px;border-radius:4px;font-size:0.9em}}
-.breadcrumb{{font-size:0.85rem;color:var(--txm);margin-bottom:20px}}
-.breadcrumb a{{color:var(--txm)}}
-.cta{{display:inline-block;margin:24px 0;padding:14px 32px;background:var(--ac);color:#fff;border-radius:var(--r);font-weight:600;text-decoration:none;font-size:1.05rem}}
-.cta:hover{{background:var(--ach);color:#fff;text-decoration:none}}
-footer{{margin-top:48px;padding-top:24px;border-top:1px solid var(--brd);font-size:0.85rem;color:var(--txm)}}
-</style>
-</head>
-<body>
-<nav class="breadcrumb">
-<a href="{app_home}">Audiobook Maker</a> &rsaquo; {crumb_name} &rsaquo; {meta["h1"]}
-</nav>
-<article>
-<h1>{meta["h1"]}</h1>
-{article_dates_html}
-{body}
-<a class="cta" href="{app_home}">{cta_label} &rarr;</a>
-</article>
-<footer>
-<p><strong>Audiobook Maker</strong> — Free & open-source EPUB/PDF to audiobook converter. 400+ AI voices, 50+ languages. <a href="{app_home}">Start converting</a>.</p>
-</footer>
-</body>
-</html>"""
+    head = _brand.seo_head(
+        desc=meta["desc"], keywords=meta["kw"], canonical=canonical, hreflang=hreflang_block,
+        og_type="article", og_title=meta["title"], og_desc=meta["desc"], og_url=canonical,
+        og_image=f"{base_url}/og-image.png", lang=lang, twitter=True,
+        ld=[article_ld, breadcrumb_ld, *extra_ld])
+    body_html = (f'<article>\n<h1>{meta["h1"]}</h1>\n{article_dates_html}\n{body}\n'
+                 f'<a class="cta" href="{app_home}">{cta_label} &rarr;</a>\n</article>')
+    footer = (f'<p><strong>Audiobook Maker</strong> — Free & open-source EPUB/PDF to audiobook converter. '
+              f'400+ AI voices, 50+ languages. <a href="{app_home}">Start converting</a>.</p>')
+    return _brand.public_page(lang=lang, title=meta["title"], home=app_home,
+                              crumb=f'{crumb_name} &rsaquo; {meta["h1"]}',
+                              body=body_html, footer=footer, head=head)

@@ -60,7 +60,7 @@ def test_faq_howto_breadcrumb_key_order():
 
 
 def test_leaves_import_only_stdlib_and_leaves():
-    for mod, allowed in ((pb, {"i18n"}), (seo_ld, {"json", "page_brand"})):
+    for mod, allowed in ((pb, {"i18n", "pathlib"}), (seo_ld, {"json", "page_brand"})):
         src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
         mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
                 for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
@@ -85,3 +85,49 @@ def test_pages_use_shared_hreflang_and_ld():
     assert guide.count('og:locale:alternate') == len(pb.SITE_LANGS) - 1
     import seo_content
     assert seo_content.lang_content("xx") is seo_content.lang_content("en")
+
+
+# ---- C3c: shell pubblica unica ---------------------------------------------------
+
+def test_seo_head_lines_in_order():
+    head = pb.seo_head(desc="D", keywords="K", canonical="https://x/p/", hreflang="HL",
+                       og_type="article", og_title="T", og_desc="D", og_url="https://x/p/",
+                       og_image="https://x/og.png", lang="it", twitter=True, ld=["{1}", "{2}"])
+    lines = head.split("\n")
+    assert lines[0] == '<meta name="description" content="D">'
+    assert lines[1] == '<meta name="keywords" content="K">'
+    assert lines[2] == '<link rel="canonical" href="https://x/p/">' and lines[3] == "HL"
+    assert '<meta property="og:locale" content="it_IT">' in lines
+    assert lines.count('<meta property="og:locale:alternate" content="en_US">') == 1
+    assert lines[-2:] == ['<script type="application/ld+json">{1}</script>',
+                          '<script type="application/ld+json">{2}</script>']
+    assert '<meta name="twitter:image" content="https://x/og.png">' in lines
+    assert pb.seo_head() == "" and "og:" not in pb.seo_head(desc="D")
+
+
+def test_public_page_shell():
+    html = pb.public_page(lang="zh", title="T&amp;", crumb="C", body="<article>B</article>",
+                          footer="<p>F</p>", home="/zh/", head="<!--H-->", css=".x{color:red}")
+    assert html.startswith("<!DOCTYPE html>") and '<html lang="zh-Hans">' in html
+    assert "<title>T&amp;</title>" in html and "<!--H-->" in html
+    assert '<nav class="breadcrumb"><a href="/zh/">Audiobook Maker</a> &rsaquo; C</nav>' in html
+    assert "<article>B</article>" in html and "<footer><p>F</p></footer>" in html
+    assert ".x{color:red}</style>" in html and "__" not in html.replace("__pycache__", "")
+
+
+def test_public_pages_share_the_shell():
+    import guide_content, privacy_content, support_content
+    for mod in (guide_content, privacy_content, support_content):
+        src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        assert "<!DOCTYPE" not in src and "<head>" not in src, mod.__name__
+    shell_marker = '<meta name="theme-color" content="#c29a6c">'
+    for html in (privacy_content.render_privacy_page("en", "https://x"),
+                 support_content.render_support_page("it", "https://x"),
+                 guide_content.build_guide_html("podcast", "fr", "https://x", "1.0")):
+        assert shell_marker in html and "__" not in html.split("<body>")[0]
+        assert '<nav class="breadcrumb"><a href="https://x' in html
+    guide = guide_content.build_guide_html("podcast", "fr", "https://x", "1.0")
+    assert '<link rel="canonical" href="https://x/guide/podcast/fr/">' in guide
+    assert '<meta property="og:locale" content="fr_FR">' in guide
+    assert guide.count('<script type="application/ld+json">') == 2
+    assert '"@type": "BreadcrumbList"' in guide and '"@type": "Article"' in guide

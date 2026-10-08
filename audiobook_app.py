@@ -64,24 +64,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 # Python di migliaia di righe (REGOLE_CODICE.md §7.1). Ora sono file:
 # `_page_template` li legge una volta, `_render_page` sostituisce i segnaposto
 # `__Pn__` nell'ordine dato (nessuna interpretazione di graffe o `%`).
-_PAGES_DIR = SCRIPT_DIR / "templates" / "pages"
-_page_cache: dict = {}
-
-
-def _page_template(name):
-    html = _page_cache.get(name)
-    if html is None:
-        html = (_PAGES_DIR / name).read_text(encoding="utf-8") if "." in name \
-            else (_PAGES_DIR / f"{name}.html").read_text(encoding="utf-8")
-        _page_cache[name] = html
-    return html
-
-
-def _render_page(name, values):
-    html = _page_template(name)
-    for key, value in values.items():
-        html = html.replace(key, str(value))
-    return html
+from page_brand import page_template as _page_template, render_page as _render_page
 
 # Startup timestamp for Last-Modified / Cache-Control on pre-rendered HTML pages
 _STARTUP_TIME = datetime.now(timezone.utc)

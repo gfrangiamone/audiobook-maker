@@ -6,7 +6,31 @@ pubbliche, le mappe lingua -> hreflang / og:locale con i relativi tag
 lo importano `audiobook_app`, `account_page`, `guide_content`,
 `templates/index_page`, che non possono importare l'entry point.
 """
+from pathlib import Path
+
 from i18n import LANGS as SITE_LANGS
+
+# Pagine servite da file: templates/pages/<name>.html (o <name> se ha gia'
+# un'estensione), lette una volta. `render_page` sostituisce i segnaposto
+# alla lettera, nell'ordine dato: nessuna interpretazione di graffe o `%`.
+PAGES_DIR = Path(__file__).resolve().parent / "templates" / "pages"
+_page_cache: dict = {}
+
+
+def page_template(name):
+    html = _page_cache.get(name)
+    if html is None:
+        path = PAGES_DIR / (name if "." in name else f"{name}.html")
+        html = path.read_text(encoding="utf-8")
+        _page_cache[name] = html
+    return html
+
+
+def render_page(name, values):
+    html = page_template(name)
+    for key, value in values.items():
+        html = html.replace(key, str(value))
+    return html
 
 # Lingua dell'interfaccia -> codice hreflang / attributo lang (BCP 47) e
 # locale Open Graph. L'ordine e' quello di SITE_LANGS: e' anche l'ordine
@@ -124,3 +148,52 @@ THEME_SCRIPT = (
     "if(!t&&window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches)t='dark';"
     "if(t==='dark')document.documentElement.setAttribute('data-theme','dark');})();</script>"
 )
+
+
+
+def seo_head(*, desc="", keywords="", canonical="", hreflang="", og_type="", og_title="",
+             og_desc="", og_url="", og_image="", lang=None, twitter=False, ld=()):
+    """Righe del <head> di una pagina pubblica: description, keywords,
+    canonical, blocco hreflang, Open Graph (con og:locale e alternates se
+    `lang`), Twitter card, blocchi JSON-LD gia' serializzati (`seo_ld.ld_json`).
+    Valori gia' escapati dal chiamante."""
+    lines = []
+    if desc:
+        lines.append(f'<meta name="description" content="{desc}">')
+    if keywords:
+        lines.append(f'<meta name="keywords" content="{keywords}">')
+    if canonical:
+        lines.append(f'<link rel="canonical" href="{canonical}">')
+    if hreflang:
+        lines.append(hreflang)
+    if og_type:
+        lines += [f'<meta property="og:type" content="{og_type}">',
+                  f'<meta property="og:title" content="{og_title}">',
+                  f'<meta property="og:description" content="{og_desc}">',
+                  '<meta property="og:site_name" content="Audiobook Maker">',
+                  f'<meta property="og:url" content="{og_url}">']
+        if og_image:
+            lines += [f'<meta property="og:image" content="{og_image}">',
+                      '<meta property="og:image:width" content="1200">',
+                      '<meta property="og:image:height" content="630">']
+        if lang:
+            cur, alt = og_locale_tags(lang)
+            lines += [f'<meta property="og:locale" content="{cur}">', alt]
+    if twitter:
+        lines += ['<meta name="twitter:card" content="summary_large_image">',
+                  f'<meta name="twitter:title" content="{og_title}">',
+                  f'<meta name="twitter:description" content="{og_desc}">',
+                  f'<meta name="twitter:image" content="{og_image}">']
+    lines += [f'<script type="application/ld+json">{block}</script>' for block in ld]
+    return "\n".join(lines)
+
+
+def public_page(*, lang, title, crumb, body, footer, home="/", head="", css=""):
+    """Pagina pubblica (guide, privacy, supporto) sulla shell unica
+    templates/pages/public_shell.html: head SEO da `seo_head`, breadcrumb
+    «Audiobook Maker › crumb», corpo, footer, CSS aggiuntivo della pagina.
+    `title`, `crumb`, `body`, `footer` sono HTML gia' pronto."""
+    return render_page("public_shell", {
+        "__LANG__": html_lang(lang), "__TITLE__": title, "__HEAD__": head, "__CSS__": css,
+        "__HOME__": home, "__CRUMB__": crumb, "__BODY__": body, "__FOOTER__": footer,
+    })
