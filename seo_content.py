@@ -21,6 +21,7 @@ Il blocco si adatta al tema della pagina usando le CSS custom properties
 """
 
 from content_store import content_json
+from i18n import pick as _i18n_pick
 from datetime import datetime
 from html import escape
 import json
@@ -67,7 +68,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     Returns:
         (article_html, faq_ld_json, howto_ld_json)
     """
-    c = _CONTENT.get(lang, _CONTENT["en"])
+    c = _i18n_pick(_CONTENT, lang, merge=False)
 
     # Key Takeaways box HTML
     kt = c.get("key_takeaways", {})
@@ -110,7 +111,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     )
 
     # HowTo JSON-LD
-    steps = _HOWTO_STEPS.get(lang, _HOWTO_STEPS["en"])
+    steps = _i18n_pick(_HOWTO_STEPS, lang, merge=False)
     howto_ld_json = json.dumps({
         "@context": "https://schema.org",
         "@type": "HowTo",
@@ -127,10 +128,10 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     }, ensure_ascii=False)
 
     # Voice/language table
-    headers = _TABLE_HEADERS.get(lang, _TABLE_HEADERS["en"])
+    headers = _i18n_pick(_TABLE_HEADERS, lang, merge=False)
     table_rows = ""
     for _lc, labels, count in _VOICE_TABLE:
-        label = labels.get(lang, labels["en"])
+        label = _i18n_pick(labels, lang, merge=False)
         table_rows += (
             f'            <tr><td>{escape(label)}</td>'
             f'<td>{escape(count)}</td>'
@@ -341,8 +342,8 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
     """
     article_html, faq_ld_raw, howto_ld_raw = _build_seo_block(lang)
 
-    features = _LD_FEATURES.get(lang, _LD_FEATURES["en"])
-    c = _CONTENT.get(lang, _CONTENT["en"])
+    features = _i18n_pick(_LD_FEATURES, lang, merge=False)
+    c = _i18n_pick(_CONTENT, lang, merge=False)
 
     base_url = "https://audiobook-maker.com"
 

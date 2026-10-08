@@ -12,6 +12,7 @@ Each guide has full EN content + metadata for all 6 languages.
 from __future__ import annotations
 
 from content_store import content_json, content_text, content_exists
+from i18n import pick as _i18n_pick
 
 
 def _guide_bodies(lang):
@@ -194,7 +195,7 @@ def build_guide_html(
     if not guide_meta_all:
         return f"<!-- Guide '{guide_id}' not found -->"
 
-    meta = guide_meta_all.get(lang, guide_meta_all["en"])
+    meta = _i18n_pick(guide_meta_all, lang, merge=False)
     html_lang = _HREFLANG_MAP.get(lang, "en")
     # Self-canonical per language, path-based: EN = x-default su /guide/<id>/,
     # le altre lingue su /guide/<id>/<lang>/. Coerente con sitemap.xml e link interni.

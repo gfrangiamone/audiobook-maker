@@ -26,6 +26,7 @@ Configurazione (env):
 
 import json
 import os
+from i18n import norm_lang as _norm_lang
 from env_utils import env_float as _env_float, env_int as _env_int, env_str
 from datetime import datetime, timezone
 
@@ -220,8 +221,8 @@ def check(texts, voice_lang, declared_lang="", *, job_id="", voice="",
     lascia passare.
     """
     try:
-        voice_lang = (voice_lang or "").strip().split("-")[0].lower()
-        declared_lang = (declared_lang or "").strip().split("-")[0].lower()
+        voice_lang = _norm_lang(voice_lang)
+        declared_lang = _norm_lang(declared_lang)
         if not voice_lang:
             return None
         text = sample_text(texts)

@@ -16,6 +16,7 @@ import logging
 import re
 import json
 import os
+import i18n as _i18n
 from ratelimit import cooldown_counter as _cooldown_counter, sliding_check as _sliding_check
 from client_identity import EMAIL_RE as _ACCT_EMAIL_RE, ip_salt as _ip_salt, mask_email as _mask_email_ci, salted_hash as _salted_hash
 from fileio import atomic_write_json, data_dir, load_json
@@ -199,30 +200,14 @@ def _activity_log_dir():
 
 activity_log.configure(log_dir=_activity_log_dir)
 
-# Carica traduzioni pagine di download da file JSON esterno
-_DL_PAGES_I18N = {}
-try:
-    with open(SCRIPT_DIR / "i18n" / "download_pages.json", encoding="utf-8") as _f:
-        _DL_PAGES_I18N = json.load(_f)
-except Exception as _e:
-    print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
+# Traduzioni delle pagine di download (i18n/download_pages.json, pagina -> lingua)
+_DL_PAGES_I18N = _i18n.load("download_pages")
 
 # Le pagine dei link dell'email (ripresa, dispositivi, cancellazione) nelle
 # lingue dell'interfaccia: chi riceve l'email non passa dal sito e non ha modo
 # di cambiare lingua da li'.
-_VC_PAGES_I18N = {}
-try:
-    with open(SCRIPT_DIR / "i18n" / "voice_clone_pages.json", encoding="utf-8") as _f:
-        _VC_PAGES_I18N = json.load(_f)
-except Exception as _e:
-    print(f"WARNING: Could not load i18n/voice_clone_pages.json: {_e}", file=sys.stderr)
-
-_ACCT_PAGES_I18N = {}
-try:
-    with open(SCRIPT_DIR / "i18n" / "account_pages.json", encoding="utf-8") as _f:
-        _ACCT_PAGES_I18N = json.load(_f)
-except Exception as _e:
-    print(f"WARNING: Could not load i18n/account_pages.json: {_e}", file=sys.stderr)
+_VC_PAGES_I18N = _i18n.load("voice_clone_pages")
+_ACCT_PAGES_I18N = _i18n.load("account_pages")
 
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
 # (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
@@ -1292,13 +1277,7 @@ _LANG_COOKIE = "abm_lang"
 
 def _get_browser_lang():
     """Return primary browser language from Accept-Language header (e.g. 'it', 'en', 'fr')."""
-    accept = request.headers.get("Accept-Language", "")
-    if not accept:
-        return ""
-    # Parse first language tag: "it-IT,it;q=0.9,en;q=0.8"  →  "it"
-    first = accept.split(",")[0].split(";")[0].strip()
-    # Return just the primary subtag (e.g. "it-IT"  →  "it")
-    return first.split("-")[0].lower() if first else ""
+    return _i18n.browser_lang(request.headers.get("Accept-Language", ""))
 
 
 def _gen_owner_cid(j):
@@ -1812,8 +1791,8 @@ def _recovery_generate_gate(job_id, rec, info):
     if total_chars > max_chars:
         raise _RecoveryRejected(
             f"{total_chars:,} caratteri oltre il cap {max_chars:,} della voce premium")
-    lang = ((rec.get("gen_lang") or rec.get("lang")
-             or getattr(info, "language", "") or "it").split("-")[0].lower() or "it")
+    lang = (_i18n.norm_lang((rec.get("gen_lang") or rec.get("lang")
+             or getattr(info, "language", "") or "it")) or "it")
     if is_gem:
         if gemini_tts is None:
             raise _RecoveryRejected("modulo gemini_tts non disponibile")
@@ -2861,7 +2840,7 @@ def _push_job_event(job_id, event, title=""):
         with _jobs_lock:
             job = jobs.get(job_id) or {}
             cid = job.get("client_id", "")
-            lang = (job.get("notify_lang") or "en").split("-")[0].lower()
+            lang = _i18n.norm_lang((job.get("notify_lang") or "en"))
         if not cid:
             return
         with _device_tokens_lock:
@@ -2871,7 +2850,7 @@ def _push_job_event(job_id, event, title=""):
         # Localizza in base alla lingua del job (fallback inglese). Per 'done' il
         # titolo del libro, se noto, resta il subject più informativo.
         _texts = _PUSH_TEXTS.get(event, _PUSH_TEXTS["error"])
-        loc_subject, body = _texts.get(lang) or _texts["en"]
+        loc_subject, body = _i18n.pick(_texts, lang, merge=False)
         subject = title or loc_subject
         dead = []
         for dev in devices:
@@ -2996,7 +2975,7 @@ async def _fetch_voices():
     # 1. Edge TTS
     for v in edge_list:
         lc_full = v["Locale"]
-        lc = lc_full.split("-")[0].lower()
+        lc = _i18n.norm_lang(lc_full)
         region = lc_full.split("-")[-1].upper()
         
         if lc not in languages:
@@ -3392,7 +3371,7 @@ def index():
     Questo garantisce che l'URL x-default negli hreflang sia auto-canonicalizzante.
     """
     lang = _detect_lang_from_request()
-    base = HTML_ROOT_TEMPLATES.get(lang, HTML_ROOT_TEMPLATES["en"])
+    base = _i18n.pick(HTML_ROOT_TEMPLATES, lang, merge=False)
     resp = app.make_response(_inject_reviews(base, lang))
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
     resp.headers["Vary"] = "Accept-Language"
@@ -3468,7 +3447,7 @@ def faq_page(lang):
 
     html_lang = {"zh": "zh-Hans"}.get(lang, lang)
     c = seo_content._CONTENT.get(lang, seo_content._CONTENT.get("en", {}))
-    title = html_mod.escape(_FAQ_TITLES.get(lang, _FAQ_TITLES["en"]))
+    title = html_mod.escape(_i18n.pick(_FAQ_TITLES, lang, merge=False))
     desc = html_mod.escape(c.get("direct_answer", ""))
     base = BASE_URL or ""
     canonical = f"{base}/faq/{lang}/"
@@ -3785,7 +3764,7 @@ def _install_buttons_html(lang):
         "it": ("Scarica da Google Play", "Scarica da App Store"),
         "en": ("Get it on Google Play", "Download on the App Store"),
     }
-    play_label, apple_label = labels.get(lang, labels["en"])
+    play_label, apple_label = _i18n.pick(labels, lang, merge=False)
 
     def _badge(url, label, svg):
         safe_label = html_mod.escape(label, quote=True)
@@ -3869,7 +3848,7 @@ def get_app_page():
         "en": ("Get the app",
                "Install AudioBook Maker &amp; Player to listen to your audiobooks on your phone."),
     }
-    title, body = T.get(lang, T["en"])
+    title, body = _i18n.pick(T, lang, merge=False)
     return (_render_install_page(lang, title, body), 200,
             {"Content-Type": "text/html; charset=utf-8"})
 
@@ -3889,7 +3868,7 @@ def _render_transfer_landing(token):
         "en": ("Open in Audiobook Maker &amp; Player",
                "If you have the app installed, this link opens it to import the job. Otherwise get the app:"),
     }
-    title, body = T.get(lang, T["en"])
+    title, body = _i18n.pick(T, lang, merge=False)
     return _render_install_page(lang, title, body)
 
 
@@ -5504,7 +5483,7 @@ def _synth_running_gemini_audit_records():
             try:
                 language = generation_engine._audit_language(job, info) or ""
             except Exception:
-                language = (getattr(info, "language", "") or "").split("-")[0].lower() if info else ""
+                language = _i18n.norm_lang(getattr(info, "language", "")) if info else ""
             payment = job.get("payment") or {}
             charged = float(payment.get("total_eur", 0) or 0)
             if charged <= 0:
@@ -7832,20 +7811,14 @@ def _vc_page_lang():
     non deve cambiare), poi quella del browser, e inglese se non e' fra
     quelle tradotte. Nessun `?lang=`: chi apre il link dell'email deve
     ritrovare la stessa lingua su tutte le pagine del giro."""
-    for lang in ((request.cookies.get(_LANG_COOKIE) or "").strip().lower(),
-                 _get_browser_lang()):
-        if lang and lang in _VC_PAGES_I18N:
-            return lang
-    return "en"
+    return _i18n.choose_lang([request.cookies.get(_LANG_COOKIE), _get_browser_lang()],
+                             _VC_PAGES_I18N)
 
 
 def _vc_txt(lang):
     """Stringhe della lingua sopra l'inglese: una chiave non ancora tradotta
     esce in inglese invece che vuota."""
-    t = dict(_VC_PAGES_FALLBACK)
-    t.update(_VC_PAGES_I18N.get("en") or {})
-    t.update(_VC_PAGES_I18N.get(lang) or {})
-    return t
+    return _i18n.pick(_VC_PAGES_I18N, lang, base=_VC_PAGES_FALLBACK)
 
 
 _VC_PENCIL_SVG = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -8219,7 +8192,7 @@ def api_community_stats_month():
 
 # ─── COMMUNITY: NEWS ────────────────────────────────────────────────
 _NEWS_TAGS = {"feature", "fix", "info"}
-_NEWS_LANGS = {"it", "en", "fr", "es", "de", "zh", "hi"}
+_NEWS_LANGS = set(_i18n.LANGS)
 
 
 def _sanitize_text(s, maxlen, keep_newlines=False):
@@ -8531,19 +8504,12 @@ def _acct_page_lang(*preferred):
     `abm_lang`), poi quelle passate dal chiamante (lingua dell'account o
     del codice), poi Accept-Language, poi inglese. I valori non tradotti
     sono saltati, non degradano a inglese."""
-    q = (request.args.get("lang") or "").strip().lower()
-    cands = [q, (request.cookies.get(_LANG_COOKIE) or "").strip().lower(),
-             *preferred, _get_browser_lang()]
-    for cand in cands:
-        if cand and cand in _ACCT_PAGES_I18N:
-            return cand
-    return "en"
+    return _i18n.choose_lang([request.args.get("lang"), request.cookies.get(_LANG_COOKIE),
+                              *preferred, _get_browser_lang()], _ACCT_PAGES_I18N)
 
 
 def _acct_txt(lang):
-    t = dict(_ACCT_PAGES_I18N.get("en") or {})
-    t.update(_ACCT_PAGES_I18N.get(lang) or {})
-    return t
+    return _i18n.pick(_ACCT_PAGES_I18N, lang)
 
 
 def _acct_html(html_doc, status=200):
@@ -10102,10 +10068,10 @@ def api_preview_audio(job_id):
         _jp_acc = jobs.get(job_id) or {}
         _jinfo_acc = _jp_acc.get("info")
         _preview_lang_pre = (
-            (request.args.get("lang") or "").strip().split("-")[0].lower()
-            or (_jp_acc.get("opt_lang") or "").strip().split("-")[0].lower()
-            or (_jp_acc.get("gen_lang") or "").strip().split("-")[0].lower()
-            or (getattr(_jinfo_acc, "language", None) or "it").split("-")[0].lower()
+            _i18n.norm_lang(request.args.get("lang"))
+            or _i18n.norm_lang(_jp_acc.get("opt_lang"))
+            or _i18n.norm_lang(_jp_acc.get("gen_lang"))
+            or _i18n.norm_lang((getattr(_jinfo_acc, "language", None) or "it"))
         )[:2]
         try:
             accent_directive_pre = gemini_tts.build_accent_directive(
@@ -10220,12 +10186,12 @@ def api_preview_audio(job_id):
                 try:
                     _job_pv = jobs[job_id]
                     _job_info = _job_pv.get("info")
-                    _q_lang = (request.args.get("lang") or "").strip().split("-")[0].lower()
+                    _q_lang = _i18n.norm_lang(request.args.get("lang"))
                     _preview_lang = (
                         _q_lang
-                        or (_job_pv.get("opt_lang") or "").strip().split("-")[0].lower()
-                        or (_job_pv.get("gen_lang") or "").strip().split("-")[0].lower()
-                        or (getattr(_job_info, "language", None) or "it").split("-")[0].lower()
+                        or _i18n.norm_lang(_job_pv.get("opt_lang"))
+                        or _i18n.norm_lang(_job_pv.get("gen_lang"))
+                        or _i18n.norm_lang((getattr(_job_info, "language", None) or "it"))
                     )[:2]
                     _norm_chars = len(gemini_tts._normalize_text(preview_text))
                     gemini_tts.record_rate_sample(
@@ -10495,7 +10461,7 @@ def _language_mismatch_hit(job, job_id, voice, lang, selected_chapters):
     della voce, perche' cambiarla e' l'unico motivo per ridomandare.
     """
     voice_lang = (lang or "") or _voice_language_hint(voice or "")
-    key = (voice_lang or "").strip().split("-")[0].lower()
+    key = _i18n.norm_lang(voice_lang)
     memo = job.get("_lang_check") or {}
     if key and key in memo:
         return memo[key]
@@ -10619,7 +10585,7 @@ def api_generate():
     # con se stessa sarebbe tautologico) - '' se assente, il confronto resta
     # allora solo sulla lingua.
     if voice.startswith(voice_clone.VOICE_ID_PREFIX):
-        _vc_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+        _vc_lang = _i18n.norm_lang(data.get("lang"))
         _vc_locale = (data.get("locale") or "").strip()
         _vc_err_code = voice_clone.check_use(voice, _get_client_id(), _vc_lang, _vc_locale)
         if _vc_err_code:
@@ -10743,9 +10709,9 @@ def api_generate():
         # metadata e EPUB/PDF con dc:language errato producono altrimenti
         # stime divergenti -> total_eur_pre sotto soglia -> payment_token
         # ignorato -> job["payment"] mai impostato -> audit charged=0).
-        _ui_lang_pre = (data.get("lang") or "").strip().split("-")[0].lower()
+        _ui_lang_pre = _i18n.norm_lang(data.get("lang"))
         lang_pre = (_ui_lang_pre
-                    or (getattr(info_pre, "language", "") or "").split("-")[0].lower()
+                    or _i18n.norm_lang(getattr(info_pre, "language", ""))
                     or "it")
         # Persisti la lingua TTS effettivamente scelta dall'utente. Serve
         # all'audit Gemini (`_audit_language`) per non registrare la lingua
@@ -11063,9 +11029,9 @@ def api_generate():
             # Speechify): stessa priorita' UI > metadata > "it" usata da
             # /api/combined_estimate, altrimenti la stima qui e quella vista
             # dal client divergerebbero.
-            _ui_lang_pre = (data.get("lang") or "").strip().split("-")[0].lower()
+            _ui_lang_pre = _i18n.norm_lang(data.get("lang"))
             lang_pre = (_ui_lang_pre
-                        or (getattr(info_pre, "language", "") or "").split("-")[0].lower()
+                        or _i18n.norm_lang(getattr(info_pre, "language", ""))
                         or "it")
             job["gen_lang"] = lang_pre
             try:
@@ -11656,7 +11622,7 @@ def api_progress(job_id):
         return _err_pre, _sc_pre
     # Lingua UI per il blocco dettagli localizzato del payload done (catturata
     # qui: `request` non è disponibile dentro il generator).
-    _ui_lang = (request.args.get("lang") or "").strip().split("-")[0].lower()
+    _ui_lang = _i18n.norm_lang(request.args.get("lang"))
 
     def stream():
         while True:
@@ -13173,7 +13139,7 @@ def api_gemini_estimate():
     voice_id = data.get("voice_id", "")
     selected = data.get("selected_chapters") or []
     rate = data.get("rate", "+0%")
-    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+    ui_lang = _i18n.norm_lang(data.get("lang"))
 
     if not _is_gemini_voice(voice_id):
         return jsonify({"error": "voice_id must be a Gemini voice"}), 400
@@ -13203,7 +13169,7 @@ def api_gemini_estimate():
     # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
     # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
     # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
-    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
+    lang = ui_lang or _i18n.norm_lang(getattr(info, "language", "")) or "it"
     try:
         est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
     except Exception as e:
@@ -13238,7 +13204,7 @@ def api_combined_estimate():
     selected = data.get("selected_chapters") or []
     ai_opt = bool(data.get("ai_opt_enabled", False))
     rate = data.get("rate", "+0%")
-    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+    ui_lang = _i18n.norm_lang(data.get("lang"))
     # Lettura opzionale del testo tra parentesi (default: rimosso): influenza il
     # conteggio chunk/caratteri e quindi la stima costo e il preflight PREMIUM.
     read_round_parens = bool(data.get("read_round_parens", False))
@@ -13270,7 +13236,7 @@ def api_combined_estimate():
     # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
     # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
     # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
-    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
+    lang = ui_lang or _i18n.norm_lang(getattr(info, "language", "")) or "it"
 
     gemini_eur = 0.0
     gemini_breakdown = {}
@@ -13483,7 +13449,7 @@ def api_paypal_create_order_gemini():
     selected = data.get("selected_chapters") or []
     ai_opt = bool(data.get("ai_opt_enabled", False))
     rate = data.get("rate", "+0%")
-    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+    ui_lang = _i18n.norm_lang(data.get("lang"))
     try:
         requested_amount = float(data.get("amount_eur") or 0)
     except (TypeError, ValueError):
@@ -13542,7 +13508,7 @@ def api_paypal_create_order_gemini():
 
     # Lingua: stessa priorita` di /api/combined_estimate (UI > metadata > "it").
     # Deve essere identica per evitare amount mismatch sul server-side check.
-    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
+    lang = ui_lang or _i18n.norm_lang(getattr(info, "language", "")) or "it"
 
     gemini_eur = 0.0
     _premium_list_eur = 0.0
@@ -13967,9 +13933,9 @@ def api_optimize():
         # `if _combined_token:` -> una richiesta senza token partiva gratis.
         _voice_for_est = data.get("voice", "")
         _rate_for_est = data.get("rate", "+0%")
-        _ui_lang_for_est = (lang or "").split("-")[0].lower() if lang else ""
+        _ui_lang_for_est = _i18n.norm_lang(lang) if lang else ""
         _lang_for_est = (_ui_lang_for_est
-                         or (getattr(info, "language", "") or "").split("-")[0].lower()
+                         or _i18n.norm_lang(getattr(info, "language", ""))
                          or "it")
         # Capitoli selezionati per la generazione (stessa logica frontend
         # combined_estimate: subset se selected_chapters, altrimenti tutti).
@@ -14324,9 +14290,9 @@ def api_optimize():
     if _is_combined_voxcpm:
         _combined_token_vox = (data.get("payment_token_combined")
                                or data.get("payment_token") or "").strip()
-        _ui_lang_for_vox = (lang or "").split("-")[0].lower() if lang else ""
+        _ui_lang_for_vox = _i18n.norm_lang(lang) if lang else ""
         _lang_for_vox = (_ui_lang_for_vox
-                         or (getattr(info, "language", "") or "").split("-")[0].lower()
+                         or _i18n.norm_lang(getattr(info, "language", ""))
                          or "it")
         # Capitoli selezionati per la generazione (stessa logica frontend
         # combined_estimate: subset se selected_chapters, altrimenti tutti).
@@ -15698,7 +15664,7 @@ def _generate_podcast_index_html(podcast_dir, title, author, cover_file, rss_fna
                "instructions": "RSS फ़ीड URL कॉपी करें और इसे अपने पसंदीदा पॉडकास्ट ऐप (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...) में पेस्ट करें।",
                "footer": "Audiobook Maker से जनरेट किया गया"},
     }
-    lb = _labels.get(lang, _labels["en"])
+    lb = _i18n.pick(_labels, lang, merge=False)
 
     # Build episode list
     sorted_mp3 = sorted([os.path.basename(f) for f in mp3_files if os.path.exists(f)])
@@ -15984,13 +15950,13 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             "zh": "&#x1F4D6; 下载译文",
             "hi": "&#x1F4D6; अनुवाद डाउनलोड करें",
         }
-        btn_label = tr_block.get("btn") or _tr_btn_fallback.get(lang, _tr_btn_fallback["en"])
+        btn_label = tr_block.get("btn") or _i18n.pick(_tr_btn_fallback, lang, merge=False)
         _tr_type_fallback = {
             "it": "Traduzione", "en": "Translation", "fr": "Traduction",
             "es": "Traducción", "de": "Übersetzung", "zh": "译文",
             "hi": "अनुवाद",
         }
-        type_label = tr_block.get("type_label") or _tr_type_fallback.get(lang, _tr_type_fallback["en"])
+        type_label = tr_block.get("type_label") or _i18n.pick(_tr_type_fallback, lang, merge=False)
         if translated_available:
             audio_btn_html = f'<p><a href="/dl/{token}/translated" class="btn">{btn_label}</a></p>'
         else:
@@ -16006,7 +15972,7 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
                 "zh": "该译文文件已不可用。请回复交付邮件，我们将免费重新翻译。",
                 "hi": "&#2311;&#2360; &#2309;&#2344;&#2369;&#2357;&#2366;&#2342; &#2325;&#2368; &#2347;&#2364;&#2366;&#2311;&#2354; &#2309;&#2348; &#2313;&#2346;&#2354;&#2348;&#2381;&#2343; &#2344;&#2361;&#2368;&#2306; &#2361;&#2376;&#2404; &#2337;&#2367;&#2354;&#2367;&#2357;&#2352;&#2368; &#2311;&#2350;&#2375;&#2354; &#2325;&#2366; &#2313;&#2340;&#2381;&#2340;&#2352; &#2342;&#2375;&#2306;: &#2361;&#2350; &#2348;&#2367;&#2344;&#2366; &#2309;&#2340;&#2367;&#2352;&#2367;&#2325;&#2381;&#2340; &#2358;&#2369;&#2354;&#2381;&#2325; &#2325;&#2375; &#2309;&#2344;&#2369;&#2357;&#2366;&#2342; &#2342;&#2379;&#2348;&#2366;&#2352;&#2366; &#2325;&#2352;&#2375;&#2306;&#2327;&#2375;&#2404;",
             }
-            _msg = _tr_unavail.get(lang, _tr_unavail["en"])
+            _msg = _i18n.pick(_tr_unavail, lang, merge=False)
             audio_btn_html = (
                 '<p style="color:#b00020;font-weight:600;line-height:1.5">'
                 f'&#9888;&#65039; {_msg}</p>')
@@ -16071,7 +16037,7 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             "zh": "&#x1F4DD;&#xFE0F; 下载优化文本 (.abm)",
             "hi": "&#x1F4DD;&#xFE0F; ऑप्टिमाइज़्ड टेक्स्ट डाउनलोड करें (.abm)",
         }
-        abm_label = _abm_labels.get(lang, _abm_labels["en"])
+        abm_label = _i18n.pick(_abm_labels, lang, merge=False)
         abm_btn_html = f'<p><a href="/dl/{token}/abm" class="btn btn-abm">{abm_label}</a></p>'
 
     # Retention totale: deve riflettere _ret reale del token (es. Gemini=48h,
@@ -16116,8 +16082,8 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             "hi": "ऐप में खोलें",
         }
         _tr_block = _transfer_t.get(lang, _transfer_t.get("en", {}))
-        _title = _tr_block.get("title") or _transfer_fallback.get(lang, _transfer_fallback["en"])[0]
-        _hint = _tr_block.get("hint") or _transfer_fallback.get(lang, _transfer_fallback["en"])[1]
+        _title = _tr_block.get("title") or _i18n.pick(_transfer_fallback, lang, merge=False)[0]
+        _hint = _tr_block.get("hint") or _i18n.pick(_transfer_fallback, lang, merge=False)[1]
         _app_name = "AudioBook Maker &amp; Player"
         if is_mobile and transfer_url:
             # Mobile/tablet: bottone che apre il deep link /t/<token> (App Link);
@@ -16129,13 +16095,13 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             # - altro: https diretto -> "Scarica su ..."
             if is_ios:
                 _open_url = _app_scheme_url(transfer_url)
-                _btn_label = _transfer_open_in_app.get(lang, _transfer_open_in_app["en"])
+                _btn_label = _i18n.pick(_transfer_open_in_app, lang, merge=False)
             elif is_android:
                 _open_url = _android_intent_url(transfer_url)
-                _btn_label = _transfer_cta.get(lang, _transfer_cta["en"])
+                _btn_label = _i18n.pick(_transfer_cta, lang, merge=False)
             else:
                 _open_url = transfer_url
-                _btn_label = _transfer_cta.get(lang, _transfer_cta["en"])
+                _btn_label = _i18n.pick(_transfer_cta, lang, merge=False)
             # href escapato per difesa in profondità: l'URL deriva da ABM_BASE_URL
             # (config fidata) + token server-side, ma non lo riflettiamo mai grezzo.
             _safe_url = html_mod.escape(_open_url, quote=True)
@@ -16585,16 +16551,8 @@ def _detect_lang_from_request() -> str:
     Scorre i tag di qualità q= e restituisce la prima lingua supportata.
     Fallback: 'en'.
     """
-    accept = request.headers.get("Accept-Language", "en")
-    # Formato: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
-    tags = re.findall(r'([a-zA-Z]{2,3})(?:-[a-zA-Z0-9]+)*(?:;q=([0-9.]+))?', accept)
-    # Ordina per q (default 1.0)
-    ranked = sorted(tags, key=lambda t: float(t[1]) if t[1] else 1.0, reverse=True)
-    for lang_tag, _ in ranked:
-        lang = lang_tag.lower()
-        if lang in _SUPPORTED_LANGS:
-            return lang
-    return "en"
+    return _i18n.browser_lang(request.headers.get("Accept-Language", "en"),
+                              supported=_SUPPORTED_LANGS, ranked=True, default="en")
 
 
 @app.after_request

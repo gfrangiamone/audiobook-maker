@@ -11,6 +11,7 @@ Scope: synthesis + pricing + usage tracking + preview cap + availability.
 
 import io
 import os
+from i18n import norm_lang as _norm_lang
 from env_utils import env_bool as _b, env_float as _f, env_int as _i
 import re
 import json
@@ -1346,7 +1347,7 @@ def accent_options(language):
     Restituisce [] per lingue mono-variante (nessun selettore UI). Usato dal
     frontend/diagnostica per sapere se mostrare il dropdown accento.
     """
-    lang = (language or "").split("-")[0].lower()
+    lang = _norm_lang(language)
     return list(ACCENT_VARIANTS.get(lang, []))
 
 
@@ -1368,7 +1369,7 @@ def build_accent_directive(language, accent_code=None):
     note ancora al nome lingua. Restituisce '' per lingue sconosciute (nessun
     ancoraggio possibile).
     """
-    lang = (language or "").split("-")[0].lower()
+    lang = _norm_lang(language)
     opts = ACCENT_VARIANTS.get(lang)
     if opts:
         valid = {c: d for c, d in opts}

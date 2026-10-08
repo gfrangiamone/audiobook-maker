@@ -22,6 +22,7 @@ import asyncio
 import html as _htmlesc
 import json
 import os
+from i18n import norm_lang as _norm_lang, pick as _i18n_pick
 from env_utils import env_bool as _env_bool, env_float as _env_float, env_int as _env_int
 import re
 import shutil
@@ -1134,7 +1135,7 @@ def _write_llm_audit(*, job=None, job_id=None, chapter_num=None,
         if job is not None:
             if not resolved_job_id:
                 resolved_job_id = job.get("job_id", "")
-            lang = (job.get("opt_lang") or "").split("-")[0].lower()
+            lang = _norm_lang(job.get("opt_lang"))
         rec = {
             "ts": ts.isoformat(),
             "job_id": resolved_job_id or "",
@@ -1163,7 +1164,7 @@ def _get_llm_prompt(lang_code="it"):
     lang_code può essere un codice ISO (it, en, fr...) o un locale (it-IT).
     """
     global _llm_prompts
-    lang = (lang_code or "it").split("-")[0].lower()
+    lang = _norm_lang((lang_code or "it"))
     if lang in _llm_prompts:
         return _llm_prompts[lang]
     
@@ -1199,11 +1200,11 @@ def _call_llm(user_content, job=None, max_retries=None):
     if job:
         opt_lang = (job.get("opt_lang") or "").strip()
         if opt_lang:
-            lang = opt_lang.split("-")[0].lower()
+            lang = _norm_lang(opt_lang)
         else:
             voice = job.get("voice") or job.get("opt_voice", "")
             if isinstance(voice, str) and voice and not _is_gemini_voice(voice):
-                lang = voice.split("-")[0].lower()
+                lang = _norm_lang(voice)
 
     prompt = _get_llm_prompt(lang)
 
@@ -1645,9 +1646,9 @@ def _generate_optimized_abm(job_id):
     # Carica il system prompt della lingua del job per il check di sicurezza.
     # Best-effort: se manca lang, salta il check (graceful).
     safety_prompt = ""
-    job_lang = (job.get("opt_lang") or "").split("-")[0].lower()
+    job_lang = _norm_lang(job.get("opt_lang"))
     if not job_lang and getattr(info, "language", ""):
-        job_lang = info.language.split("-")[0].lower()
+        job_lang = _norm_lang(info.language)
     if job_lang:
         try:
             safety_prompt = _get_llm_prompt(job_lang)
@@ -1921,7 +1922,7 @@ def _generation_details_lines(job, lang):
     gen_details_html nel payload done di /api/progress). I campi utente sono
     HTML-escaped. Solleva su input malformato: la difensivita' (return '')
     resta nei chiamanti."""
-    d = _email_details_i18n.get(lang, _email_details_i18n["en"])
+    d = _i18n_pick(_email_details_i18n, lang, merge=False)
     voice = (job.get("voice") or "").strip()
     is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice) or _is_voxcpm_voice(voice)
     lines = []
@@ -2336,7 +2337,7 @@ def _send_completion_email(job_id):
 
     _email_i18n = _completion_email_texts(book_title, retention_h)
 
-    t = dict(_email_i18n.get(lang, _email_i18n["en"]))
+    t = dict(_i18n_pick(_email_i18n, lang, merge=False))
 
     # Podcast section (only for podcast downloads)
     podcast_section = ""
@@ -2424,7 +2425,7 @@ def _send_optimization_email(job_id):
 
     _opt_email_i18n = _opt_email_texts(book_title, retention_h)
 
-    t = _opt_email_i18n.get(lang, _opt_email_i18n["en"])
+    t = _i18n_pick(_opt_email_i18n, lang, merge=False)
     subject = t["subject"]
     html_body = _email_html_body(t, dl_url)
     # Copie amministrative agganciate durante l'ottimizzazione (QR admin da
@@ -2549,7 +2550,7 @@ def _send_optimization_failed_email(job_id, job):
     payment_type = job.get("payment_type", "")
 
     texts = _opt_failed_email_texts(book_title, paid)
-    t = dict(texts.get(lang, texts["en"]))
+    t = dict(_i18n_pick(texts, lang, merge=False))
     if paid > 0 and job.get("refund_done") and payment_type == "voucher":
         t["warn"] = t["refund_voucher"]
     elif paid > 0 and job.get("refund_done") and payment_type == "paypal":
@@ -2693,7 +2694,7 @@ def _notify_user_premium_job_failed(job_id, job, refund):
         return False
     info = job.get("info")
     book_title = getattr(info, "title", "") or "Audiobook"
-    lang = (job.get("notify_lang") or "en").split("-")[0].lower()
+    lang = _norm_lang((job.get("notify_lang") or "en"))
     amount = float(refund.get("amount_eur", 0) or 0)
     code = refund.get("voucher_code") or ""
     expiry = ""
@@ -2708,7 +2709,7 @@ def _notify_user_premium_job_failed(job_id, job, refund):
             pass
 
     texts = _premium_failed_email_texts(book_title, amount, code, expiry)
-    t = dict(texts.get(lang, texts["en"]))
+    t = dict(_i18n_pick(texts, lang, merge=False))
     if refund.get("method") == "paypal" and code and amount > 0:
         t["warn"] = t["refund_paypal"]
     elif refund.get("method") == "voucher" and amount > 0:
@@ -3491,7 +3492,7 @@ def run_optimization(job_id, selected_chapters=None):
                 try:
                     _ui_lang_autogen = (job.get("opt_lang") or "").lower()
                     _lang_autogen = (_ui_lang_autogen
-                                     or (getattr(info, "language", "") or "").split("-")[0].lower()
+                                     or _norm_lang(getattr(info, "language", ""))
                                      or "it")
                     _est_autogen = gemini_tts.estimate_book_cost(
                         info.chapters, voice,
@@ -3513,7 +3514,7 @@ def run_optimization(job_id, selected_chapters=None):
                     _est_spx_ag = speechify_tts.estimate_book_cost(
                         info.chapters,
                         language=((job.get("opt_lang") or "").lower()
-                                  or (getattr(info, "language", "") or "").split("-")[0].lower()
+                                  or _norm_lang(getattr(info, "language", ""))
                                   or "en"),
                     )
                     job["speechify_estimate"] = _est_spx_ag
@@ -3529,7 +3530,7 @@ def run_optimization(job_id, selected_chapters=None):
                     job["voxcpm_estimate"] = voxcpm_tts.estimate_book_cost(
                         info.chapters,
                         language=((job.get("opt_lang") or "").lower()
-                                  or (getattr(info, "language", "") or "").split("-")[0].lower()
+                                  or _norm_lang(getattr(info, "language", ""))
                                   or "it"),
                     )
                 except Exception as _e_est_vox_ag:
@@ -4032,7 +4033,7 @@ def _send_translation_email(job_id):
     dl_url = f"{BASE_URL}/dl/{token}" if BASE_URL else f"/dl/{token}"
 
     _tr_email_i18n = _tr_email_texts(book_title, retention_h)
-    t = _tr_email_i18n.get(lang, _tr_email_i18n["en"])
+    t = _i18n_pick(_tr_email_i18n, lang, merge=False)
     subject = t["subject"]
     html_body = _email_html_body(t, dl_url)
     success = email_service._send_email(email, subject, html_body)
@@ -4699,16 +4700,16 @@ def _audit_language(job, info):
     """
     for src in (job.get("opt_lang"), job.get("gen_lang")):
         if isinstance(src, str) and src.strip():
-            return src.strip().split("-")[0].lower()
+            return _norm_lang(src)
     try:
         _est_lang = (((job.get("payment") or {}).get("gemini_est") or {})
                      .get("language") or "")
         if isinstance(_est_lang, str) and _est_lang.strip():
-            return _est_lang.strip().split("-")[0].lower()
+            return _norm_lang(_est_lang)
     except Exception:
         pass
     fallback = getattr(info, "language", "") or ""
-    return (fallback.split("-")[0].lower() if fallback else "")
+    return (_norm_lang(fallback) if fallback else "")
 
 
 # ---------------------------------------------------------------------------

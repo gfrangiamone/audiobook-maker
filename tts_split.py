@@ -16,6 +16,7 @@ Dipende da audio_utils per _generate_silence_mp3 e _concatenate_mp3.
 
 import asyncio
 import os
+from i18n import norm_lang as _norm_lang
 import re
 import tempfile
 import time
@@ -1059,7 +1060,7 @@ def _pick_edge_fallback_voice(lang2, gender=None, accent_code=None):
     `gender`: 'Male'/'Female' (case-insensitive) o None. None -> Female
     (comportamento storico). `accent_code`: codice come in ACCENT_VARIANTS.
     """
-    lang2 = (lang2 or "").split("-")[0].lower()
+    lang2 = _norm_lang(lang2)
     g = "Male" if str(gender or "").strip().lower().startswith("m") else "Female"
     if accent_code:
         ac = str(accent_code).strip().lower()
@@ -1109,7 +1110,7 @@ def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path,
     successo, oppure False. Non solleva: ogni errore -> False (il caller scrive
     comunque il silenzio a monte).
     """
-    lang2 = (fallback_lang or "").split("-")[0].lower()
+    lang2 = _norm_lang(fallback_lang)
     voice = _pick_edge_fallback_voice(lang2, gender=gender, accent_code=accent_code)
     tmp_mp3 = output_path + ".edgefallback.mp3"
     # Loop asyncio dedicato e isolato: generate_chunk_mp3 e' async ma qui siamo

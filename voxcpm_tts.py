@@ -18,6 +18,7 @@ import collections
 import json
 import logging
 import os
+from i18n import norm_lang as _norm_lang
 from voice_utils import clone_token as _clone_token, parse_rate_pct as _parse_rate_pct
 from env_utils import env_float as _f, env_int as _i
 import re
@@ -1004,7 +1005,7 @@ def _lingua_voce(voice_id):
         if not lang:
             raise ValueError("voce campione sconosciuta")
         return lang.lower()
-    return voxcpm_catalog.parse_voice_id(voice_id)["locale"].split("-")[0].lower()
+    return _norm_lang(voxcpm_catalog.parse_voice_id(voice_id)["locale"])
 
 
 # Passo base delle voci campionate, prima della velocita' del proprietario.

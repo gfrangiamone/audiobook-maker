@@ -17,6 +17,7 @@ Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 import html
 import json
 import os
+import i18n as _i18n
 from ratelimit import throttle_ok as _throttle_ok
 from client_identity import EMAIL_RE as _EMAIL_RE
 import threading
@@ -40,13 +41,7 @@ BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 # Voce campionata: testi email in sette lingue (i18n/voice_clone_emails.json)
 # ---------------------------------------------------------------------------
 
-_VC_I18N = {}
-try:
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n",
-                           "voice_clone_emails.json"), encoding="utf-8") as _f:
-        _VC_I18N = json.load(_f)
-except Exception as _e:      # noqa: BLE001
-    print(f"WARNING: i18n/voice_clone_emails.json non caricato: {_e}", flush=True)
+_VC_I18N = _i18n.load("voice_clone_emails")
 
 # ---------------------------------------------------------------------------
 # Admin digest config
@@ -829,7 +824,7 @@ def _send_payment_receipt_email(order_id, email, amount_eur, kind="optimization"
     """Ricevuta del pagamento PayPal, nella lingua UI di chi paga (fallback
     inglese). `kind`: servizio pagato (chiavi di `_RECEIPT_SERVICE`). `job`:
     se presente aggiunge il blocco su dove arrivera' il link di download."""
-    lang = (lang or "").split("-")[0].lower()
+    lang = _i18n.norm_lang(lang)
     if lang not in _RECEIPT_I18N:
         lang = "en"
     t = _RECEIPT_I18N[lang]
@@ -980,7 +975,7 @@ def _send_voucher_email(code, email, amount_eur, book_title, kind="optimization"
     if not (email and _smtp_available()):
         return
     from datetime import datetime, timedelta
-    lang = (lang or "").split("-")[0].lower()
+    lang = _i18n.norm_lang(lang)
     if lang not in _VOUCHER_I18N:
         lang = "en"
     t = _VOUCHER_I18N[lang]
@@ -1014,13 +1009,8 @@ def _send_voucher_email(code, email, amount_eur, book_title, kind="optimization"
 # ---------------------------------------------------------------------------
 
 def _i18n_table(table, lang):
-    """Testi della lingua con fallback PER CHIAVE su `en`: una chiave mancante
-    in una traduzione prende l'inglese invece di far saltare l'invio con
-    KeyError dentro `.format` (l'email non partiva, in silenzio)."""
-    code = (lang or "").split("-")[0].lower()
-    base = table.get("en") or {}
-    loc = table.get(code) if code != "en" else None
-    return {**base, **loc} if loc else dict(base)
+    """Testi della lingua con fallback PER CHIAVE su `en` (i18n.pick)."""
+    return _i18n.pick(table, lang)
 
 
 def _vc_t(lang):
@@ -1093,13 +1083,7 @@ def send_voice_clone_expiring(email, lang, *, days, manage_url):
 # Account: codice di accesso / cancellazione (i18n/account_emails.json)
 # ---------------------------------------------------------------------------
 
-_ACCT_I18N = {}
-try:
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n",
-                           "account_emails.json"), encoding="utf-8") as _f:
-        _ACCT_I18N = json.load(_f)
-except Exception as _e:      # noqa: BLE001
-    print(f"WARNING: i18n/account_emails.json non caricato: {_e}", flush=True)
+_ACCT_I18N = _i18n.load("account_emails")
 
 
 def _acct_t(lang):

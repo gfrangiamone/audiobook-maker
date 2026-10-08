@@ -12,6 +12,7 @@ cambiano là vanno aggiornate anche qui. Nessun provider nominato.
 from __future__ import annotations
 
 from content_store import content_json
+from i18n import pick as _i18n_pick
 import html as _html
 import json as _json
 import re as _re
@@ -36,7 +37,7 @@ def _li(items):
 
 def body(lang: str) -> str:
     """HTML del corpo della guida; lingue sconosciute ricadono sull'inglese."""
-    t = _T.get(lang) or _T["en"]
+    t = _i18n_pick(_T, lang, merge=False)
     steps = "\n".join(
         f'  <li id="step-{i}"><strong>{name}</strong> &mdash; {text}</li>'
         for i, (name, text) in enumerate(t["steps"], 1))
@@ -67,7 +68,7 @@ def _ld_json(obj) -> str:
 
 def extra_ld(lang: str, canonical: str, meta: dict) -> list:
     """JSON-LD HowTo + FAQPage, generati dagli stessi dati del testo visibile."""
-    t = _T.get(lang) or _T["en"]
+    t = _i18n_pick(_T, lang, merge=False)
     in_lang = {"zh": "zh-Hans"}.get(lang, lang if lang in _T else "en")
     howto = {
         "@context": "https://schema.org",

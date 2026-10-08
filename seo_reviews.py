@@ -16,6 +16,7 @@ import json as _json
 from datetime import datetime, timezone
 
 import community_store
+from i18n import pick as _i18n_pick
 
 
 # Visible heading per UI language
@@ -101,10 +102,10 @@ def build_reviews(lang: str) -> dict:
         items = []
     items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
     total = len(items)
-    heading = _REVIEWS_HEADING.get(lang, _REVIEWS_HEADING["en"])
+    heading = _i18n_pick(_REVIEWS_HEADING, lang, merge=False)
 
     if total == 0:
-        empty = _NO_REVIEWS.get(lang, _NO_REVIEWS["en"])
+        empty = _i18n_pick(_NO_REVIEWS, lang, merge=False)
         html_block = (
             f'<section id="reviews" class="seo-block">'
             f'<h2>{_html.escape(heading)}</h2>'
@@ -116,7 +117,7 @@ def build_reviews(lang: str) -> dict:
 
     avg = round(sum(int(it.get("rating", 0)) for it in items) / total, 2)
     latest_ts = max(int(it.get("created_at", 0)) for it in items)
-    anon_label = _ANON.get(lang, _ANON["en"])
+    anon_label = _i18n_pick(_ANON, lang, merge=False)
 
     review_entries: list[dict] = []
     visible_items: list[dict] = []
@@ -179,8 +180,8 @@ def build_reviews(lang: str) -> dict:
         + "</script>"
     )
 
-    avg_label = _AVG_LABEL.get(lang, _AVG_LABEL["en"])
-    based_on = _BASED_ON.get(lang, _BASED_ON["en"]).format(n=total)
+    avg_label = _i18n_pick(_AVG_LABEL, lang, merge=False)
+    based_on = _i18n_pick(_BASED_ON, lang, merge=False).format(n=total)
     summary_stars = _stars_html(int(round(avg)))
 
     items_html_parts = []

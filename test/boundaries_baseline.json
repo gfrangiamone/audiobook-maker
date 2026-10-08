@@ -74,15 +74,6 @@
   "community_moderator.py": 1,
   "community_translator.py": 1
  },
- "lang_split_by_hand": {
-  "audiobook_app.py": 30,
-  "email_service.py": 3,
-  "gemini_tts.py": 2,
-  "generation_engine.py": 13,
-  "tts_split.py": 2,
-  "voice_language_guard.py": 2,
-  "voxcpm_tts.py": 1
- },
  "llm_call_by_hand": {
   "abuse_watch.py": 1,
   "community_moderator.py": 1,
