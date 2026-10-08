@@ -1,0 +1,135 @@
+{
+  "it": {
+    "subject": "Ricevuta pagamento Audiobook Maker — {amount} EUR",
+    "heading": "Grazie per il tuo pagamento.",
+    "amount": "Importo",
+    "txid": "ID transazione",
+    "service": "Servizio",
+    "project": "Progetto",
+    "info": "Conserva questa email come ricevuta. Per la fatturazione contattaci.",
+    "refund": "Se il servizio non può essere completato, l'importo ti viene rimborsato automaticamente con un buono (maggiorato del {pct}% in caso di errore tecnico), valido {days} giorni.",
+    "delivery": "Il link per scaricare il risultato verrà inviato a <strong>{dest}</strong> al termine della lavorazione. Se preferisci riceverlo a un altro indirizzo, indicalo nella pagina di generazione prima che il lavoro finisca.",
+    "service_names": {
+      "optimization": "Ottimizzazione AI del testo",
+      "translation": "Traduzione del libro",
+      "translation_opt": "Traduzione del libro con ottimizzazione AI del testo",
+      "premium": "Audiolibro con voce PREMIUM",
+      "premium_opt": "Audiolibro con voce PREMIUM e ottimizzazione AI del testo",
+      "voice_clone": "Campionamento della tua voce"
+    }
+  },
+  "en": {
+    "subject": "Audiobook Maker payment receipt — EUR {amount}",
+    "heading": "Thank you for your payment.",
+    "amount": "Amount",
+    "txid": "Transaction ID",
+    "service": "Service",
+    "project": "Project",
+    "info": "Keep this email as your receipt. Contact us for invoicing.",
+    "refund": "If the service cannot be completed, the amount is refunded automatically with a voucher ({pct}% more in case of a technical failure), valid for {days} days.",
+    "delivery": "The download link will be sent to <strong>{dest}</strong> once processing is complete. To receive it at a different address, enter it on the generation page before the job finishes.",
+    "service_names": {
+      "optimization": "AI text optimization",
+      "translation": "Book translation",
+      "translation_opt": "Book translation with AI text optimization",
+      "premium": "Audiobook with PREMIUM voice",
+      "premium_opt": "Audiobook with PREMIUM voice and AI text optimization",
+      "voice_clone": "Sampling of your voice"
+    }
+  },
+  "fr": {
+    "subject": "Reçu de paiement Audiobook Maker — {amount} EUR",
+    "heading": "Merci pour votre paiement.",
+    "amount": "Montant",
+    "txid": "ID de transaction",
+    "service": "Service",
+    "project": "Projet",
+    "info": "Conservez cet e-mail comme reçu. Contactez-nous pour la facturation.",
+    "refund": "Si le service ne peut pas être réalisé, le montant vous est remboursé automatiquement sous forme de bon (majoré de {pct} % en cas d'erreur technique), valable {days} jours.",
+    "delivery": "Le lien de téléchargement sera envoyé à <strong>{dest}</strong> à la fin du traitement. Pour le recevoir à une autre adresse, indiquez-la sur la page de génération avant la fin du travail.",
+    "service_names": {
+      "optimization": "Optimisation IA du texte",
+      "translation": "Traduction du livre",
+      "translation_opt": "Traduction du livre avec optimisation IA du texte",
+      "premium": "Livre audio avec voix PREMIUM",
+      "premium_opt": "Livre audio avec voix PREMIUM et optimisation IA du texte",
+      "voice_clone": "Échantillonnage de votre voix"
+    }
+  },
+  "es": {
+    "subject": "Recibo de pago Audiobook Maker — {amount} EUR",
+    "heading": "Gracias por tu pago.",
+    "amount": "Importe",
+    "txid": "ID de transacción",
+    "service": "Servicio",
+    "project": "Proyecto",
+    "info": "Guarda este correo como recibo. Contáctanos para la facturación.",
+    "refund": "Si el servicio no puede completarse, el importe se reembolsa automáticamente con un cupón (un {pct}% más en caso de error técnico), válido {days} días.",
+    "delivery": "El enlace de descarga se enviará a <strong>{dest}</strong> al finalizar el procesamiento. Si prefieres otra dirección, indícala en la página de generación antes de que termine el trabajo.",
+    "service_names": {
+      "optimization": "Optimización IA del texto",
+      "translation": "Traducción del libro",
+      "translation_opt": "Traducción del libro con optimización IA del texto",
+      "premium": "Audiolibro con voz PREMIUM",
+      "premium_opt": "Audiolibro con voz PREMIUM y optimización IA del texto",
+      "voice_clone": "Muestreo de tu voz"
+    }
+  },
+  "de": {
+    "subject": "Zahlungsbeleg Audiobook Maker — {amount} EUR",
+    "heading": "Danke für deine Zahlung.",
+    "amount": "Betrag",
+    "txid": "Transaktions-ID",
+    "service": "Leistung",
+    "project": "Projekt",
+    "info": "Bewahre diese E-Mail als Beleg auf. Für eine Rechnung kontaktiere uns.",
+    "refund": "Kann die Leistung nicht erbracht werden, wird der Betrag automatisch als Gutschein erstattet (bei technischen Fehlern um {pct} % erhöht), {days} Tage gültig.",
+    "delivery": "Der Download-Link wird nach Abschluss der Verarbeitung an <strong>{dest}</strong> gesendet. Für eine andere Adresse gib sie vor Ende des Auftrags auf der Generierungsseite an.",
+    "service_names": {
+      "optimization": "KI-Textoptimierung",
+      "translation": "Buchübersetzung",
+      "translation_opt": "Buchübersetzung mit KI-Textoptimierung",
+      "premium": "Hörbuch mit PREMIUM-Stimme",
+      "premium_opt": "Hörbuch mit PREMIUM-Stimme und KI-Textoptimierung",
+      "voice_clone": "Aufnahme deiner Stimme"
+    }
+  },
+  "zh": {
+    "subject": "Audiobook Maker 付款收据 — {amount} EUR",
+    "heading": "感谢您的付款。",
+    "amount": "金额",
+    "txid": "交易 ID",
+    "service": "服务",
+    "project": "项目",
+    "info": "请保留此邮件作为收据。如需发票请联系我们。",
+    "refund": "如服务无法完成，付款将自动以代金券形式退还（技术故障时额外增加 {pct}%），有效期 {days} 天。",
+    "delivery": "处理完成后，下载链接将发送至 <strong>{dest}</strong>。如需发送到其他邮箱，请在任务结束前在生成页面填写另一个邮箱。",
+    "service_names": {
+      "optimization": "AI 文本优化",
+      "translation": "图书翻译",
+      "translation_opt": "图书翻译（含 AI 文本优化）",
+      "premium": "PREMIUM 语音有声书",
+      "premium_opt": "PREMIUM 语音有声书（含 AI 文本优化）",
+      "voice_clone": "您的声音采样"
+    }
+  },
+  "hi": {
+    "subject": "Audiobook Maker भुगतान रसीद — EUR {amount}",
+    "heading": "आपके भुगतान के लिए धन्यवाद।",
+    "amount": "राशि",
+    "txid": "लेन-देन ID",
+    "service": "सेवा",
+    "project": "परियोजना",
+    "info": "इस ईमेल को रसीद के रूप में रखें। चालान के लिए हमसे संपर्क करें।",
+    "refund": "यदि सेवा पूरी नहीं हो पाती, तो राशि अपने आप वाउचर के रूप में लौटा दी जाती है (तकनीकी त्रुटि पर {pct}% अधिक), जो {days} दिनों तक मान्य है।",
+    "delivery": "प्रसंस्करण पूरा होने पर डाउनलोड लिंक <strong>{dest}</strong> पर भेजा जाएगा। किसी दूसरे पते पर चाहिए तो जॉब खत्म होने से पहले जेनरेशन पेज पर वह ईमेल दर्ज करें।",
+    "service_names": {
+      "optimization": "AI टेक्स्ट ऑप्टिमाइज़ेशन",
+      "translation": "पुस्तक अनुवाद",
+      "translation_opt": "AI टेक्स्ट ऑप्टिमाइज़ेशन सहित पुस्तक अनुवाद",
+      "premium": "PREMIUM आवाज़ वाली ऑडियोबुक",
+      "premium_opt": "PREMIUM आवाज़ और AI टेक्स्ट ऑप्टिमाइज़ेशन वाली ऑडियोबुक",
+      "voice_clone": "आपकी आवाज़ का सैंपलिंग"
+    }
+  }
+}

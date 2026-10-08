@@ -29,6 +29,7 @@ import os
 from datetime import date, timedelta
 from pathlib import Path
 
+import email_layout
 import gemini_cost_audit
 
 # Il marker dell'ultimo giorno gia' riepilogato. Sta su disco e non in
@@ -504,29 +505,20 @@ def html(r):
 
 
 def _pagina(r, corpo):
-    return (
-        '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-        '<body style="font-family:system-ui,-apple-system,sans-serif;'
-        'color:#333;max-width:900px;margin:0 auto;padding:20px">'
-        '<div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);'
-        'color:white;padding:20px 24px;border-radius:12px 12px 0 0">'
-        '<h2 style="margin:0">\U0001f50a VoxCPM — code tagliate del '
-        "%s</h2>"
-        '<p style="margin:8px 0 0;opacity:.85">Ritentativi della verifica ASR '
-        "sul worker — giornata UTC</p></div>%s"
-        '<p style="color:#999;font-size:12px;margin-top:16px;padding:0 4px">'
-        "Un chunk è <em>sospetto</em> quando l'ASR del worker sente la "
-        "frase finire prima del suo testo. Il worker lo rigenera con un altro "
-        "seme, per al massimo ABM_VOXCPM_VERIFY_TRIES giri, e tiene il nuovo "
-        "take solo se è migliore del vecchio. Quando i sospetti superano "
-        "ABM_VOXCPM_VERIFY_MAX_FRAC rigenera soltanto i rotti conclamati: gli "
-        "altri restano fra i «non tentati». L'audio viene "
-        "consegnato in ogni caso. Prima di confrontare, il worker riduce a un "
-        "segno unico i numeri di entrambe le code — cifre, lettere e simboli "
-        "— perché altrimenti «1967» e «millenovecentosessantasette» "
-        "sembrerebbero una coda mancante: quelle sono le code contate fra i "
-        "«numeri riconosciuti».</p>"
-        '<p style="color:#999;font-size:12px;padding:0 4px">Messaggio '
-        "automatico di Audiobook Maker. Per disattivarlo: ABM_VOXCPM_DIGEST=0 "
-        "nella configurazione del server.</p></body></html>"
-        % (_esc(r["giorno"]), corpo))
+    return email_layout.digest_page(
+        "\U0001f50a VoxCPM — code tagliate del %s" % _esc(r["giorno"]),
+        "Ritentativi della verifica ASR sul worker — giornata UTC",
+        corpo,
+        ["Un chunk è <em>sospetto</em> quando l'ASR del worker sente la "
+         "frase finire prima del suo testo. Il worker lo rigenera con un altro "
+         "seme, per al massimo ABM_VOXCPM_VERIFY_TRIES giri, e tiene il nuovo "
+         "take solo se è migliore del vecchio. Quando i sospetti superano "
+         "ABM_VOXCPM_VERIFY_MAX_FRAC rigenera soltanto i rotti conclamati: gli "
+         "altri restano fra i «non tentati». L'audio viene "
+         "consegnato in ogni caso. Prima di confrontare, il worker riduce a un "
+         "segno unico i numeri di entrambe le code — cifre, lettere e simboli "
+         "— perché altrimenti «1967» e «millenovecentosessantasette» "
+         "sembrerebbero una coda mancante: quelle sono le code contate fra i "
+         "«numeri riconosciuti».",
+         "Messaggio automatico di Audiobook Maker. Per disattivarlo: ABM_VOXCPM_DIGEST=0 "
+         "nella configurazione del server."])

@@ -28,7 +28,7 @@ LEAVES = {
     "semantic_judge", "secure_archive", "text_reflow", "gemini_transport",
     "gemini_availability", "chunk_reuse", "assembly_queue", "cancel_policy",
     "activity_log", "activity_db", "user_stats", "env_utils", "fileio",
-    "client_identity", "ratelimit", "content_store", "i18n", "page_brand", "seo_ld",
+    "client_identity", "ratelimit", "content_store", "i18n", "page_brand", "seo_ld", "email_layout",
 }
 
 # Moduli di servizio che non devono importare generation_engine (§2.1).
@@ -52,7 +52,7 @@ PATTERNS = [
     ("ffmpeg_outside_audio_utils", r'["\']ff(mpeg|probe)["\']', {"audio_utils"}),
     ("forwarded_for_by_hand", r'headers\.get\(\s*["\']X-Forwarded-For', set()),
     ("lang_split_by_hand", r'\.split\("-"\)\[0\]\.lower\(\)', {"i18n"}),
-    ("html_doctype_in_py", r"<!DOCTYPE html", set()),
+    ("html_doctype_in_py", r"<!DOCTYPE html", {"email_layout"}),   # le email sono documenti interi
     ("naive_utc", r"\.utcnow\(\)|\.utcfromtimestamp\(", set()),
     ("mirror_comment", r"(?i)(mirror (del|of)|clone di|identica a .* salvo)", set()),
 ]

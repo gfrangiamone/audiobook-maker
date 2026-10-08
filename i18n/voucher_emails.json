@@ -1,0 +1,107 @@
+{
+  "it": {
+    "subject": "Audiobook Maker — Buono di rimborso {amount} EUR",
+    "heading": "Il tuo buono di rimborso",
+    "failed": "{what} di <strong>{title}</strong> non è andata a buon fine. Il pagamento ti è stato interamente rimborsato con un buono{bonus}.",
+    "bonus": ", maggiorato del {pct}%",
+    "code": "Codice buono",
+    "value": "Valore",
+    "expiry": "Scadenza",
+    "use": "Per usarlo, scegli il pagamento con buono e inserisci questo codice insieme all'email <strong>{email}</strong>. Vale per qualunque servizio a pagamento.",
+    "note": "Il buono è nominativo e riutilizzabile: se l'operazione costa meno del suo valore, il saldo residuo resta disponibile fino alla scadenza.",
+    "what_names": {
+      "optimization": "L'ottimizzazione AI del testo",
+      "translation": "La traduzione"
+    }
+  },
+  "en": {
+    "subject": "Audiobook Maker — Refund voucher EUR {amount}",
+    "heading": "Your refund voucher",
+    "failed": "{what} of <strong>{title}</strong> could not be completed. Your payment has been fully refunded with a voucher{bonus}.",
+    "bonus": ", increased by {pct}%",
+    "code": "Voucher code",
+    "value": "Value",
+    "expiry": "Expires",
+    "use": "To use it, choose voucher payment and enter this code together with the email <strong>{email}</strong>. It is valid for any paid service.",
+    "note": "The voucher is personal and reusable: if a purchase costs less than its value, the remaining balance stays available until it expires.",
+    "what_names": {
+      "optimization": "The AI text optimization",
+      "translation": "The translation"
+    }
+  },
+  "fr": {
+    "subject": "Audiobook Maker — Bon de remboursement {amount} EUR",
+    "heading": "Votre bon de remboursement",
+    "failed": "{what} de <strong>{title}</strong> n'a pas pu être menée à bien. Votre paiement vous a été entièrement remboursé sous forme de bon{bonus}.",
+    "bonus": ", majoré de {pct} %",
+    "code": "Code du bon",
+    "value": "Valeur",
+    "expiry": "Expiration",
+    "use": "Pour l'utiliser, choisissez le paiement par bon et saisissez ce code avec l'adresse <strong>{email}</strong>. Il est valable pour tous les services payants.",
+    "note": "Le bon est nominatif et réutilisable : si une opération coûte moins que sa valeur, le solde restant reste disponible jusqu'à l'expiration.",
+    "what_names": {
+      "optimization": "L'optimisation IA du texte",
+      "translation": "La traduction"
+    }
+  },
+  "es": {
+    "subject": "Audiobook Maker — Cupón de reembolso {amount} EUR",
+    "heading": "Tu cupón de reembolso",
+    "failed": "{what} de <strong>{title}</strong> no se ha podido completar. Te hemos reembolsado el pago íntegramente con un cupón{bonus}.",
+    "bonus": ", incrementado en un {pct}%",
+    "code": "Código del cupón",
+    "value": "Valor",
+    "expiry": "Caducidad",
+    "use": "Para usarlo, elige el pago con cupón e introduce este código junto con el correo <strong>{email}</strong>. Sirve para cualquier servicio de pago.",
+    "note": "El cupón es nominativo y reutilizable: si una operación cuesta menos que su valor, el saldo restante sigue disponible hasta la caducidad.",
+    "what_names": {
+      "optimization": "La optimización IA del texto",
+      "translation": "La traducción"
+    }
+  },
+  "de": {
+    "subject": "Audiobook Maker — Erstattungsgutschein {amount} EUR",
+    "heading": "Dein Erstattungsgutschein",
+    "failed": "{what} von <strong>{title}</strong> konnte nicht abgeschlossen werden. Deine Zahlung wurde dir vollständig als Gutschein erstattet{bonus}.",
+    "bonus": ", um {pct} % erhöht",
+    "code": "Gutscheincode",
+    "value": "Wert",
+    "expiry": "Gültig bis",
+    "use": "Um ihn einzulösen, wähle die Zahlung per Gutschein und gib diesen Code zusammen mit der E-Mail <strong>{email}</strong> ein. Er gilt für alle kostenpflichtigen Dienste.",
+    "note": "Der Gutschein ist personengebunden und mehrfach nutzbar: Kostet ein Vorgang weniger als sein Wert, bleibt das Restguthaben bis zum Ablauf verfügbar.",
+    "what_names": {
+      "optimization": "Die KI-Textoptimierung",
+      "translation": "Die Übersetzung"
+    }
+  },
+  "zh": {
+    "subject": "Audiobook Maker — 退款代金券 {amount} EUR",
+    "heading": "您的退款代金券",
+    "failed": "<strong>{title}</strong> 的{what}未能完成。您的付款已以代金券形式全额退还{bonus}。",
+    "bonus": "，并额外增加 {pct}%",
+    "code": "代金券代码",
+    "value": "金额",
+    "expiry": "有效期至",
+    "use": "使用时请选择代金券支付，并输入此代码及邮箱 <strong>{email}</strong>。适用于所有付费服务。",
+    "note": "代金券为实名且可重复使用：若消费金额低于券面金额，余额在有效期内仍可使用。",
+    "what_names": {
+      "optimization": "AI 文本优化",
+      "translation": "翻译"
+    }
+  },
+  "hi": {
+    "subject": "Audiobook Maker — रिफंड वाउचर EUR {amount}",
+    "heading": "आपका रिफंड वाउचर",
+    "failed": "<strong>{title}</strong> का {what} पूरा नहीं हो सका। आपका भुगतान वाउचर के रूप में पूरी तरह लौटा दिया गया है{bonus}।",
+    "bonus": " ({pct}% अतिरिक्त सहित)",
+    "code": "वाउचर कोड",
+    "value": "मूल्य",
+    "expiry": "समाप्ति",
+    "use": "इसे इस्तेमाल करने के लिए वाउचर भुगतान चुनें और यह कोड ईमेल <strong>{email}</strong> के साथ दर्ज करें। यह सभी सशुल्क सेवाओं पर मान्य है।",
+    "note": "वाउचर व्यक्तिगत और दोबारा इस्तेमाल योग्य है: खर्च इसके मूल्य से कम हो तो शेष राशि समाप्ति तक उपलब्ध रहती है।",
+    "what_names": {
+      "optimization": "AI टेक्स्ट ऑप्टिमाइज़ेशन",
+      "translation": "अनुवाद"
+    }
+  }
+}

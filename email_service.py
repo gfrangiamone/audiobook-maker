@@ -15,9 +15,12 @@ Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 """
 
 import html
-import json
 import os
 import i18n as _i18n
+import email_layout as _layout
+import email_layout as _layout
+import email_layout as _layout
+import email_layout as _layout
 from ratelimit import throttle_ok as _throttle_ok
 from client_identity import EMAIL_RE as _EMAIL_RE
 import threading
@@ -602,12 +605,10 @@ def _try_send_admin_digest():
     power_block = _power_users_block_html()
     abuse_block = _abuse_block_html(_abuse_data or {})
     voice_clone_block = _voice_clone_block_html(_vc_data or {})
-    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
-<div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
-<h2 style="margin:0">\U0001f3a7 Audiobook Maker \u2014 Activity Digest</h2>
-<p style="margin:8px 0 0;opacity:.85">{intro} \u2014 {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
-</div>
-<table style="width:100%;border-collapse:collapse;background:white;border:1px solid #ddd;border-top:none">
+    html = _layout.digest_page(
+        "\U0001f3a7 Audiobook Maker \u2014 Activity Digest",
+        f"{intro} \u2014 {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"""<table style="width:100%;border-collapse:collapse;background:white;border:1px solid #ddd;border-top:none">
 <thead><tr style="background:#f0f5fa">
 <th style="padding:10px 12px;text-align:left;font-size:13px;color:#555">Ora</th>
 <th style="padding:10px 12px;text-align:left;font-size:13px;color:#555">Libro</th>
@@ -622,10 +623,9 @@ def _try_send_admin_digest():
 {funnel_block}
 {power_block}
 {abuse_block}
-{voice_clone_block}
-<p style="color:#999;font-size:12px;margin-top:16px;padding:0 4px">Questo messaggio \u00e8 generato automaticamente da Audiobook Maker.
-Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del server.</p>
-</body></html>"""
+{voice_clone_block}""",
+        ["Questo messaggio è generato automaticamente da Audiobook Maker.\n"
+         "Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del server."])
 
     try:
         _send_email(ADMIN_EMAIL, subject, html)
@@ -685,138 +685,18 @@ def _try_send_voxcpm_digest():
 # Payment emails
 # ---------------------------------------------------------------------------
 
-# Ricevuta di pagamento in sette lingue. `kind` = servizio pagato, fissato
-# dalla route di creazione dell'ordine in job["pay_receipt_kind"] (vedi
+# Ricevuta di pagamento in sette lingue (i18n/receipt_emails.json): testi
+# piu' `service_names` = etichette del servizio pagato per `kind`, fissato dalla
+# route di creazione dell'ordine in job["pay_receipt_kind"] (vedi
 # api_paypal_capture_order); "voice_clone" per il campionamento di una voce.
-_RECEIPT_SERVICE = {
-    "it": {"optimization": "Ottimizzazione AI del testo",
-           "translation": "Traduzione del libro",
-           "translation_opt": "Traduzione del libro con ottimizzazione AI del testo",
-           "premium": "Audiolibro con voce PREMIUM",
-           "premium_opt": "Audiolibro con voce PREMIUM e ottimizzazione AI del testo",
-           "voice_clone": "Campionamento della tua voce"},
-    "en": {"optimization": "AI text optimization",
-           "translation": "Book translation",
-           "translation_opt": "Book translation with AI text optimization",
-           "premium": "Audiobook with PREMIUM voice",
-           "premium_opt": "Audiobook with PREMIUM voice and AI text optimization",
-           "voice_clone": "Sampling of your voice"},
-    "fr": {"optimization": "Optimisation IA du texte",
-           "translation": "Traduction du livre",
-           "translation_opt": "Traduction du livre avec optimisation IA du texte",
-           "premium": "Livre audio avec voix PREMIUM",
-           "premium_opt": "Livre audio avec voix PREMIUM et optimisation IA du texte",
-           "voice_clone": "Échantillonnage de votre voix"},
-    "es": {"optimization": "Optimización IA del texto",
-           "translation": "Traducción del libro",
-           "translation_opt": "Traducción del libro con optimización IA del texto",
-           "premium": "Audiolibro con voz PREMIUM",
-           "premium_opt": "Audiolibro con voz PREMIUM y optimización IA del texto",
-           "voice_clone": "Muestreo de tu voz"},
-    "de": {"optimization": "KI-Textoptimierung",
-           "translation": "Buchübersetzung",
-           "translation_opt": "Buchübersetzung mit KI-Textoptimierung",
-           "premium": "Hörbuch mit PREMIUM-Stimme",
-           "premium_opt": "Hörbuch mit PREMIUM-Stimme und KI-Textoptimierung",
-           "voice_clone": "Aufnahme deiner Stimme"},
-    "zh": {"optimization": "AI 文本优化",
-           "translation": "图书翻译",
-           "translation_opt": "图书翻译（含 AI 文本优化）",
-           "premium": "PREMIUM 语音有声书",
-           "premium_opt": "PREMIUM 语音有声书（含 AI 文本优化）",
-           "voice_clone": "您的声音采样"},
-    "hi": {"optimization": "AI टेक्स्ट ऑप्टिमाइज़ेशन",
-           "translation": "पुस्तक अनुवाद",
-           "translation_opt": "AI टेक्स्ट ऑप्टिमाइज़ेशन सहित पुस्तक अनुवाद",
-           "premium": "PREMIUM आवाज़ वाली ऑडियोबुक",
-           "premium_opt": "PREMIUM आवाज़ और AI टेक्स्ट ऑप्टिमाइज़ेशन वाली ऑडियोबुक",
-           "voice_clone": "आपकी आवाज़ का सैंपलिंग"},
-}
+_RECEIPT_I18N = _i18n.load("receipt_emails")
+_RECEIPT_SERVICE = {lg: t.get("service_names", {}) for lg, t in _RECEIPT_I18N.items()}
 
-_RECEIPT_I18N = {
-    "it": {
-        "subject": "Ricevuta pagamento Audiobook Maker — {amount} EUR",
-        "heading": "Grazie per il tuo pagamento.",
-        "amount": "Importo", "txid": "ID transazione", "service": "Servizio", "project": "Progetto",
-        "info": "Conserva questa email come ricevuta. Per la fatturazione contattaci.",
-        "refund": "Se il servizio non può essere completato, l'importo ti viene rimborsato "
-                  "automaticamente con un buono (maggiorato del {pct}% in caso di errore tecnico), "
-                  "valido {days} giorni.",
-        "delivery": "Il link per scaricare il risultato verrà inviato a <strong>{dest}</strong> "
-                    "al termine della lavorazione. Se preferisci riceverlo a un altro indirizzo, "
-                    "indicalo nella pagina di generazione prima che il lavoro finisca.",
-    },
-    "en": {
-        "subject": "Audiobook Maker payment receipt — EUR {amount}",
-        "heading": "Thank you for your payment.",
-        "amount": "Amount", "txid": "Transaction ID", "service": "Service", "project": "Project",
-        "info": "Keep this email as your receipt. Contact us for invoicing.",
-        "refund": "If the service cannot be completed, the amount is refunded automatically "
-                  "with a voucher ({pct}% more in case of a technical failure), valid for {days} days.",
-        "delivery": "The download link will be sent to <strong>{dest}</strong> once processing "
-                    "is complete. To receive it at a different address, enter it on the "
-                    "generation page before the job finishes.",
-    },
-    "fr": {
-        "subject": "Reçu de paiement Audiobook Maker — {amount} EUR",
-        "heading": "Merci pour votre paiement.",
-        "amount": "Montant", "txid": "ID de transaction", "service": "Service", "project": "Projet",
-        "info": "Conservez cet e-mail comme reçu. Contactez-nous pour la facturation.",
-        "refund": "Si le service ne peut pas être réalisé, le montant vous est remboursé "
-                  "automatiquement sous forme de bon (majoré de {pct} % en cas d'erreur technique), "
-                  "valable {days} jours.",
-        "delivery": "Le lien de téléchargement sera envoyé à <strong>{dest}</strong> "
-                    "à la fin du traitement. Pour le recevoir à une autre adresse, indiquez-la "
-                    "sur la page de génération avant la fin du travail.",
-    },
-    "es": {
-        "subject": "Recibo de pago Audiobook Maker — {amount} EUR",
-        "heading": "Gracias por tu pago.",
-        "amount": "Importe", "txid": "ID de transacción", "service": "Servicio", "project": "Proyecto",
-        "info": "Guarda este correo como recibo. Contáctanos para la facturación.",
-        "refund": "Si el servicio no puede completarse, el importe se reembolsa automáticamente "
-                  "con un cupón (un {pct}% más en caso de error técnico), válido "
-                  "{days} días.",
-        "delivery": "El enlace de descarga se enviará a <strong>{dest}</strong> al finalizar "
-                    "el procesamiento. Si prefieres otra dirección, indícala en la página "
-                    "de generación antes de que termine el trabajo.",
-    },
-    "de": {
-        "subject": "Zahlungsbeleg Audiobook Maker — {amount} EUR",
-        "heading": "Danke für deine Zahlung.",
-        "amount": "Betrag", "txid": "Transaktions-ID", "service": "Leistung", "project": "Projekt",
-        "info": "Bewahre diese E-Mail als Beleg auf. Für eine Rechnung kontaktiere uns.",
-        "refund": "Kann die Leistung nicht erbracht werden, wird der Betrag automatisch als "
-                  "Gutschein erstattet (bei technischen Fehlern um {pct} % erhöht), "
-                  "{days} Tage gültig.",
-        "delivery": "Der Download-Link wird nach Abschluss der Verarbeitung an "
-                    "<strong>{dest}</strong> gesendet. Für eine andere Adresse gib sie vor "
-                    "Ende des Auftrags auf der Generierungsseite an.",
-    },
-    "zh": {
-        "subject": "Audiobook Maker 付款收据 — {amount} EUR",
-        "heading": "感谢您的付款。",
-        "amount": "金额", "txid": "交易 ID", "service": "服务", "project": "项目",
-        "info": "请保留此邮件作为收据。如需发票请联系我们。",
-        "refund": "如服务无法完成，付款将自动以代金券形式退还"
-                  "（技术故障时额外增加 {pct}%），有效期 {days} 天。",
-        "delivery": "处理完成后，下载链接将发送至 <strong>{dest}</strong>。"
-                    "如需发送到其他邮箱，请在任务结束前"
-                    "在生成页面填写另一个邮箱。",
-    },
-    "hi": {
-        "subject": "Audiobook Maker भुगतान रसीद — EUR {amount}",
-        "heading": "आपके भुगतान के लिए धन्यवाद।",
-        "amount": "राशि", "txid": "लेन-देन ID", "service": "सेवा", "project": "परियोजना",
-        "info": "इस ईमेल को रसीद के रूप में रखें। चालान के लिए हमसे संपर्क करें।",
-        "refund": "यदि सेवा पूरी नहीं हो पाती, तो राशि अपने आप वाउचर के रूप में लौटा दी जाती है "
-                  "(तकनीकी त्रुटि पर {pct}% अधिक), जो {days} दिनों तक मान्य है।",
-        "delivery": "प्रसंस्करण पूरा होने पर डाउनलोड लिंक "
-                    "<strong>{dest}</strong> पर भेजा जाएगा। "
-                    "किसी दूसरे पते पर चाहिए तो जॉब खत्म होने से पहले "
-                    "जेनरेशन पेज पर वह ईमेल दर्ज करें।",
-    },
-}
+
+def _voucher_expiry():
+    """Data di scadenza (gg/mm/aaaa) di un buono emesso adesso."""
+    from datetime import datetime, timedelta
+    return (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
 
 
 def _send_payment_receipt_email(order_id, email, amount_eur, kind="optimization",
@@ -824,11 +704,8 @@ def _send_payment_receipt_email(order_id, email, amount_eur, kind="optimization"
     """Ricevuta del pagamento PayPal, nella lingua UI di chi paga (fallback
     inglese). `kind`: servizio pagato (chiavi di `_RECEIPT_SERVICE`). `job`:
     se presente aggiunge il blocco su dove arrivera' il link di download."""
-    lang = _i18n.norm_lang(lang)
-    if lang not in _RECEIPT_I18N:
-        lang = "en"
-    t = _RECEIPT_I18N[lang]
-    service = _RECEIPT_SERVICE[lang].get(kind) or _RECEIPT_SERVICE[lang]["optimization"]
+    t = _i18n.pick(_RECEIPT_I18N, lang)
+    service = t["service_names"].get(kind) or t["service_names"]["optimization"]
     amount = f"{amount_eur:.2f}"
     subject = t["subject"].format(amount=amount)
     rows = (f"{t['amount']}: <strong>{amount} EUR</strong>"
@@ -852,119 +729,21 @@ def _send_payment_receipt_email(order_id, email, amount_eur, kind="optimization"
   <div style="padding:14px 16px;background:#fff7ed;border-left:4px solid #f97316;border-radius:4px;margin:16px 0">
     <p style="margin:0">&#x1F4E7; {t["delivery"].format(dest=html.escape(dest))}</p>
   </div>"""
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#2c3e50">&#x1F4B3; {t["heading"]}</h2>
+    html_body = _layout.layout(f"""  <h2 style="color:#2c3e50">&#x1F4B3; {t["heading"]}</h2>
   <div style="padding:16px;background:#f0f5ff;border-radius:8px;margin:16px 0">
     <p style="margin:0">{rows}</p>
   </div>{delivery_html}
   <p>{t["info"]}</p>
-  <p style="font-size:.9em;color:#666">{refund}</p>
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
-</div>"""
+  <p style="font-size:.9em;color:#666">{refund}</p>""", BASE_URL)
     _send_email(email, subject, html_body)
 
 
-# Email del buono di rimborso, in sette lingue. `{what}` e' l'operazione
-# fallita, presa da `_VOUCHER_WHAT` secondo il `kind` del job; `{bonus}` vale
-# "" quando il buono non e' maggiorato (annullamento volontario).
-_VOUCHER_WHAT = {
-    "it": {"optimization": "L'ottimizzazione AI del testo", "translation": "La traduzione"},
-    "en": {"optimization": "The AI text optimization", "translation": "The translation"},
-    "fr": {"optimization": "L'optimisation IA du texte", "translation": "La traduction"},
-    "es": {"optimization": "La optimizaci\u00f3n IA del texto", "translation": "La traducci\u00f3n"},
-    "de": {"optimization": "Die KI-Textoptimierung", "translation": "Die \u00dcbersetzung"},
-    "zh": {"optimization": "AI \u6587\u672c\u4f18\u5316", "translation": "\u7ffb\u8bd1"},
-    "hi": {"optimization": "AI \u091f\u0947\u0915\u094d\u0938\u094d\u091f \u0911\u092a\u094d\u091f\u093f\u092e\u093e\u0907\u091c\u093c\u0947\u0936\u0928",
-           "translation": "\u0905\u0928\u0941\u0935\u093e\u0926"},
-}
-
-_VOUCHER_I18N = {
-    "it": {
-        "subject": "Audiobook Maker \u2014 Buono di rimborso {amount} EUR",
-        "heading": "Il tuo buono di rimborso",
-        "failed": "{what} di <strong>{title}</strong> non \u00e8 andata a buon fine. "
-                  "Il pagamento ti \u00e8 stato interamente rimborsato con un buono{bonus}.",
-        "bonus": ", maggiorato del {pct}%",
-        "code": "Codice buono", "value": "Valore", "expiry": "Scadenza",
-        "use": "Per usarlo, scegli il pagamento con buono e inserisci questo codice "
-               "insieme all'email <strong>{email}</strong>. Vale per qualunque servizio a pagamento.",
-        "note": "Il buono \u00e8 nominativo e riutilizzabile: se l'operazione costa meno del suo valore, "
-                "il saldo residuo resta disponibile fino alla scadenza.",
-    },
-    "en": {
-        "subject": "Audiobook Maker \u2014 Refund voucher EUR {amount}",
-        "heading": "Your refund voucher",
-        "failed": "{what} of <strong>{title}</strong> could not be completed. "
-                  "Your payment has been fully refunded with a voucher{bonus}.",
-        "bonus": ", increased by {pct}%",
-        "code": "Voucher code", "value": "Value", "expiry": "Expires",
-        "use": "To use it, choose voucher payment and enter this code together with "
-               "the email <strong>{email}</strong>. It is valid for any paid service.",
-        "note": "The voucher is personal and reusable: if a purchase costs less than its value, "
-                "the remaining balance stays available until it expires.",
-    },
-    "fr": {
-        "subject": "Audiobook Maker \u2014 Bon de remboursement {amount} EUR",
-        "heading": "Votre bon de remboursement",
-        "failed": "{what} de <strong>{title}</strong> n'a pas pu \u00eatre men\u00e9e \u00e0 bien. "
-                  "Votre paiement vous a \u00e9t\u00e9 enti\u00e8rement rembours\u00e9 sous forme de bon{bonus}.",
-        "bonus": ", major\u00e9 de {pct} %",
-        "code": "Code du bon", "value": "Valeur", "expiry": "Expiration",
-        "use": "Pour l'utiliser, choisissez le paiement par bon et saisissez ce code avec "
-               "l'adresse <strong>{email}</strong>. Il est valable pour tous les services payants.",
-        "note": "Le bon est nominatif et r\u00e9utilisable : si une op\u00e9ration co\u00fbte moins que sa valeur, "
-                "le solde restant reste disponible jusqu'\u00e0 l'expiration.",
-    },
-    "es": {
-        "subject": "Audiobook Maker \u2014 Cup\u00f3n de reembolso {amount} EUR",
-        "heading": "Tu cup\u00f3n de reembolso",
-        "failed": "{what} de <strong>{title}</strong> no se ha podido completar. "
-                  "Te hemos reembolsado el pago \u00edntegramente con un cup\u00f3n{bonus}.",
-        "bonus": ", incrementado en un {pct}%",
-        "code": "C\u00f3digo del cup\u00f3n", "value": "Valor", "expiry": "Caducidad",
-        "use": "Para usarlo, elige el pago con cup\u00f3n e introduce este c\u00f3digo junto con "
-               "el correo <strong>{email}</strong>. Sirve para cualquier servicio de pago.",
-        "note": "El cup\u00f3n es nominativo y reutilizable: si una operaci\u00f3n cuesta menos que su valor, "
-                "el saldo restante sigue disponible hasta la caducidad.",
-    },
-    "de": {
-        "subject": "Audiobook Maker \u2014 Erstattungsgutschein {amount} EUR",
-        "heading": "Dein Erstattungsgutschein",
-        "failed": "{what} von <strong>{title}</strong> konnte nicht abgeschlossen werden. "
-                  "Deine Zahlung wurde dir vollst\u00e4ndig als Gutschein erstattet{bonus}.",
-        "bonus": ", um {pct} % erh\u00f6ht",
-        "code": "Gutscheincode", "value": "Wert", "expiry": "G\u00fcltig bis",
-        "use": "Um ihn einzul\u00f6sen, w\u00e4hle die Zahlung per Gutschein und gib diesen Code zusammen mit "
-               "der E-Mail <strong>{email}</strong> ein. Er gilt f\u00fcr alle kostenpflichtigen Dienste.",
-        "note": "Der Gutschein ist personengebunden und mehrfach nutzbar: Kostet ein Vorgang weniger als "
-                "sein Wert, bleibt das Restguthaben bis zum Ablauf verf\u00fcgbar.",
-    },
-    "zh": {
-        "subject": "Audiobook Maker \u2014 \u9000\u6b3e\u4ee3\u91d1\u5238 {amount} EUR",
-        "heading": "\u60a8\u7684\u9000\u6b3e\u4ee3\u91d1\u5238",
-        "failed": "<strong>{title}</strong> \u7684{what}\u672a\u80fd\u5b8c\u6210\u3002"
-                  "\u60a8\u7684\u4ed8\u6b3e\u5df2\u4ee5\u4ee3\u91d1\u5238\u5f62\u5f0f\u5168\u989d\u9000\u8fd8{bonus}\u3002",
-        "bonus": "\uff0c\u5e76\u989d\u5916\u589e\u52a0 {pct}%",
-        "code": "\u4ee3\u91d1\u5238\u4ee3\u7801", "value": "\u91d1\u989d", "expiry": "\u6709\u6548\u671f\u81f3",
-        "use": "\u4f7f\u7528\u65f6\u8bf7\u9009\u62e9\u4ee3\u91d1\u5238\u652f\u4ed8\uff0c\u5e76\u8f93\u5165\u6b64\u4ee3\u7801\u53ca\u90ae\u7bb1 "
-               "<strong>{email}</strong>\u3002\u9002\u7528\u4e8e\u6240\u6709\u4ed8\u8d39\u670d\u52a1\u3002",
-        "note": "\u4ee3\u91d1\u5238\u4e3a\u5b9e\u540d\u4e14\u53ef\u91cd\u590d\u4f7f\u7528\uff1a\u82e5\u6d88\u8d39\u91d1\u989d\u4f4e\u4e8e\u5238\u9762\u91d1\u989d\uff0c"
-                "\u4f59\u989d\u5728\u6709\u6548\u671f\u5185\u4ecd\u53ef\u4f7f\u7528\u3002",
-    },
-    "hi": {
-        "subject": "Audiobook Maker \u2014 \u0930\u093f\u092b\u0902\u0921 \u0935\u093e\u0909\u091a\u0930 EUR {amount}",
-        "heading": "\u0906\u092a\u0915\u093e \u0930\u093f\u092b\u0902\u0921 \u0935\u093e\u0909\u091a\u0930",
-        "failed": "<strong>{title}</strong> \u0915\u093e {what} \u092a\u0942\u0930\u093e \u0928\u0939\u0940\u0902 \u0939\u094b \u0938\u0915\u093e\u0964 "
-                  "\u0906\u092a\u0915\u093e \u092d\u0941\u0917\u0924\u093e\u0928 \u0935\u093e\u0909\u091a\u0930 \u0915\u0947 \u0930\u0942\u092a \u092e\u0947\u0902 \u092a\u0942\u0930\u0940 \u0924\u0930\u0939 \u0932\u094c\u091f\u093e \u0926\u093f\u092f\u093e \u0917\u092f\u093e \u0939\u0948{bonus}\u0964",
-        "bonus": " ({pct}% \u0905\u0924\u093f\u0930\u093f\u0915\u094d\u0924 \u0938\u0939\u093f\u0924)",
-        "code": "\u0935\u093e\u0909\u091a\u0930 \u0915\u094b\u0921", "value": "\u092e\u0942\u0932\u094d\u092f", "expiry": "\u0938\u092e\u093e\u092a\u094d\u0924\u093f",
-        "use": "\u0907\u0938\u0947 \u0907\u0938\u094d\u0924\u0947\u092e\u093e\u0932 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0935\u093e\u0909\u091a\u0930 \u092d\u0941\u0917\u0924\u093e\u0928 \u091a\u0941\u0928\u0947\u0902 \u0914\u0930 \u092f\u0939 \u0915\u094b\u0921 \u0908\u092e\u0947\u0932 "
-               "<strong>{email}</strong> \u0915\u0947 \u0938\u093e\u0925 \u0926\u0930\u094d\u091c \u0915\u0930\u0947\u0902\u0964 \u092f\u0939 \u0938\u092d\u0940 \u0938\u0936\u0941\u0932\u094d\u0915 \u0938\u0947\u0935\u093e\u0913\u0902 \u092a\u0930 \u092e\u093e\u0928\u094d\u092f \u0939\u0948\u0964",
-        "note": "\u0935\u093e\u0909\u091a\u0930 \u0935\u094d\u092f\u0915\u094d\u0924\u093f\u0917\u0924 \u0914\u0930 \u0926\u094b\u092c\u093e\u0930\u093e \u0907\u0938\u094d\u0924\u0947\u092e\u093e\u0932 \u092f\u094b\u0917\u094d\u092f \u0939\u0948: \u0916\u0930\u094d\u091a \u0907\u0938\u0915\u0947 \u092e\u0942\u0932\u094d\u092f \u0938\u0947 \u0915\u092e \u0939\u094b \u0924\u094b "
-                "\u0936\u0947\u0937 \u0930\u093e\u0936\u093f \u0938\u092e\u093e\u092a\u094d\u0924\u093f \u0924\u0915 \u0909\u092a\u0932\u092c\u094d\u0927 \u0930\u0939\u0924\u0940 \u0939\u0948\u0964",
-    },
-}
+# Email del buono di rimborso, in sette lingue (i18n/voucher_emails.json).
+# `{what}` e' l'operazione fallita, presa da `what_names` secondo il `kind` del
+# job; `{bonus}` vale "" quando il buono non e' maggiorato (annullamento
+# volontario).
+_VOUCHER_I18N = _i18n.load("voucher_emails")
+_VOUCHER_WHAT = {lg: t.get("what_names", {}) for lg, t in _VOUCHER_I18N.items()}
 
 
 def _send_voucher_email(code, email, amount_eur, book_title, kind="optimization",
@@ -974,33 +753,20 @@ def _send_voucher_email(code, email, amount_eur, book_title, kind="optimization"
     UI del job (fallback inglese)."""
     if not (email and _smtp_available()):
         return
-    from datetime import datetime, timedelta
-    lang = _i18n.norm_lang(lang)
-    if lang not in _VOUCHER_I18N:
-        lang = "en"
-    t = _VOUCHER_I18N[lang]
-    what = _VOUCHER_WHAT[lang].get(kind) or _VOUCHER_WHAT[lang]["optimization"]
-    expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
+    t = _i18n.pick(_VOUCHER_I18N, lang)
+    what = t["what_names"].get(kind) or t["what_names"]["optimization"]
+    expiry = _voucher_expiry()
     amount = f"{amount_eur:.2f}"
     title = html.escape(book_title or "") or "&mdash;"
     bonus = t["bonus"].format(pct=VOUCHER_BONUS_PERCENT) if bonus_applied else ""
     subject = t["subject"].format(amount=amount)
     failed = t["failed"].format(what=what, title=title, bonus=bonus)
     use = t["use"].format(email=html.escape(email))
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#2c3e50">&#x1F381; {t["heading"]}</h2>
+    html_body = _layout.layout(f"""  <h2 style="color:#2c3e50">&#x1F381; {t["heading"]}</h2>
   <p>{failed}</p>
-  <div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
-    <div style="font-size:.85em;color:#666;margin-bottom:8px">{t["code"]}:</div>
-    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{code}</div>
-    <div style="margin-top:12px">{t["value"]}: <strong>{amount} EUR</strong></div>
-    <div style="margin-top:4px;font-size:.9em;color:#666">{t["expiry"]}: {expiry}</div>
-  </div>
+  {_layout.voucher_box(code, amount, expiry, code_label=t["code"] + ":", value_label=t["value"], expiry_label=t["expiry"])}
   <p>{use}</p>
-  <p style="font-size:.85em;color:#666">{t["note"]}</p>
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
-</div>"""
+  <p style="font-size:.85em;color:#666">{t["note"]}</p>""", BASE_URL)
     _send_email(email, subject, html_body)
 
 
@@ -1029,11 +795,12 @@ def _vc_num(value, kind="float"):
         return None
 
 
-def _vc_send(email, lang, subject_key, body_keys, **values):
-    """Compone e manda una email della voce campione. `body_keys`: chiavi da
-    concatenare. I valori vengono escapati tranne gli URL (chiavi *_url).
-    Ritorna False su qualunque errore: chi chiama sta gia' nel flusso."""
-    t = _vc_t(lang)
+def _i18n_send(table, tag, email, lang, subject_key, body_keys, **values):
+    """Compone e manda una email dai testi `table` (lingua -> chiave, fallback
+    per chiave su en). `body_keys`: chiavi da concatenare, piu' `footer` se
+    c'e'. I valori vengono escapati tranne gli URL (chiavi *_url). Ritorna
+    False su qualunque errore: chi chiama sta gia' nel flusso."""
+    t = _i18n_table(table, lang)
     if not t or not email:
         return False
     safe = {k: (v if k.endswith("_url") else html.escape(str(v))) for k, v in values.items()}
@@ -1042,8 +809,12 @@ def _vc_send(email, lang, subject_key, body_keys, **values):
         body = "".join(t[k].format(**safe) for k in body_keys) + t.get("footer", "")
         return bool(_send_email(email, subject, body))
     except Exception as e:      # noqa: BLE001
-        print(f"[email] voice clone {subject_key} non inviata: {type(e).__name__}: {e}", flush=True)
+        print(f"[email] {tag} {subject_key} non inviata: {type(e).__name__}: {e}", flush=True)
         return False
+
+
+def _vc_send(email, lang, subject_key, body_keys, **values):
+    return _i18n_send(_VC_I18N, "voice clone", email, lang, subject_key, body_keys, **values)
 
 
 def send_voice_clone_paid(email, lang, *, voice_code, amount_eur, resume_url, manage_url, delete_url):
@@ -1091,17 +862,7 @@ def _acct_t(lang):
 
 
 def _acct_send(email, lang, subject_key, body_key, **values):
-    t = _acct_t(lang)
-    if not t or not email:
-        return False
-    safe = {k: (v if k.endswith("_url") else html.escape(str(v))) for k, v in values.items()}
-    try:
-        subject = t[subject_key].format(**safe)
-        body = t[body_key].format(**safe) + t.get("footer", "")
-        return bool(_send_email(email, subject, body))
-    except Exception as e:      # noqa: BLE001
-        print(f"[email] account {subject_key} non inviata: {type(e).__name__}: {e}", flush=True)
-        return False
+    return _i18n_send(_ACCT_I18N, "account", email, lang, subject_key, (body_key,), **values)
 
 
 def send_account_code(email, lang, *, code, link_url, purpose, minutes):
@@ -1173,18 +934,11 @@ def _send_voucher_notification_email(code, email, amount_eur, valid_days, create
         days_int = VOUCHER_EXPIRY_DAYS
     code_safe = _sanitize_header(code, max_len=64)
     subject = f"Your Audiobook Maker voucher — EUR {amount_eur:.2f}"
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-  <h2 style="color:#2c3e50">&#x1F381; Your voucher</h2>
+    html_body = _layout.layout(f"""  <h2 style="color:#2c3e50">&#x1F381; Your voucher</h2>
   <p>Here is your voucher worth <strong>EUR {amount_eur:.2f}</strong>, which you can use for premium services on audiobook-maker.com (premium voices, AI text optimisation or AI translations):</p>
-  <div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
-    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{code_safe}</div>
-    <div style="margin-top:12px">Value: <strong>EUR {amount_eur:.2f}</strong></div>
-  </div>
+  {_layout.voucher_box(code_safe, f"{amount_eur:.2f}", value_label="Value")}
   <p>Please use it within <strong>{days_int} days</strong> from <strong>{gen_date}</strong>.</p>
-  <p>Thank you for your support!</p>
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
-</div>"""
+  <p>Thank you for your support!</p>""", BASE_URL, extra_style=";color:#333")
     return _send_email(email, subject, html_body)
 
 
@@ -1202,37 +956,24 @@ def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None
     subject = (f"Audiobook Maker — Generazione non avviata, rimborso emesso "
                f"({amount_eur:.2f} EUR)")
     if voucher_code:
-        from datetime import datetime, timedelta
-        expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
-        refund_block = f"""<div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
-    <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono di rimborso:</div>
-    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{voucher_code}</div>
-    <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
-    <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
-  </div>
-  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{_esc_html(email)}</strong>.</p>"""
+        refund_block = _layout.voucher_refund_block(voucher_code, f"{amount_eur:.2f}", _voucher_expiry(),
+                                                    _esc_html(email))
     else:
-        refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
-    <p style="margin:0"><strong>Rimborso accreditato:</strong> {amount_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
-  </div>"""
+        refund_block = _layout.refund_credited(f"{amount_eur:.2f}")
     retry_hint = ""
     if retry_after_sec and retry_after_sec > 0:
         hours = max(1, retry_after_sec // 3600)
         retry_hint = (f"<p>Il servizio si rinnova al massimo entro <strong>"
                       f"{hours} or{'a' if hours == 1 else 'e'}</strong>: puoi "
                       f"riprovare gi&agrave; da domani.</p>")
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio non avviata</h2>
+    html_body = _layout.layout(f"""  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio non avviata</h2>
   <p>Ciao,</p>
   <p>la generazione delle voci PREMIUM per <strong>{title_safe}</strong> non &egrave; stata avviata.</p>
   <p><strong>Motivo:</strong> il motore voci PREMIUM &egrave; temporaneamente sovraccarico e non avrebbe potuto completare il tuo libro senza interruzioni.</p>
   <p>Per non lasciarti con un audio parziale abbiamo emesso il <strong>rimborso integrale</strong> della cifra che avevi versato, senza nemmeno iniziare la sintesi.</p>
   {refund_block}
   {retry_hint}
-  <p>Ti chiediamo scusa per il disagio.</p>
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
-</div>"""
+  <p>Ti chiediamo scusa per il disagio.</p>""", BASE_URL)
     _send_email(email, subject, html_body)
 
 
@@ -1278,26 +1019,20 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
     refund_line = ""
     if amount_eur and amount_eur > 0:
         if voucher_code:
-            refund_line = (f"<tr><td><strong>Rimborso</strong></td>"
-                           f"<td>{amount_eur:.2f} EUR — voucher PayPal "
-                           f"<code>{voucher_code}</code></td></tr>")
+            refund_line = _layout.row("Rimborso", f"{amount_eur:.2f} EUR — voucher PayPal "
+                                                  f"<code>{voucher_code}</code>")
         else:
-            refund_line = (f"<tr><td><strong>Rimborso</strong></td>"
-                           f"<td>{amount_eur:.2f} EUR — riaccredito "
-                           f"voucher originale</td></tr>")
+            refund_line = _layout.row("Rimborso", f"{amount_eur:.2f} EUR — riaccredito voucher originale")
 
     plan_line = ""
     if chunks_total is not None:
         if chunks_failed is not None:
-            plan_line = (f"<tr><td><strong>Chunk</strong></td>"
-                         f"<td>{chunks_failed}/{chunks_total} falliti</td></tr>")
+            plan_line = _layout.row("Chunk", f"{chunks_failed}/{chunks_total} falliti")
         else:
-            plan_line = (f"<tr><td><strong>Chunk previsti</strong></td>"
-                         f"<td>{chunks_total}</td></tr>")
+            plan_line = _layout.row("Chunk previsti", f"{chunks_total}")
     chars_line = ""
     if chars_total is not None:
-        chars_line = (f"<tr><td><strong>Caratteri</strong></td>"
-                      f"<td>{chars_total:,}</td></tr>")
+        chars_line = _layout.row("Caratteri", f"{chars_total:,}")
 
     # Sec: questi valori sono controllati dall'utente (titolo/metadata libro, email,
     # dettaglio errore) e finiscono nel corpo HTML dell'email admin → HTML-escape,
@@ -1335,23 +1070,20 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
       Richiede login admin (cookie su /admin/audit-premium). Se ricevi 401, fai login e ritorna a questo link.
     </div>
   </div>"""
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px">
-  <div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-    <h2 style="margin:0;font-size:18px">Gemini TTS — {kind_label}</h2>
-    <p style="margin:6px 0 0;opacity:.9;font-size:13px">Job <code style="background:rgba(255,255,255,.18);padding:2px 6px;border-radius:3px">{job_id}</code></p>
-  </div>
-  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ddd;border-top:none;font-size:14px">
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee;width:40%"><strong>Outcome audit</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><code>{audit_outcome}</code></td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Utente</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{email_safe}</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Libro</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{title_safe}</td></tr>
-    {plan_line}
-    {chars_line}
-    {refund_line}
-    <tr><td style="padding:8px 12px"><strong>Dettaglio</strong></td><td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#555">{reason_safe or '—'}</td></tr>
-  </table>
-  {forensic_block}
-  <p style="color:#888;font-size:12px;margin-top:16px">Alert generato automaticamente. Per disattivare rimuovere <code>ABM_ADMIN_EMAIL</code>. Console eventi: <code>{BASE_URL}/admin/#tab-gemini</code></p>
-</div>"""
+    rows = "".join([
+        _layout.row("Outcome audit", f"<code>{audit_outcome}</code>", width="40%"),
+        _layout.row("Utente", email_safe),
+        _layout.row("Libro", title_safe),
+        plan_line, chars_line, refund_line,
+        _layout.row("Dettaglio", reason_safe or "—", last=True, mono=True),
+    ])
+    html_body = _layout.admin_alert(
+        f"Gemini TTS — {kind_label}", color,
+        subtitle_html=(f'Job <code style="background:rgba(255,255,255,.18);padding:2px 6px;'
+                       f'border-radius:3px">{job_id}</code>'),
+        rows_html=rows, after_html=forensic_block,
+        note_html=("Alert generato automaticamente. Per disattivare rimuovere <code>ABM_ADMIN_EMAIL</code>. "
+                   f"Console eventi: <code>{BASE_URL}/admin/#tab-gemini</code>"))
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)
         print(f"[admin] Failure alert sent for {key} ({kind_label})")
@@ -1412,40 +1144,29 @@ def admin_notify_margin_anomaly(job_id, kind, provider, book_title="",
         f"[ABM-ADMIN] {'URGENTE ' if urgent else ''}Margine {prov_safe} — "
         f"job {job_id[:8]}", max_len=180)
 
-    chars_line = ""
-    if chars_total is not None:
-        chars_line = (f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'
-                      f'<strong>Caratteri</strong></td>'
-                      f'<td style="padding:8px 12px;border-bottom:1px solid #eee">'
-                      f'{chars_total:,}</td></tr>')
-    thr_line = ""
-    if urgent:
-        thr_line = (f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'
-                    f'<strong>Soglia gratuità</strong></td>'
-                    f'<td style="padding:8px 12px;border-bottom:1px solid #eee">'
-                    f'{threshold_eur:.2f} EUR</td></tr>')
+    chars_line = _layout.row("Caratteri", f"{chars_total:,}") if chars_total is not None else ""
+    thr_line = _layout.row("Soglia gratuità", f"{threshold_eur:.2f} EUR") if urgent else ""
 
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px">
-  <div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-    <h2 style="margin:0;font-size:18px">{kind_label}</h2>
-    <p style="margin:6px 0 0;opacity:.9;font-size:13px">Job <code style="background:rgba(255,255,255,.18);padding:2px 6px;border-radius:3px">{job_id}</code> &middot; {prov_safe}</p>
-  </div>
-  <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:14px 16px;font-size:13px;color:#334155">{lead}</div>
-  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ddd;border-top:none;font-size:14px">
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee;width:46%"><strong>Libro</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{title_safe}</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Incassato</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{revenue_eur:.2f} EUR</td></tr>
-    {thr_line}
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Costo provider stimato</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{cost_est_eur:.4f} EUR</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Costo provider reale</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>{cost_actual_eur:.4f} EUR</strong></td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Listino sui consumi reali</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{list_actual_eur:.2f} EUR</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Margine atteso</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{margin_expected_eur:.4f} EUR</td></tr>
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Margine reale</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>{margin_actual_eur:.4f} EUR</strong></td></tr>
-    {chars_line}
-    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Outcome audit</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><code>{outcome_safe or '-'}</code></td></tr>
-    <tr><td style="padding:8px 12px"><strong>Dettaglio</strong></td><td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#555">{detail_safe or '-'}</td></tr>
-  </table>
-  <p style="color:#888;font-size:12px;margin-top:16px">Alert automatico a consuntivo. Disattivabile con <code>ABM_MARGIN_ALERT=0</code>. Audit: <code>{BASE_URL}/admin/audit-premium</code></p>
-</div>"""
+    rows = "".join([
+        _layout.row("Libro", title_safe, width="46%"),
+        _layout.row("Incassato", f"{revenue_eur:.2f} EUR"),
+        thr_line,
+        _layout.row("Costo provider stimato", f"{cost_est_eur:.4f} EUR"),
+        _layout.row("Costo provider reale", f"<strong>{cost_actual_eur:.4f} EUR</strong>"),
+        _layout.row("Listino sui consumi reali", f"{list_actual_eur:.2f} EUR"),
+        _layout.row("Margine atteso", f"{margin_expected_eur:.4f} EUR"),
+        _layout.row("Margine reale", f"<strong>{margin_actual_eur:.4f} EUR</strong>"),
+        chars_line,
+        _layout.row("Outcome audit", f"<code>{outcome_safe or '-'}</code>"),
+        _layout.row("Dettaglio", detail_safe or "-", last=True, mono=True),
+    ])
+    html_body = _layout.admin_alert(
+        kind_label, color,
+        subtitle_html=(f'Job <code style="background:rgba(255,255,255,.18);padding:2px 6px;'
+                       f'border-radius:3px">{job_id}</code> &middot; {prov_safe}'),
+        lead_html=lead, rows_html=rows,
+        note_html=("Alert automatico a consuntivo. Disattivabile con <code>ABM_MARGIN_ALERT=0</code>. "
+                   f"Audit: <code>{BASE_URL}/admin/audit-premium</code>"))
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)
         print(f"[admin] Margin alert sent for {key} ({kind})")
@@ -1492,8 +1213,7 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
     # notte a rifare il cambio a mente prima di decidere se ricaricare.
     credit_row = ""
     if credit_left_usd is not None:
-        credit_row = (f"<tr><td><strong>Credito residuo (stima)</strong></td>"
-                      f"<td>{credit_left_usd:.2f} USD</td></tr>")
+        credit_row = _layout.kv("Credito residuo (stima)", f"{credit_left_usd:.2f} USD")
 
     # `probe_first_sec` assente significa "nessuna sonda armata": rientro
     # automatico spento per configurazione, oppure causa di trip non
@@ -1502,8 +1222,7 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
     # non deve promettere un appuntamento che nessuno ha fissato.
     probe_label = _fmt_durata_it(probe_first_sec) if probe_first_sec else ""
     if probe_label:
-        probe_row = (f"<tr><td><strong>Prima sonda di rientro</strong></td>"
-                     f"<td>fra {_esc_html(probe_label)}</td></tr>")
+        probe_row = _layout.kv("Prima sonda di rientro", f"fra {_esc_html(probe_label)}")
         probe_par = (
             "<p><strong>Il rientro si tenta da solo.</strong> Una sonda in "
             "background - poche parole di sintesi, nessun utente collegato - "
@@ -1526,13 +1245,7 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
             "ricaricare il credito Cloudflare), riattiva Cloudflare dal "
             "pannello <em>Backend TTS</em> della console admin.</p>")
 
-    html_body = f"""
-    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
-      <div style="background:#c0392b;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <h2 style="margin:0;font-size:18px">TTS: passaggio automatico a Vertex</h2>
-      </div>
-      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
-        <p>Il modello <strong>{model_safe}</strong> non viene piu' servito da
+    html_body = _layout.admin_panel("TTS: passaggio automatico a Vertex", "#c0392b", f"""        <p>Il modello <strong>{model_safe}</strong> non viene piu' servito da
            Cloudflare. I job in corso proseguono su Vertex dal chunk
            corrente, senza interruzione e senza differenza udibile.</p>
         <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
@@ -1547,9 +1260,7 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
           quasi al pareggio, mentre su Cloudflare resta ampio. Il servizio
           continua a funzionare, ma ogni ora in questo stato e' margine
           perso su ogni job servito.</p>
-        {probe_par}
-      </div>
-    </div>"""
+        {probe_par}""")
 
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)
@@ -1621,22 +1332,12 @@ def admin_notify_tts_backend_return(model_key, probe_attempts=0,
     # illeggibile). Meglio omettere la riga che stampare uno zero, che
     # significherebbe "nessun disservizio", cioe' il contrario del vero.
     durata = _fmt_durata_it(down_seconds)
-    durata_row = ""
-    if durata:
-        durata_row = (f"<tr><td><strong>Durata del failover</strong></td>"
-                      f"<td>{_esc_html(durata)}</td></tr>")
+    durata_row = _layout.kv("Durata del failover", _esc_html(durata)) if durata else ""
     credit_row = ""
     if credit_left_usd is not None:
-        credit_row = (f"<tr><td><strong>Credito residuo (stima)</strong></td>"
-                      f"<td>{credit_left_usd:.2f} USD</td></tr>")
+        credit_row = _layout.kv("Credito residuo (stima)", f"{credit_left_usd:.2f} USD")
 
-    html_body = f"""
-    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
-      <div style="background:#1e8449;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <h2 style="margin:0;font-size:18px">TTS: rientro automatico su Cloudflare</h2>
-      </div>
-      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
-        <p>Il modello <strong>{model_safe}</strong> e' tornato su Cloudflare:
+    html_body = _layout.admin_panel("TTS: rientro automatico su Cloudflare", "#1e8449", f"""        <p>Il modello <strong>{model_safe}</strong> e' tornato su Cloudflare:
            una sonda di rientro ha ottenuto audio valido e il breaker e'
            stato riarmato. I job che partono da ora usano di nuovo
            Cloudflare; quelli gia' in corso finiscono su Vertex, dove sono
@@ -1655,9 +1356,7 @@ def admin_notify_tts_backend_return(model_key, probe_attempts=0,
            <code>ABM_CF_CREDIT_BALANCE_USD</code> sia riallineato e che il
            ledger sia stato azzerato dal pannello <em>Backend TTS</em>,
            altrimenti il residuo stimato resta sbagliato per il ciclo
-           successivo.</p>
-      </div>
-    </div>"""
+           successivo.</p>""")
 
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)
@@ -1712,13 +1411,7 @@ def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
         f"[ABM-ADMIN] Credito Cloudflare basso: {left:.2f} USD residui "
         f"(soglia {threshold:.2f})", max_len=200)
 
-    html_body = f"""
-    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
-      <div style="background:#d97706;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <h2 style="margin:0;font-size:18px">Credito Cloudflare in esaurimento</h2>
-      </div>
-      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
-        <p>Il credito Cloudflare stimato e' sceso sotto la soglia di
+    html_body = _layout.admin_panel("Credito Cloudflare in esaurimento", "#d97706", f"""        <p>Il credito Cloudflare stimato e' sceso sotto la soglia di
            pre-allarme. <strong>Il TTS gira ancora su Cloudflare</strong>: non
            e' avvenuto alcun failover, e non ci sono job in errore.</p>
         <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
@@ -1753,9 +1446,7 @@ def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
               accumularsi dal ciclo precedente. Il solo aggiornamento della
               variabile d'ambiente non basta.</li>
         </ol>
-        <p style="color:#888;font-size:12px;margin-top:16px">Il saldo Cloudflare non e' leggibile via API: questo importo e' una stima, in USD come il credito del fornitore. Per disattivare l'avviso: <code>ABM_CF_CREDIT_BALANCE_USD=0</code>. Console: <code>{BASE_URL}/admin/</code></p>
-      </div>
-    </div>"""
+        <p style="color:#888;font-size:12px;margin-top:16px">Il saldo Cloudflare non e' leggibile via API: questo importo e' una stima, in USD come il credito del fornitore. Per disattivare l'avviso: <code>ABM_CF_CREDIT_BALANCE_USD=0</code>. Console: <code>{BASE_URL}/admin/</code></p>""")
 
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)
@@ -1781,13 +1472,7 @@ def admin_notify_gemini_model_unavailable(model_key, detail, job_id, cooldown_se
     minutes = int(cooldown_sec or 0) // 60
     subject = _sanitize_header(
         f"[ABM-ADMIN] TTS {model_key}: modello non disponibile", max_len=200)
-    html_body = f"""
-    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
-      <div style="background:#b91c1c;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <h2 style="margin:0;font-size:18px">Modello TTS non disponibile</h2>
-      </div>
-      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
-        <p>Errore permanente sul canale del modello: il job e' stato fermato con
+    html_body = _layout.admin_panel("Modello TTS non disponibile", "#b91c1c", f"""        <p>Errore permanente sul canale del modello: il job e' stato fermato con
            rimborso standard e il modello e' nascosto agli utenti.</p>
         <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
           <tr><td><strong>Modello</strong></td><td><code>{model_safe}</code></td></tr>
@@ -1796,9 +1481,7 @@ def admin_notify_gemini_model_unavailable(model_key, detail, job_id, cooldown_se
         </table>
         <p>Rientro automatico fra {minutes} minuti, oppure con «Riattiva» nel
            pannello «Backend TTS» della console admin dopo aver risolto la causa
-           (chiave API, credito, abilitazione del modello).</p>
-      </div>
-    </div>"""
+           (chiave API, credito, abilitazione del modello).</p>""")
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)
     except Exception as e:
@@ -1846,25 +1529,15 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
         note = ""
     dl_safe = (download_url or "").replace('"', "%22")
     if voucher_code and refund_eur > 0:
-        from datetime import datetime, timedelta
-        expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
-        refund_block = f"""<div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
-    <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono di rimborso:</div>
-    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{voucher_code}</div>
-    <div style="margin-top:12px">Valore: <strong>{refund_eur:.2f} EUR</strong></div>
-    <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
-  </div>
-  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{_esc_html(email)}</strong>.</p>"""
+        refund_block = _layout.voucher_refund_block(voucher_code, f"{refund_eur:.2f}", _voucher_expiry(),
+                                                    _esc_html(email))
     elif refund_eur > 0:
-        refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
-    <p style="margin:0"><strong>Rimborso accreditato:</strong> {refund_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
-  </div>"""
+        refund_block = _layout.refund_credited(f"{refund_eur:.2f}")
     else:
-        refund_block = f"""<div style="padding:16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin:20px 0">
-    <p style="margin:0">La generazione era gi&agrave; in fase avanzata: l'importo trattenuto ({retained_eur:.2f} EUR) corrisponde al costo gi&agrave; sostenuto. <strong>Nessun rimborso residuo</strong>.</p>
-  </div>"""
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#d97706">{heading}</h2>
+        refund_block = _layout.notice(
+            f"La generazione era gi&agrave; in fase avanzata: l'importo trattenuto ({retained_eur:.2f} EUR) "
+            f"corrisponde al costo gi&agrave; sostenuto. <strong>Nessun rimborso residuo</strong>.")
+    html_body = _layout.layout(f"""  <h2 style="color:#d97706">{heading}</h2>
   <p>Ciao,</p>
   <p>{intro}</p>
   <p>Abbiamo salvato l'<strong>audio parziale</strong> gi&agrave; sintetizzato fino a quel momento. Puoi scaricarlo dal link sottostante:</p>
@@ -1879,10 +1552,7 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
   </table>
   {refund_block}
   {note}
-  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di interruzione, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
-</div>"""
+  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di interruzione, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>""", BASE_URL)
     _send_email(email, subject, html_body)
 
 
@@ -1901,28 +1571,15 @@ def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label
     title_safe = _esc_html(_sanitize_header(book_title or "il tuo libro", max_len=120))
     subject = f"Audiobook Maker \u2014 Generazione interrotta, rimborso emesso ({amount_eur:.2f} EUR)"
     if voucher_code:
-        from datetime import datetime, timedelta
-        expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
-        refund_block = f"""<div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
-    <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono di rimborso:</div>
-    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{voucher_code}</div>
-    <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
-    <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
-  </div>
-  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{_esc_html(email)}</strong>.</p>"""
+        refund_block = _layout.voucher_refund_block(voucher_code, f"{amount_eur:.2f}", _voucher_expiry(),
+                                                    _esc_html(email))
     else:
-        refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
-    <p style="margin:0"><strong>Rimborso accreditato:</strong> {amount_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
-  </div>"""
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio interrotta</h2>
+        refund_block = _layout.refund_credited(f"{amount_eur:.2f}")
+    html_body = _layout.layout(f"""  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio interrotta</h2>
   <p>Ciao,</p>
   <p>la generazione delle voci PREMIUM per <strong>{title_safe}</strong> non &egrave; stata completata.</p>
   <p><strong>Motivo:</strong> {_esc_html(reason_label)}</p>
   <p>L'operazione &egrave; considerata <strong>fallita</strong> e abbiamo emesso il <strong>rimborso integrale</strong> della cifra che avevi versato.</p>
   {refund_block}
-  <p>Ti chiediamo scusa per il disagio. Puoi ritentare la generazione tra qualche ora, quando la quota del servizio si sar&agrave; rinnovata.</p>
-  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-  <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
-</div>"""
+  <p>Ti chiediamo scusa per il disagio. Puoi ritentare la generazione tra qualche ora, quando la quota del servizio si sar&agrave; rinnovata.</p>""", BASE_URL)
     _send_email(email, subject, html_body)

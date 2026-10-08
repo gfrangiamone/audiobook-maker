@@ -62,10 +62,6 @@
   "voice_clone_demo.py": 1,
   "voxcpm_tts.py": 1
  },
- "html_doctype_in_py": {
-  "email_service.py": 1,
-  "voxcpm_digest.py": 1
- },
  "import_generation_engine": {
   "abuse_watch.py": 2,
   "community_moderator.py": 1,
