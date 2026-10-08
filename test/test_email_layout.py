@@ -25,10 +25,11 @@ def test_voucher_box_and_refund_blocks():
     assert "Codice:" in box and "Scade: 01/01/2027" in box
     plain = L.voucher_box("AB-12", "7.50")
     assert "margin-bottom:8px" not in plain and "Scadenza" not in plain
-    blk = L.voucher_refund_block("AB-12", "7.50", "01/01/2027", "u@x.it")
-    assert "Codice buono di rimborso:" in blk and "insieme all'email <strong>u@x.it</strong>" in blk
-    green = L.refund_credited("3.00")
-    assert "#f0fff4" in green and "3.00 EUR sono stati ri-accreditati" in green
+    t = i18n.load("premium_emails")["it"]
+    blk = L.voucher_refund_block("AB-12", "7.50", "01/01/2027", "USA <strong>u@x.it</strong>", t)
+    assert "Codice buono di rimborso:" in blk and "<p>USA <strong>u@x.it</strong></p>" in blk
+    green = L.refund_credited("<strong>X</strong> 3.00 EUR")
+    assert "#f0fff4" in green and "<strong>X</strong> 3.00 EUR" in green
     assert "#fff7ed" in L.notice("x")
 
 
@@ -129,3 +130,65 @@ def test_vc_and_acct_senders_share_i18n_send(monkeypatch):
     src = pathlib.Path(es.__file__).read_text(encoding="utf-8")
     assert src.count("def _i18n_send(") == 1 and "safe = {k:" in src and src.count("safe = {k:") == 1
     assert "dashed #8b5cf6" not in src and "linear-gradient" not in src and "<!DOCTYPE" not in src
+
+
+# ---- C4b: email PREMIUM localizzate --------------------------------------------------
+
+def _capture(monkeypatch):
+    sent = []
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, **k: sent.append((subj, html)) or True)
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "BASE_URL", "https://x")
+    return sent
+
+
+def test_premium_emails_italian_texts_unchanged(monkeypatch):
+    sent = _capture(monkeypatch)
+    es._send_gemini_overload_email("u@x.it", 4.0, "Libro", voucher_code="V-3", retry_after_sec=7200)
+    es._send_gemini_failed_refund_email("u@x.it", 5.28, "Libro", "quota", voucher_code=None)
+    es._send_gemini_cancelled_partial_email("u@x.it", 2.0, 0.71, 1.29, "REF-ABC", "Libro",
+                                            "https://x/dl/TOK", lang="it")
+    es._send_gemini_cancelled_partial_email("u@x.it", 2.0, 2.0, 0.0, None, "Libro",
+                                            "https://x/dl/TOK", lang="it", auto_cancel=True)
+    (s1, h1), (s2, h2), (s3, h3), (s4, h4) = sent
+    assert s1 == "Audiobook Maker — Generazione non avviata, rimborso emesso (4.00 EUR)"
+    assert "Generazione audio non avviata" in h1 and "<strong>Libro</strong> non &egrave; stata avviata" in h1
+    assert "entro <strong>2 ore</strong>" in h1 and "Codice buono di rimborso:" in h1 and ">V-3<" in h1
+    assert "Ti chiediamo scusa per il disagio.</p>" in h1
+    assert s2 == "Audiobook Maker — Generazione interrotta, rimborso emesso (5.28 EUR)"
+    assert "<strong>Motivo:</strong> il provider del servizio voci ha esaurito la quota giornaliera" in h2
+    assert "<strong>Rimborso accreditato:</strong> 5.28 EUR sono stati ri-accreditati" in h2
+    assert s3.startswith("Audiobook Maker — Generazione annullata") and "(1.29 EUR rimborsati)" in s3
+    assert "hai annullato la generazione" in h3 and ">REF-ABC<" in h3 and "https://x/dl/TOK" in h3
+    assert "Scarica l'audio parziale (MP3)" in h3 and "Quota trattenuta" in h3 and "0.71 EUR" in h3
+    assert s4.startswith("Audiobook Maker — Generazione interrotta") and "Generazione interrotta</h2>" in h4
+    assert "consegna via email" in h4 and "Nessun rimborso residuo" in h4 and "(2.00 EUR)" in h4
+
+
+def test_premium_emails_english_and_fallback(monkeypatch):
+    sent = _capture(monkeypatch)
+    es._send_gemini_overload_email("u@x.it", 4.0, "", voucher_code=None, retry_after_sec=3600, lang="en")
+    es._send_gemini_failed_refund_email("u@x.it", 5.0, "Book", "budget", voucher_code="V", lang="fr")
+    es._send_gemini_failed_refund_email("u@x.it", 5.0, "Book", "testo <b>libero</b>", lang="de-DE")
+    es._send_gemini_cancelled_partial_email("u@x.it", 2.0, 0.5, 1.5, None, "Book", "https://x/d", lang="zh")
+    (s1, h1), (s2, h2), (s3, h3), (s4, h4) = sent
+    assert s1 == "Audiobook Maker — Generation not started, refund issued (4.00 EUR)"
+    assert "<strong>your book</strong>" in h1 and "within <strong>1 hour</strong>" in h1
+    assert "<strong>Refund credited:</strong> 4.00 EUR" in h1 and "Ciao" not in h1
+    assert "daily spending limit" in h2 and "Refund voucher code:" in h2 and ">V<" in h2   # fr -> en
+    assert "<strong>Reason:</strong> testo &lt;b&gt;libero&lt;/b&gt;" in h3
+    assert "Refund details" in h4 and "Download the partial audio (MP3)" in h4 and "1.50 EUR" in h4
+    for h in (h1, h2, h3, h4):
+        assert "Gemini" not in h and "__" not in h and "{" not in h
+
+
+def test_premium_json_complete_and_placeholders():
+    data = i18n.load("premium_emails")
+    assert set(data["en"]) == set(data["it"])
+    import re
+    for key, it_text in data["it"].items():
+        en_text = data["en"][key]
+        if isinstance(it_text, dict):
+            assert set(it_text) == set(en_text) == {"quota", "budget", "quality", "interrupted_restart"}
+            continue
+        assert set(re.findall(r"{(\w+)}", it_text)) == set(re.findall(r"{(\w+)}", en_text)), key

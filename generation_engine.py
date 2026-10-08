@@ -3159,20 +3159,8 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
         return
     if failure_kind is None:
         failure_kind = "quota" if is_quota else "budget"
-    if failure_kind == "quota":
-        reason_label = (
-            "il provider del servizio voci ha esaurito la quota giornaliera "
-            "di richieste sul nostro piano corrente"
-        )
-    elif failure_kind == "budget":
-        reason_label = (
-            "e' stato raggiunto il limite di spesa giornaliero del servizio"
-        )
-    else:  # quality
-        reason_label = (
-            "alcune porzioni del testo non sono state sintetizzate "
-            "correttamente e l'audio risultante sarebbe stato incompleto"
-        )
+    # Il motivo e' una chiave (quota | budget | quality): il testo, nella
+    # lingua dell'utente, sta in i18n/premium_emails.json.
     book_title = ""
     try:
         info = job.get("info")
@@ -3184,7 +3172,8 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
         book_title = job.get("original_filename", "")
     try:
         email_service._send_gemini_failed_refund_email(
-            email, amt, book_title, reason_label, voucher_code=voucher_code,
+            email, amt, book_title, failure_kind, voucher_code=voucher_code,
+            lang=job.get("browser_lang") or job.get("notify_lang") or "it",
         )
         print(f"[{job_id}] Refund notification email sent to {email} "
               f"(amount={amt:.2f} EUR, reason={pause_reason}).")
@@ -6891,6 +6880,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             _email_to, amt, _book_title,
                             voucher_code=job.get("refund_voucher_code"),
                             retry_after_sec=_pf.get("retry_after_sec", 0),
+                            lang=job.get("browser_lang") or job.get("notify_lang") or "it",
                         )
                 except Exception as _notif_err:
                     print(f"[{job_id}] Preflight user notification failed (non-fatal): {_notif_err}")

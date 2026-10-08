@@ -690,6 +690,18 @@ def _try_send_voxcpm_digest():
 # route di creazione dell'ordine in job["pay_receipt_kind"] (vedi
 # api_paypal_capture_order); "voice_clone" per il campionamento di una voce.
 _RECEIPT_I18N = _i18n.load("receipt_emails")
+# Email delle generazioni PREMIUM (sovraccarico, annullata con audio parziale,
+# fallita con rimborso): i18n/premium_emails.json, fallback inglese per chiave.
+_PREMIUM_I18N = _i18n.load("premium_emails")
+
+
+def _premium_refund_block(t, amount, voucher_code, email):
+    """Blocco di rimborso delle email PREMIUM: box del nuovo buono (pagamento
+    PayPal) o riga verde del riaccredito sul buono originale."""
+    if voucher_code:
+        return _layout.voucher_refund_block(voucher_code, amount, _voucher_expiry(),
+                                            t["voucher_use"].format(email=_esc_html(email)), t)
+    return _layout.refund_credited(t["refund_credited"].format(amount=amount))
 _RECEIPT_SERVICE = {lg: t.get("service_names", {}) for lg, t in _RECEIPT_I18N.items()}
 
 
@@ -943,37 +955,34 @@ def _send_voucher_notification_email(code, email, amount_eur, valid_days, create
 
 
 def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None,
-                                 retry_after_sec=0):
+                                 retry_after_sec=0, lang="it"):
     """Notifica all'utente che il job non e' stato avviato perche' il motore
     voci PREMIUM e' temporaneamente sovraccarico. Include il rimborso integrale.
 
     voucher_code valorizzato => pagamento PayPal, e' stato emesso un voucher.
     voucher_code None => pagamento via voucher, importo ri-accreditato.
+    `lang`: lingua UI del job (fallback inglese per chiave).
     """
     if not (email and _smtp_available()):
         return
-    title_safe = _esc_html(_sanitize_header(book_title or "il tuo libro", max_len=120))
-    subject = (f"Audiobook Maker — Generazione non avviata, rimborso emesso "
-               f"({amount_eur:.2f} EUR)")
-    if voucher_code:
-        refund_block = _layout.voucher_refund_block(voucher_code, f"{amount_eur:.2f}", _voucher_expiry(),
-                                                    _esc_html(email))
-    else:
-        refund_block = _layout.refund_credited(f"{amount_eur:.2f}")
+    t = _i18n.pick(_PREMIUM_I18N, lang)
+    title_safe = _esc_html(_sanitize_header(book_title or t["default_title"], max_len=120))
+    amount = f"{amount_eur:.2f}"
+    subject = t["overload_subject"].format(amount=amount)
+    refund_block = _premium_refund_block(t, amount, voucher_code, email)
     retry_hint = ""
     if retry_after_sec and retry_after_sec > 0:
         hours = max(1, retry_after_sec // 3600)
-        retry_hint = (f"<p>Il servizio si rinnova al massimo entro <strong>"
-                      f"{hours} or{'a' if hours == 1 else 'e'}</strong>: puoi "
-                      f"riprovare gi&agrave; da domani.</p>")
-    html_body = _layout.layout(f"""  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio non avviata</h2>
-  <p>Ciao,</p>
-  <p>la generazione delle voci PREMIUM per <strong>{title_safe}</strong> non &egrave; stata avviata.</p>
-  <p><strong>Motivo:</strong> il motore voci PREMIUM &egrave; temporaneamente sovraccarico e non avrebbe potuto completare il tuo libro senza interruzioni.</p>
-  <p>Per non lasciarti con un audio parziale abbiamo emesso il <strong>rimborso integrale</strong> della cifra che avevi versato, senza nemmeno iniziare la sintesi.</p>
+        retry_hint = "<p>" + (t["overload_retry_1"] if hours == 1
+                              else t["overload_retry_n"].format(hours=hours)) + "</p>"
+    html_body = _layout.layout(f"""  <h2 style="color:#c0392b">{t["overload_heading"]}</h2>
+  <p>{t["hello"]}</p>
+  <p>{t["overload_intro"].format(title=title_safe)}</p>
+  <p>{t["overload_reason"]}</p>
+  <p>{t["overload_refund"]}</p>
   {refund_block}
   {retry_hint}
-  <p>Ti chiediamo scusa per il disagio.</p>""", BASE_URL)
+  <p>{t["apology"]}</p>""", BASE_URL)
     _send_email(email, subject, html_body)
 
 
@@ -1507,60 +1516,47 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     """
     if not (email and _smtp_available()):
         return
-    title_safe = _esc_html(_sanitize_header(book_title or "il tuo libro", max_len=120))
-    if auto_cancel:
-        subject = (f"Audiobook Maker — Generazione interrotta, audio parziale "
-                   f"disponibile ({refund_eur:.2f} EUR rimborsati)")
-        heading = "&#x26A0;&#xFE0F; Generazione interrotta"
-        intro = (f"la generazione delle voci PREMIUM per <strong>{title_safe}</strong> "
-                 f"si &egrave; interrotta prima del completamento perch&eacute; la "
-                 f"pagina del browser non era pi&ugrave; in contatto con il servizio "
-                 f"(scheda chiusa, computer in sospensione o connessione caduta).")
-        note = ("<p>Per i libri lunghi ti consigliamo di attivare la "
-                "<strong>consegna via email</strong> prima di avviare la "
-                "generazione: il lavoro prosegue sui nostri server anche a "
-                "browser chiuso e ricevi l'audiolibro appena &egrave; pronto.</p>")
-    else:
-        subject = (f"Audiobook Maker — Generazione annullata, audio parziale "
-                   f"disponibile ({refund_eur:.2f} EUR rimborsati)")
-        heading = "&#x26A0;&#xFE0F; Generazione annullata su tua richiesta"
-        intro = (f"hai annullato la generazione delle voci PREMIUM per "
-                 f"<strong>{title_safe}</strong> mentre era in corso.")
-        note = ""
+    t = _i18n.pick(_PREMIUM_I18N, lang)
+    title_safe = _esc_html(_sanitize_header(book_title or t["default_title"], max_len=120))
+    refund = f"{refund_eur:.2f}"
+    kind = "autocancel" if auto_cancel else "cancel"
+    subject = t[f"{kind}_subject"].format(amount=refund)
+    heading = t[f"{kind}_heading"]
+    intro = t[f"{kind}_intro"].format(title=title_safe)
+    note = f"<p>{t['autocancel_note']}</p>" if auto_cancel else ""
     dl_safe = (download_url or "").replace('"', "%22")
-    if voucher_code and refund_eur > 0:
-        refund_block = _layout.voucher_refund_block(voucher_code, f"{refund_eur:.2f}", _voucher_expiry(),
-                                                    _esc_html(email))
-    elif refund_eur > 0:
-        refund_block = _layout.refund_credited(f"{refund_eur:.2f}")
+    if refund_eur > 0:
+        refund_block = _premium_refund_block(t, refund, voucher_code, email)
     else:
-        refund_block = _layout.notice(
-            f"La generazione era gi&agrave; in fase avanzata: l'importo trattenuto ({retained_eur:.2f} EUR) "
-            f"corrisponde al costo gi&agrave; sostenuto. <strong>Nessun rimborso residuo</strong>.")
+        refund_block = _layout.notice(t["no_refund"].format(retained=f"{retained_eur:.2f}"))
     html_body = _layout.layout(f"""  <h2 style="color:#d97706">{heading}</h2>
-  <p>Ciao,</p>
+  <p>{t["hello"]}</p>
   <p>{intro}</p>
-  <p>Abbiamo salvato l'<strong>audio parziale</strong> gi&agrave; sintetizzato fino a quel momento. Puoi scaricarlo dal link sottostante:</p>
+  <p>{t["partial_saved"]}</p>
   <p style="text-align:center;margin:20px 0">
-    <a href="{dl_safe}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">Scarica l'audio parziale (MP3)</a>
+    <a href="{dl_safe}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">{t["download_btn"]}</a>
   </p>
-  <h3 style="margin-top:28px;color:#333">Dettaglio rimborso</h3>
+  <h3 style="margin-top:28px;color:#333">{t["refund_title"]}</h3>
   <table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0">
-    <tr><td style="padding:6px 0;color:#666">Importo versato</td><td style="padding:6px 0;text-align:right"><strong>{paid_eur:.2f} EUR</strong></td></tr>
-    <tr><td style="padding:6px 0;color:#666">Quota trattenuta (costo gi&agrave; sostenuto)</td><td style="padding:6px 0;text-align:right">{retained_eur:.2f} EUR</td></tr>
-    <tr><td style="padding:6px 0;color:#666;border-top:1px solid #eee"><strong>Rimborso</strong></td><td style="padding:6px 0;text-align:right;border-top:1px solid #eee"><strong style="color:#059669">{refund_eur:.2f} EUR</strong></td></tr>
+    <tr><td style="padding:6px 0;color:#666">{t["paid_label"]}</td><td style="padding:6px 0;text-align:right"><strong>{paid_eur:.2f} EUR</strong></td></tr>
+    <tr><td style="padding:6px 0;color:#666">{t["retained_label"]}</td><td style="padding:6px 0;text-align:right">{retained_eur:.2f} EUR</td></tr>
+    <tr><td style="padding:6px 0;color:#666;border-top:1px solid #eee"><strong>{t["refund_label"]}</strong></td><td style="padding:6px 0;text-align:right;border-top:1px solid #eee"><strong style="color:#059669">{refund} EUR</strong></td></tr>
   </table>
   {refund_block}
   {note}
-  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di interruzione, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>""", BASE_URL)
+  <p style="font-size:.9em;color:#666">{t["retained_note"]}</p>""", BASE_URL)
     _send_email(email, subject, html_body)
 
 
-def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label, voucher_code=None):
-    """Notifica all'utente che la generazione voci PREMIUM e' fallita per
-    esaurimento quota giornaliera del provider (o limite di spesa interno) e
-    che il rimborso integrale e' stato emesso.
+def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label, voucher_code=None,
+                                     lang="it"):
+    """Notifica all'utente che la generazione voci PREMIUM e' fallita (quota
+    giornaliera del provider, limite di spesa, qualita', riavvio) e che il
+    rimborso integrale e' stato emesso.
 
+    `reason_label`: chiave di `reason_names` (quota | budget | quality |
+    interrupted_restart), localizzata; un testo libero viene mostrato
+    escapato cosi' com'e'.
     - voucher_code valorizzato => pagamento PayPal, e' stato emesso un nuovo
       voucher (con eventuale bonus) all'email.
     - voucher_code None => pagamento via voucher, l'importo e' stato
@@ -1568,18 +1564,17 @@ def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label
     """
     if not (email and _smtp_available()):
         return
-    title_safe = _esc_html(_sanitize_header(book_title or "il tuo libro", max_len=120))
-    subject = f"Audiobook Maker \u2014 Generazione interrotta, rimborso emesso ({amount_eur:.2f} EUR)"
-    if voucher_code:
-        refund_block = _layout.voucher_refund_block(voucher_code, f"{amount_eur:.2f}", _voucher_expiry(),
-                                                    _esc_html(email))
-    else:
-        refund_block = _layout.refund_credited(f"{amount_eur:.2f}")
-    html_body = _layout.layout(f"""  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio interrotta</h2>
-  <p>Ciao,</p>
-  <p>la generazione delle voci PREMIUM per <strong>{title_safe}</strong> non &egrave; stata completata.</p>
-  <p><strong>Motivo:</strong> {_esc_html(reason_label)}</p>
-  <p>L'operazione &egrave; considerata <strong>fallita</strong> e abbiamo emesso il <strong>rimborso integrale</strong> della cifra che avevi versato.</p>
+    t = _i18n.pick(_PREMIUM_I18N, lang)
+    title_safe = _esc_html(_sanitize_header(book_title or t["default_title"], max_len=120))
+    amount = f"{amount_eur:.2f}"
+    subject = t["failed_subject"].format(amount=amount)
+    reason_html = t["reason_names"].get(reason_label) or _esc_html(reason_label)
+    refund_block = _premium_refund_block(t, amount, voucher_code, email)
+    html_body = _layout.layout(f"""  <h2 style="color:#c0392b">{t["failed_heading"]}</h2>
+  <p>{t["hello"]}</p>
+  <p>{t["failed_intro"].format(title=title_safe)}</p>
+  <p>{t["failed_reason"].format(reason=reason_html)}</p>
+  <p>{t["failed_refund"]}</p>
   {refund_block}
-  <p>Ti chiediamo scusa per il disagio. Puoi ritentare la generazione tra qualche ora, quando la quota del servizio si sar&agrave; rinnovata.</p>""", BASE_URL)
+  <p>{t["failed_retry"]}</p>""", BASE_URL)
     _send_email(email, subject, html_body)

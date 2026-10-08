@@ -1999,6 +1999,7 @@ def _send_interrupted_email(rec, refund_code=None):
     try:
         email_service._send_gemini_failed_refund_email(
             email, amt, title, "interrupted_restart", voucher_code=refund_code,
+            lang=rec.get("browser_lang") or rec.get("notify_lang") or "it",
         )
     except Exception as e:
         print(f"[{rec.get('id')}] interrupted email failed (non-fatal): {e}")

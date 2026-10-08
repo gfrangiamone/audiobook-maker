@@ -10,8 +10,8 @@ le funzioni compongono soltanto.
 
 - `layout(body, base_url)`: wrapper 600px + footer «Audiobook Maker — url».
 - `voucher_box(code, amount, expiry)`: box tratteggiato viola del buono.
-- `refund_credited(amount)`, `voucher_refund_block(...)`: blocchi di rimborso
-  delle email PREMIUM (testi italiani; i18n in C4b).
+- `refund_credited(text)`, `voucher_refund_block(...)`: blocchi di rimborso
+  delle email PREMIUM (testi dal chiamante, i18n/premium_emails.json).
 - `admin_alert(title, color, rows=...)`: barra colorata + tabella a righe
   `row(label, value)`; `admin_panel(title, color, body)`: barra + riquadro
   libero con righe `kv(label, value)`.
@@ -52,19 +52,19 @@ def voucher_box(code, amount, expiry="", *, code_label="", value_label="Valore",
             f'  </div>')
 
 
-def refund_credited(amount):
-    """Blocco verde: importo ri-accreditato sul buono originale (email PREMIUM)."""
+def refund_credited(text_html):
+    """Blocco verde: importo ri-accreditato sul buono originale (il testo,
+    gia' localizzato e con l'importo, lo passa il chiamante)."""
     return (f'<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">\n'
-            f'    <p style="margin:0"><strong>Rimborso accreditato:</strong> {amount} EUR sono stati '
-            f'ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un '
-            f'nuovo tentativo.</p>\n  </div>')
+            f'    <p style="margin:0">{text_html}</p>\n  </div>')
 
 
-def voucher_refund_block(code, amount, expiry, email_html):
-    """Box del buono di rimborso + istruzioni d'uso (email PREMIUM, PayPal)."""
-    return (voucher_box(code, amount, expiry, code_label="Codice buono di rimborso:")
-            + f"\n  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice "
-              f"insieme all'email <strong>{email_html}</strong>.</p>")
+def voucher_refund_block(code, amount, expiry, use_html, t):
+    """Box del buono di rimborso + istruzioni d'uso. `t`: etichette
+    localizzate (`voucher_code_label`, `voucher_value`, `voucher_expiry`)."""
+    return (voucher_box(code, amount, expiry, code_label=t["voucher_code_label"],
+                        value_label=t["voucher_value"], expiry_label=t["voucher_expiry"])
+            + f"\n  <p>{use_html}</p>")
 
 
 def notice(text_html, *, bg="#fff7ed", border="#fed7aa"):
