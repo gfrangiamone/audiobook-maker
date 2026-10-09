@@ -23,7 +23,8 @@ import html as _htmlesc
 import json
 import os
 from i18n import norm_lang as _norm_lang, pick as _i18n_pick
-from env_utils import env_bool as _env_bool, env_float as _env_float, env_int as _env_int
+from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
+from env_utils import env_bool as _env_bool, env_float as _env_float, env_int as _env_int, env_str as _env_str
 import re
 import shutil
 import threading
@@ -201,6 +202,7 @@ BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
 _jobs = None            # reference to jobs dict in audiobook_app
 _upload_dir = None      # Path to data directory
+_llm_leak_audit = _MonthlyJsonl("llm_leak_audit", lambda: _upload_dir, compact=False)
 _download_tokens = None # reference to token dict in audiobook_app
 _save_tokens = None     # callable: persist tokens to disk
 _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op)
@@ -1127,8 +1129,6 @@ def _write_llm_audit(*, job=None, job_id=None, chapter_num=None,
             return
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc)
-        month = ts.strftime("%Y-%m")
-        path = _upload_dir / f"llm_leak_audit_{month}.jsonl"
         # Risolvi lang/job_id da job se non passati esplicitamente
         resolved_job_id = job_id
         lang = ""
@@ -1149,8 +1149,7 @@ def _write_llm_audit(*, job=None, job_id=None, chapter_num=None,
             "chars_output": int(chars_output or 0),
             "leaked_preview": (leaked_preview or "")[:200],
         }
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        _llm_leak_audit.append(rec)
     except Exception as e:
         # Audit non deve mai bloccare il flusso utente
         print(f"[llm-audit] write failed: {e}")
@@ -5386,7 +5385,11 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
 # nell'audit dei costi: quello ha una riga per job ed e' letto dagli
 # aggregati, questo ne ha una per difetto e serve solo a guardarci dentro.
 # Mensile e append-only come l'altro, sotto la stessa data dir.
-_CODE_TAGLIATE_LOCK = threading.Lock()
+def _data_dir_fn():
+    return Path(_env_str("ABM_DATA_DIR", "."))
+
+
+_code_tagliate_store = _MonthlyJsonl("voxcpm_code_tagliate", _data_dir_fn)
 # I campi del giudizio del worker che valgono la pena di essere conservati,
 # nell'ordine in cui si leggono. Fuori da questa lista non passa niente: il
 # worker puo' aggiungere chiavi sue, e un dataset che cambia forma da solo non
@@ -5449,10 +5452,7 @@ def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
             "code_tagliate_dettaglio") or []
         if not righe:
             return
-        ora = datetime.now(timezone.utc)
-        base = Path(os.environ.get("ABM_DATA_DIR", "."))
-        fp = base / f"voxcpm_code_tagliate_{ora.strftime('%Y-%m')}.jsonl"
-        ts = ora.isoformat()
+        ts = datetime.now(timezone.utc).isoformat()
         blocco = []
         for r in righe:
             # `if ... is None` e non `or`: il capitolo 0 e il chunk 0
@@ -5466,12 +5466,8 @@ def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
             for k in _CODE_TAGLIATE_CAMPI + _CODE_TAGLIATE_POSIZIONE:
                 if k in r:
                     rec[k] = r[k]
-            blocco.append(json.dumps(rec, ensure_ascii=False,
-                                     separators=(",", ":")))
-        with _CODE_TAGLIATE_LOCK:
-            fp.parent.mkdir(parents=True, exist_ok=True)
-            with open(fp, "a", encoding="utf-8") as f:
-                f.write("\n".join(blocco) + "\n")
+            blocco.append(rec)
+        _code_tagliate_store.append_many(blocco, add_ts=False)
     except Exception as e:
         print(f"[{job_id}] voxcpm tails dataset write failed (non-fatal): {e}")
 

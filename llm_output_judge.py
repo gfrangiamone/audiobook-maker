@@ -26,8 +26,6 @@ Configurazione (env):
   ABM_OUTPUT_MIN_CHARS    sotto, nessun controllo       (default: 400)
 """
 
-import json
-import os
 from env_utils import env_float as _env_float, env_int as _env_int, env_str
 from datetime import datetime, timezone
 
@@ -50,8 +48,7 @@ def _env(name, default=""):
 
 def mode():
     """`off`, `observe` o `on`. Un valore ignoto vale il default, non `on`."""
-    m = _env("ABM_OUTPUT_JUDGE_MODE", _DEFAULT_MODE).lower()
-    return m if m in _MODES else _DEFAULT_MODE
+    return sj.mode_from_env("ABM_OUTPUT_JUDGE_MODE", _MODES, _DEFAULT_MODE)
 
 
 def enabled():
@@ -123,10 +120,7 @@ def suspicious(source, output):
 # ---------------------------------------------------------------------------
 
 def _clip(text):
-    t = (text or "").strip()
-    if len(t) <= _HEAD_CHARS + _TAIL_CHARS:
-        return t
-    return t[:_HEAD_CHARS].rstrip() + "\n[...]\n" + t[-_TAIL_CHARS:].lstrip()
+    return sj.clip(text, _HEAD_CHARS, _TAIL_CHARS)
 
 
 def _state(source, output, lang=""):
@@ -196,12 +190,7 @@ def review(source, output, *, lang="", timeout=None):
     resp = sj.ask(_state(source, output, lang), questions, timeout=timeout)
     if resp is None:
         return {}
-    probs = {}
-    for key in questions:
-        p = sj.noul(resp, key)
-        if p is not None:
-            probs[key] = float(p)
-    return probs
+    return sj.probs(resp, questions)
 
 
 def verdict(probs):
@@ -218,21 +207,12 @@ def verdict(probs):
     return "", ""
 
 
-def _audit_path():
-    d = _env("ABM_DATA_DIR")
-    if not d or not os.path.isdir(d):
-        return ""
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    return os.path.join(d, f"llm_output_judge_audit_{month}.jsonl")
-
-
 def write_audit(source, output, probs, reason, *, lang="", job_id="",
                 chapter="", flag=""):
     """Una riga per chunk giudicato: e' il dataset con cui tarare le soglie
     prima di passare a `on`. Best-effort, mai fatale per la generazione."""
     try:
-        path = _audit_path()
-        if not path or not probs:
+        if not probs:
             return
         rec = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -249,8 +229,7 @@ def write_audit(source, output, probs, reason, *, lang="", job_id="",
             "applied": bool(reason) and applies(),
             "preview": (output or "")[:200],
         }
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        sj.append_monthly_audit("llm_output_judge_audit", rec, "output_judge")
     except Exception as e:      # noqa: BLE001 - l'audit non ferma un capitolo
         print(f"[output_judge] audit non scritto: {type(e).__name__}: {e}",
               flush=True)

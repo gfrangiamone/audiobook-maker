@@ -1,63 +1,41 @@
 """Audit log writer/reader/aggregator per Gemini TTS cost estimation.
 
-Formato: JSONL append-only, file mensile in ABM_DATA_DIR.
+Formato: JSONL append-only, file mensile in ABM_DATA_DIR (letto a ogni
+chiamata; `_DATA_DIR`, se valorizzato, lo sovrascrive: lo fanno i test).
 Filename: gemini_cost_audit_YYYY-MM.jsonl
+
+Writer, reader e filtri vengono da `jsonl_audit.MonthlyJsonl`; qui restano
+l'API pubblica (`append_record`, `iter_records`) e `aggregate`.
 """
-import os
-import json
-import threading
-from datetime import datetime, timezone
 from pathlib import Path
 
-_DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "."))
-_lock = threading.Lock()
+from env_utils import env_str
+from jsonl_audit import MonthlyJsonl
+
+_DATA_DIR = None
+
+
+def _dir():
+    return _DATA_DIR if _DATA_DIR is not None else Path(env_str("ABM_DATA_DIR", "."))
+
+
+_store = MonthlyJsonl("gemini_cost_audit", _dir)
 
 
 def _current_file():
-    ym = datetime.now(timezone.utc).strftime("%Y-%m")
-    return _DATA_DIR / f"gemini_cost_audit_{ym}.jsonl"
+    return _store.path()
 
 
 def append_record(record: dict):
     """Append atomico (append-mode + lock) di un record audit."""
-    rec = dict(record)
-    rec.setdefault("ts", datetime.now(timezone.utc).isoformat())
-    line = json.dumps(rec, ensure_ascii=False, separators=(",", ":"))
-    with _lock:
-        fp = _current_file()
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        with open(fp, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+    _store.append(record)
 
 
 def iter_records(model=None, language=None, outcome=None,
                  date_from=None, date_to=None):
     """Itera record applicando filtri. date_from/to: ISO date 'YYYY-MM-DD'."""
-    for fp in sorted(_DATA_DIR.glob("gemini_cost_audit_*.jsonl")):
-        try:
-            with open(fp, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if model and rec.get("model_key") != model:
-                        continue
-                    if language and rec.get("language") != language:
-                        continue
-                    if outcome and rec.get("outcome") != outcome:
-                        continue
-                    ts = rec.get("ts", "")
-                    if date_from and ts[:10] < date_from:
-                        continue
-                    if date_to and ts[:10] > date_to:
-                        continue
-                    yield rec
-        except IOError:
-            continue
+    return _store.iter(filters={"model_key": model, "language": language},
+                       outcome=outcome, date_from=date_from, date_to=date_to)
 
 
 def aggregate(model=None, language=None, date_from=None, date_to=None):

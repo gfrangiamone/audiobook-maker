@@ -27,8 +27,6 @@ Configurazione (env):
   ABM_SECTION_MAX_QUESTIONS  cap di domande per libro     (default: 24)
 """
 
-import json
-import os
 from env_utils import env_float as _env_float, env_int as _env_int, env_str
 import time
 from datetime import datetime, timezone
@@ -69,8 +67,7 @@ def mode():
     """`off`, `observe`, `recover` o `on`. Un valore ignoto vale il default,
     non `on`: un errore di battitura nell'unit systemd non deve accendere gli
     scarti."""
-    m = _env("ABM_SECTION_JUDGE_MODE", _DEFAULT_MODE).lower()
-    return m if m in _MODES else _DEFAULT_MODE
+    return sj.mode_from_env("ABM_SECTION_JUDGE_MODE", _MODES, _DEFAULT_MODE)
 
 
 def enabled():
@@ -165,10 +162,7 @@ def _key(sid):
 
 
 def _excerpt(text):
-    t = (text or "").strip()
-    if len(t) <= _EXCERPT_CHARS:
-        return t
-    return t[:_EXCERPT_CHARS].rstrip() + "…"
+    return sj.clip(text, _EXCERPT_CHARS, marker="…")
 
 
 def _body_sampled(s):
@@ -414,14 +408,6 @@ def decide(verdicts, dropped, kept, stats=None):
 # Audit
 # ---------------------------------------------------------------------------
 
-def _audit_path():
-    d = _env("ABM_DATA_DIR")
-    if not d or not os.path.isdir(d):
-        return ""
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    return os.path.join(d, f"section_judge_audit_{month}.jsonl")
-
-
 def write_audit(book, verdicts, dropped, kept, recover, drop, *, elapsed=0.0,
                 stats=None):
     """Riga JSONL per libro: serve a tarare le soglie sui libri veri prima di
@@ -432,8 +418,7 @@ def write_audit(book, verdicts, dropped, kept, recover, drop, *, elapsed=0.0,
     stato fermato dal budget o dal verdetto, e due finestre di misura con
     soglie diverse non si possono confrontare."""
     try:
-        path = _audit_path()
-        if not path or not verdicts:
+        if not verdicts:
             return
         by_id = {s["id"]: s for s in list(dropped or []) + list(kept or [])}
         kept_ids = {s["id"] for s in (kept or [])}
@@ -470,8 +455,7 @@ def write_audit(book, verdicts, dropped, kept, recover, drop, *, elapsed=0.0,
                 for sid, p in sorted(verdicts.items(), key=lambda kv: kv[1])
             ],
         }
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        sj.append_monthly_audit("section_judge_audit", rec, "section_judge")
     except Exception as e:      # noqa: BLE001 - l'audit non ferma un libro
         print(f"[section_judge] audit non scritto: {type(e).__name__}: {e}",
               flush=True)

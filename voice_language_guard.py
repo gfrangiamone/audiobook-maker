@@ -24,8 +24,6 @@ Configurazione (env):
   ABM_VOICELANG_SAMPLE    caratteri del campione    (default: 1500)
 """
 
-import json
-import os
 from i18n import norm_lang as _norm_lang
 from env_utils import env_float as _env_float, env_int as _env_int, env_str
 from datetime import datetime, timezone
@@ -43,8 +41,7 @@ def _env(name, default=""):
 
 def mode():
     """`off`, `observe` o `on`. Un valore ignoto vale il default, non `on`."""
-    m = _env("ABM_VOICELANG_MODE", _DEFAULT_MODE).lower()
-    return m if m in _MODES else _DEFAULT_MODE
+    return sj.mode_from_env("ABM_VOICELANG_MODE", _MODES, _DEFAULT_MODE)
 
 
 def enabled():
@@ -176,21 +173,12 @@ def review(text, voice_lang, declared_lang="", *, timeout=None):
             "language_confidence": float(conf or 0.0)}
 
 
-def _audit_path():
-    d = _env("ABM_DATA_DIR")
-    if not d or not os.path.isdir(d):
-        return ""
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    return os.path.join(d, f"voice_language_audit_{month}.jsonl")
-
-
 def write_audit(probs, voice_lang, declared_lang, mismatch, *, job_id="",
                 voice="", chars=0):
     """Una riga per controllo. Serve a sapere quante volte l'avviso sarebbe
     partito, e su quali lingue, prima di accenderlo davvero."""
     try:
-        path = _audit_path()
-        if not path or not probs:
+        if not probs:
             return
         rec = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -205,8 +193,7 @@ def write_audit(probs, voice_lang, declared_lang, mismatch, *, job_id="",
             "mismatch": bool(mismatch),
             "applied": bool(mismatch) and applies(),
         }
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        sj.append_monthly_audit("voice_language_audit", rec, "voicelang")
     except Exception as e:      # noqa: BLE001 - l'audit non ferma un job
         print(f"[voicelang] audit non scritto: {type(e).__name__}: {e}",
               flush=True)

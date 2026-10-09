@@ -30,8 +30,6 @@ Configurazione (env):
   ABM_TRANSCRIPT_MIN_CHARS   frase piu' corta: nessun giudizio (default: 20)
 """
 
-import json
-import os
 from env_utils import env_float as _env_float, env_int as _env_int, env_str
 from datetime import datetime, timezone
 
@@ -49,8 +47,7 @@ def _env(name, default=""):
 
 def mode():
     """`off`, `observe` o `on`. Un valore ignoto vale il default, non `on`."""
-    m = _env("ABM_TRANSCRIPT_JUDGE_MODE", _DEFAULT_MODE).lower()
-    return m if m in _MODES else _DEFAULT_MODE
+    return sj.mode_from_env("ABM_TRANSCRIPT_JUDGE_MODE", _MODES, _DEFAULT_MODE)
 
 
 def enabled():
@@ -97,8 +94,7 @@ def min_chars():
 # ---------------------------------------------------------------------------
 
 def _clip(text):
-    t = (text or "").strip()
-    return t if len(t) <= _MAX_CHARS else t[:_MAX_CHARS].rstrip() + " [...]"
+    return sj.clip(text, _MAX_CHARS)
 
 
 def _state(expected, heard, cer, lang=""):
@@ -167,12 +163,7 @@ def review(expected, heard, cer, *, lang="", timeout=None):
                   timeout=timeout)
     if resp is None:
         return {}
-    probs = {}
-    for key in questions:
-        p = sj.noul(resp, key)
-        if p is not None:
-            probs[key] = float(p)
-    return probs
+    return sj.probs(resp, questions)
 
 
 def verdict(probs):
@@ -187,22 +178,13 @@ def verdict(probs):
     return same >= min_same() and whole >= min_whole()
 
 
-def _audit_path():
-    d = _env("ABM_DATA_DIR")
-    if not d or not os.path.isdir(d):
-        return ""
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    return os.path.join(d, f"transcript_judge_audit_{month}.jsonl")
-
-
 def write_audit(expected, heard, cer, probs, rescued, *, lang="",
                 client_id=""):
     """Una riga per campione giudicato. E' il dataset con cui decidere se
     accendere `on`: quante letture corrette il CER stava buttando via, e
     quante volte il giudice ha detto di no. Best-effort."""
     try:
-        path = _audit_path()
-        if not path or not probs:
+        if not probs:
             return
         rec = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -216,8 +198,7 @@ def write_audit(expected, heard, cer, probs, rescued, *, lang="",
             "expected": (expected or "")[:200],
             "heard": (heard or "")[:200],
         }
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        sj.append_monthly_audit("transcript_judge_audit", rec, "transcript_judge")
     except Exception as e:      # noqa: BLE001 - l'audit non decide niente
         print(f"[transcript_judge] audit non scritto: "
               f"{type(e).__name__}: {e}", flush=True)

@@ -25,6 +25,8 @@ from env_utils import env_float as _env_float, env_int as _env_int, env_str
 import threading
 import time
 
+from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
+
 # L'SDK e' opzionale: in produzione arriva da requirements.txt, ma l'app deve
 # avviarsi anche senza (installazione parziale, ambiente di test minimale).
 try:
@@ -219,3 +221,62 @@ def reset():
 def sdk_import_error():
     """Messaggio dell'import fallito dell'SDK, vuoto se e' andato a buon fine."""
     return _SDK_IMPORT_ERROR
+
+
+# ---------------------------------------------------------------------------
+# Scheletro comune dei judge (section, translation, transcript, llm_output,
+# voice_language_guard): modo da env, probabilita' per domanda, ritaglio dei
+# testi, audit mensile. Prima ogni modulo ne aveva una copia.
+# ---------------------------------------------------------------------------
+
+def mode_from_env(var, modes, default):
+    """Modo di un judge da `var`: un valore ignoto vale `default`, mai `on`
+    (un errore di battitura nell'unit systemd non deve accendere niente)."""
+    m = _env(var, default).lower()
+    return m if m in modes else default
+
+
+def probs(response, keys):
+    """`{chiave: probabilita'}` per le Noul che hanno risposto; `{}` se la
+    risposta manca. Una domanda senza risposta non compare: il chiamante
+    la tratta come «nessun giudizio», mai come zero."""
+    out = {}
+    if response is None:
+        return out
+    for key in keys:
+        p = noul(response, key)
+        if p is not None:
+            out[key] = float(p)
+    return out
+
+
+def clip(text, head, tail=0, marker=None):
+    """Testo ridotto a `head` caratteri iniziali (+ `tail` finali). Con `tail`
+    il segno di taglio e' su riga propria (`\n[...]\n`), altrimenti in coda
+    (` [...]` o `marker`)."""
+    t = (text or "").strip()
+    if len(t) <= head + tail:
+        return t
+    if tail:
+        return t[:head].rstrip() + (marker or "\n[...]\n") + t[-tail:].lstrip()
+    return t[:head].rstrip() + (" [...]" if marker is None else marker)
+
+
+_audit_stores: dict = {}
+
+
+def append_monthly_audit(prefix, rec, tag=""):
+    """Una riga in `ABM_DATA_DIR/<prefix>_YYYY-MM.jsonl`, solo se la cartella
+    esiste (mai creata). Best-effort: un errore si stampa con `tag` e non
+    si propaga, l'audit non ferma mai un job. Ritorna True se scritto."""
+    try:
+        store = _audit_stores.get(prefix)
+        if store is None:
+            store = _audit_stores[prefix] = _MonthlyJsonl(
+                prefix, lambda: _env("ABM_DATA_DIR") or ".", compact=False, require_dir=True)
+        if not _env("ABM_DATA_DIR"):
+            return False
+        return store.append(rec)
+    except Exception as e:      # noqa: BLE001
+        print(f"[{tag or prefix}] audit non scritto: {type(e).__name__}: {e}", flush=True)
+        return False

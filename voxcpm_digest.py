@@ -31,12 +31,14 @@ from pathlib import Path
 
 import email_layout
 import gemini_cost_audit
+from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 
 # Il marker dell'ultimo giorno gia' riepilogato. Sta su disco e non in
 # memoria perche' un riavvio del server non deve ne' saltare un giorno ne'
 # rispedirlo: il digest arriva una volta sola per giorno, comunque vada il
 # processo.
 _DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "."))
+_code_tagliate = _MonthlyJsonl("voxcpm_code_tagliate", lambda: _DATA_DIR)
 _MARKER = "voxcpm_digest_last.txt"
 
 # Quanti job elencare per esteso. Oltre, la mail diventa un tabulato che
@@ -75,30 +77,16 @@ def da_ascoltare(giorno):
         lista di `{"job_id", "language", "code": [...]}`, dal job con piu'
         code; le code di ogni job in ordine di capitolo e chunk.
     """
-    fp = _DATA_DIR / ("voxcpm_code_tagliate_%s.jsonl" % giorno[:7])
     per_job = {}
-    try:
-        with open(fp, encoding="utf-8") as f:
-            for riga in f:
-                try:
-                    r = json.loads(riga)
-                except ValueError:
-                    continue
-                if not isinstance(r, dict):
-                    continue
-                if str(r.get("ts") or "")[:10] != giorno:
-                    continue
-                if (r.get("outcome") or "") != "completed":
-                    continue
-                if not _probabile_taglio(r):
-                    continue
-                jid = r.get("job_id") or ""
-                job = per_job.setdefault(jid, {
-                    "job_id": jid, "language": r.get("language") or "—",
-                    "code": []})
-                job["code"].append(r)
-    except OSError:
-        return []
+    for r in _code_tagliate.iter(month=giorno[:7], outcome="completed",
+                                 date_from=giorno, date_to=giorno):
+        if not _probabile_taglio(r):
+            continue
+        jid = r.get("job_id") or ""
+        job = per_job.setdefault(jid, {
+            "job_id": jid, "language": r.get("language") or "—",
+            "code": []})
+        job["code"].append(r)
     fuori = list(per_job.values())
     for job in fuori:
         job["code"].sort(key=lambda c: (_intero(c.get("capitolo")),

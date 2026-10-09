@@ -30,6 +30,7 @@ nessuna funzione pubblica solleva mai.
 import json
 import os
 from fileio import atomic_write_text
+from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 import threading
 import time
 from datetime import datetime, timezone
@@ -54,6 +55,7 @@ _FILE_PREFIX = "load_metrics_"
 
 _lock = threading.Lock()
 _data_dir = None          # Path, iniettata da configure()
+_rows = _MonthlyJsonl(_FILE_PREFIX.rstrip("_"), lambda: _data_dir, ascii=True)
 _buckets = {}             # {t_start: bucket} — quello corrente piu' eventuali arretrati
 
 
@@ -196,11 +198,8 @@ def flush(now=None):
             rows = [(t, _serialize(_buckets[t])) for t in ready]
         written = 0
         for t, row in rows:
-            path = Path(_data_dir) / f"{_FILE_PREFIX}{_month_of(t)}.jsonl"
             try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with open(path, "a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(row, separators=(",", ":")) + "\n")
+                _rows.append(row, month=_month_of(t), add_ts=False)
                 written += 1
             except OSError:
                 # Disco pieno o path non scrivibile: il bucket viene comunque

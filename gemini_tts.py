@@ -12,6 +12,7 @@ Scope: synthesis + pricing + usage tracking + preview cap + availability.
 import io
 import os
 from i18n import norm_lang as _norm_lang
+from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 from env_utils import env_bool as _b, env_float as _f, env_int as _i
 import re
 import json
@@ -1806,29 +1807,13 @@ def get_daily_spent_eur():
     if _data_dir is None:
         return 0.0
     today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    month = _current_month()
-    audit_file = _data_dir / f"gemini_cost_audit_{month}.jsonl"
-    if not audit_file.exists():
-        return 0.0
-    spent = 0.0
     try:
-        with audit_file.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ts = rec.get("ts", "")
-                if not ts.startswith(today_iso):
-                    continue
-                spent += float(rec.get("google_cost_eur_actual", 0.0) or 0.0)
+        return sum(float(rec.get("google_cost_eur_actual", 0.0) or 0.0)
+                   for rec in _cost_audit.iter(month=_current_month(),
+                                               date_from=today_iso, date_to=today_iso))
     except Exception as e:
         print(f"[gemini-tts] get_daily_spent_eur failed: {e}")
         return 0.0
-    return spent
 
 
 def preflight_budget_check(estimated_cost_eur):
@@ -1914,6 +1899,9 @@ def get_max_chunk_chars(language):
 
 
 _data_dir = None
+# Lettore dell'audit dei costi (stesso file di gemini_cost_audit) sulla
+# cartella iniettata da configure(), non su ABM_DATA_DIR.
+_cost_audit = _MonthlyJsonl("gemini_cost_audit", lambda: _data_dir)
 _usage_file_path = None
 _usage_lock = threading.Lock()
 _usage_cache = None
