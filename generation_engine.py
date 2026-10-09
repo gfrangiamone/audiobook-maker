@@ -4985,6 +4985,82 @@ def _tts_share_eur(paid_total_eur, llm_eur):
     return round(max(0.0, paid - llm), 2)
 
 
+def _payment_audit_fields(job):
+    """Pagamento del job come lo scrivono i tre audit premium: `charged`,
+    `payment_method`, `payment_source`, `payment_token_short`,
+    `combined_total_eur`.
+
+    Fallback: il flusso auto_generate post-optimize storicamente non
+    impostava job["payment"] (l'unico setter era /api/generate). Per job
+    legacy o path non ancora coperti si accetta come ripiego la cifra
+    registrata da /api/optimize (job["payment_amount_eur"]), scorporata della
+    quota AI nel combinato; nel JSONL l'origine e' marcata
+    payment_source="legacy_fallback" cosi' una doppia copertura resta
+    rintracciabile. Il token e' mascherato: mai il PayPal order_id intero.
+    """
+    payment = job.get("payment") or {}
+    charged = float(payment.get("total_eur", 0) or 0)
+    method = payment.get("method", "") or ""
+    source = payment.get("source", "") or ""
+    token = payment.get("token", "") or ""
+    if charged <= 0:
+        legacy = _tts_share_eur(job.get("payment_amount_eur", 0), payment.get("llm_eur"))
+        if legacy > 0:
+            charged = legacy
+            method = job.get("payment_type", "") or method
+            token = job.get("payment_token", "") or token
+            source = source or "legacy_fallback"
+    token_short = (token[:8] + "...") if len(token) > 12 else token
+    llm_quota = payment.get("llm_eur")
+    combined = (round(charged + float(llm_quota or 0), 4)
+                if llm_quota is not None else round(charged, 4))
+    return {"charged": charged, "payment_method": method, "payment_source": source,
+            "payment_token_short": token_short, "combined_total_eur": combined}
+
+
+def _rate_audit_fields(job):
+    """`rate_pct` e `rate_step` del job: il prezzo proposto scala col fattore
+    di velocita', quindi va tracciato per la calibrazione per rate_step."""
+    rate_raw = job.get("rate", "+0%")
+    return {"rate_pct": int(_parse_rate_pct(rate_raw)), "rate_step": _rate_step(rate_raw)}
+
+
+def _common_audit_tail(rec, job):
+    """Campi condivisi in coda al record: chunk riusati da un tentativo
+    precedente (senza, il costo reale di un job recuperato appare
+    inspiegabilmente sotto stima) e i numeri dell'annullamento."""
+    reused = int(job.get("chunks_reused", 0) or 0)
+    if reused:
+        rec["chunks_reused"] = reused
+    cancel = job.get("cancel_meta")
+    if isinstance(cancel, dict):
+        rec["cancel_paid_eur"] = round(float(cancel.get("paid_eur", 0) or 0), 2)
+        rec["cancel_retained_eur"] = round(float(cancel.get("retained_eur", 0) or 0), 2)
+        rec["cancel_refund_eur"] = round(float(cancel.get("refund_eur", 0) or 0), 2)
+        rec["cancel_progress_pct"] = int(cancel.get("progress_pct", 0) or 0)
+        rec["cancel_partial_audio_delivered"] = bool(cancel.get("partial_audio_delivered", False))
+    return rec
+
+
+def _finish_audit(job_id, job, rec, engine, est, free_thr, *, should_have_been, pay, label):
+    """Chiusura comune: scrive il record, azzera il carry del costo, passa dal
+    rilevatore di anomalie di margine e stampa l'AUDIT WARNING se un job
+    completato sopra soglia gratuita non ha un pagamento registrato (token
+    consumato in un path che non stasha job["payment"], o stima divergente
+    fra frontend e server). L'anomalia si valuta DOPO append_record: l'audit
+    deve esserci anche se l'invio dell'email fallisce."""
+    gemini_cost_audit.append_record(rec)
+    _clear_cost_carry(job_id, engine)
+    _check_margin_anomalies(job_id, job, rec, est, engine, free_thr)
+    if rec.get("outcome") == "completed" and pay["charged"] <= 0.0 and should_have_been > free_thr:
+        print(f"[{job_id}] AUDIT WARNING: completed {label} job sopra soglia "
+              f"({should_have_been:.2f}€) senza pagamento registrato "
+              f"(payment_method={pay['payment_method'] or 'NONE'}, "
+              f"payment_token_in_job={'YES' if job.get('payment_token') else 'NO'}). "
+              f"Possibile bug: token consumato in un path che non stasha "
+              f"job['payment']. Vedi md_files/ttsgemini.md sezione audit.")
+
+
 def _write_gemini_audit(job_id, job, voice_id, language, outcome):
     """Append audit record at end of Gemini job. Best-effort, non-fatal."""
     try:
@@ -4993,37 +5069,8 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         actual = job.get("gemini_actual") or {}
         parts = voice_id.split(":")
         model_key = parts[1] if len(parts) >= 3 else "?"
-        payment = job.get("payment") or {}
-        charged = float(payment.get("total_eur", 0) or 0)
-        payment_method = payment.get("method", "") or ""
-        payment_source = payment.get("source", "") or ""
-        payment_token_full = payment.get("token", "") or ""
-        # Fallback: il flusso auto_generate post-optimize storicamente non
-        # impostava job["payment"] (l'unico setter era /api/generate). Per
-        # job legacy o path non ancora coperti, accettiamo come ripiego la
-        # cifra registrata da /api/optimize (job["payment_amount_eur"]).
-        # Nel JSONL marchiamo l'origine con payment_source="legacy_fallback"
-        # cosi' un'eventuale doppia copertura e' rintracciabile.
-        if charged <= 0:
-            # payment_amount_eur e' il pagato intero: nel combinato la quota
-            # AI va scorporata, altrimenti finirebbe anche nell'audit TTS.
-            _legacy_amt = _tts_share_eur(job.get("payment_amount_eur", 0),
-                                         payment.get("llm_eur"))
-            if _legacy_amt > 0:
-                charged = _legacy_amt
-                payment_method = job.get("payment_type", "") or payment_method
-                payment_token_full = job.get("payment_token", "") or payment_token_full
-                payment_source = payment_source or "legacy_fallback"
-        # Token mascherato per audit (mai esporre il PayPal order_id completo).
-        if payment_token_full:
-            payment_token_short = (payment_token_full[:8] + "..."
-                                   if len(payment_token_full) > 12
-                                   else payment_token_full)
-        else:
-            payment_token_short = ""
-        _llm_quota = payment.get("llm_eur")
-        _combined_total_eur = (round(charged + float(_llm_quota or 0), 4)
-                               if _llm_quota is not None else round(charged, 4))
+        pay = _payment_audit_fields(job)
+        charged = pay["charged"]
         google_cost_actual = float(actual.get("google_cost_eur", 0.0) or 0.0)
         # Fallback su google_cost_actual per job/test legacy che non hanno mai
         # popolato pricing_cost_eur (pre-esistenti a questa correzione): senza
@@ -5055,18 +5102,11 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         # reale (vedi nota sopra su Cloudflare).
         delta_pct = round((delta_eur / pricing_cost_actual * 100), 2) if pricing_cost_actual > 0 else 0.0
         est = job.get("gemini_estimate") or {}
-        # Rate scelto dall'utente: il prezzo proposto scala col fattore di
-        # velocità, quindi va tracciato per consentire calibrazione per
-        # rate_step (vedi recalc-params, raggruppato anche su rate_step).
-        rate_raw = job.get("rate", "+0%")
-        rate_pct_val = int(_parse_rate_pct(rate_raw))
-        rate_step_val = _rate_step(rate_raw)
         rec = {
             "job_id": job_id,
             "model_key": model_key,
             "language": language or "",
-            "rate_pct": rate_pct_val,
-            "rate_step": rate_step_val,
+            **_rate_audit_fields(job),
             "chars_total": int(actual.get("chars", 0) or 0),
             "input_tokens_est": int(est.get("input_tokens_est", 0) or 0),
             "input_tokens_actual": int(actual.get("input_tokens", 0) or 0),
@@ -5088,27 +5128,17 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "delta_eur": delta_eur,
             "delta_pct": delta_pct,
             "margin_eur_actual": round(charged - google_cost_actual, 4),
-            "combined_total_eur": _combined_total_eur,
+            "combined_total_eur": pay["combined_total_eur"],
             "outcome": outcome,
-            "payment_method": payment_method,
-            "payment_token_short": payment_token_short,
-            "payment_source": payment_source,
+            "payment_method": pay["payment_method"],
+            "payment_token_short": pay["payment_token_short"],
+            "payment_source": pay["payment_source"],
         }
-        # Chunk riusati da un tentativo precedente: senza questo campo il costo
-        # provider reale di un job recuperato appare inspiegabilmente sotto stima.
-        _reused_n = int(job.get("chunks_reused", 0) or 0)
-        if _reused_n:
-            rec["chunks_reused"] = _reused_n
-        _cancel_meta = job.get("cancel_meta")
-        if isinstance(_cancel_meta, dict):
-            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
-            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
-            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
-            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
-            rec["cancel_partial_audio_delivered"] = bool(
-                _cancel_meta.get("partial_audio_delivered", False))
-        gemini_cost_audit.append_record(rec)
-        _clear_cost_carry(job_id, "gemini")
+        _common_audit_tail(rec, job)
+        # Stessa soglia del listino (gemini_tts), non una copia dell'env.
+        _free_thr = gemini_tts.FREE_THRESHOLD_EUR if gemini_tts is not None else 0.50
+        _finish_audit(job_id, job, rec, "gemini", est, _free_thr,
+                      should_have_been=should_have_been, pay=pay, label="Gemini")
         # Release atomic budget reservation (cost ora persistito nel JSONL,
         # quindi futuri preflight lo conteranno in `spent` direttamente).
         try:
@@ -5116,26 +5146,6 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             _gtts.release_reservation(job_id)
         except Exception:
             pass
-        # Diagnostica: job completato sopra soglia gratuita senza pagamento
-        # registrato e' sintomo di bug (token consumato in un branch che non
-        # stasha job["payment"], oppure stima divergente fra frontend/server
-        # che salta il branch payment). Stampa WARNING esplicito cosi' la
-        # prossima occorrenza emerge nei log senza dover scavare nel JSONL.
-        # Stessa soglia del listino (gemini_tts), non una copia dell'env.
-        _free_thr = gemini_tts.FREE_THRESHOLD_EUR if gemini_tts is not None else 0.50
-        # Rilevatore a consuntivo su margine e job gratuiti sopra soglia.
-        # Dopo append_record: l'audit deve essere scritto anche se l'invio
-        # dell'email fallisce.
-        _check_margin_anomalies(job_id, job, rec, est, "gemini", _free_thr)
-        if (outcome == "completed"
-                and charged <= 0.0
-                and should_have_been > _free_thr):
-            print(f"[{job_id}] AUDIT WARNING: completed job sopra soglia "
-                  f"({should_have_been:.2f}€) senza pagamento registrato "
-                  f"(payment_method={payment_method or 'NONE'}, "
-                  f"payment_token_in_job={'YES' if job.get('payment_token') else 'NO'}). "
-                  f"Possibile bug: token consumato in un path che non stasha "
-                  f"job['payment']. Vedi md_files/ttsgemini.md sezione audit.")
         # Reconciliation a livello mensile (gemini_tts_usage.json): registra
         # il delta stima/reale per consentire calibrazione del modello di costo.
         # Solo job davvero completati - per i cancel partiali la stima ex-ante
@@ -5254,30 +5264,8 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         model_key = parts[1] if len(parts) >= 3 else getattr(
             speechify_tts, "MODEL_ID", "simba-3.2")
         # --- Pagamento (stessa tasca premium job["payment"] di Gemini) ---
-        payment = job.get("payment") or {}
-        charged = float(payment.get("total_eur", 0) or 0)
-        payment_method = payment.get("method", "") or ""
-        payment_source = payment.get("source", "") or ""
-        payment_token_full = payment.get("token", "") or ""
-        if charged <= 0:
-            # payment_amount_eur e' il pagato intero: nel combinato la quota
-            # AI va scorporata, altrimenti finirebbe anche nell'audit TTS.
-            _legacy_amt = _tts_share_eur(job.get("payment_amount_eur", 0),
-                                         payment.get("llm_eur"))
-            if _legacy_amt > 0:
-                charged = _legacy_amt
-                payment_method = job.get("payment_type", "") or payment_method
-                payment_token_full = job.get("payment_token", "") or payment_token_full
-                payment_source = payment_source or "legacy_fallback"
-        if payment_token_full:
-            payment_token_short = (payment_token_full[:8] + "..."
-                                   if len(payment_token_full) > 12
-                                   else payment_token_full)
-        else:
-            payment_token_short = ""
-        _llm_quota = payment.get("llm_eur")
-        _combined_total_eur = (round(charged + float(_llm_quota or 0), 4)
-                               if _llm_quota is not None else round(charged, 4))
+        pay = _payment_audit_fields(job)
+        charged = pay["charged"]
         # --- Costo provider + prezzo "dovuto" (char-based Simba) ---
         metered_chars = int(actual.get("billable_chars", 0) or 0) or int(
             actual.get("chars", 0) or 0)
@@ -5307,16 +5295,12 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
                     _cost_usd_est * float(pricing_common.usd_eur_rate()), 4)
         except Exception:
             provider_cost_eur_est = 0.0
-        rate_raw = job.get("rate", "+0%")
-        rate_pct_val = int(_parse_rate_pct(rate_raw))
-        rate_step_val = _rate_step(rate_raw)
         rec = {
             "job_id": job_id,
             "provider": "speechify",
             "model_key": model_key,
             "language": language or "",
-            "rate_pct": rate_pct_val,
-            "rate_step": rate_step_val,
+            **_rate_audit_fields(job),
             "chars_total": int(actual.get("chars", 0) or 0),
             "billable_chars": metered_chars,
             "input_tokens_est": 0,
@@ -5332,38 +5316,17 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             "delta_eur": delta_eur,
             "delta_pct": delta_pct,
             "margin_eur_actual": round(charged - provider_cost_eur, 4),
-            "combined_total_eur": _combined_total_eur,
+            "combined_total_eur": pay["combined_total_eur"],
             "outcome": outcome,
-            "payment_method": payment_method,
-            "payment_token_short": payment_token_short,
-            "payment_source": payment_source,
+            "payment_method": pay["payment_method"],
+            "payment_token_short": pay["payment_token_short"],
+            "payment_source": pay["payment_source"],
         }
-        # Chunk riusati da un tentativo precedente: senza questo campo il costo
-        # provider reale di un job recuperato appare inspiegabilmente sotto stima.
-        _reused_n = int(job.get("chunks_reused", 0) or 0)
-        if _reused_n:
-            rec["chunks_reused"] = _reused_n
-        _cancel_meta = job.get("cancel_meta")
-        if isinstance(_cancel_meta, dict):
-            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
-            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
-            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
-            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
-            rec["cancel_partial_audio_delivered"] = bool(
-                _cancel_meta.get("partial_audio_delivered", False))
-        gemini_cost_audit.append_record(rec)
-        _clear_cost_carry(job_id, "speechify")
+        _common_audit_tail(rec, job)
         # Stessa soglia del listino (speechify_tts): la copia locale aveva
         # default 0.40 contro 0.50 e divergeva dal prezzo applicato.
-        _free_thr = speechify_tts.free_threshold_eur()
-        # Rilevatore a consuntivo (mirror del ramo Gemini).
-        _check_margin_anomalies(job_id, job, rec, _spx_est, "speechify", _free_thr)
-        if (outcome == "completed"
-                and charged <= 0.0
-                and should_have_been > _free_thr):
-            print(f"[{job_id}] AUDIT WARNING: completed Speechify job sopra soglia "
-                  f"({should_have_been:.2f}€) senza pagamento registrato "
-                  f"(payment_method={payment_method or 'NONE'}).")
+        _finish_audit(job_id, job, rec, "speechify", _spx_est, speechify_tts.free_threshold_eur(),
+                      should_have_been=should_have_been, pay=pay, label="Speechify")
     except Exception as e:
         print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
 
@@ -5485,27 +5448,8 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             return
         actual = job.get("voxcpm_actual") or {}
         # --- Pagamento: stessa tasca premium job["payment"] degli altri due ---
-        payment = job.get("payment") or {}
-        charged = float(payment.get("total_eur", 0) or 0)
-        payment_method = payment.get("method", "") or ""
-        payment_source = payment.get("source", "") or ""
-        payment_token_full = payment.get("token", "") or ""
-        if charged <= 0:
-            # payment_amount_eur e' il pagato intero: nel combinato la quota
-            # AI va scorporata, altrimenti finirebbe anche nell'audit TTS.
-            _legacy_amt = _tts_share_eur(job.get("payment_amount_eur", 0),
-                                         payment.get("llm_eur"))
-            if _legacy_amt > 0:
-                charged = _legacy_amt
-                payment_method = job.get("payment_type", "") or payment_method
-                payment_token_full = job.get("payment_token", "") or payment_token_full
-                payment_source = payment_source or "legacy_fallback"
-        payment_token_short = ((payment_token_full[:8] + "...")
-                               if len(payment_token_full) > 12
-                               else payment_token_full)
-        _llm_quota = payment.get("llm_eur")
-        _combined_total_eur = (round(charged + float(_llm_quota or 0), 4)
-                               if _llm_quota is not None else round(charged, 4))
+        pay = _payment_audit_fields(job)
+        charged = pay["charged"]
 
         # --- Costo GPU + prezzo "dovuto" sui caratteri effettivamente letti ---
         chars = int(actual.get("chars", 0) or 0)
@@ -5564,9 +5508,6 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         delta_eur = round(should_have_been - charged, 4)
         delta_pct = (round((delta_eur / provider_cost_eur * 100), 2)
                      if provider_cost_eur > 0 else 0.0)
-        rate_raw = job.get("rate", "+0%")
-        rate_pct_val = int(_parse_rate_pct(rate_raw))
-
         # Voce campionata: l'id `vc_...` (mai il token, che e' segreto) e il
         # libro consegnato contato sulla voce per la tab admin.
         voice_clone_id = ""
@@ -5585,8 +5526,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "voice_clone_id": voice_clone_id,
             "model_key": "v2",
             "language": language or "",
-            "rate_pct": rate_pct_val,
-            "rate_step": _rate_step(rate_raw),
+            **_rate_audit_fields(job),
             "chars_total": chars,
             "billable_chars": chars,
             "input_tokens_est": 0,
@@ -5602,11 +5542,11 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "delta_eur": delta_eur,
             "delta_pct": delta_pct,
             "margin_eur_actual": round(charged - provider_cost_eur, 4),
-            "combined_total_eur": _combined_total_eur,
+            "combined_total_eur": pay["combined_total_eur"],
             "outcome": outcome,
-            "payment_method": payment_method,
-            "payment_token_short": payment_token_short,
-            "payment_source": payment_source,
+            "payment_method": pay["payment_method"],
+            "payment_token_short": pay["payment_token_short"],
+            "payment_source": pay["payment_source"],
             # Specifici di VoxCPM: la base per ricalcolare, e la salute del
             # worker (rimbalzi e capitoli rifatti) accanto al costo.
             "gpu_seconds": gpu_seconds,
@@ -5678,31 +5618,12 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "worker_verify_ripetizioni": int(
                 actual.get("verifica_ripetizioni", 0) or 0),
         }
-        _reused_n = int(job.get("chunks_reused", 0) or 0)
-        if _reused_n:
-            rec["chunks_reused"] = _reused_n
-        _cancel_meta = job.get("cancel_meta")
-        if isinstance(_cancel_meta, dict):
-            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
-            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
-            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
-            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
-            rec["cancel_partial_audio_delivered"] = bool(
-                _cancel_meta.get("partial_audio_delivered", False))
-        gemini_cost_audit.append_record(rec)
-        _clear_cost_carry(job_id, "voxcpm")
+        _common_audit_tail(rec, job)
+        _finish_audit(job_id, job, rec, "voxcpm", _vox_est, voxcpm_tts.free_threshold_eur(),
+                      should_have_been=should_have_been, pay=pay, label="VoxCPM")
         # Dopo l'audit e non al posto suo: sono due file con due scopi, e il
         # secondo non deve poter far mancare il primo.
         _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome)
-        _free_thr = voxcpm_tts.free_threshold_eur()
-        # Rilevatore a consuntivo su margine e job gratuiti sopra soglia: il
-        # record VoxCPM usa gli stessi campi di Gemini e Speechify, ma era
-        # l'unico motore a saltarlo.
-        _check_margin_anomalies(job_id, job, rec, _vox_est, "voxcpm", _free_thr)
-        if outcome == "completed" and charged <= 0.0 and should_have_been > _free_thr:
-            print(f"[{job_id}] AUDIT WARNING: completed VoxCPM job sopra soglia "
-                  f"({should_have_been:.2f}€) senza pagamento registrato "
-                  f"(payment_method={payment_method or 'NONE'}).")
     except Exception as e:
         print(f"[{job_id}] voxcpm audit write failed (non-fatal): {e}")
 
