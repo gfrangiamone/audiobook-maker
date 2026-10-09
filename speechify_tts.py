@@ -358,11 +358,21 @@ def _retry_after_seconds(resp, attempt):
 
 
 class _SpeechifyRetry(Exception):
-    """Risposta 429/5xx: si ritenta (porta la response per Retry-After)."""
+    """Tentativo da rifare: risposta 429/5xx (porta la response per
+    Retry-After) oppure errore di rete (`resp` None, backoff)."""
 
-    def __init__(self, resp):
-        super().__init__(f"HTTP {resp.status_code}")
+    def __init__(self, resp, detail=""):
+        super().__init__(f"HTTP {resp.status_code}" if resp is not None else detail)
         self.resp = resp
+
+
+# Errori di trasporto ritentabili dentro `synthesize`: i tipi di `requests`
+# se il pacchetto c'e', altrimenti i timeout/errori socket della stdlib.
+try:
+    import requests as _requests
+    _NET_ERRORS = (_requests.RequestException, TimeoutError, ConnectionError)
+except ImportError:  # pragma: no cover
+    _NET_ERRORS = (TimeoutError, ConnectionError, OSError)
 
 
 def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
@@ -402,13 +412,19 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
     url = API_BASE + (STREAM_ENDPOINT if use_stream else SPEECH_ENDPOINT)
 
     def _once(attempt):
-        with slot():  # gate globale: un permesso per l'intera chiamata
-            resp = session.post(url, json=payload, headers=headers,
-                                timeout=120, stream=use_stream)
-            # In streaming il corpo si scarica solo all'accesso: consumalo DENTRO
-            # lo slot cosi' la call occupa il permesso per header + download audio
-            # (invariante di concorrenza).
-            raw_body = resp.content if (use_stream and resp.status_code == 200) else None
+        try:
+            with slot():  # gate globale: un permesso per l'intera chiamata
+                resp = session.post(url, json=payload, headers=headers,
+                                    timeout=120, stream=use_stream)
+                # In streaming il corpo si scarica solo all'accesso: consumalo
+                # DENTRO lo slot cosi' la call occupa il permesso per header +
+                # download audio (invariante di concorrenza).
+                raw_body = resp.content if (use_stream and resp.status_code == 200) else None
+        except _NET_ERRORS as e:
+            # Rete (timeout di lettura, connessione caduta): si ritenta qui,
+            # nello stesso budget dei 429/5xx. Il wrapper di chunk non
+            # ritenta piu' (prima 3 x 3 = 9 chiamate per chunk).
+            raise _SpeechifyRetry(None, f"{type(e).__name__}: {e}") from e
         if resp.status_code == 200:
             if use_stream:
                 # Streaming: il corpo E' l'audio WAV grezzo (audio_format=wav),
@@ -449,7 +465,8 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
                                  is_retryable=lambda e: isinstance(e, _SpeechifyRetry),
                                  wait=lambda attempt, e: _retry_after_seconds(e.resp, attempt))
     except _SpeechifyRetry as e:
-        raise RuntimeError(f"Speechify synthesis failed after {max_attempts} attempts: {e}") from None
+        raise RuntimeError(f"Speechify synthesis failed after {max_attempts} attempts: {e}") from (
+            e.__cause__ if e.resp is None else None)
 
 
 def estimate_book_cost(chapters, language="en"):

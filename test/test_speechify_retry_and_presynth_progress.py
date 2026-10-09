@@ -4,6 +4,10 @@ Incidente 2026-08-31 (job 1dxCX/2Mzs): (a) durante la pre-sintesi parallela il
 job restava a 0% per 35-40 minuti senza alcun aggiornamento; (b) un
 `Read timed out` non veniva ritentato (max_retries=1) e il chunk PREMIUM pagato
 veniva sostituito da 1 s di silenzio.
+
+D2 passo 5 (2026-10-09): il retry sugli errori di rete vive dentro
+`speechify_tts.synthesize` (stesso budget dei 429/5xx); il wrapper di chunk
+fa un solo giro (prima 3 x 3 = 9 chiamate HTTP per chunk).
 """
 import pathlib
 
@@ -21,44 +25,77 @@ def _ok_result(text):
             "channels": 1, "billable_chars": len(text), "voice_name": "wyatt_32"}
 
 
+class _FlakySession:
+    """Finto requests.Session: solleva o restituisce gli elementi della coda."""
+    def __init__(self, items):
+        self._items = list(items)
+        self.calls = []
+
+    def post(self, url, json=None, headers=None, timeout=None, stream=False):
+        self.calls.append(1)
+        item = self._items.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _no_sleep_retry(monkeypatch):
+    """retry_call senza attese reali (il default `sleep=time.sleep` e' legato alla def)."""
+    import retry_util
+    real = retry_util.retry_call
+    monkeypatch.setattr(retry_util, "retry_call",
+                        lambda fn, **kw: real(fn, **{**kw, "sleep": lambda s: None}))
+
+
+def _spy_synthesize(monkeypatch, sess, wrapper_calls):
+    real = speechify_tts.synthesize
+
+    def _spy(text, voice_id, output_path, emotion=None, rate="+0%", **kw):
+        wrapper_calls.append(1)
+        return real(text, voice_id, output_path, emotion=emotion, rate=rate, session=sess)
+
+    monkeypatch.setattr("speechify_tts.synthesize", _spy)
+
+
 def test_generate_chunk_speechify_retries_on_network_error(monkeypatch, tmp_path):
-    calls = []
-
-    def _flaky(text, voice_id, output_path, emotion=None, rate="+0%", **kw):
-        calls.append(1)
-        if len(calls) < 3:
-            raise ConnectionError("HTTPSConnectionPool(host='api.speechify.ai'): Read timed out.")
-        with open(output_path, "wb") as fp:
-            fp.write(b"\x00\x00")
-        return _ok_result(text)
-
-    monkeypatch.setattr("speechify_tts.synthesize", _flaky)
-    monkeypatch.setattr(tts_split.time, "sleep", lambda s: None)
+    """Due timeout di rete poi una risposta buona: il chunk riesce con 3 POST
+    dentro synthesize e un solo giro del wrapper."""
+    import base64
+    from test.test_speechify_synthesize import _Resp, _make_wav_bytes
+    monkeypatch.setenv("ABM_SPEECHIFY_API_KEY", "k")
+    monkeypatch.setattr(speechify_tts, "use_stream_api", lambda: False)
+    _no_sleep_retry(monkeypatch)
+    ok = _Resp(200, {"audio_data": base64.b64encode(_make_wav_bytes()).decode(),
+                     "billable_characters_count": 11})
+    sess = _FlakySession([ConnectionError("HTTPSConnectionPool(host='api.speechify.ai'): Read timed out."),
+                          ConnectionError("Read timed out."), ok])
+    wrapper_calls = []
+    _spy_synthesize(monkeypatch, sess, wrapper_calls)
     out = tmp_path / "c.pcm"
     fi = {}
     res = tts_split.generate_chunk_pcm_speechify(
         "Hello world", "speechify:simba-3.2:wyatt_32", str(out), failure_info=fi)
-    assert len(calls) == 3
-    assert res["success"] is True
+    assert len(sess.calls) == 3 and len(wrapper_calls) == 1
+    assert res["success"] is True and res["billable_chars"] == 11
     assert fi == {}
 
 
 def test_generate_chunk_speechify_silence_after_all_retries(monkeypatch, tmp_path):
-    calls = []
-
-    def _always_timeout(*a, **k):
-        calls.append(1)
-        raise ConnectionError("Read timed out.")
-
-    monkeypatch.setattr("speechify_tts.synthesize", _always_timeout)
-    monkeypatch.setattr(tts_split.time, "sleep", lambda s: None)
+    """Rete sempre giu': 3 POST dentro synthesize, poi il wrapper consegna il
+    silenzio e annota failure_info (nessun secondo livello di retry)."""
+    monkeypatch.setenv("ABM_SPEECHIFY_API_KEY", "k")
+    monkeypatch.setattr(speechify_tts, "use_stream_api", lambda: False)
+    _no_sleep_retry(monkeypatch)
+    sess = _FlakySession([ConnectionError("Read timed out.")] * 3)
+    wrapper_calls = []
+    _spy_synthesize(monkeypatch, sess, wrapper_calls)
     out = tmp_path / "c.pcm"
     fi = {}
     res = tts_split.generate_chunk_pcm_speechify(
         "Hello world", "speechify:simba-3.2:wyatt_32", str(out), failure_info=fi)
     assert res is False
-    assert len(calls) >= 3
-    assert fi["reason"] == "synthesize_failed"
+    assert len(sess.calls) == 3 and len(wrapper_calls) == 1
+    assert fi["reason"] == "synthesize_failed" and "Read timed out" in fi["detail"]
     assert out.exists()
 
 

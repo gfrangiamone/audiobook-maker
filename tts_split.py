@@ -1478,7 +1478,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
 
 def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
-                                 rate="+0%", max_retries=3, failure_info=None):
+                                 rate="+0%", max_retries=1, failure_info=None):
     """Genera PCM 16-bit mono da testo via Speechify Simba-3.2 con fallback silenzio.
 
     SpeechifyUnavailable viene ri-sollevata (errore permanente: silenziarlo
@@ -1509,10 +1509,9 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
               f"({len(clean)} chars: \"{snippet}...\"): {e}")
 
     try:
-        # Errori di rete (Read timed out, ConnectionError...) e retry HTTP
-        # esauriti in synthesize: si ritenta con backoff. Prima
-        # (max_retries=1) un singolo timeout sostituiva un chunk PREMIUM
-        # pagato con 1 s di silenzio.
+        # I ritentativi (rete, 429, 5xx, Retry-After) vivono tutti dentro
+        # `speechify_tts.synthesize`: qui un solo giro (D2 passo 5, prima 3 x 3
+        # = 9 chiamate HTTP per chunk). `max_retries` resta per i test.
         return _retry.retry_call(
             lambda _a: _spx.synthesize(clean, voice_id, output_path,
                                        emotion=emotion, rate=rate),

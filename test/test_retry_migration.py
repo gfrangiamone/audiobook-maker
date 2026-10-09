@@ -1,9 +1,10 @@
 """D2b: i loop dei motori su retry_util conservano tentativi e backoff.
 
 Il numero di chiamate di rete per chunk resta quello di prima della
-migrazione (gate del piano, passo 4): Speechify 3 tentativi HTTP dentro
-`synthesize` x 3 del wrapper di chunk, VoxCPM 8 sottomissioni, push FCM 3,
-offload cloud 3.
+migrazione (gate del piano, passo 4), salvo Speechify dove D2 passo 5
+(decisione 2026-10-09) ha tolto il retry annidato: 3 tentativi (HTTP e
+rete) dentro `synthesize`, 1 solo giro del wrapper di chunk (prima 3 x 3 =
+9 chiamate). VoxCPM 8 sottomissioni, push FCM 3, offload cloud 3.
 """
 import types
 
@@ -42,6 +43,48 @@ def test_speechify_synthesize_three_http_attempts_and_retry_after(monkeypatch, t
     assert len(posts) == 1                                          # 4xx: nessun retry
 
 
+def test_speechify_synthesize_retries_network_errors_too(monkeypatch, tmp_path):
+    """D2 passo 5: timeout e connessioni cadute si ritentano dentro synthesize
+    (stesso budget dei 429/5xx), con la causa originale nella catena."""
+    import speechify_tts as spx
+    monkeypatch.setattr(spx, "is_available", lambda: True)
+    monkeypatch.setattr(spx, "api_key", lambda: "k")
+    monkeypatch.setattr(spx, "use_stream_api", lambda: False)
+    waits, posts = [], []
+    monkeypatch.setattr(spx._retry, "retry_call",
+                        lambda fn, **kw: _retry_recording(fn, kw, waits))
+
+    def timed_out(*a, **k):
+        posts.append(1)
+        raise ConnectionError("Read timed out")
+
+    session = types.SimpleNamespace(post=timed_out)
+    with pytest.raises(RuntimeError, match="after 3 attempts: ConnectionError: Read timed out") as ei:
+        spx.synthesize("ciao", "speechify:simba-3.2:harper_32", str(tmp_path / "o.pcm"), session=session)
+    assert len(posts) == 3 and waits == [1.0, 2.0]
+    assert isinstance(ei.value.__cause__, ConnectionError)
+    posts.clear(); waits.clear()
+    seq = iter([ConnectionError("reset"), _Resp(503, {"Retry-After": "0.5"})])
+
+    def flaky(*a, **k):
+        posts.append(1)
+        item = next(seq, None)
+        if isinstance(item, Exception):
+            raise item
+        if item is not None:
+            return item
+        r = _Resp(200)
+        r.content = b"RIFF" + b"\x00" * 60
+        return r
+
+    session = types.SimpleNamespace(post=flaky)
+    try:
+        spx.synthesize("ciao", "speechify:simba-3.2:harper_32", str(tmp_path / "o.pcm"), session=session)
+    except Exception as e:                      # il corpo finto puo' non decodificarsi: conta il numero di POST
+        assert "after 3 attempts" not in str(e)
+    assert len(posts) == 3 and waits == [1.0, 0.5]
+
+
 import retry_util as _ru
 
 _REAL_RETRY_CALL = _ru.retry_call      # i moduli importano lo stesso oggetto modulo: si patcha quello
@@ -53,20 +96,26 @@ def _retry_recording(fn, kw, waits):
     return _REAL_RETRY_CALL(fn, **kw)
 
 
-def test_speechify_chunk_wrapper_three_attempts_over_synthesize(monkeypatch, tmp_path):
+def test_speechify_chunk_wrapper_single_pass_over_synthesize(monkeypatch, tmp_path):
+    """D2 passo 5: il wrapper di chunk non ritenta (i retry vivono in synthesize);
+    `max_retries` resta per chi vuole piu' giri."""
     import tts_split, speechify_tts as spx
     calls = []
 
     def boom(*a, **k):
         calls.append(1)
-        raise RuntimeError("Read timed out")
+        raise RuntimeError("Speechify synthesis failed after 3 attempts: ConnectionError: Read timed out")
 
     monkeypatch.setattr(spx, "synthesize", boom)
     monkeypatch.setattr(tts_split._retry, "retry_call",
                         lambda fn, **kw: _retry_recording(fn, kw, []))
     out = tts_split.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
                                                  str(tmp_path / "c.pcm"))
-    assert len(calls) == 3 and not (isinstance(out, dict) and out.get("success"))
+    assert len(calls) == 1 and not (isinstance(out, dict) and out.get("success"))
+    calls.clear()
+    out = tts_split.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
+                                                 str(tmp_path / "c.pcm"), max_retries=3)
+    assert len(calls) == 3                                                           # esplicito: come prima
     calls.clear()
 
     def fatal(*a, **k):
