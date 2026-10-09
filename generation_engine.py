@@ -5972,29 +5972,87 @@ def _write_premium_audit(job_id, job, voice, info, outcome, engine):
         print(f"[{job_id}] {engine} audit failed (non-fatal): {e}")
 
 
-def _premium_job_failed(job_id, job, voice, info, e, engine):
-    """Job premium Speechify/VoxCPM caduto con un'eccezione: audit, rimborso
-    integrale (ottimizzazione AI compresa), email + push all'utente, allerta
-    admin, descrittore pending marcato failed. Ogni passo e' non-fatale."""
-    _write_premium_audit(job_id, job, voice, info, "failed_refunded", engine)
+def _premium_fail(job_id, job, voice, info, engine, outcome, refund_reason, *,
+                  kind="generic", reason_detail="", notify_reason=None, failure_kind=None,
+                  is_quota=True, pay=True, chunks_total=None, chunks_failed=None, notify=None):
+    """Chiusura unica di un job premium fallito (E1d2, 2026-10-09): audit del
+    motore (`outcome`), rimborso integrale sulla tasca job["payment"]
+    (ottimizzazione AI compresa, `refund_reason`), email + push all'utente
+    (copy Gemini per Gemini: `notify_reason`/`failure_kind`/`is_quota`; copy
+    premium con il buono per Speechify e VoxCPM), allerta admin (`kind`,
+    `reason_detail`, conteggi chunk), descrittore pending marcato `outcome`.
+    Ogni passo e' non-fatale e non blocca i successivi. `pay=False` (job
+    gratuito): niente rimborso ne' email utente, resta l'allerta admin.
+    `notify(refund)` sostituisce l'avviso utente standard (preflight: email
+    di sovraccarico con il tempo di attesa). Prima ogni uscita (eccezione, quota/budget, qualita', tutti i chunk
+    falliti, nessun output) rifaceva la sequenza a modo suo, e su nessun
+    output / tutti i chunk falliti Speechify e VoxCPM non avvisavano ne'
+    utente ne' admin. Ritorna l'esito del rimborso (o None)."""
+    _write_premium_audit(job_id, job, voice, info, outcome, engine)
     refund = None
-    try:
-        refund = _refund_gemini_payment(job_id, job, f"failed: {e}")
-    except Exception as _ref_err:
-        print(f"[{job_id}] {engine} refund failed (non-fatal): {_ref_err}")
-    try:
-        _notify_user_premium_job_failed(job_id, job, refund)
-    except Exception as _notif_err:
-        print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+    if pay:
+        try:
+            refund = _refund_gemini_payment(job_id, job, refund_reason)
+        except Exception as _ref_err:
+            print(f"[{job_id}] {engine} refund failed (non-fatal): {_ref_err}")
+        try:
+            if notify is not None:
+                notify(refund)
+            elif engine == "gemini":
+                _notify_user_gemini_job_failed(job_id, job, notify_reason or refund_reason,
+                                               is_quota=is_quota, failure_kind=failure_kind)
+            else:
+                _notify_user_premium_job_failed(job_id, job, refund)
+        except Exception as _notif_err:
+            print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
     try:
         _admin_alert_gemini_failure(
-            job_id, job, kind="generic",
-            audit_outcome="failed_refunded",
-            reason_detail=f"{engine} {type(e).__name__}: {str(e)[:300]}",
+            job_id, job, kind=kind, audit_outcome=outcome, reason_detail=reason_detail,
+            chunks_total=chunks_total, chunks_failed=chunks_failed,
         )
     except Exception as _al_err:
         print(f"[{job_id}] Admin alert failed (non-fatal): {_al_err}")
-    _mark_pending_failed(job_id, "failed_refunded")
+    _mark_pending_failed(job_id, outcome)
+    return refund
+
+
+def _notify_user_preflight_blocked(job_id, job, info, pf):
+    """Email di sovraccarico (con tempo di attesa e buono) a chi ha pagato un
+    job Gemini bloccato dal preflight di budget. Destinatario: email del
+    pagamento (voucher o PayPal). Non-fatal (chiamata da `_premium_fail`)."""
+    payment_meta = job.get("payment") or {}
+    amt = float(payment_meta.get("total_eur", 0) or 0)
+    amt += float(job.get("refund_llm_eur", 0) or 0)
+    method = payment_meta.get("method", "")
+    tok = payment_meta.get("token")
+    _email_to = ""
+    try:
+        if method == "voucher" and tok:
+            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+            _email_to = v.get("email", "") or ""
+        elif method == "paypal" and tok:
+            pay = payment._payments.get(tok, {})
+            _email_to = pay.get("email", "") or ""
+    except Exception:
+        _email_to = ""
+    try:
+        _book_title = getattr(info, "title", "") or job.get("original_filename", "")
+    except Exception:
+        _book_title = job.get("original_filename", "")
+    if _email_to and amt > 0:
+        email_service._send_gemini_overload_email(
+            _email_to, amt, _book_title,
+            voucher_code=job.get("refund_voucher_code"),
+            retry_after_sec=(pf or {}).get("retry_after_sec", 0),
+            lang=job.get("browser_lang") or job.get("notify_lang") or "it",
+        )
+
+
+def _premium_job_failed(job_id, job, voice, info, e, engine):
+    """Job premium Speechify/VoxCPM caduto con un'eccezione: `_premium_fail`
+    con esito `failed_refunded`."""
+    return _premium_fail(job_id, job, voice, info, engine, "failed_refunded", f"failed: {e}",
+                         reason_detail=f"{engine} {type(e).__name__}: {str(e)[:300]}")
 
 
 def _gemini_quality_refund(job_id, job, voice, info, failed_chunks, total_chunks, early=False):
@@ -6032,24 +6090,11 @@ def _gemini_quality_refund(job_id, job, voice, info, failed_chunks, total_chunks
     print(f"[{job_id}] Gemini job FAILED for quality "
           f"({failed_chunks}/{_tot}={_ratio:.1%}){_tag} -> "
           f"{'no charge (free job)' if _is_free else 'full refund triggered'}.")
-    _write_premium_audit(job_id, job, voice, info, _outcome, "gemini")
-    if not _is_free:
-        try:
-            _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot}")
-        except Exception as _ref_err:
-            print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-        try:
-            _notify_user_gemini_job_failed(job_id, job, "quality_failed",
-                                           failure_kind="quality")
-        except Exception as _notif_err:
-            print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
-    _admin_alert_gemini_failure(
-        job_id, job, kind="quality",
-        audit_outcome=_outcome,
-        reason_detail=f"{failed_chunks}/{_tot} chunk silenziati ({_ratio:.1%}){_tag}",
-        chunks_total=_tot, chunks_failed=failed_chunks,
-    )
-    _mark_pending_failed(job_id, _outcome)
+    _premium_fail(job_id, job, voice, info, "gemini", _outcome,
+                  f"quality_failed: {failed_chunks}/{_tot}", kind="quality", pay=not _is_free,
+                  notify_reason="quality_failed", failure_kind="quality",
+                  reason_detail=f"{failed_chunks}/{_tot} chunk silenziati ({_ratio:.1%}){_tag}",
+                  chunks_total=_tot, chunks_failed=failed_chunks)
 
 
 def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info):
@@ -6749,54 +6794,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     "retry_after_sec": _pf.get("retry_after_sec"),
                 }
                 _set_job_status(job, "error")
-                _write_premium_audit(job_id, job, voice, info, "preflight_blocked_refunded", "gemini")
-                # Refund
-                _refund_info = None
-                try:
-                    _refund_info = _refund_gemini_payment(
-                        job_id, job, f"preflight_block: {_reason}",
-                    )
-                except Exception as _ref_err:
-                    print(f"[{job_id}] Preflight refund failed (non-fatal): {_ref_err}")
-                # Notifica utente (overload copy)
-                try:
-                    payment_meta = job.get("payment") or {}
-                    amt = float(payment_meta.get("total_eur", 0) or 0)
-                    amt += float(job.get("refund_llm_eur", 0) or 0)
-                    method = payment_meta.get("method", "")
-                    tok = payment_meta.get("token")
-                    _email_to = ""
-                    try:
-                        if method == "voucher" and tok:
-                            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
-                            _email_to = v.get("email", "") or ""
-                        elif method == "paypal" and tok:
-                            pay = payment._payments.get(tok, {})
-                            _email_to = pay.get("email", "") or ""
-                    except Exception:
-                        _email_to = ""
-                    _book_title = ""
-                    try:
-                        _book_title = getattr(info, "title", "") or job.get("original_filename", "")
-                    except Exception:
-                        _book_title = job.get("original_filename", "")
-                    if _email_to and amt > 0:
-                        email_service._send_gemini_overload_email(
-                            _email_to, amt, _book_title,
-                            voucher_code=job.get("refund_voucher_code"),
-                            retry_after_sec=_pf.get("retry_after_sec", 0),
-                            lang=job.get("browser_lang") or job.get("notify_lang") or "it",
-                        )
-                except Exception as _notif_err:
-                    print(f"[{job_id}] Preflight user notification failed (non-fatal): {_notif_err}")
-                # Admin alert
-                _admin_alert_gemini_failure(
-                    job_id, job, kind="preflight",
-                    audit_outcome="preflight_blocked_refunded",
-                    reason_detail=_reason,
-                    chunks_total=total_chunks,
-                )
-                _mark_pending_failed(job_id, "preflight_blocked_refunded")
+                # Audit, rimborso, email di sovraccarico, allerta admin, pending.
+                _premium_fail(job_id, job, voice, info, "gemini", "preflight_blocked_refunded",
+                              f"preflight_block: {_reason}", kind="preflight", reason_detail=_reason,
+                              chunks_total=total_chunks,
+                              notify=lambda refund: _notify_user_preflight_blocked(job_id, job, info, _pf))
                 return
 
         job["progress_current"] = 1
@@ -7729,20 +7731,21 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["user_facing_error"] = _user_msg
             print(f"[{job_id}] ALL CHUNKS FAILED ({failed_chunks}/{_tot_chunks_safe}) "
                   f"engine={engine} -> error + refund, nessuna consegna.")
+            if use_speechify or use_voxcpm:
+                # Motore premium: il pagamento vive in job["payment"] (stessa
+                # tasca di Gemini); chiusura unica con audit, rimborso, avvisi
+                # a utente e admin, pending (prima: solo rimborso e audit).
+                _premium_fail(job_id, job, voice, info, _premium_engine(False, use_speechify, use_voxcpm),
+                              "failed_all_chunks_refunded",
+                              f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}",
+                              reason_detail=f"all chunks failed ({failed_chunks}/{_tot_chunks_safe})",
+                              chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks)
+                return
             try:
-                # Speechify e VoxCPM sono engine premium: il pagamento vive in
-                # job["payment"] (stessa tasca di Gemini) e va rimborsato via
-                # _refund_gemini_payment. _refund_job_payment tratta la tasca
-                # LLM (payment_amount_eur) e sarebbe la tasca sbagliata.
-                if use_speechify or use_voxcpm:
-                    _refund_gemini_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
-                else:
-                    _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
+                # Edge: tasca LLM (payment_amount_eur), non job["payment"].
+                _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
             except Exception as _ref_err:
                 print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-            if use_speechify or use_voxcpm:
-                _write_premium_audit(job_id, job, voice, info, "failed_all_chunks_refunded",
-                                     _premium_engine(False, use_speechify, use_voxcpm))
             _mark_pending_failed(job_id, "failed_all_chunks_refunded")
             return
 
@@ -7775,41 +7778,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] EMPTY OUTPUT after assembly "
                   f"(failed_chunks={failed_chunks}, output_format={output_format}, "
                   f"m4b_failed={job.get('m4b_failed')}) -> error + refund.")
-            _write_premium_audit(job_id, job, voice, info, "failed_no_output_refunded",
-                                 _premium_engine(use_gemini, use_speechify, use_voxcpm))
-            if use_gemini:
-                try:
-                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
-                except Exception as _ref_err:
-                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-                try:
-                    _notify_user_gemini_job_failed(job_id, job, "no_output",
-                                                   failure_kind="generic")
-                except Exception as _notif_err:
-                    print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
-                try:
-                    _admin_alert_gemini_failure(
-                        job_id, job, kind="generic",
-                        audit_outcome="failed_no_output_refunded",
-                        reason_detail="empty output after assembly (disk full / ffmpeg error)",
-                        chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks,
-                    )
-                except Exception:
-                    pass
-            elif use_speechify or use_voxcpm:
-                # Premium: rimborso sulla tasca job["payment"] (come Gemini).
-                # DIVERGENZA nota (piano E1d): Gemini notifica utente e admin,
-                # Speechify e VoxCPM solo audit + rimborso; unificare e' un
-                # cambio di comportamento da collaudare in sandbox.
-                try:
-                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
-                except Exception as _ref_err:
-                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-            else:
-                try:
-                    _refund_job_payment(job_id, job, "no_output")
-                except Exception as _ref_err:
-                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            _eng = _premium_engine(use_gemini, use_speechify, use_voxcpm)
+            if _eng:
+                # Premium: tasca job["payment"]; dal 2026-10-09 anche Speechify
+                # e VoxCPM avvisano utente e admin (prima solo audit + rimborso).
+                _premium_fail(job_id, job, voice, info, _eng, "failed_no_output_refunded",
+                              "no_output: assembly failed", notify_reason="no_output",
+                              failure_kind="generic",
+                              reason_detail="empty output after assembly (disk full / ffmpeg error)",
+                              chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks)
+                return
+            try:
+                _refund_job_payment(job_id, job, "no_output")
+            except Exception as _ref_err:
+                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_no_output_refunded")
             return
 
@@ -8094,34 +8076,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                              "gia' emesso automaticamente.")
             job["error"] = _user_msg
             job["user_facing_error"] = _user_msg
-            _write_premium_audit(job_id, job, voice, info,
-                                 "failed_quota_refunded" if _is_quota else "failed_budget_refunded",
-                                 "gemini")
+            _outcome = "failed_quota_refunded" if _is_quota else "failed_budget_refunded"
             print(f"[{job_id}] Gemini job FAILED for {pause_reason} "
                   f"(retry_after={retry_after}s) -> full refund triggered.")
-            try:
-                _refund_gemini_payment(job_id, job,
-                                       f"quota_exhausted: {pause_reason}"
-                                       if _is_quota
-                                       else f"budget_exceeded: {pause_reason}")
-            except Exception as _ref_err:
-                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-            # Notifica esplicita all'utente che ha pagato il job (oltre al
-            # voucher gia' inviato per PayPal da _refund_gemini_payment).
-            try:
-                _notify_user_gemini_job_failed(job_id, job, pause_reason,
-                                               is_quota=_is_quota)
-            except Exception as _notif_err:
-                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
-            _admin_alert_gemini_failure(
-                job_id, job,
-                kind="quota" if _is_quota else "budget",
-                audit_outcome="failed_quota_refunded" if _is_quota
-                              else "failed_budget_refunded",
-                reason_detail=f"{pause_reason} | retry_after={retry_after}s | {str(e)[:200]}",
-            )
-            _mark_pending_failed(job_id, "failed_quota_refunded" if _is_quota
-                                 else "failed_budget_refunded")
+            # Rimborso, poi notifica esplicita all'utente che ha pagato (oltre
+            # al voucher gia' inviato per PayPal da _refund_gemini_payment).
+            _premium_fail(job_id, job, voice, info, "gemini", _outcome,
+                          f"quota_exhausted: {pause_reason}" if _is_quota
+                          else f"budget_exceeded: {pause_reason}",
+                          kind="quota" if _is_quota else "budget", is_quota=_is_quota,
+                          notify_reason=pause_reason,
+                          reason_detail=f"{pause_reason} | retry_after={retry_after}s | {str(e)[:200]}")
             import traceback
             traceback.print_exc()
             return
@@ -8152,21 +8117,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["user_facing_error"] = _user_msg
             print(f"[{job_id}] ASSEMBLY FAILED -> error + refund, nessuna consegna: {e}")
         if use_gemini:
-            _write_premium_audit(job_id, job, voice, info, "failed_refunded", "gemini")
-            # F3: Refund the user payment (voucher or paypal) for failed Gemini job
-            _refund_gemini_payment(job_id, job, f"failed: {e}")
-            # Notifica utente con copy "qualita'" (errore generico, parziale non consegnabile)
-            try:
-                _notify_user_gemini_job_failed(job_id, job, f"generic_error: {e}",
-                                               failure_kind="quality")
-            except Exception as _notif_err:
-                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
-            _admin_alert_gemini_failure(
-                job_id, job, kind="generic",
-                audit_outcome="failed_refunded",
-                reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
-            )
-            _mark_pending_failed(job_id, "failed_refunded")
+            # Copy utente "qualita'" (errore generico, parziale non consegnabile).
+            _premium_fail(job_id, job, voice, info, "gemini", "failed_refunded", f"failed: {e}",
+                          notify_reason=f"generic_error: {e}", failure_kind="quality",
+                          reason_detail=f"{type(e).__name__}: {str(e)[:300]}")
         if use_speechify:
             _premium_job_failed(job_id, job, voice, info, e, "speechify")
         if use_voxcpm:

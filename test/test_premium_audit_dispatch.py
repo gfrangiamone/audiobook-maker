@@ -35,7 +35,8 @@ def test_exit_paths_use_the_dispatcher():
     src = inspect.getsource(ge.run_generation)
     for writer in ("_write_gemini_audit(", "_write_speechify_audit(", "_write_voxcpm_audit("):
         assert writer not in src, writer
-    assert src.count("_write_premium_audit(") >= 6
+    assert src.count("_write_premium_audit(") + src.count("_premium_fail(") >= 6
+    assert "_write_premium_audit(" in inspect.getsource(ge._premium_fail)
     for fn in (ge._premium_job_failed, ge._gemini_quality_refund):
         s = inspect.getsource(fn)
-        assert "_write_premium_audit(" in s and "_write_voxcpm_audit(" not in s and "_write_gemini_audit(" not in s
+        assert "_premium_fail(" in s and "_write_voxcpm_audit(" not in s and "_write_gemini_audit(" not in s
