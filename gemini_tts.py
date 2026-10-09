@@ -1665,17 +1665,13 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
     """
     model_key, _, voice_name = parse_voice_id(voice_id)
 
-    # Normalizziamo ogni capitolo separatamente per evitare che whitespace/newline
-    # gonfino il conteggio caratteri rispetto a word_count*split() usato altrove.
-    chars_per_chapter = []
-    chars_total = 0
-    normalized_parts = []
-    for ch in chapters:
-        txt = getattr(ch, "text", "") or ""
-        norm = _normalize_text(txt)
-        chars_per_chapter.append(len(norm))
-        chars_total += len(norm)
-        normalized_parts.append(norm)
+    # Caratteri letti e fatturati: titolo parlato + corpo, normalizzati per
+    # capitolo (whitespace/newline non gonfiano il conteggio). Dal 2026-10-09
+    # i titoli entrano anche qui, come su VoxCPM: contano nei token stimati
+    # e quindi nel prezzo (pricing_common.billable_text).
+    from tts_split import spoken_title_prefix
+    chars_per_chapter, chars_total, normalized_parts = _pricing.billable_chars(
+        chapters, spoken_title_prefix, normalize=_normalize_text)
 
     combined = " ".join(normalized_parts)
     input_tokens = estimate_input_tokens(combined, language)

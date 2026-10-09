@@ -60,3 +60,26 @@ def free_result(gross_eur, threshold_eur):
         "is_free": is_free,
         "free_threshold_eur": threshold_eur,
     }
+
+
+def billable_text(ch, title_prefix=None, normalize=None):
+    """Il testo che la voce legge per il capitolo `ch`, e che quindi si
+    fattura: il titolo parlato che il piano antepone (`title_prefix(ch,
+    text)`, separatore compreso) piu' il corpo. `normalize` (es. la
+    normalizzazione Gemini) si applica a entrambi. "" per un capitolo
+    senza testo. Unica regola per Gemini, Speechify e VoxCPM: prima i titoli
+    letti erano fatturati solo su VoxCPM (un libro da 402 capitoli ne leggeva
+    ~15 mila caratteri gratis)."""
+    text = getattr(ch, "text", "") or ""
+    if not text:
+        return ""
+    prefix = title_prefix(ch, text) if title_prefix else ""
+    spoken = prefix + text
+    return normalize(spoken) if normalize else spoken
+
+
+def billable_chars(chapters, title_prefix=None, normalize=None):
+    """(caratteri per capitolo, totale, testi fatturati) su `billable_text`."""
+    texts = [billable_text(ch, title_prefix, normalize) for ch in chapters]
+    per = [len(t) for t in texts]
+    return per, sum(per), texts

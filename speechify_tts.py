@@ -470,19 +470,17 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
 
 
 def estimate_book_cost(chapters, language="en"):
-    """Stima costo end-to-end su caratteri di input (somma capitoli).
+    """Stima costo end-to-end sui caratteri letti (corpo + titolo parlato
+    di ogni capitolo, `pricing_common.billable_text`: dal 2026-10-09 come
+    VoxCPM; prima i titoli non erano fatturati).
 
     Args:
-        chapters: lista di oggetti con attributo `.text`.
+        chapters: lista di oggetti con attributo `.text` (e `.title`).
         language: ISO 639-1 (solo 'en' supportato; parametro per simmetria).
     """
-    chars_per_chapter = []
-    chars_total = 0
-    for ch in chapters:
-        txt = getattr(ch, "text", "") or ""
-        n = len(txt)
-        chars_per_chapter.append(n)
-        chars_total += n
+    from tts_split import spoken_title_prefix
+
+    chars_per_chapter, chars_total, _ = _pricing.billable_chars(chapters, spoken_title_prefix)
     price = compute_user_price_eur(chars_total)
     return {
         "chars_total": chars_total,

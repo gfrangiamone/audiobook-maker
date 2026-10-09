@@ -18,6 +18,7 @@ import collections
 import json
 import logging
 import retry_util as _retry
+import pricing_common
 import os
 from i18n import norm_lang as _norm_lang
 from voice_utils import clone_token as _clone_token, parse_rate_pct as _parse_rate_pct
@@ -343,15 +344,7 @@ def estimate_book_cost(chapters, language="it"):
     """
     from tts_split import spoken_title_prefix
 
-    chars_per_chapter = []
-    chars_total = 0
-    for ch in chapters:
-        testo = getattr(ch, "text", "") or ""
-        n = len(testo)
-        if testo:
-            n += len(spoken_title_prefix(ch, testo))
-        chars_per_chapter.append(n)
-        chars_total += n
+    chars_per_chapter, chars_total, _ = pricing_common.billable_chars(chapters, spoken_title_prefix)
     price = compute_user_price_eur(chars_total, language)
     return {
         "chars_total": chars_total,
