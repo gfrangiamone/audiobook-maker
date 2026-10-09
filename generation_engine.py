@@ -5954,16 +5954,37 @@ def _early_abort_params():
     return ratio, max(1, min_chunks)
 
 
+# Writer di audit per motore premium: un posto solo invece di una scala
+# if/elif in ogni punto di uscita (completato, tutti i chunk falliti, nessun
+# output, annullato, eccezione).
+# Nomi, non funzioni: risolti a ogni chiamata nel modulo, cosi' i test che
+# sostituiscono `_write_voxcpm_audit` & co. vengono visti anche da qui.
+_PREMIUM_AUDIT = {"gemini": "_write_gemini_audit", "speechify": "_write_speechify_audit",
+                  "voxcpm": "_write_voxcpm_audit"}
+
+
+def _premium_engine(use_gemini, use_speechify, use_voxcpm):
+    """Nome del motore premium in uso, o "" per Edge/Google."""
+    return "gemini" if use_gemini else "speechify" if use_speechify else "voxcpm" if use_voxcpm else ""
+
+
+def _write_premium_audit(job_id, job, voice, info, outcome, engine):
+    """Scrive l'audit del motore premium `engine` (no-op per "" ), mai fatale:
+    l'audit non deve fermare rimborso e notifiche che seguono."""
+    writer = globals().get(_PREMIUM_AUDIT.get(engine, ""))
+    if writer is None:
+        return
+    try:
+        writer(job_id, job, voice, _audit_language(job, info), outcome)
+    except Exception as e:      # noqa: BLE001
+        print(f"[{job_id}] {engine} audit failed (non-fatal): {e}")
+
+
 def _premium_job_failed(job_id, job, voice, info, e, engine):
     """Job premium Speechify/VoxCPM caduto con un'eccezione: audit, rimborso
     integrale (ottimizzazione AI compresa), email + push all'utente, allerta
     admin, descrittore pending marcato failed. Ogni passo e' non-fatale."""
-    audit = (_write_voxcpm_audit if engine == "voxcpm"
-             else _write_speechify_audit)
-    try:
-        audit(job_id, job, voice, _audit_language(job, info), "failed_refunded")
-    except Exception:
-        pass
+    _write_premium_audit(job_id, job, voice, info, "failed_refunded", engine)
     refund = None
     try:
         refund = _refund_gemini_payment(job_id, job, f"failed: {e}")
@@ -6019,11 +6040,7 @@ def _gemini_quality_refund(job_id, job, voice, info, failed_chunks, total_chunks
     print(f"[{job_id}] Gemini job FAILED for quality "
           f"({failed_chunks}/{_tot}={_ratio:.1%}){_tag} -> "
           f"{'no charge (free job)' if _is_free else 'full refund triggered'}.")
-    try:
-        _write_gemini_audit(job_id, job, voice, _audit_language(job, info),
-                            _outcome)
-    except Exception:
-        pass
+    _write_premium_audit(job_id, job, voice, info, _outcome, "gemini")
     if not _is_free:
         try:
             _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot}")
@@ -6406,12 +6423,8 @@ def _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_
     except Exception as e:
         print(f"[{job_id}] cloud offload spawn error: {e}", flush=True)
 
-    if use_gemini:
-        _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
-    elif use_speechify:
-        _write_speechify_audit(job_id, job, voice, _audit_language(job, info), "completed")
-    elif use_voxcpm:
-        _write_voxcpm_audit(job_id, job, voice, _audit_language(job, info), "completed")
+    _write_premium_audit(job_id, job, voice, info, "completed",
+                         _premium_engine(use_gemini, use_speechify, use_voxcpm))
 
     # Send push notification to mobile devices
     if _send_push:
@@ -6744,13 +6757,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     "retry_after_sec": _pf.get("retry_after_sec"),
                 }
                 _set_job_status(job, "error")
-                # Audit
-                try:
-                    _write_gemini_audit(job_id, job, voice,
-                                        _audit_language(job, info),
-                                        "preflight_blocked_refunded")
-                except Exception:
-                    pass
+                _write_premium_audit(job_id, job, voice, info, "preflight_blocked_refunded", "gemini")
                 # Refund
                 _refund_info = None
                 try:
@@ -7741,20 +7748,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
             except Exception as _ref_err:
                 print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-            if use_speechify:
-                try:
-                    _write_speechify_audit(job_id, job, voice,
-                                           _audit_language(job, info),
-                                           "failed_all_chunks_refunded")
-                except Exception:
-                    pass
-            if use_voxcpm:
-                try:
-                    _write_voxcpm_audit(job_id, job, voice,
-                                        _audit_language(job, info),
-                                        "failed_all_chunks_refunded")
-                except Exception:
-                    pass
+            if use_speechify or use_voxcpm:
+                _write_premium_audit(job_id, job, voice, info, "failed_all_chunks_refunded",
+                                     _premium_engine(False, use_speechify, use_voxcpm))
             _mark_pending_failed(job_id, "failed_all_chunks_refunded")
             return
 
@@ -7787,13 +7783,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] EMPTY OUTPUT after assembly "
                   f"(failed_chunks={failed_chunks}, output_format={output_format}, "
                   f"m4b_failed={job.get('m4b_failed')}) -> error + refund.")
+            _write_premium_audit(job_id, job, voice, info, "failed_no_output_refunded",
+                                 _premium_engine(use_gemini, use_speechify, use_voxcpm))
             if use_gemini:
-                try:
-                    _write_gemini_audit(job_id, job, voice,
-                                        _audit_language(job, info),
-                                        "failed_no_output_refunded")
-                except Exception:
-                    pass
                 try:
                     _refund_gemini_payment(job_id, job, "no_output: assembly failed")
                 except Exception as _ref_err:
@@ -7812,26 +7804,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     )
                 except Exception:
                     pass
-            elif use_speechify:
+            elif use_speechify or use_voxcpm:
                 # Premium: rimborso sulla tasca job["payment"] (come Gemini).
-                try:
-                    _write_speechify_audit(job_id, job, voice,
-                                           _audit_language(job, info),
-                                           "failed_no_output_refunded")
-                except Exception:
-                    pass
-                try:
-                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
-                except Exception as _ref_err:
-                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-            elif use_voxcpm:
-                # Premium: rimborso sulla tasca job["payment"], come Speechify.
-                try:
-                    _write_voxcpm_audit(job_id, job, voice,
-                                        _audit_language(job, info),
-                                        "failed_no_output_refunded")
-                except Exception:
-                    pass
+                # DIVERGENZA nota (piano E1d): Gemini notifica utente e admin,
+                # Speechify e VoxCPM solo audit + rimborso; unificare e' un
+                # cambio di comportamento da collaudare in sandbox.
                 try:
                     _refund_gemini_payment(job_id, job, "no_output: assembly failed")
                 except Exception as _ref_err:
@@ -7977,8 +7954,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 }
 
                 outcome = "cancelled_partial" if retained > 0 else "cancelled_refunded"
-                _write_gemini_audit(job_id, job, voice,
-                                    _audit_language(job, info), outcome)
+                _write_premium_audit(job_id, job, voice, info, outcome, "gemini")
 
                 refund_result = _refund_gemini_payment(
                     job_id, job, "cancelled", retained_eur=retained)
@@ -8007,47 +7983,24 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         print(f"[{job_id}] cancel partial email failed: {e}")
             except Exception as cancel_err:
                 print(f"[{job_id}] Cancel partial flow error (fallback to legacy): {cancel_err}")
-                try:
-                    _write_gemini_audit(job_id, job, voice,
-                                        _audit_language(job, info),
-                                        "cancelled_refunded")
-                except Exception:
-                    pass
+                _write_premium_audit(job_id, job, voice, info, "cancelled_refunded", "gemini")
                 try:
                     _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
                 except Exception:
                     pass
         elif use_gemini and not still_current:
             print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
-        elif use_speechify and still_current:
-            # Cancel volontario di un job Speechify pagato: rimborso INTEGRALE
-            # (nessuna retention parziale; l'audio parziale non viene consegnato
-            # per questo engine). Tasca premium job["payment"] come Gemini.
-            # _refund_gemini_payment e' no-op se il job non era pagato.
-            try:
-                _write_speechify_audit(job_id, job, voice,
-                                       _audit_language(job, info),
-                                       "cancelled_refunded")
-            except Exception:
-                pass
+        elif (use_speechify or use_voxcpm) and still_current:
+            # Cancel volontario di un job Speechify/VoxCPM pagato: rimborso
+            # INTEGRALE (nessuna retention parziale; l'audio parziale non viene
+            # consegnato per questi motori). Tasca premium job["payment"] come
+            # Gemini. _refund_gemini_payment e' no-op se il job non era pagato.
+            _engine = _premium_engine(False, use_speechify, use_voxcpm)
+            _write_premium_audit(job_id, job, voice, info, "cancelled_refunded", _engine)
             try:
                 _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
             except Exception as _ref_err:
-                print(f"[{job_id}] Speechify cancel refund failed (non-fatal): {_ref_err}")
-        elif use_voxcpm and still_current:
-            # Cancel volontario di un job VoxCPM pagato: rimborso INTEGRALE,
-            # stessa tasca premium job["payment"] di Gemini/Speechify.
-            # _refund_gemini_payment e' no-op se il job non era pagato.
-            try:
-                _write_voxcpm_audit(job_id, job, voice,
-                                    _audit_language(job, info),
-                                    "cancelled_refunded")
-            except Exception:
-                pass
-            try:
-                _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
-            except Exception as _ref_err:
-                print(f"[{job_id}] VoxCPM cancel refund failed (non-fatal): {_ref_err}")
+                print(f"[{job_id}] {_engine} cancel refund failed (non-fatal): {_ref_err}")
 
         if still_current:
             # Cancel volontario = job concluso per il batch: senza questo mark
@@ -8149,13 +8102,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                              "gia' emesso automaticamente.")
             job["error"] = _user_msg
             job["user_facing_error"] = _user_msg
-            try:
-                _write_gemini_audit(job_id, job, voice,
-                                    _audit_language(job, info),
-                                    "failed_quota_refunded" if _is_quota
-                                    else "failed_budget_refunded")
-            except Exception:
-                pass
+            _write_premium_audit(job_id, job, voice, info,
+                                 "failed_quota_refunded" if _is_quota else "failed_budget_refunded",
+                                 "gemini")
             print(f"[{job_id}] Gemini job FAILED for {pause_reason} "
                   f"(retry_after={retry_after}s) -> full refund triggered.")
             try:
@@ -8220,7 +8169,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["user_facing_error"] = _user_msg
             print(f"[{job_id}] ASSEMBLY FAILED -> error + refund, nessuna consegna: {e}")
         if use_gemini:
-            _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "failed_refunded")
+            _write_premium_audit(job_id, job, voice, info, "failed_refunded", "gemini")
             # F3: Refund the user payment (voucher or paypal) for failed Gemini job
             _refund_gemini_payment(job_id, job, f"failed: {e}")
             # Notifica utente con copy "qualita'" (errore generico, parziale non consegnabile)
