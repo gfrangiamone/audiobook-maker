@@ -40,7 +40,7 @@ def live_jobs():
 def test_requires_admin_auth(client, live_jobs):
     with patch.object(app, "_admin_auth_ok", return_value=False):
         r = client.get("/api/admin/jobs_progress?ids=gen1")
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 def test_one_request_returns_every_requested_job(client, live_jobs):

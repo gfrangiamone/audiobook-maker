@@ -136,7 +136,7 @@ def test_giorno_senza_sessioni_vuoto(logdir):
 
 
 def test_giorno_richiede_admin(logdir):
-    assert _get(f"/admin/log-activity/day?ym={YM}&day=2026-08-01", auth=False).status_code == 403
+    assert _get(f"/admin/log-activity/day?ym={YM}&day=2026-08-01", auth=False).status_code == 401
 
 
 @pytest.mark.parametrize("qs", [

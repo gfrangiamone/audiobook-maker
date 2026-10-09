@@ -19,7 +19,7 @@ def client(tmp_path):
 def test_requires_admin_auth(client):
     with patch.object(app, "_admin_auth_ok", return_value=False):
         r = client.get("/api/admin/load_stats?window=24h")
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 def test_returns_all_sections(client):

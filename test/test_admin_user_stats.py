@@ -267,7 +267,7 @@ def test_endpoint_richiede_auth_admin(tmp_path, monkeypatch):
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", tmp_path)
     with patch("audiobook_app._admin_auth_ok", return_value=False):
         r = audiobook_app.app.test_client().get("/api/admin/user_stats?ym=2026-08")
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 @pytest.mark.parametrize("ym", ["", "2026-13", "2026-8", "agosto", "../../etc/passwd",

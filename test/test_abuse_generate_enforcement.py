@@ -375,7 +375,7 @@ def test_admin_clear_endpoint(env, client, monkeypatch):
     g = _abuse_verdict([CID])
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-test")
     r = client.post(f"/admin/api/abuse/clear/{g}")
-    assert r.status_code == 403 and aw.verdict_for(g) is not None
+    assert r.status_code == 401 and aw.verdict_for(g) is not None      # guardia admin unificata (E2a)
     r = client.post(f"/admin/api/abuse/clear/{g}", headers={"X-Admin-Token": "tok-test"})
     assert r.status_code == 200 and r.get_json() == {"ok": True, "group": g, "cleared": True}
     assert aw.verdict_for(g) is None
@@ -401,9 +401,9 @@ def test_admin_clear_endpoint_rejects_invalid_group(env, client, monkeypatch):
     r = client.post("/admin/api/abuse/clear/not-a-group",
                      headers={"X-Admin-Token": "tok-test"})
     assert r.status_code == 400 and r.get_json() == {"error": "invalid group"}
-    # senza token: 403 prima ancora della validazione del formato
+    # senza token: 401 prima ancora della validazione del formato
     r = client.post("/admin/api/abuse/clear/net:%0Aforged")
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 def test_admin_clear_endpoint_accepts_raw_cid_group(env, client, monkeypatch):
