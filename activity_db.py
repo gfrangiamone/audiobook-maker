@@ -10,6 +10,7 @@ Le righe entrano ed escono come tuple di 9 stringhe nell'ordine di
 activity_log.Row (FIELDS): questo modulo non importa activity_log.
 """
 import sqlite3
+import db
 import time
 from pathlib import Path
 from typing import cast
@@ -79,19 +80,7 @@ _MIGRATIONS = (
 # --------------------------------------------------------------- connessioni
 
 def _migrate(conn, name, statements):
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        done = conn.execute("SELECT 1 FROM schema_migrations WHERE name = ?",
-                            (name,)).fetchone()
-        if done is None:
-            for s in statements:
-                conn.execute(s)
-            conn.execute("INSERT INTO schema_migrations (name, applied_at) "
-                         "VALUES (?, ?)", (name, int(time.time())))
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    conn.execute("COMMIT")
+    return db.apply_migration(conn, name, statements)
 
 
 def connect(path, busy_ms=2000):
@@ -103,11 +92,7 @@ def connect(path, busy_ms=2000):
     conn = sqlite3.connect(str(path), check_same_thread=False,
                            isolation_level=None, timeout=busy_ms / 1000.0)
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute(f"PRAGMA busy_timeout={int(busy_ms)}")
-        conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations "
-                     "(name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)")
+        db.configure_connection(conn, busy_ms=busy_ms, foreign_keys=False)
         for name, statements in _MIGRATIONS:
             _migrate(conn, name, statements)
     except BaseException:
@@ -123,10 +108,7 @@ def reader(path):
     `mode=ro`, non `rw` + query_only: chiudendosi come ultima connessione
     (script lanciato a servizio fermo) una connessione rw fa il checkpoint
     del WAL dentro il DB, cioe' scrive."""
-    uri = Path(path).resolve().as_uri() + "?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=2.0)
-    conn.execute("PRAGMA query_only=1")
-    return conn
+    return db.open_readonly(path)
 
 
 # --------------------------------------------------------------- mappatura

@@ -34,14 +34,12 @@ import hashlib
 import json
 import os
 from client_identity import ip_salt as _ip_salt, norm_email as _norm_email, salted_hash as _salted_hash
-import threading
 import time
-from datetime import datetime
 from pathlib import Path
 
 from fileio import atomic_write_json, data_dir, load_json
+from monthly_ledger import MonthlyLedger, month_key
 
-_lock = threading.RLock()
 _KEEP_MONTHS = 3
 _IDS_KEEP_DAYS = 120  # retention dei legami installazione->identita di quota
 _ANON = "_anon"
@@ -57,7 +55,7 @@ def _quota_file():
 
 
 def _month():
-    return datetime.now().strftime("%Y-%m")
+    return month_key()
 
 
 def limit_chars():
@@ -225,48 +223,30 @@ def _norm_client(client_id):
     return _resolve(_load_ids(), cid)
 
 
+# Libro mastro {"YYYY-MM": {chiave: {"chars": n, "jobs": {job: n}, "gated": n}}}:
+# lock, riparazione dello schema, idempotenza per job e potatura a 3 mesi in
+# monthly_ledger; qui alias device, chiavi `mail:`, cap e policy.
+_LEDGER = MonthlyLedger(_quota_file, "chars", cast=int, keep_months=_KEEP_MONTHS,
+                        month_fn=lambda: _month())
+_lock = _LEDGER.lock
+
+
 def _load():
-    return load_json(_quota_file(), {})
+    return _LEDGER.load()
 
 
 def _save(d):
-    for old in sorted(d.keys())[:-_KEEP_MONTHS]:
-        d.pop(old, None)
-    try:
-        atomic_write_json(_quota_file(), d)
-    except Exception:
-        pass
+    _LEDGER.save(d)
 
 
 def _bucket(d, cid, create=False):
     """Bucket del client nel mese corrente (schema riparato se corrotto)."""
-    month = _month()
-    if not isinstance(d.get(month), dict):
-        if not create:
-            return None
-        d[month] = {}
-    month_bucket = d[month]
-    if not isinstance(month_bucket.get(cid), dict):
-        if not create:
-            return None
-        month_bucket[cid] = {"chars": 0, "jobs": {}}
-    b = month_bucket[cid]
-    if not isinstance(b.get("jobs"), dict):
-        b["jobs"] = {}
-    try:
-        b["chars"] = max(0, int(b.get("chars", 0) or 0))
-    except (TypeError, ValueError):
-        b["chars"] = 0
-    return b
+    return _LEDGER.bucket(d, cid, create)
 
 
 def _used_key(key):
     """Caratteri del mese corrente sotto una chiave grezza (cid canonico o `mail:`)."""
-    if not key:
-        return 0
-    with _lock:
-        b = _bucket(_load(), key)
-    return int(b["chars"]) if b else 0
+    return int(_LEDGER.used(key)) if key else 0
 
 
 def used_chars(client_id):
@@ -275,12 +255,7 @@ def used_chars(client_id):
 
 
 def _job_charged_key(key, job_id):
-    jid = (job_id or "").strip()
-    if not jid or not key:
-        return False
-    with _lock:
-        b = _bucket(_load(), key)
-    return bool(b) and jid in b["jobs"]
+    return bool(key) and _LEDGER.job_charged(key, job_id)
 
 
 def job_charged(client_id, job_id):
@@ -291,15 +266,11 @@ def job_charged(client_id, job_id):
 
 def _consume_into(d, key, amount, jid, gated):
     """Somma su una chiave grezza. Caller sotto `_lock`, con `d` da salvare."""
-    b = _bucket(d, key, create=True)
-    if jid and jid in b["jobs"]:
-        return b["chars"]
-    b["chars"] += amount
-    if jid:
-        b["jobs"][jid] = amount
-    if gated:
+    total, charged_now = _LEDGER.charge(d, key, amount, jid)
+    if charged_now and gated:
+        b = _bucket(d, key)
         b["gated"] = int(b.get("gated", 0) or 0) + 1
-    return b["chars"]
+    return total
 
 
 def consume(client_id, chars, job_id, gated=False, email=""):
@@ -329,15 +300,7 @@ def consume(client_id, chars, job_id, gated=False, email=""):
 
 def _refund_from(d, key, jid):
     """Storna `jid` da una chiave grezza. Caller sotto `_lock`."""
-    b = _bucket(d, key)
-    if not b or jid not in b["jobs"]:
-        return 0
-    try:
-        amount = max(0, int(b["jobs"].pop(jid) or 0))
-    except (TypeError, ValueError):
-        amount = 0
-    b["chars"] = max(0, b["chars"] - amount)
-    return amount
+    return _LEDGER.uncharge(d, key, jid)
 
 
 def refund(client_id, job_id, email=""):

@@ -26,6 +26,7 @@ from i18n import norm_lang as _norm_lang, pick as _i18n_pick
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 import llm_client
 import retry_util as _retry
+import pricing_common
 import llm_client
 import llm_client
 from env_utils import env_bool as _env_bool, env_float as _env_float, env_int as _env_int, env_str as _env_str
@@ -5222,7 +5223,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         try:
             price = speechify_tts.compute_user_price_eur(metered_chars)
             provider_cost_eur = float(price.get("cost_usd", 0.0) or 0.0) * float(
-                speechify_tts.usd_eur_rate())
+                pricing_common.usd_eur_rate())
             should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
         except Exception:
             provider_cost_eur = 0.0
@@ -5240,7 +5241,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             _cost_usd_est = float(_spx_est.get("cost_usd", 0.0) or 0.0)
             if _cost_usd_est > 0:
                 provider_cost_eur_est = round(
-                    _cost_usd_est * float(speechify_tts.usd_eur_rate()), 4)
+                    _cost_usd_est * float(pricing_common.usd_eur_rate()), 4)
         except Exception:
             provider_cost_eur_est = 0.0
         rate_raw = job.get("rate", "+0%")
@@ -5478,7 +5479,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             gpu_seconds = float(fattura.get("gpu_seconds", 0.0) or 0.0)
         try:
             provider_cost_eur = round(
-                cost_usd * float(speechify_tts.usd_eur_rate()), 4)
+                cost_usd * float(pricing_common.usd_eur_rate()), 4)
         except Exception:
             provider_cost_eur = 0.0
 
@@ -5493,7 +5494,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             _cost_usd_est = float(_vox_est.get("cost_usd", 0.0) or 0.0)
             if _cost_usd_est > 0:
                 provider_cost_eur_est = round(
-                    _cost_usd_est * float(speechify_tts.usd_eur_rate()), 4)
+                    _cost_usd_est * float(pricing_common.usd_eur_rate()), 4)
         except Exception:
             provider_cost_eur_est = 0.0
 

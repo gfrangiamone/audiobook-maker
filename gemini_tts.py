@@ -11,6 +11,7 @@ Scope: synthesis + pricing + usage tracking + preview cap + availability.
 
 import io
 import os
+import pricing_common as _pricing
 import retry_util as _retry
 from i18n import norm_lang as _norm_lang
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
@@ -930,7 +931,7 @@ def _trip_to_vertex(model_key, *, reason, detail, job_id):
             f"non e' configurato: nessun backend Gemini disponibile")
 
 
-USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
+USD_EUR_RATE = _pricing.usd_eur_rate()
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 PAYPAL_PERCENT_FEE = _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
 FREE_THRESHOLD_EUR = _f("ABM_GEMINI_FREE_THRESHOLD_EUR", 0.50)
@@ -1637,22 +1638,15 @@ def compute_user_price_eur(google_cost_eur, model_key):
 
     margin_pct = get_margin_percent(model_key)
     base_eur = google_cost_eur * (1.0 + margin_pct / 100.0)
-    paypal_factor = 1.0 - (PAYPAL_PERCENT_FEE / 100.0)
-    if paypal_factor <= 0:
-        raise ValueError("PAYPAL_PERCENT_FEE >= 100, invalid config")
-    gross = (base_eur + PAYPAL_FIXED_FEE_EUR) / paypal_factor
-    user_price = round(gross, 2)
-    is_free = user_price < FREE_THRESHOLD_EUR
+    gross = _pricing.paypal_gross_up(base_eur, fixed_fee_eur=PAYPAL_FIXED_FEE_EUR,
+                                     percent_fee=PAYPAL_PERCENT_FEE)
     return {
         "google_cost_eur": round(google_cost_eur, 4),
         "margin_percent": margin_pct,
         "base_price_eur": round(base_eur, 4),
-        "user_price_eur": 0.0 if is_free else user_price,
-        "list_price_eur": user_price,
-        "is_free": is_free,
+        **_pricing.free_result(gross, FREE_THRESHOLD_EUR),
         "paypal_fixed_fee_eur": PAYPAL_FIXED_FEE_EUR,
         "paypal_percent_fee": PAYPAL_PERCENT_FEE,
-        "free_threshold_eur": FREE_THRESHOLD_EUR,
     }
 
 

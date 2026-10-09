@@ -18,6 +18,7 @@ Dipende solo dalla stdlib, da os.environ e dal modulo foglia community_store
 
 import json
 import os
+import pricing_common
 from ratelimit import lockout_record as _lockout_record, lockout_remaining as _lockout_remaining, sliding_check as _sliding_check, window_record as _window_record
 from client_identity import norm_email as _norm_email
 import shutil
@@ -75,8 +76,7 @@ EUR_CLONED_VOICE = float(os.environ.get("ABM_EUR_CLONED_VOICE", "5.00").replace(
 # Accettano virgola decimale.
 LLM_COST_USD_PER_MTOK = float(
     os.environ.get("ABM_LLM_COST_USD_PER_MTOK", "0.18").replace(",", "."))
-USD_EUR_RATE = float(
-    os.environ.get("ABM_GEMINI_USD_EUR_RATE", "0.86").replace(",", "."))
+USD_EUR_RATE = pricing_common.usd_eur_rate()
 # Traduzione libro: €/M caratteri input e costo minimo (floor sul totale,
 # applicato solo quando si paga). Accettano virgola decimale.
 TRANSLATE_RATE_EUR_PER_MCHAR = float(

@@ -74,6 +74,7 @@ File di stato: <data_dir>/_tts_backend_state.json
 import json
 import math
 import os
+import pricing_common
 import fileio
 from env_utils import env_float as _f_env
 import threading
@@ -842,10 +843,7 @@ def usd_eur_rate():
     Un valore <= 0 o non numerico e' inutilizzabile (dividerebbe per zero
     nella migrazione): degrada al default invece di sollevare.
     """
-    rate = _f_env("ABM_GEMINI_USD_EUR_RATE", 0.86)
-    if not rate or rate <= 0:
-        return 0.86
-    return rate
+    return pricing_common.usd_eur_rate()
 
 
 def to_eur(usd):

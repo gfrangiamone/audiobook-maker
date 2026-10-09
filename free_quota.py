@@ -13,14 +13,12 @@ import hashlib
 import json
 import os
 from env_utils import env_float as _env_float
-import threading
-from datetime import datetime
 from pathlib import Path
 
-from fileio import atomic_write_json, data_dir, load_json
+from fileio import data_dir
+from monthly_ledger import MonthlyLedger, month_key
 from voice_utils import is_speechify_voice, is_voxcpm_voice
 
-_lock = threading.RLock()
 _KEEP_MONTHS = 3
 _ANON = "_anon"
 
@@ -32,7 +30,15 @@ def _quota_file():
 
 
 def _month():
-    return datetime.now().strftime("%Y-%m")
+    return month_key()
+
+
+# Libro mastro {"YYYY-MM": {cid: {"eur": n, "jobs": {job: n}}}}: lock,
+# riparazione dello schema, idempotenza per job e potatura a 3 mesi stanno
+# in monthly_ledger; qui restano la policy (soglie, floor, cap) e le API.
+_LEDGER = MonthlyLedger(_quota_file, "eur", cast=float, keep_months=_KEEP_MONTHS,
+                        round_to=4, month_fn=lambda: _month())
+_lock = _LEDGER.lock
 
 
 def limit_eur():
@@ -53,26 +59,12 @@ def _norm_client(client_id):
 
 
 def _load():
-    return load_json(_quota_file(), {})
+    return _LEDGER.load()
 
 
 def used_eur(client_id):
     """Valore di listino gia' regalato al client nel mese corrente."""
-    with _lock:
-        d = _load()
-    month = _month()
-    # Valida schema: mese deve mappare a dict
-    month_data = d.get(month)
-    if not isinstance(month_data, dict):
-        return 0.0
-    bucket = month_data.get(_norm_client(client_id)) or {}
-    # Valida schema: client deve mappare a dict
-    if not isinstance(bucket, dict):
-        return 0.0
-    try:
-        return float(bucket.get("eur", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+    return float(_LEDGER.used(_norm_client(client_id)))
 
 
 def consume(client_id, eur, job_id):
@@ -80,44 +72,7 @@ def consume(client_id, eur, job_id):
 
     Ritorna il totale del mese dopo l'operazione.
     """
-    cid = _norm_client(client_id)
-    jid = (job_id or "").strip()
-    try:
-        amount = max(0.0, float(eur or 0.0))
-    except (TypeError, ValueError):
-        amount = 0.0
-    with _lock:
-        d = _load()
-        month = _month()
-        # Ripara schema corrotto: mese deve essere dict
-        if not isinstance(d.get(month), dict):
-            d[month] = {}
-        # Ripara schema corrotto: client deve essere dict
-        month_bucket = d[month]
-        if not isinstance(month_bucket.get(cid), dict):
-            month_bucket[cid] = {"eur": 0.0, "jobs": {}}
-        bucket = month_bucket[cid]
-        # Ripara schema corrotto: jobs deve essere dict
-        if not isinstance(bucket.get("jobs"), dict):
-            bucket["jobs"] = {}
-        jobs = bucket["jobs"]
-        try:
-            current = float(bucket.get("eur", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            current = 0.0
-        if jid and jid in jobs:
-            return current
-        current = round(current + amount, 4)
-        bucket["eur"] = current
-        if jid:
-            jobs[jid] = round(amount, 4)
-        for old in sorted(d.keys())[:-_KEEP_MONTHS]:
-            d.pop(old, None)
-        try:
-            atomic_write_json(_quota_file(), d)
-        except Exception:
-            pass
-        return current
+    return _LEDGER.consume(_norm_client(client_id), eur, job_id)
 
 
 def charge_key(job_id, voice_id, chapter_indexes=None):
@@ -149,19 +104,7 @@ def job_charged(client_id, job_id):
     ricalcolare `used + list` produrrebbe un 402 che chiede denaro per un
     credito gia' speso.
     """
-    jid = (job_id or "").strip()
-    if not jid:
-        return False
-    with _lock:
-        d = _load()
-    month_data = d.get(_month())
-    if not isinstance(month_data, dict):
-        return False
-    bucket = month_data.get(_norm_client(client_id))
-    if not isinstance(bucket, dict):
-        return False
-    jobs = bucket.get("jobs")
-    return isinstance(jobs, dict) and jid in jobs
+    return _LEDGER.job_charged(_norm_client(client_id), job_id)
 
 
 def snapshot(client_id):

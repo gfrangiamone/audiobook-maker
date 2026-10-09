@@ -33,7 +33,7 @@
   "generation_engine.py": 9,
   "load_metrics.py": 5,
   "output_reuse.py": 1,
-  "payment.py": 22,
+  "payment.py": 21,
   "push_service.py": 1,
   "secure_archive.py": 3,
   "speechify_tts.py": 1,

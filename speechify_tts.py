@@ -15,6 +15,7 @@ import os
 from env_utils import env_bool as _b, env_float as _f, env_int as _i
 import threading
 import time
+import pricing_common as _pricing
 import retry_util as _retry
 import wave
 
@@ -198,16 +199,9 @@ def chunk_max_chars():
 
 
 # Costanti condivise con Gemini (stesse env per non divergere sui prezzi).
-def usd_eur_rate():
-    return _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
-
-
-def paypal_fixed_fee_eur():
-    return _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
-
-
-def paypal_percent_fee():
-    return _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
+usd_eur_rate = _pricing.usd_eur_rate
+paypal_fixed_fee_eur = _pricing.paypal_fixed_fee_eur
+paypal_percent_fee = _pricing.paypal_percent_fee
 
 
 def voice_locale(voice_name):
@@ -298,22 +292,14 @@ def compute_user_price_eur(chars):
     cost_usd = chars / 1_000_000.0 * cost_usd_per_mchar()
     margin = margin_percent()
     base_eur = cost_usd * usd_eur_rate() * (1.0 + margin / 100.0)
-    paypal_factor = 1.0 - (paypal_percent_fee() / 100.0)
-    if paypal_factor <= 0:
-        raise ValueError("PAYPAL_PERCENT_FEE >= 100, invalid config")
-    gross = (base_eur + paypal_fixed_fee_eur()) / paypal_factor
-    user_price = round(gross, 2)
-    threshold = free_threshold_eur()
-    is_free = user_price < threshold
+    gross = _pricing.paypal_gross_up(base_eur, fixed_fee_eur=paypal_fixed_fee_eur(),
+                                     percent_fee=paypal_percent_fee())
     return {
         "chars": chars,
         "cost_usd": round(cost_usd, 6),
         "base_price_eur": round(base_eur, 4),
         "margin_percent": margin,
-        "user_price_eur": 0.0 if is_free else user_price,
-        "list_price_eur": user_price,
-        "is_free": is_free,
-        "free_threshold_eur": threshold,
+        **_pricing.free_result(gross, free_threshold_eur()),
     }
 
 
