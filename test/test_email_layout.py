@@ -168,27 +168,48 @@ def test_premium_emails_italian_texts_unchanged(monkeypatch):
 def test_premium_emails_english_and_fallback(monkeypatch):
     sent = _capture(monkeypatch)
     es._send_gemini_overload_email("u@x.it", 4.0, "", voucher_code=None, retry_after_sec=3600, lang="en")
-    es._send_gemini_failed_refund_email("u@x.it", 5.0, "Book", "budget", voucher_code="V", lang="fr")
-    es._send_gemini_failed_refund_email("u@x.it", 5.0, "Book", "testo <b>libero</b>", lang="de-DE")
-    es._send_gemini_cancelled_partial_email("u@x.it", 2.0, 0.5, 1.5, None, "Book", "https://x/d", lang="zh")
+    es._send_gemini_failed_refund_email("u@x.it", 5.0, "Book", "budget", voucher_code="V", lang="pt")
+    es._send_gemini_failed_refund_email("u@x.it", 5.0, "Book", "testo <b>libero</b>", lang="ja-JP")
+    es._send_gemini_cancelled_partial_email("u@x.it", 2.0, 0.5, 1.5, None, "Book", "https://x/d", lang="ru")
     (s1, h1), (s2, h2), (s3, h3), (s4, h4) = sent
     assert s1 == "Audiobook Maker — Generation not started, refund issued (4.00 EUR)"
     assert "<strong>your book</strong>" in h1 and "within <strong>1 hour</strong>" in h1
     assert "<strong>Refund credited:</strong> 4.00 EUR" in h1 and "Ciao" not in h1
-    assert "daily spending limit" in h2 and "Refund voucher code:" in h2 and ">V<" in h2   # fr -> en
+    assert "daily spending limit" in h2 and "Refund voucher code:" in h2 and ">V<" in h2   # pt -> en
     assert "<strong>Reason:</strong> testo &lt;b&gt;libero&lt;/b&gt;" in h3
     assert "Refund details" in h4 and "Download the partial audio (MP3)" in h4 and "1.50 EUR" in h4
     for h in (h1, h2, h3, h4):
         assert "Gemini" not in h and "__" not in h and "{" not in h
 
 
+def test_premium_emails_translated_languages(monkeypatch):
+    """C4b (2026-10-09): fr/es/de/zh/hi hanno i loro testi; nessun placeholder
+    o nome di fornitore nel risultato."""
+    sent = _capture(monkeypatch)
+    expected = {"fr": "Génération", "es": "Generación", "de": "Generierung", "zh": "生成", "hi": "जनरेशन"}
+    for lang in expected:
+        es._send_gemini_overload_email("u@x.it", 4.0, "", voucher_code=None, retry_after_sec=7200, lang=lang)
+        es._send_gemini_failed_refund_email("u@x.it", 5.0, "Book", "quota", voucher_code="V", lang=lang)
+        es._send_gemini_cancelled_partial_email("u@x.it", 2.0, 0.5, 1.5, None, "Book", "https://x/d", lang=lang)
+    assert len(sent) == 15
+    for i, lang in enumerate(expected):
+        for subj, html in sent[3 * i:3 * i + 3]:
+            assert expected[lang] in subj and "Audiobook Maker" in subj
+            assert "Gemini" not in html and "{" not in html and "__" not in html
+            assert "Generation" not in subj                                   # non e' il fallback inglese
+        assert ">V<" in sent[3 * i + 1][1] and "https://x/d" in sent[3 * i + 2][1]
+
+
 def test_premium_json_complete_and_placeholders():
     data = i18n.load("premium_emails")
-    assert set(data["en"]) == set(data["it"])
+    assert set(data) == {"it", "en", "fr", "es", "de", "zh", "hi"}
     import re
-    for key, it_text in data["it"].items():
-        en_text = data["en"][key]
-        if isinstance(it_text, dict):
-            assert set(it_text) == set(en_text) == {"quota", "budget", "quality", "interrupted_restart"}
-            continue
-        assert set(re.findall(r"{(\w+)}", it_text)) == set(re.findall(r"{(\w+)}", en_text)), key
+    for lang in data:
+        assert set(data[lang]) == set(data["it"]), lang
+        for key, it_text in data["it"].items():
+            other = data[lang][key]
+            if isinstance(it_text, dict):
+                assert set(it_text) == set(other) == {"quota", "budget", "quality", "interrupted_restart"}, lang
+                continue
+            assert set(re.findall(r"{(\w+)}", it_text)) == set(re.findall(r"{(\w+)}", other)), (lang, key)
+            assert ("<strong>" in it_text) == ("<strong>" in other), (lang, key)
