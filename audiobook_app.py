@@ -7255,12 +7255,11 @@ def api_vc_progress(clone_id):
         fine = time.time() + 1800
         while True:
             cur = voice_clone.get(clone_id) or rec
-            yield "data: " + json.dumps(_vc_view(cur)) + "\n\n"
+            yield _sse_event(_vc_view(cur))
             if cur.get("state") in _VC_SSE_END or time.time() > fine:
                 return
             time.sleep(2)
-    return Response(stream(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _sse_response(stream())
 
 
 def _vc_action(clone_id, fn):
@@ -11485,6 +11484,40 @@ def api_account_progress():
     return resp
 
 
+def _sse_event(payload):
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _sse_response(gen):
+    """Risposta `text/event-stream` con gli header anti-buffering usati da
+    tutte le SSE dell'app."""
+    return Response(stream_with_context(gen), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _sse_stream(job_id, build, *, sleep_sec=2.0):
+    """SSE di avanzamento di un job: a ogni giro rilegge `jobs[job_id]`
+    (evento di errore e chiusura se e' sparito), segna `last_poll`
+    (heartbeat: un client sta ascoltando), chiede a `build(job)` la coppia
+    `(payload, terminale)` e chiude lo stream sul terminale. `request` non
+    e' disponibile dentro il generator: il chiamante cattura prima quello
+    che gli serve (owner check, lingua)."""
+    def gen():
+        while True:
+            if job_id not in jobs:
+                yield _sse_event({"status": "error", "error": "Job not found"})
+                break
+            job = jobs[job_id]
+            job["last_poll"] = time.time()
+            payload, terminal = build(job)
+            yield _sse_event(payload)
+            if terminal:
+                break
+            time.sleep(sleep_sec)
+    return _sse_response(gen())
+
+
+
 @app.route("/api/progress/<job_id>")
 def api_progress(job_id):
     # Ownership check fuori dallo stream (la `request` non è disponibile dentro il generator).
@@ -11495,144 +11528,136 @@ def api_progress(job_id):
     # qui: `request` non è disponibile dentro il generator).
     _ui_lang = _i18n.norm_lang(request.args.get("lang"))
 
-    def stream():
-        while True:
-            if job_id not in jobs:
-                yield f"data: {json.dumps({'status': 'error', 'error': 'Job not found'})}\n\n"
-                break
-            job = jobs[job_id]
-            # Heartbeat: segna che un client sta ascoltando
-            job["last_poll"] = time.time()
-            payload = {
-                "status": job.get("status", "unknown"),
-                "progress_current": job.get("progress_current", 0),
-                "progress_total": job.get("progress_total", 0),
-                "progress_message": job.get("progress_message", ""),
-                "current_chapter": job.get("current_chapter", ""),
-                "current_chapter_num": job.get("current_chapter_num", 0),
-                "total_chapters": job.get("total_chapters", 0),
-                "elapsed_seconds": job.get("elapsed_seconds", 0),
-                "bytes_generated": job.get("bytes_generated", 0),
-                "processed_chars": job.get("processed_chars", 0),
-                "total_chars": job.get("total_chars", 0),
-            }
-            # M4B progress (visibile solo se la fase M4B è attiva)
-            if job.get("m4b_progress_total"):
-                payload["m4b_progress_current"] = job.get("m4b_progress_current", 0)
-                payload["m4b_progress_total"] = job["m4b_progress_total"]
-                payload["m4b_progress_message"] = job.get("m4b_progress_message", "")
-            # Espone l'importo pagato (quota refundabile) e il metodo: serve
-            # al frontend per reidratare _payState dopo un reload e mostrare
-            # "Importo versato" corretto nel modal di cancel. Usa total_eur
-            # (l'importo effettivamente consumato dal payment_token) perche'
-            # e' la stessa base che _CancelledError handler in
-            # generation_engine.py passa a cancel_policy.compute_cancel_retention.
-            _paym_sse = job.get("payment") or {}
-            if _paym_sse:
-                try:
-                    payload["paid_eur"] = round(float(_paym_sse.get("total_eur", 0.0) or 0.0), 2)
-                except (TypeError, ValueError):
-                    payload["paid_eur"] = 0.0
-                payload["paid_method"] = _paym_sse.get("method", "")
-            if job.get("status") == "error":
-                # Errore generico verso il client: il dettaglio resta nei log server-side.
-                payload["error"] = "generation_failed"
-                # Eccezione: per il pre-flight block delle voci PREMIUM,
-                # esponiamo un error_kind strutturato cosi' il frontend puo'
-                # mostrare un popup specifico e riportare l'utente alla scelta
-                # voce (invece di redirect generico alla home).
-                _pf_block = job.get("gemini_preflight_block")
-                if _pf_block:
-                    payload["error_kind"] = "gemini_overload"
-                    payload["retry_after_sec"] = int(_pf_block.get("retry_after_sec") or 0)
-                    _paym = job.get("payment") or {}
-                    payload["refund_method"] = _paym.get("method", "")
-                    # Codice voucher di rimborso solo se PayPal (per voucher
-                    # il riaccredito e' silenzioso sul codice originale).
-                    if _paym.get("method") == "paypal":
-                        _vcode = job.get("refund_voucher_code")
-                        if _vcode:
-                            payload["refund_voucher_code"] = _vcode
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            if job.get("status") == "cancelled" or job.get("cancelled"):
-                payload["status"] = "cancelled"
-                if job.get("abuse_terminated"):
-                    # Kill della moderazione anti-abuso: il frontend mostra il
-                    # messaggio neutro invece di "Generazione annullata".
-                    payload["error_code"] = "job_terminated"
-                # Espone metadati cancel volontario voci PREMIUM: refund summary
-                # (paid/retained/refund/progress) + link al MP3 parziale se
-                # generato. Vedi T7 generation_engine.py:_CancelledError branch.
-                _cm = job.get("cancel_meta")
-                if isinstance(_cm, dict):
-                    payload["cancel_meta"] = {
-                        "paid_eur": _cm.get("paid_eur", 0),
-                        "retained_eur": _cm.get("retained_eur", 0),
-                        "refund_eur": _cm.get("refund_eur", 0),
-                        "progress_pct": _cm.get("progress_pct", 0),
-                        "partial_audio_delivered": bool(
-                            _cm.get("partial_audio_delivered", False)),
-                    }
-                _pdl = job.get("partial_download_url")
-                if _pdl:
-                    payload["partial_download_url"] = _pdl
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            if job.get("status") in ("done", "partial"):
-                # 'partial' (frazione chunk falliti oltre soglia) percorre lo
-                # stesso path di completamento di 'done' — file, ABM, email e
-                # offload sono gia' prodotti. E' uno stato TERMINALE: va emesso
-                # il payload di completamento e chiuso lo stream, altrimenti il
-                # frontend resta appeso sulla schermata di avanzamento.
-                # payload["status"] conserva il valore reale ('partial'/'done').
-                payload["output_name"] = job.get("output_name", "output")
-                payload["has_podcast"] = job.get("podcast_ready", False)
-                # Reconnection fallback: se output_m4b o optimized_abm_path non sono
-                # impostati, cerca SOLO dentro la cartella della generazione corrente
-                # (job["output_dir"] = output_{gen_epoch}/). Mai fare scan globale su
-                # tutti gli output_*/ perché erediteresti file di run precedenti e li
-                # mostreresti come scaricabili per la run corrente.
-                _cur_output = job.get("output_dir")
-                if _cur_output and os.path.isdir(_cur_output):
-                    _cur_path = Path(_cur_output)
-                    if not job.get("output_m4b"):
-                        _m4bs = list(_cur_path.glob("*.m4b"))
-                        if _m4bs:
-                            job["output_m4b"] = str(_m4bs[0])
-                    if not job.get("optimized_abm_path"):
-                        _abms = list(_cur_path.glob("*.abm"))
-                        if _abms:
-                            job["optimized_abm_path"] = str(_abms[0])
+    def _build(job):
+        payload = {
+            "status": job.get("status", "unknown"),
+            "progress_current": job.get("progress_current", 0),
+            "progress_total": job.get("progress_total", 0),
+            "progress_message": job.get("progress_message", ""),
+            "current_chapter": job.get("current_chapter", ""),
+            "current_chapter_num": job.get("current_chapter_num", 0),
+            "total_chapters": job.get("total_chapters", 0),
+            "elapsed_seconds": job.get("elapsed_seconds", 0),
+            "bytes_generated": job.get("bytes_generated", 0),
+            "processed_chars": job.get("processed_chars", 0),
+            "total_chars": job.get("total_chars", 0),
+        }
+        # M4B progress (visibile solo se la fase M4B è attiva)
+        if job.get("m4b_progress_total"):
+            payload["m4b_progress_current"] = job.get("m4b_progress_current", 0)
+            payload["m4b_progress_total"] = job["m4b_progress_total"]
+            payload["m4b_progress_message"] = job.get("m4b_progress_message", "")
+        # Espone l'importo pagato (quota refundabile) e il metodo: serve
+        # al frontend per reidratare _payState dopo un reload e mostrare
+        # "Importo versato" corretto nel modal di cancel. Usa total_eur
+        # (l'importo effettivamente consumato dal payment_token) perche'
+        # e' la stessa base che _CancelledError handler in
+        # generation_engine.py passa a cancel_policy.compute_cancel_retention.
+        _paym_sse = job.get("payment") or {}
+        if _paym_sse:
+            try:
+                payload["paid_eur"] = round(float(_paym_sse.get("total_eur", 0.0) or 0.0), 2)
+            except (TypeError, ValueError):
+                payload["paid_eur"] = 0.0
+            payload["paid_method"] = _paym_sse.get("method", "")
+        if job.get("status") == "error":
+            # Errore generico verso il client: il dettaglio resta nei log server-side.
+            payload["error"] = "generation_failed"
+            # Eccezione: per il pre-flight block delle voci PREMIUM,
+            # esponiamo un error_kind strutturato cosi' il frontend puo'
+            # mostrare un popup specifico e riportare l'utente alla scelta
+            # voce (invece di redirect generico alla home).
+            _pf_block = job.get("gemini_preflight_block")
+            if _pf_block:
+                payload["error_kind"] = "gemini_overload"
+                payload["retry_after_sec"] = int(_pf_block.get("retry_after_sec") or 0)
+                _paym = job.get("payment") or {}
+                payload["refund_method"] = _paym.get("method", "")
+                # Codice voucher di rimborso solo se PayPal (per voucher
+                # il riaccredito e' silenzioso sul codice originale).
+                if _paym.get("method") == "paypal":
+                    _vcode = job.get("refund_voucher_code")
+                    if _vcode:
+                        payload["refund_voucher_code"] = _vcode
+            return payload, True
+        if job.get("status") == "cancelled" or job.get("cancelled"):
+            payload["status"] = "cancelled"
+            if job.get("abuse_terminated"):
+                # Kill della moderazione anti-abuso: il frontend mostra il
+                # messaggio neutro invece di "Generazione annullata".
+                payload["error_code"] = "job_terminated"
+            # Espone metadati cancel volontario voci PREMIUM: refund summary
+            # (paid/retained/refund/progress) + link al MP3 parziale se
+            # generato. Vedi T7 generation_engine.py:_CancelledError branch.
+            _cm = job.get("cancel_meta")
+            if isinstance(_cm, dict):
+                payload["cancel_meta"] = {
+                    "paid_eur": _cm.get("paid_eur", 0),
+                    "retained_eur": _cm.get("retained_eur", 0),
+                    "refund_eur": _cm.get("refund_eur", 0),
+                    "progress_pct": _cm.get("progress_pct", 0),
+                    "partial_audio_delivered": bool(
+                        _cm.get("partial_audio_delivered", False)),
+                }
+            _pdl = job.get("partial_download_url")
+            if _pdl:
+                payload["partial_download_url"] = _pdl
+            return payload, True
+        if job.get("status") in ("done", "partial"):
+            # 'partial' (frazione chunk falliti oltre soglia) percorre lo
+            # stesso path di completamento di 'done' — file, ABM, email e
+            # offload sono gia' prodotti. E' uno stato TERMINALE: va emesso
+            # il payload di completamento e chiuso lo stream, altrimenti il
+            # frontend resta appeso sulla schermata di avanzamento.
+            # payload["status"] conserva il valore reale ('partial'/'done').
+            payload["output_name"] = job.get("output_name", "output")
+            payload["has_podcast"] = job.get("podcast_ready", False)
+            # Reconnection fallback: se output_m4b o optimized_abm_path non sono
+            # impostati, cerca SOLO dentro la cartella della generazione corrente
+            # (job["output_dir"] = output_{gen_epoch}/). Mai fare scan globale su
+            # tutti gli output_*/ perché erediteresti file di run precedenti e li
+            # mostreresti come scaricabili per la run corrente.
+            _cur_output = job.get("output_dir")
+            if _cur_output and os.path.isdir(_cur_output):
+                _cur_path = Path(_cur_output)
+                if not job.get("output_m4b"):
+                    _m4bs = list(_cur_path.glob("*.m4b"))
+                    if _m4bs:
+                        job["output_m4b"] = str(_m4bs[0])
+                if not job.get("optimized_abm_path"):
+                    _abms = list(_cur_path.glob("*.abm"))
+                    if _abms:
+                        job["optimized_abm_path"] = str(_abms[0])
 
-                payload["output_m4b"] = bool(job.get("output_m4b"))
-                payload["has_abm"] = bool(job.get("ai_optimized")) or (bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", "")))
-                payload["failed_chunks"] = job.get("failed_chunks", 0)
-                payload["m4b_failed"] = bool(job.get("m4b_failed", False))
-                # Kit ZIP di ripiego (MP3 + capitoli + script) quando l'M4B è fallito.
-                _kit_zip = job.get("output_m4b_fallback_zip")
-                payload["m4b_fallback_zip"] = bool(_kit_zip and os.path.exists(_kit_zip))
-                # Dettagli di generazione localizzati per il pannello
-                # "Audiolibro pronto": stessi testi del blocco email di
-                # completamento (fonte unica _generation_details_lines,
-                # campi utente già HTML-escaped). Best-effort.
-                try:
-                    _det = generation_engine._generation_details_lines(
-                        job, _ui_lang or (job.get("notify_lang") or "en"))
-                    if _det:
-                        payload["gen_details_html"] = "<br>".join(_det)
-                except Exception as _det_err:
-                    print(f"[{job_id}] gen_details payload failed (non-fatal): {_det_err}")
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            yield f"data: {json.dumps(payload)}\n\n"
-            time.sleep(1)
+            payload["output_m4b"] = bool(job.get("output_m4b"))
+            payload["has_abm"] = bool(job.get("ai_optimized")) or (bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", "")))
+            payload["failed_chunks"] = job.get("failed_chunks", 0)
+            payload["m4b_failed"] = bool(job.get("m4b_failed", False))
+            # Kit ZIP di ripiego (MP3 + capitoli + script) quando l'M4B è fallito.
+            _kit_zip = job.get("output_m4b_fallback_zip")
+            payload["m4b_fallback_zip"] = bool(_kit_zip and os.path.exists(_kit_zip))
+            # Dettagli di generazione localizzati per il pannello
+            # "Audiolibro pronto": stessi testi del blocco email di
+            # completamento (fonte unica _generation_details_lines,
+            # campi utente già HTML-escaped). Best-effort.
+            try:
+                _det = generation_engine._generation_details_lines(
+                    job, _ui_lang or (job.get("notify_lang") or "en"))
+                if _det:
+                    payload["gen_details_html"] = "<br>".join(_det)
+            except Exception as _det_err:
+                print(f"[{job_id}] gen_details payload failed (non-fatal): {_det_err}")
+            return payload, True
+        return payload, False
 
-    return Response(
-        stream_with_context(stream()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return _sse_stream(job_id, _build, sleep_sec=1)
+
+
+def _log_admin_cancel(job_id, job, voice):
+    """Riga ADMIN_CANCEL nel log attivita' (kill dalla console admin): stessa
+    forma per generazione, ottimizzazione e traduzione."""
+    _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
+                  job.get("client_id", ""), "", voice or "", "")
 
 
 @app.route("/api/cancel/<job_id>", methods=["POST"])
@@ -11681,8 +11706,7 @@ def api_cancel(job_id):
         if is_admin_kill:
             job["server_interrupted"] = True
     if is_admin_kill:
-        _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
-                      job.get("client_id", ""), "", job.get("voice", "") or "", "")
+        _log_admin_cancel(job_id, job, job.get("voice", ""))
     return jsonify({"status": "cancelling"})
 
 
@@ -14374,55 +14398,40 @@ def api_optimize_progress(job_id):
     _job_pre, _err_pre, _sc_pre = _check_job_owner(job_id)
     if _err_pre is not None:
         return _err_pre, _sc_pre
-    def stream():
-        while True:
-            if job_id not in jobs:
-                yield f"data: {json.dumps({'status': 'error', 'error': 'Job not found'})}\n\n"
-                break
-            job = jobs[job_id]
-            job["last_poll"] = time.time()
-            status = job.get("status", "unknown")
-            payload = {
-                "status": status,
-                "opt_progress_current": job.get("opt_progress_current", 0),
-                "opt_progress_total": job.get("opt_progress_total", 0),
-                "opt_progress_message": job.get("opt_progress_message", ""),
-                "opt_current_chapter": job.get("opt_current_chapter", ""),
-                "opt_current_chapter_num": job.get("opt_current_chapter_num", 0),
-                "opt_processed_chars": job.get("opt_processed_chars", 0),
-                "opt_streamed_chars": job.get("opt_streamed_chars", 0),
-                "opt_current_chapter_chars": job.get("opt_current_chapter_chars", 0),
-                "opt_total_chars": job.get("opt_total_chars", 0),
-                "opt_total_chars_extended": job.get("opt_total_chars_extended", job.get("opt_total_chars", 0)),
-                "opt_elapsed_seconds": round(time.time() - job["opt_start_time"]) if job.get("opt_start_time") else job.get("opt_elapsed_seconds", 0),
-            }
-            if status == "error":
-                # Errore generico verso il client; il dettaglio resta nei log server-side.
-                payload["error"] = "optimization_failed"
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            if status == "cancelled" or job.get("opt_cancelled"):
-                payload["status"] = "cancelled"
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            if status == "optimized":
-                payload["ai_optimized"] = True
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            # If auto_generate kicked in, status is now "generating" or "done"
-            if status in ("generating", "done"):
-                payload["ai_optimized"] = True
-                payload["auto_generate_started"] = True
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            yield f"data: {json.dumps(payload)}\n\n"
-            time.sleep(2)
+    def _build(job):
+        status = job.get("status", "unknown")
+        payload = {
+            "status": status,
+            "opt_progress_current": job.get("opt_progress_current", 0),
+            "opt_progress_total": job.get("opt_progress_total", 0),
+            "opt_progress_message": job.get("opt_progress_message", ""),
+            "opt_current_chapter": job.get("opt_current_chapter", ""),
+            "opt_current_chapter_num": job.get("opt_current_chapter_num", 0),
+            "opt_processed_chars": job.get("opt_processed_chars", 0),
+            "opt_streamed_chars": job.get("opt_streamed_chars", 0),
+            "opt_current_chapter_chars": job.get("opt_current_chapter_chars", 0),
+            "opt_total_chars": job.get("opt_total_chars", 0),
+            "opt_total_chars_extended": job.get("opt_total_chars_extended", job.get("opt_total_chars", 0)),
+            "opt_elapsed_seconds": round(time.time() - job["opt_start_time"]) if job.get("opt_start_time") else job.get("opt_elapsed_seconds", 0),
+        }
+        if status == "error":
+            # Errore generico verso il client; il dettaglio resta nei log server-side.
+            payload["error"] = "optimization_failed"
+            return payload, True
+        if status == "cancelled" or job.get("opt_cancelled"):
+            payload["status"] = "cancelled"
+            return payload, True
+        if status == "optimized":
+            payload["ai_optimized"] = True
+            return payload, True
+        # If auto_generate kicked in, status is now "generating" or "done"
+        if status in ("generating", "done"):
+            payload["ai_optimized"] = True
+            payload["auto_generate_started"] = True
+            return payload, True
+        return payload, False
 
-    return Response(
-        stream_with_context(stream()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return _sse_stream(job_id, _build, sleep_sec=2)
 
 
 # ════════════════ TRADUZIONE LIBRO ════════════════
@@ -14689,51 +14698,37 @@ def api_translate_progress(job_id):
     if _err_pre is not None:
         return _err_pre, _sc_pre
 
-    def stream():
-        while True:
-            if job_id not in jobs:
-                yield f"data: {json.dumps({'status': 'error', 'error': 'Job not found'})}\n\n"
-                break
-            job = jobs[job_id]
-            job["last_poll"] = time.time()
-            status = job.get("status", "unknown")
-            payload = {
-                "status": status,
-                "tr_progress_current": job.get("tr_progress_current", 0),
-                "tr_progress_total": job.get("tr_progress_total", 0),
-                "tr_progress_message": job.get("tr_progress_message", ""),
-                "tr_current_chapter": job.get("tr_current_chapter", ""),
-                "tr_current_chapter_num": job.get("tr_current_chapter_num", 0),
-                "tr_processed_chars": job.get("tr_processed_chars", 0),
-                "tr_streamed_chars": job.get("tr_streamed_chars", 0),
-                "tr_total_chars": job.get("tr_total_chars", 0),
-                "tr_elapsed_seconds": job.get("tr_elapsed_seconds", 0),
-                "translated_name": job.get("translated_name", ""),
-                "error": job.get("error", ""),
-            }
-            # Completamento ed errore (status autorevole) hanno PRECEDENZA su
-            # tr_cancelled: un job arrivato a "translated"/"error" è terminato
-            # e un eventuale flag di cancellazione stantio (lasciato da un
-            # thread precedente in una race di riavvio) non deve mascherarlo,
-            # altrimenti il pannello perde il bottone di download.
-            if status == "translated":
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            if status == "error":
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            if job.get("tr_cancelled"):
-                payload["status"] = "cancelled"
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            yield f"data: {json.dumps(payload)}\n\n"
-            time.sleep(2)
+    def _build(job):
+        status = job.get("status", "unknown")
+        payload = {
+            "status": status,
+            "tr_progress_current": job.get("tr_progress_current", 0),
+            "tr_progress_total": job.get("tr_progress_total", 0),
+            "tr_progress_message": job.get("tr_progress_message", ""),
+            "tr_current_chapter": job.get("tr_current_chapter", ""),
+            "tr_current_chapter_num": job.get("tr_current_chapter_num", 0),
+            "tr_processed_chars": job.get("tr_processed_chars", 0),
+            "tr_streamed_chars": job.get("tr_streamed_chars", 0),
+            "tr_total_chars": job.get("tr_total_chars", 0),
+            "tr_elapsed_seconds": job.get("tr_elapsed_seconds", 0),
+            "translated_name": job.get("translated_name", ""),
+            "error": job.get("error", ""),
+        }
+        # Completamento ed errore (status autorevole) hanno PRECEDENZA su
+        # tr_cancelled: un job arrivato a "translated"/"error" è terminato
+        # e un eventuale flag di cancellazione stantio (lasciato da un
+        # thread precedente in una race di riavvio) non deve mascherarlo,
+        # altrimenti il pannello perde il bottone di download.
+        if status == "translated":
+            return payload, True
+        if status == "error":
+            return payload, True
+        if job.get("tr_cancelled"):
+            payload["status"] = "cancelled"
+            return payload, True
+        return payload, False
 
-    return Response(
-        stream_with_context(stream()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return _sse_stream(job_id, _build, sleep_sec=2)
 
 
 @app.route("/api/translate_cancel/<job_id>", methods=["POST"])
@@ -14749,8 +14744,7 @@ def api_translate_cancel(job_id):
     # Kill amministrativo dalla pagina /admin/log-activity: traccia ADMIN_CANCEL
     # per coerenza con /api/cancel e /api/cancel_optimize (visibilità nel log).
     if _admin_auth_ok(_admin_auth_from_request()):
-        _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
-                      job.get("client_id", ""), "", "", "")
+        _log_admin_cancel(job_id, job, "")
     return jsonify({"status": "cancelling"})
 
 
@@ -14882,9 +14876,7 @@ def api_cancel_optimize(job_id):
             if job.get("status") == "optimizing":
                 job["opt_cancelled"] = True
                 if _admin_auth_ok(_admin_auth_from_request()):
-                    _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
-                                  job.get("client_id", ""), "",
-                                  job.get("opt_voice", "") or "", "")
+                    _log_admin_cancel(job_id, job, job.get("opt_voice", ""))
                 return jsonify({"status": "cancelling"})
     return jsonify({"status": "not_found"}), 404
 
@@ -14917,6 +14909,18 @@ def api_active_jobs():
                 "chapter": job.get("current_chapter", ""),
             })
     return jsonify({"jobs": active, "count": len(active)})
+
+
+def _with_mp3_fallback_header(resp):
+    """Segnala al client che al posto dell'M4B arriva l'MP3 (header
+    `X-Fallback: mp3`, esposto al JS via CORS). Mai fatale."""
+    try:
+        resp.headers["X-Fallback"] = "mp3"
+        prev = resp.headers.get("Access-Control-Expose-Headers", "")
+        resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
+    except Exception:
+        pass
+    return resp
 
 
 def _check_dl_token(token):
@@ -15242,12 +15246,7 @@ def token_do_download_m4b(token):
                           "", "", "", "")
         _mark_token_downloaded(token_info)
         resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3", conditional=True)
-        try:
-            resp.headers["X-Fallback"] = "mp3"
-            prev = resp.headers.get("Access-Control-Expose-Headers", "")
-            resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
-        except Exception:
-            pass
+        _with_mp3_fallback_header(resp)
         return resp
 
     # Cold tier: il locale (m4b e mp3) è evacuato; se esiste la copia cold del
@@ -15555,6 +15554,60 @@ def _generate_podcast_index_html(podcast_dir, title, author, cover_file, rss_fna
     return index_path
 
 
+def _build_podcast_zip(job_id, podcast_dir, mp3_files, epub_path, info, safe_name, base_url,
+                       language, zip_base):
+    """Pacchetto podcast costruito in `podcast_dir` (poi rimossa): MP3,
+    copertina (EPUB a 1400px, poi estrazione grezza, poi generata), feed RSS
+    e index.html; ritorna il path dello ZIP `<zip_base>.zip`. Usato dal
+    download diretto (`/api/download_podcast`) e da quello via token email."""
+    podcast_dir = Path(podcast_dir)
+    podcast_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        for mp3 in mp3_files:
+            if os.path.exists(mp3):
+                shutil.copy2(mp3, str(podcast_dir / os.path.basename(mp3)))
+        cover_file = ""
+        cover_path = str(podcast_dir / "cover.jpg")
+        has_epub = bool(epub_path) and os.path.exists(epub_path)
+        # Strategia 1: Pillow a 1400px quadrati (iTunes)
+        if has_epub and _extract_cover_from_epub(epub_path, cover_path, target_size=1400):
+            cover_file = "cover.jpg"
+            print(f"[{job_id}] Podcast cover: Pillow 1400px ({os.path.getsize(cover_path)} bytes)")
+        else:
+            # Strategia 2: estrazione grezza (funziona anche senza Pillow)
+            raw_path, raw_mime = ("", "")
+            if has_epub:
+                print(f"[{job_id}] Podcast cover: _extract_cover_from_epub failed, trying raw extraction")
+                raw_path, raw_mime = _extract_cover_for_preview(epub_path, str(podcast_dir))
+            if raw_path and os.path.exists(raw_path):
+                ext = ".png" if raw_mime == "image/png" else ".jpg"
+                final_cover = str(podcast_dir / ("cover" + ext))
+                if raw_path != final_cover:
+                    shutil.move(raw_path, final_cover)
+                cover_file = "cover" + ext
+                print(f"[{job_id}] Podcast cover: raw extraction OK ({os.path.getsize(final_cover)} bytes)")
+            else:
+                # Strategia 3: copertina generata
+                print(f"[{job_id}] Podcast cover: raw extraction failed, generating fallback")
+                _generate_fallback_cover(cover_path, title=info.title or "", author=info.author or "")
+                if os.path.exists(cover_path) and os.path.getsize(cover_path) > 0:
+                    cover_file = "cover.jpg"
+                    print(f"[{job_id}] Podcast cover: fallback generated ({os.path.getsize(cover_path)} bytes)")
+                else:
+                    print(f"[{job_id}] Podcast cover: all strategies failed, no cover in podcast")
+        rss_fname = f"{safe_name}_podcast.xml"
+        rss_path = str(podcast_dir / rss_fname)
+        _generate_podcast_rss(info, mp3_files, rss_path,
+                              base_url=base_url, cover_filename=cover_file,
+                              rss_filename=rss_fname)
+        _generate_podcast_index_html(podcast_dir, info.title, info.author,
+                                     cover_file, rss_fname, mp3_files, language=language)
+        print(f"[{job_id}] Podcast ZIP contents: {[f.name for f in podcast_dir.iterdir()]}")
+        return shutil.make_archive(str(zip_base), "zip", str(podcast_dir))
+    finally:
+        shutil.rmtree(str(podcast_dir), ignore_errors=True)
+
+
 def _serve_podcast_download(token_info, job, job_id):
     """Serve podcast download from job in memory or token snapshot on disk."""
 
@@ -15650,42 +15703,11 @@ def _serve_podcast_download(token_info, job, job_id):
         return _send_file_throttled(str(cached_zip), as_attachment=True,
                          download_name=f"{safe_name}_podcast.zip")
 
-    # Build podcast package in a unique temp dir to avoid race conditions
-    podcast_dir = epoch_dir / f"podcast_{uuid.uuid4().hex[:8]}"
-    podcast_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        for mp3 in mp3_files:
-            if os.path.exists(mp3):
-                shutil.copy2(mp3, str(podcast_dir / os.path.basename(mp3)))
-        cover_file = ""
-        cover_path = str(podcast_dir / "cover.jpg")
-        if epub_path and os.path.exists(epub_path):
-            if _extract_cover_from_epub(epub_path, cover_path, target_size=1400):
-                cover_file = "cover.jpg"
-            else:
-                raw_path, raw_mime = _extract_cover_for_preview(epub_path, str(podcast_dir))
-                if raw_path and os.path.exists(raw_path):
-                    ext = ".png" if raw_mime == "image/png" else ".jpg"
-                    final_cover = str(podcast_dir / ("cover" + ext))
-                    if raw_path != final_cover:
-                        shutil.move(raw_path, final_cover)
-                    cover_file = "cover" + ext
-                else:
-                    _generate_fallback_cover(cover_path, title=info.title or "", author=info.author or "")
-                    if os.path.exists(cover_path) and os.path.getsize(cover_path) > 0:
-                        cover_file = "cover.jpg"
-        rss_fname = f"{safe_name}_podcast.xml"
-        rss_path = str(podcast_dir / rss_fname)
-        _generate_podcast_rss(info, mp3_files, rss_path,
-                              base_url=base_url, cover_filename=cover_file,
-                              rss_filename=rss_fname)
-        _generate_podcast_index_html(podcast_dir, info.title, info.author,
-                                     cover_file, rss_fname, mp3_files,
-                                     language=getattr(info, 'language', '') or token_info.get('language', 'en'))
-        podcast_zip = shutil.make_archive(
-            str(work_dir / f"{safe_name}_podcast"), "zip", str(podcast_dir))
-    finally:
-        shutil.rmtree(str(podcast_dir), ignore_errors=True)
+    # Pacchetto in una cartella temporanea unica (niente race fra download paralleli)
+    podcast_zip = _build_podcast_zip(
+        job_id, epoch_dir / f"podcast_{uuid.uuid4().hex[:8]}", mp3_files, epub_path, info,
+        safe_name, base_url, getattr(info, 'language', '') or token_info.get('language', 'en'),
+        work_dir / f"{safe_name}_podcast")
     orig = token_info.get("original_filename", job.get("original_filename", "") if job else "")
     if not _is_resume_or_probe_request():
         _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
@@ -16087,12 +16109,7 @@ def api_download(job_id):
             resp = _send_file_throttled(mp3_path, as_attachment=True,
                                         download_name=f"{safe_name}.mp3",
                                         no_cache=True, bypass_throttle=True, conditional=True)
-            try:
-                resp.headers["X-Fallback"] = "mp3"
-                prev = resp.headers.get("Access-Control-Expose-Headers", "")
-                resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
-            except Exception:
-                pass
+            _with_mp3_fallback_header(resp)
             return resp
         return "File not found", 404
 
@@ -16147,12 +16164,7 @@ def api_download(job_id):
                 resp = _send_file_throttled(mp3_path, as_attachment=True,
                                             download_name=f"{_safe_filename(job['info'].title)}.mp3",
                                             no_cache=True, bypass_throttle=True, conditional=True)
-                try:
-                    resp.headers["X-Fallback"] = "mp3"
-                    prev = resp.headers.get("Access-Control-Expose-Headers", "")
-                    resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
-                except Exception:
-                    pass
+                _with_mp3_fallback_header(resp)
                 return resp
             return "File not found", 404
 
@@ -16219,67 +16231,10 @@ def api_download_podcast(job_id):
     safe_name = job["podcast_safe_name"]
     work_dir = Path(job["epub_path"]).parent
 
-    # Build podcast ZIP on-the-fly with the user-provided base URL
-    podcast_dir = work_dir / "podcast"
-    podcast_dir.mkdir(exist_ok=True)
-    try:
-        for mp3 in mp3_files:
-            if os.path.exists(mp3):
-                shutil.copy2(mp3, str(podcast_dir / os.path.basename(mp3)))
-
-        # Cover art: extract from EPUB (try Pillow for 1400px square, fallback to raw)
-        cover_file = ""
-        cover_path = str(podcast_dir / "cover.jpg")
-        epub_path = job["epub_path"]
-
-        # Strategy 1: Pillow resize to 1400px square (iTunes compliant)
-        if _extract_cover_from_epub(epub_path, cover_path, target_size=1400):
-            cover_file = "cover.jpg"
-            print(f"[{job_id}] Podcast cover: Pillow 1400px ({os.path.getsize(cover_path)} bytes)")
-        else:
-            # Strategy 2: raw extraction via _extract_cover_for_preview (works without Pillow)
-            print(f"[{job_id}] Podcast cover: _extract_cover_from_epub failed, trying raw extraction")
-            raw_path, raw_mime = _extract_cover_for_preview(epub_path, str(podcast_dir))
-            if raw_path and os.path.exists(raw_path):
-                cover_file = os.path.basename(raw_path)
-                # Rename to cover.jpg/cover.png for consistency
-                ext = ".png" if raw_mime == "image/png" else ".jpg"
-                final_cover = str(podcast_dir / ("cover" + ext))
-                if raw_path != final_cover:
-                    shutil.move(raw_path, final_cover)
-                cover_file = "cover" + ext
-                print(f"[{job_id}] Podcast cover: raw extraction OK ({os.path.getsize(final_cover)} bytes)")
-            else:
-                # Strategy 3: generate fallback cover
-                print(f"[{job_id}] Podcast cover: raw extraction failed, generating fallback")
-                _generate_fallback_cover(cover_path,
-                                         title=info.title or "",
-                                         author=info.author or "")
-                if os.path.exists(cover_path) and os.path.getsize(cover_path) > 0:
-                    cover_file = "cover.jpg"
-                    print(f"[{job_id}] Podcast cover: fallback generated ({os.path.getsize(cover_path)} bytes)")
-                else:
-                    print(f"[{job_id}] Podcast cover: all strategies failed, no cover in podcast")
-
-        rss_fname = f"{safe_name}_podcast.xml"
-        rss_path = str(podcast_dir / rss_fname)
-        _generate_podcast_rss(info, mp3_files, rss_path,
-                              base_url=base_url, cover_filename=cover_file,
-                              rss_filename=rss_fname)
-
-        _generate_podcast_index_html(podcast_dir, info.title, info.author,
-                                     cover_file, rss_fname, mp3_files,
-                                     language=getattr(info, 'language', 'en'))
-
-        # Verify ZIP contents before creating archive
-        zip_contents = list(podcast_dir.iterdir())
-        print(f"[{job_id}] Podcast ZIP contents: {[f.name for f in zip_contents]}")
-
-        podcast_zip = shutil.make_archive(
-            str(work_dir / f"{safe_name}_podcast"), "zip", str(podcast_dir)
-        )
-    finally:
-        shutil.rmtree(str(podcast_dir), ignore_errors=True)
+    # ZIP costruito al volo col base URL del server
+    podcast_zip = _build_podcast_zip(
+        job_id, work_dir / "podcast", mp3_files, job["epub_path"], info, safe_name, base_url,
+        getattr(info, 'language', 'en'), work_dir / f"{safe_name}_podcast")
 
     # work_dir è la root del job (fuori da output*/): lo zip podcast NON viene
     # gestito dal tiering, quindi rimuovilo dopo l'invio per non lasciarlo orfano.
