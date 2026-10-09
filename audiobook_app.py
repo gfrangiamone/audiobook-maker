@@ -12765,8 +12765,12 @@ def api_paypal_create_order():
     if _maint is not None:
         return _maint
     data = request.json or {}; job_id = data.get("job_id", "")
-    if job_id not in jobs: return jsonify({"error": "Job not found"}), 404
-    job = jobs[job_id]; info = job.get("info")
+    # Sec: solo il proprietario del job (o l'admin) puo' aprire un ordine su
+    # di esso, come per ogni altra route che legge jobs[job_id].
+    job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        return _err, _sc
+    info = job.get("info")
     if not info: return jsonify({"error": "No book data"}), 400
     selected_chapters = _parse_selected_chapters(data.get("selected_chapters"))
     # Allinea il calcolo a /api/optimize_estimate e /api/optimize: i capitoli
@@ -13355,10 +13359,11 @@ def api_paypal_create_order_gemini():
     if _gate is not None:
         return _gate
 
-    with _jobs_lock:
-        job = jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "job not found"}), 404
+    # Sec: solo il proprietario del job (o l'admin) puo' aprire un ordine su
+    # di esso, come per ogni altra route che legge jobs[job_id].
+    job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        return _err, _sc
 
     # Server saturo: nessun ordine PayPal viene creato. Il gate esiste anche in
     # /api/generate prima del preflight, ma la capacita` puo` esaurirsi mentre
@@ -13536,9 +13541,11 @@ def api_paypal_create_order_translate():
         return _maint
     data = request.json or {}
     job_id = data.get("job_id", "")
-    if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
-    job = jobs[job_id]
+    # Sec: solo il proprietario del job (o l'admin) puo' aprire un ordine su
+    # di esso, come per ogni altra route che legge jobs[job_id].
+    job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        return _err, _sc
     info = job.get("info")
     if not info:
         return jsonify({"error": "No book data"}), 400

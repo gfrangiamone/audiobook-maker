@@ -148,6 +148,7 @@ def test_paypal_create_order_gemini_rejected_when_server_busy(client, clean_jobs
     """Server saturo: nessun ordine PayPal viene nemmeno creato."""
     _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
     _seed_candidate()
+    client.set_cookie("abm_cid", "mine")   # proprietario di CAND (E2: _check_job_owner)
     r = client.post("/api/paypal_create_order_gemini",
                     json={"job_id": "CAND", "voice_id": _GEMINI_VOICE,
                           "amount_eur": 1.0})

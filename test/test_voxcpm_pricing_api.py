@@ -147,6 +147,7 @@ def test_la_stima_non_e_confusa_dall_ottimizzazione(client, job_grande):
 
 
 def test_l_ordine_paypal_rifiuta_un_importo_diverso(client, job_grande):
+    client.set_cookie("abm_cid", "cid-vox")  # proprietario di job_grande (E2: _check_job_owner)
     r = client.post("/api/paypal_create_order_gemini",
                     json={"job_id": job_grande, "voice_id": VOCE,
                           "amount_eur": 0.10})
