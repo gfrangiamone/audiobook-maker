@@ -115,11 +115,20 @@ def test_run_generation_passa_job_id_a_ogni_evento_m4b():
     import inspect
     import generation_engine
 
-    tree = ast.parse(inspect.getsource(generation_engine.run_generation))
+    # E1(a): i log START/END vivono in _run_m4b_conversion; run_generation la
+    # chiama tre volte passando job_id come secondo argomento.
+    tree = ast.parse(inspect.getsource(generation_engine._run_m4b_conversion))
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_log_m4b_progress"]
-    assert len(calls) == 6
+    assert len(calls) == 2
     assert all(isinstance(c.args[0], ast.Name) and c.args[0].id == "job_id" for c in calls)
+    tree = ast.parse(inspect.getsource(generation_engine.run_generation))
+    runs = [n for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_run_m4b_conversion"]
+    assert len(runs) == 3
+    assert all(isinstance(c.args[1], ast.Name) and c.args[1].id == "job_id" for c in runs)
+    assert not [n for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_log_m4b_progress"]
 
 
 # ---------------------------------------------------------------------------
