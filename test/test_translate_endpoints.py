@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 import audiobook_app
 
+import token_store
+
 
 @pytest.fixture
 def client():
@@ -200,7 +202,7 @@ def test_download_translation(client, tmp_path):
 def test_dl_token_translated(client, tmp_path):
     f = tmp_path / "libro.epub"
     f.write_bytes(b"PK fake epub")
-    audiobook_app._download_tokens["tok-tr-1"] = {
+    token_store.download_tokens["tok-tr-1"] = {
         "job_id": "TJ9", "created_at": time.time(),
         "download_type": "translated",
         "translated_path": str(f), "translated_name": "libro.epub",
@@ -211,11 +213,11 @@ def test_dl_token_translated(client, tmp_path):
         assert r.status_code == 200
         assert b"PK fake epub" in r.data
     finally:
-        audiobook_app._download_tokens.pop("tok-tr-1", None)
+        token_store.download_tokens.pop("tok-tr-1", None)
 
 
 def test_dl_token_translated_expired(client, tmp_path):
-    audiobook_app._download_tokens["tok-tr-2"] = {
+    token_store.download_tokens["tok-tr-2"] = {
         "job_id": "TJ9", "created_at": time.time() - 10 * 365 * 86400,
         "download_type": "translated",
         "translated_path": "/nope", "translated_name": "x.txt",
@@ -225,7 +227,7 @@ def test_dl_token_translated_expired(client, tmp_path):
         r = client.get("/dl/tok-tr-2/translated")
         assert r.status_code == 410
     finally:
-        audiobook_app._download_tokens.pop("tok-tr-2", None)
+        token_store.download_tokens.pop("tok-tr-2", None)
 
 
 def test_paypal_create_order_translate_amount(client, monkeypatch):

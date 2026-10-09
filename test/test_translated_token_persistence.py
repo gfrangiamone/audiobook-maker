@@ -18,11 +18,13 @@ import time
 
 import audiobook_app
 
+import token_store
+
 
 def _tokens_env(monkeypatch, tmp_path, tokens):
     f = tmp_path / "_download_tokens.json"
-    monkeypatch.setattr(audiobook_app, "_TOKENS_FILE", pathlib.Path(f))
-    monkeypatch.setattr(audiobook_app, "_download_tokens", dict(tokens))
+    monkeypatch.setattr(token_store, "TOKENS_FILE", pathlib.Path(f))
+    monkeypatch.setattr(token_store, "download_tokens", dict(tokens))
     return f
 
 
@@ -41,7 +43,7 @@ def test_translated_fields_survive_save_load_roundtrip(monkeypatch, tmp_path):
         }
     })
 
-    audiobook_app._save_tokens()
+    token_store.save_tokens()
     data = json.loads(f.read_text(encoding="utf-8"))
 
     assert data[tok]["translated_path"] == "/data/trjob/output_1/libro-es.epub", \
@@ -53,9 +55,9 @@ def test_translated_fields_survive_save_load_roundtrip(monkeypatch, tmp_path):
     # esistere, altrimenti il token viene giustamente scartato come invalido.
     (tmp_path / "trjob").mkdir()
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", pathlib.Path(tmp_path))
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
-    audiobook_app._load_tokens()
-    assert audiobook_app._download_tokens[tok]["translated_path"].endswith("libro-es.epub")
+    monkeypatch.setattr(token_store, "download_tokens", {})
+    token_store.load_tokens()
+    assert token_store.download_tokens[tok]["translated_path"].endswith("libro-es.epub")
 
 
 def test_dl_page_translated_unavailable_is_not_a_dead_end():
@@ -105,5 +107,5 @@ def test_cleanup_loop_has_translated_retention_branch():
     assert 'if status == "translated":' in body, "ramo translated assente dal cleanup loop"
     j = body.index('if status == "translated":')
     branch = body[j:j + 900]
-    assert "_has_active_download_tokens" in branch, "manca il guard sui token attivi"
+    assert "has_active_download_tokens" in branch, "manca il guard sui token attivi"
     assert "translated_at" in branch

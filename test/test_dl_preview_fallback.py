@@ -13,6 +13,7 @@ Questi test bloccano la regressione di entrambi.
 import importlib
 import time
 import pytest
+import token_store
 
 
 @pytest.fixture
@@ -52,8 +53,8 @@ def test_chapters_dl_redirects_to_cold_not_preview_zip(app_env, monkeypatch):
     key = f"{job_id}/output_1/book.zip"
     _patch_cold(monkeypatch, key)
 
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tokZ"] = {
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tokZ"] = {
         "job_id": job_id,
         "created_at": time.time(),
         "download_type": "chapters",
@@ -79,8 +80,8 @@ def test_chapters_dl_never_serves_preview_when_cold_unavailable(app_env, monkeyp
     job_id = "PreviewOnlyJob"
     _make_job_with_previews(tmp_path, job_id)
 
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tokP"] = {
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tokP"] = {
         "job_id": job_id,
         "created_at": time.time(),
         "download_type": "chapters",

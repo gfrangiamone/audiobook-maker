@@ -11,15 +11,17 @@ Invarianti verificate:
 import time
 
 import audiobook_app
+
+import token_store
 import generation_engine
 
 
 def _align_ge(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     monkeypatch.setattr(generation_engine, "_save_tokens", lambda: None)
     monkeypatch.setattr(generation_engine, "_jobs", audiobook_app.jobs)
-    monkeypatch.setattr(generation_engine, "_download_tokens", audiobook_app._download_tokens)
+    monkeypatch.setattr(generation_engine, "_download_tokens", token_store.download_tokens)
 
 
 def test_admin_copy_claim_preserves_original_owner(monkeypatch, tmp_path):
@@ -31,7 +33,7 @@ def test_admin_copy_claim_preserves_original_owner(monkeypatch, tmp_path):
             "output_m4b": str(out), "output_format": "m4b",
             "start_time": time.time(),
         }
-    audiobook_app._download_tokens["WTOK1"] = {
+    token_store.download_tokens["WTOK1"] = {
         "job_id": jid, "client_id": "web-cid-xyz", "created_at": time.time(),
         "is_gemini": False, "output_m4b": str(out), "output_format": "m4b",
     }
@@ -39,8 +41,8 @@ def test_admin_copy_claim_preserves_original_owner(monkeypatch, tmp_path):
     created = []
     tok = None
     try:
-        tok = audiobook_app._ensure_admin_copy_token(jid)
-        assert audiobook_app._transfer_tokens[tok].get("admin_copy") is True
+        tok = token_store.ensure_admin_copy_token(jid)
+        assert token_store.transfer_tokens[tok].get("admin_copy") is True
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-app-1"})
         assert r.status_code == 200
@@ -50,14 +52,14 @@ def test_admin_copy_claim_preserves_original_owner(monkeypatch, tmp_path):
         # Flusso utente invariato: job e token originale immutati
         assert audiobook_app.jobs[jid]["client_id"] == "web-cid-xyz"
         assert audiobook_app.jobs[jid].get("transferred_to_mobile") is not True
-        assert audiobook_app._download_tokens["WTOK1"]["client_id"] == "web-cid-xyz"
+        assert token_store.download_tokens["WTOK1"]["client_id"] == "web-cid-xyz"
 
         # Clone di proprietà dell'app admin
-        created = [t for t, v in audiobook_app._download_tokens.items()
+        created = [t for t, v in token_store.download_tokens.items()
                    if isinstance(v, dict) and v.get("job_id") == jid
                    and v.get("admin_copy")]
         assert len(created) == 1
-        clone = audiobook_app._download_tokens[created[0]]
+        clone = token_store.download_tokens[created[0]]
         assert clone["client_id"] == "admin-app-1"
         assert clone["output_m4b"] == str(out)
 
@@ -69,10 +71,10 @@ def test_admin_copy_claim_preserves_original_owner(monkeypatch, tmp_path):
     finally:
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
-        audiobook_app._download_tokens.pop("WTOK1", None)
+        token_store.download_tokens.pop("WTOK1", None)
         for t in created:
-            audiobook_app._download_tokens.pop(t, None)
-        audiobook_app._transfer_tokens.pop(tok, None)
+            token_store.download_tokens.pop(t, None)
+        token_store.transfer_tokens.pop(tok, None)
 
 
 def test_admin_copy_done_job_without_token_does_not_expose_user(monkeypatch, tmp_path):
@@ -90,12 +92,12 @@ def test_admin_copy_done_job_without_token_does_not_expose_user(monkeypatch, tmp
     created = []
     tok = None
     try:
-        tok = audiobook_app._ensure_admin_copy_token(jid)
+        tok = token_store.ensure_admin_copy_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-app-2"})
         assert r.status_code == 200
 
-        toks = [(t, v) for t, v in audiobook_app._download_tokens.items()
+        toks = [(t, v) for t, v in token_store.download_tokens.items()
                 if isinstance(v, dict) and v.get("job_id") == jid]
         created = [t for t, _ in toks]
         # Esattamente un token: il clone admin. Nessun token utente residuo.
@@ -113,8 +115,8 @@ def test_admin_copy_done_job_without_token_does_not_expose_user(monkeypatch, tmp
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
         for t in created:
-            audiobook_app._download_tokens.pop(t, None)
-        audiobook_app._transfer_tokens.pop(tok, None)
+            token_store.download_tokens.pop(t, None)
+        token_store.transfer_tokens.pop(tok, None)
 
 
 def test_copy_qr_endpoint_requires_admin(monkeypatch):
@@ -127,7 +129,7 @@ def test_copy_qr_endpoint_requires_admin(monkeypatch):
 def test_copy_qr_endpoint_returns_url(monkeypatch):
     """Job recuperabile (in RAM): l'endpoint emette url+qr e crea il token."""
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     jid = "qr-job-1"
     with audiobook_app._jobs_lock:
         audiobook_app.jobs[jid] = {"status": "generating", "client_id": "web-x",
@@ -143,7 +145,7 @@ def test_copy_qr_endpoint_returns_url(monkeypatch):
         assert d.get("available") is True
         assert "/t/" in d["url"]
         assert isinstance(d["qr"], str)  # data-URI PNG o '' se qrcode assente
-        tok_ref["t"] = [t for t, v in audiobook_app._transfer_tokens.items()
+        tok_ref["t"] = [t for t, v in token_store.transfer_tokens.items()
                         if isinstance(v, dict) and v.get("job_id") == jid
                         and v.get("admin_copy")]
         assert len(tok_ref["t"]) == 1
@@ -151,14 +153,14 @@ def test_copy_qr_endpoint_returns_url(monkeypatch):
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
         for t in tok_ref.get("t", []):
-            audiobook_app._transfer_tokens.pop(t, None)
+            token_store.transfer_tokens.pop(t, None)
 
 
 def test_copy_qr_endpoint_unavailable_when_gone(monkeypatch):
     """Job definitivamente sparito (non in RAM, nessun token, nessun file): il QR
     non deve essere proposto → available:false, nessun url/token."""
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     jid = "qr-gone-1"
     c = audiobook_app.app.test_client()
     r = c.get(f"/admin/api/job/{jid}/copy-qr",
@@ -167,7 +169,7 @@ def test_copy_qr_endpoint_unavailable_when_gone(monkeypatch):
     d = r.get_json()
     assert d.get("available") is False
     assert "url" not in d
-    residui = [t for t, v in audiobook_app._transfer_tokens.items()
+    residui = [t for t, v in token_store.transfer_tokens.items()
                if isinstance(v, dict) and v.get("job_id") == jid]
     assert residui == []
 
@@ -175,24 +177,24 @@ def test_copy_qr_endpoint_unavailable_when_gone(monkeypatch):
 def test_admin_copy_claim_gone_job_returns_410(monkeypatch):
     """Claim su job sparito (né RAM, né token, né file) → 410 job_unavailable."""
     _align_ge(monkeypatch)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     jid = "acp-gone"
     tok = None
     try:
-        tok = audiobook_app._ensure_admin_copy_token(jid)
+        tok = token_store.ensure_admin_copy_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-gone"})
         assert r.status_code == 410
         assert r.get_json().get("error_code") == "job_unavailable"
     finally:
-        audiobook_app._transfer_tokens.pop(tok, None)
+        token_store.transfer_tokens.pop(tok, None)
 
 
 def test_admin_copy_inprogress_hooks_and_delivers(monkeypatch, tmp_path):
     """Job IN CORSO: il claim aggancia (pending) senza toccare l'utente; al COMPLETE
     la copia admin è materializzata come token admin-owned scaricabile."""
     _align_ge(monkeypatch)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     jid = "acp-inprog"
     out = tmp_path / "out.m4b"; out.write_bytes(b"x")
     with audiobook_app._jobs_lock:
@@ -204,7 +206,7 @@ def test_admin_copy_inprogress_hooks_and_delivers(monkeypatch, tmp_path):
     created = []
     tok = None
     try:
-        tok = audiobook_app._ensure_admin_copy_token(jid)
+        tok = token_store.ensure_admin_copy_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-ip"})
         assert r.status_code == 200
@@ -213,17 +215,17 @@ def test_admin_copy_inprogress_hooks_and_delivers(monkeypatch, tmp_path):
         # cid agganciato al job, nessun token ancora creato, utente invariato
         assert "admin-ip" in audiobook_app.jobs[jid]["admin_copy_cids"]
         assert audiobook_app.jobs[jid]["client_id"] == "web-ip"
-        assert [v for v in audiobook_app._download_tokens.values()
+        assert [v for v in token_store.download_tokens.values()
                 if isinstance(v, dict) and v.get("job_id") == jid] == []
 
         # Simula il COMPLETE: materializza le copie admin
         audiobook_app.jobs[jid]["status"] = "done"
         generation_engine._materialize_admin_copies(jid)
 
-        created = [t for t, v in audiobook_app._download_tokens.items()
+        created = [t for t, v in token_store.download_tokens.items()
                    if isinstance(v, dict) and v.get("job_id") == jid]
         assert len(created) == 1
-        clone = audiobook_app._download_tokens[created[0]]
+        clone = token_store.download_tokens[created[0]]
         assert clone["client_id"] == "admin-ip" and clone.get("admin_copy") is True
         # lista svuotata (idempotenza) e nessun token utente residuo
         assert not audiobook_app.jobs[jid].get("admin_copy_cids")
@@ -231,8 +233,8 @@ def test_admin_copy_inprogress_hooks_and_delivers(monkeypatch, tmp_path):
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
         for t in created:
-            audiobook_app._download_tokens.pop(t, None)
-        audiobook_app._transfer_tokens.pop(tok, None)
+            token_store.download_tokens.pop(t, None)
+        token_store.transfer_tokens.pop(tok, None)
 
 
 def test_admin_copy_pending_visible_in_my_jobs(monkeypatch, tmp_path):
@@ -241,7 +243,7 @@ def test_admin_copy_pending_visible_in_my_jobs(monkeypatch, tmp_path):
     Il job pending deve comparire subito nella tab Attivita' (flag admin_copy),
     e al COMPLETE trasformarsi nell'entry done col download token clonato."""
     _align_ge(monkeypatch)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     jid = "acp-myjobs"
     out = tmp_path / "out.m4b"; out.write_bytes(b"x")
     with audiobook_app._jobs_lock:
@@ -255,7 +257,7 @@ def test_admin_copy_pending_visible_in_my_jobs(monkeypatch, tmp_path):
     created = []
     tok = None
     try:
-        tok = audiobook_app._ensure_admin_copy_token(jid)
+        tok = token_store.ensure_admin_copy_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-mj"})
         assert r.status_code == 200 and r.get_json().get("pending") is True
@@ -273,7 +275,7 @@ def test_admin_copy_pending_visible_in_my_jobs(monkeypatch, tmp_path):
         # COMPLETE: materializzazione -> entry done col token clonato
         audiobook_app.jobs[jid]["status"] = "done"
         generation_engine._materialize_admin_copies(jid)
-        created = [t for t, v in audiobook_app._download_tokens.items()
+        created = [t for t, v in token_store.download_tokens.items()
                    if isinstance(v, dict) and v.get("job_id") == jid]
         mj2 = c.get("/api/my_jobs", headers={"X-ABM-Cid": "admin-mj"}).get_json()
         entry2 = next((e for e in mj2["jobs"] if e["job_id"] == jid), None)
@@ -283,8 +285,8 @@ def test_admin_copy_pending_visible_in_my_jobs(monkeypatch, tmp_path):
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
         for t in created:
-            audiobook_app._download_tokens.pop(t, None)
-        audiobook_app._transfer_tokens.pop(tok, None)
+            token_store.download_tokens.pop(t, None)
+        token_store.transfer_tokens.pop(tok, None)
 
 
 def test_copy_qr_exposes_user_dl_link_and_notify_email(monkeypatch, tmp_path):
@@ -292,8 +294,8 @@ def test_copy_qr_exposes_user_dl_link_and_notify_email(monkeypatch, tmp_path):
     QR deve esporre il link /dl DELL'UTENTE (non il clone admin) e l'indirizzo
     a cui la notifica e' stata inviata."""
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_tokens", lambda: None)
     monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.test")
     jid = "qr-dl-1"
     out = tmp_path / "out.m4b"; out.write_bytes(b"x")
@@ -304,13 +306,13 @@ def test_copy_qr_exposes_user_dl_link_and_notify_email(monkeypatch, tmp_path):
             "output_m4b": str(out), "output_format": "m4b",
             "notify_email": "utente@example.com", "start_time": now,
         }
-    audiobook_app._download_tokens["UTOK-DL"] = {
+    token_store.download_tokens["UTOK-DL"] = {
         "job_id": jid, "client_id": "web-dl", "created_at": now,
         "is_gemini": False, "output_m4b": str(out), "output_format": "m4b",
     }
     # Clone admin di una precedente indagine: NON deve essere proposto come
     # link da inoltrare all'utente.
-    audiobook_app._download_tokens["ATOK-DL"] = {
+    token_store.download_tokens["ATOK-DL"] = {
         "job_id": jid, "client_id": "admin-app", "created_at": now,
         "admin_copy": True, "output_m4b": str(out), "output_format": "m4b",
     }
@@ -325,21 +327,21 @@ def test_copy_qr_exposes_user_dl_link_and_notify_email(monkeypatch, tmp_path):
         assert d["notify_email"] == "utente@example.com"
         assert d["dl_downloaded"] is False
         assert d["dl_expires_at"] > now
-        tok_ref["t"] = [t for t, v in audiobook_app._transfer_tokens.items()
+        tok_ref["t"] = [t for t, v in token_store.transfer_tokens.items()
                         if isinstance(v, dict) and v.get("job_id") == jid]
     finally:
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
-        audiobook_app._download_tokens.pop("UTOK-DL", None)
-        audiobook_app._download_tokens.pop("ATOK-DL", None)
+        token_store.download_tokens.pop("UTOK-DL", None)
+        token_store.download_tokens.pop("ATOK-DL", None)
         for t in tok_ref.get("t", []):
-            audiobook_app._transfer_tokens.pop(t, None)
+            token_store.transfer_tokens.pop(t, None)
 
 
 def test_admin_user_dl_link_skips_admin_copy_and_expired(monkeypatch):
     """_admin_user_dl_link: ignora i cloni admin e i token oltre retention;
     a parita' di job sceglie quello che scade piu' tardi."""
-    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_tokens", lambda: None)
     jid = "dl-pick-1"
     now = time.time()
     ret = audiobook_app._retention_for_token_info({})
@@ -350,7 +352,7 @@ def test_admin_user_dl_link_skips_admin_copy_and_expired(monkeypatch):
         "T-B": {"job_id": jid, "created_at": now - 60},
         "T-OTHER": {"job_id": "altro-job", "created_at": now},
     }
-    audiobook_app._download_tokens.update(toks)
+    token_store.download_tokens.update(toks)
     try:
         best = audiobook_app._admin_user_dl_link(jid, now=now)
         assert best is not None
@@ -360,14 +362,14 @@ def test_admin_user_dl_link_skips_admin_copy_and_expired(monkeypatch):
         assert audiobook_app._admin_user_dl_link("job-inesistente", now=now) is None
     finally:
         for t in toks:
-            audiobook_app._download_tokens.pop(t, None)
+            token_store.download_tokens.pop(t, None)
 
 
 def test_copy_qr_notify_email_from_pending_descriptor(monkeypatch):
     """Job non piu' in RAM: l'indirizzo di notifica arriva dal descrittore di
     recupero (rimosso solo dopo l'invio della mail)."""
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     jid = "qr-pending-1"
     monkeypatch.setattr(
         audiobook_app.pending_jobs, "orphans",
@@ -387,7 +389,7 @@ def test_admin_copy_finalized_not_in_ram_reconstructs_from_disk(monkeypatch, tmp
     """Job finalizzato NON più in RAM ma con output ancora su disco: il claim
     ricostruisce lo snapshot e consegna la copia admin (nessun 410)."""
     _align_ge(monkeypatch)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path)
     jid = "acp-cold"
     outdir = tmp_path / jid / "output_1"
@@ -396,20 +398,20 @@ def test_admin_copy_finalized_not_in_ram_reconstructs_from_disk(monkeypatch, tmp
     created = []
     tok = None
     try:
-        tok = audiobook_app._ensure_admin_copy_token(jid)
+        tok = token_store.ensure_admin_copy_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-cold"})
         assert r.status_code == 200
         body = r.get_json()
         assert body.get("admin_copy") is True and body.get("job_id") == jid
-        created = [t for t, v in audiobook_app._download_tokens.items()
+        created = [t for t, v in token_store.download_tokens.items()
                    if isinstance(v, dict) and v.get("job_id") == jid]
         assert len(created) == 1
-        clone = audiobook_app._download_tokens[created[0]]
+        clone = token_store.download_tokens[created[0]]
         assert clone["client_id"] == "admin-cold" and clone.get("admin_copy") is True
         assert clone["output_m4b"] == str(m4b)
         assert clone["book_title"] == "Libro"
     finally:
         for t in created:
-            audiobook_app._download_tokens.pop(t, None)
-        audiobook_app._transfer_tokens.pop(tok, None)
+            token_store.download_tokens.pop(t, None)
+        token_store.transfer_tokens.pop(tok, None)

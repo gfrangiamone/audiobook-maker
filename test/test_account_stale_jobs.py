@@ -9,6 +9,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import token_store
 import db
 import generation_engine as ge
 import pending_jobs
@@ -103,7 +104,7 @@ def test_cleanup_of_non_terminal_job_settles_row(env, monkeypatch, tmp_path):
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path / "up")
     monkeypatch.setattr(audiobook_app, "_reconcile_unused_capture_for_job", lambda *a: None)
     monkeypatch.setattr(audiobook_app, "_delete_cold_for_job", lambda *a: None)
-    monkeypatch.setattr(audiobook_app, "_has_active_download_tokens", lambda *a: False)
+    monkeypatch.setattr(token_store, "has_active_download_tokens", lambda *a: False)
     monkeypatch.setattr(pending_jobs, "mark_failed", lambda jid: None)
     for jid, job in (("c1", {"status": "analyzed", "cancelled": True}),
                      ("c2", {"status": "generating"}),

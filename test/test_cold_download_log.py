@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 
 import pytest
+import token_store
 
 
 @pytest.fixture
@@ -53,8 +54,8 @@ def test_cold_redirect_is_logged_as_cold_not_as_delivered_download(app_env, monk
     missing_m4b = str(tmp_path / "data" / job_id / "output_1" / "book.m4b")
     _patch_cold(monkeypatch, "jobCold/output_1/book.m4b")
 
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tokCold"] = {
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tokCold"] = {
         "job_id": job_id,
         "created_at": time.time(),
         "output_m4b": missing_m4b,
@@ -77,8 +78,8 @@ def test_local_serving_is_logged_as_delivered_download(app_env, monkeypatch):
     m4b = out_dir / "book.m4b"
     m4b.write_bytes(b"\x00\x00\x00\x1cftypM4A " + b"x" * 64)
 
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tokHot"] = {
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tokHot"] = {
         "job_id": job_id,
         "created_at": time.time(),
         "output_m4b": str(m4b),
@@ -109,8 +110,8 @@ def test_cold_redirect_keeps_premium_no_download_retention(app_env, monkeypatch)
         "original_filename": "book.epub",
         "is_gemini": True,
     }
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tokColdPrem"] = tok
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tokColdPrem"] = tok
     base = audiobook_app._retention_for_token_info(tok)
 
     resp = audiobook_app.app.test_client().get("/dl/tokColdPrem/m4b", follow_redirects=False)
@@ -138,8 +139,8 @@ def test_local_serving_marks_token_downloaded(app_env, monkeypatch):
         "original_filename": "book.epub",
         "is_gemini": True,
     }
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tokHotPrem"] = tok
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tokHotPrem"] = tok
     base = audiobook_app._retention_for_token_info(tok)
 
     resp = audiobook_app.app.test_client().get("/dl/tokHotPrem/m4b", follow_redirects=False)

@@ -24,6 +24,8 @@ import pytest
 
 import audiobook_app
 
+import token_store
+
 CID = "restore-cid-12345"
 HDR = {"X-ABM-Cid": CID}
 
@@ -44,7 +46,7 @@ def client():
 
 @pytest.fixture
 def seed_job(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
+    monkeypatch.setattr(token_store, "download_tokens", {})
     seeded = []
 
     def _seed(jid, **fields):
@@ -135,7 +137,7 @@ def test_completed_job_known_only_from_its_token_is_not_live(client, seed_job):
     # descrittore non deve dichiararsi `live`, o la SPA aprirebbe uno stream
     # che risponde 410.
     now = time.time()
-    audiobook_app._download_tokens["TOKRESTORE"] = {
+    token_store.download_tokens["TOKRESTORE"] = {
         "job_id": "rj7",
         "client_id": CID,
         "created_at": now - 60,
@@ -154,7 +156,7 @@ def test_live_flag_survives_the_merge_with_the_download_token(
     now = time.time()
     seed_job("rj8", status="done", output_format="m4b", single_file=True,
              info=_FakeInfo("Consegnato", 9), start_time=now - 120)
-    audiobook_app._download_tokens["TOKMERGE"] = {
+    token_store.download_tokens["TOKMERGE"] = {
         "job_id": "rj8",
         "client_id": CID,
         "created_at": now - 60,

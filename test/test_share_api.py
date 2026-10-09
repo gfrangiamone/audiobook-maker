@@ -4,6 +4,8 @@ import time
 import pytest
 
 import audiobook_app
+
+import token_store
 import storage_backend
 
 
@@ -40,25 +42,25 @@ def test_share_tokens_save_load_roundtrip(monkeypatch, tmp_path):
     import json
     import pathlib
     f = tmp_path / "_share_tokens.json"
-    monkeypatch.setattr(audiobook_app, "_SHARE_TOKENS_FILE", pathlib.Path(f))
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "SHARE_TOKENS_FILE", pathlib.Path(f))
+    monkeypatch.setattr(token_store, "share_tokens", {
         "STOK": {"kind": "upload", "s3_key": "shares/a/x.m4b",
                  "filename": "x.m4b", "client_id": "mobile-cid-12345",
                  "created_at": time.time(), "ttl_sec": 7200}
     })
-    audiobook_app._save_share_tokens()
+    token_store.save_share_tokens()
     data = json.loads(f.read_text(encoding="utf-8"))
     assert "STOK" in data
     assert data["STOK"]["s3_key"] == "shares/a/x.m4b"
     # reload
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
-    audiobook_app._load_share_tokens()
-    assert audiobook_app._share_tokens["STOK"]["kind"] == "upload"
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    token_store.load_share_tokens()
+    assert token_store.share_tokens["STOK"]["kind"] == "upload"
 
 
 def test_find_available_download_token(monkeypatch):
     now = time.time()
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "T1": {"job_id": "J1", "client_id": "mobile-cid-12345",
                "created_at": now - 60, "is_gemini": False},
         "T2": {"job_id": "J1", "client_id": "ALTRO",
@@ -66,10 +68,10 @@ def test_find_available_download_token(monkeypatch):
         "T3": {"job_id": "J2", "client_id": "mobile-cid-12345",
                "created_at": now - 10 * 365 * 86400, "is_gemini": False},
     })
-    assert audiobook_app._find_available_download_token("J1", "mobile-cid-12345", now) == "T1"
+    assert token_store.find_available_download_token("J1", "mobile-cid-12345", now) == "T1"
     # job di altri / scaduto -> None
-    assert audiobook_app._find_available_download_token("J1", "x", now) is None
-    assert audiobook_app._find_available_download_token("J2", "mobile-cid-12345", now) is None
+    assert token_store.find_available_download_token("J1", "x", now) is None
+    assert token_store.find_available_download_token("J2", "mobile-cid-12345", now) is None
 
 
 def test_safe_share_filename():
@@ -85,13 +87,13 @@ def test_share_link_for(monkeypatch):
 
 def test_share_create_ready_for_available_job(client, monkeypatch):
     now = time.time()
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
                 "created_at": now - 30, "is_gemini": False,
                 "output_m4b": "/x/out.m4b"},
     })
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
     r = client.post("/api/share/create", headers=HDR, json={"job_id": "JOBA"})
     assert r.status_code == 200
@@ -99,16 +101,16 @@ def test_share_create_ready_for_available_job(client, monkeypatch):
     assert data["mode"] == "ready"
     assert data["link"].startswith("https://audiobook-maker.com/s/")
     assert data["ttl_sec"] == 86400
-    rec = audiobook_app._share_tokens[data["share_token"]]
+    rec = token_store.share_tokens[data["share_token"]]
     assert rec["kind"] == "ready"
     assert rec["download_token"] == "DLT"
     assert rec["client_id"] == "mobile-cid-12345"
 
 
 def test_share_create_upload_when_no_job(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "download_tokens", {})
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "presigned_put_url",
                         lambda key, ttl=None: f"https://r2/PUT/{key}")
@@ -123,8 +125,8 @@ def test_share_create_upload_when_no_job(client, monkeypatch):
     assert data["max_bytes"] == 524288000
     # pending record must be persisted
     share_id = data["share_id"]
-    assert audiobook_app._share_tokens[share_id]["kind"] == "pending"
-    assert audiobook_app._share_tokens[share_id]["client_id"] == "mobile-cid-12345"
+    assert token_store.share_tokens[share_id]["kind"] == "pending"
+    assert token_store.share_tokens[share_id]["client_id"] == "mobile-cid-12345"
 
 
 def test_share_create_requires_cid(client):
@@ -134,7 +136,7 @@ def test_share_create_requires_cid(client):
 
 
 def test_share_create_upload_unavailable_without_s3(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
+    monkeypatch.setattr(token_store, "download_tokens", {})
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     r = client.post("/api/share/create", headers=HDR, json={"filename": "x.m4b"})
     assert r.status_code == 503
@@ -142,26 +144,26 @@ def test_share_create_upload_unavailable_without_s3(client, monkeypatch):
 
 
 def test_share_finalize_ok(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SID1": {"kind": "pending", "s3_key": "shares/SID1/x.m4b", "filename": "x.m4b",
                  "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size", lambda key: 1234)
     monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
     r = client.post("/api/share/finalize", headers=HDR, json={"share_id": "SID1", "filename": "x.m4b"})
     assert r.status_code == 200
     data = r.get_json()
     assert data["link"].startswith("https://audiobook-maker.com/s/")
-    rec = audiobook_app._share_tokens[data["share_token"]]
+    rec = token_store.share_tokens[data["share_token"]]
     assert rec["kind"] == "upload" and rec["s3_key"] == "shares/SID1/x.m4b"
-    assert "SID1" not in audiobook_app._share_tokens   # pending consumed
+    assert "SID1" not in token_store.share_tokens   # pending consumed
 
 
 def test_share_finalize_not_uploaded(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SID2": {"kind": "pending", "s3_key": "shares/SID2/x.m4b", "filename": "x.m4b",
                  "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size", lambda key: None)
     r = client.post("/api/share/finalize", headers=HDR,
                     json={"share_id": "SID2", "filename": "x.m4b"})
@@ -171,10 +173,10 @@ def test_share_finalize_not_uploaded(client, monkeypatch):
 
 def test_share_finalize_too_large_deletes(client, monkeypatch):
     deleted = []
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SID3": {"kind": "pending", "s3_key": "shares/SID3/big.m4b", "filename": "big.m4b",
                  "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size",
                         lambda key: 600 * 1024 * 1024)
     monkeypatch.setattr(storage_backend, "delete_object", lambda key: deleted.append(key))
@@ -183,14 +185,14 @@ def test_share_finalize_too_large_deletes(client, monkeypatch):
     assert r.status_code == 413
     assert r.get_json()["error_code"] == "too_large"
     assert deleted == ["shares/SID3/big.m4b"]
-    assert "SID3" not in audiobook_app._share_tokens
+    assert "SID3" not in token_store.share_tokens
 
 
 def test_share_finalize_storage_error_returns_502(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SIDX": {"kind": "pending", "s3_key": "shares/SIDX/x.m4b", "filename": "x.m4b",
                  "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     def _boom(key):
         raise RuntimeError("r2 down")
     monkeypatch.setattr(storage_backend, "object_size", _boom)
@@ -201,10 +203,10 @@ def test_share_finalize_storage_error_returns_502(client, monkeypatch):
 
 
 def test_share_finalize_forbidden_other_cid(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SID_OTHER": {"kind": "pending", "s3_key": "shares/SID_OTHER/x.m4b", "filename": "x.m4b",
                       "client_id": "other-cid-99999", "created_at": time.time(), "ttl_sec": 3600}})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     r = client.post("/api/share/finalize", headers=HDR,
                     json={"share_id": "SID_OTHER", "filename": "x.m4b"})
     assert r.status_code == 403
@@ -212,8 +214,8 @@ def test_share_finalize_forbidden_other_cid(client, monkeypatch):
 
 
 def test_share_finalize_unknown_share_id(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     r = client.post("/api/share/finalize", headers=HDR,
                     json={"share_id": "NONEXISTENT", "filename": "x.m4b"})
     assert r.status_code == 404
@@ -221,7 +223,7 @@ def test_share_finalize_unknown_share_id(client, monkeypatch):
 
 
 def test_share_claim_expired_returns_410(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
               "client_id": "c", "created_at": time.time() - 9999, "ttl_sec": 7200}
     })
@@ -231,13 +233,13 @@ def test_share_claim_expired_returns_410(client, monkeypatch):
 
 
 def test_share_claim_unknown_returns_404(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(token_store, "share_tokens", {})
     r = client.get("/api/share/claim/NOPE")
     assert r.status_code == 404
 
 
 def test_share_claim_ok_returns_dl_url(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
               "client_id": "c", "created_at": time.time(), "ttl_sec": 7200}
     })
@@ -251,7 +253,7 @@ def test_share_claim_ok_returns_dl_url(client, monkeypatch):
 
 
 def test_share_dl_upload_redirects_presigned(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
               "client_id": "c", "created_at": time.time(), "ttl_sec": 7200}
     })
@@ -267,12 +269,12 @@ def test_share_dl_upload_redirects_presigned(client, monkeypatch):
 def test_share_dl_ready_serves_file(client, tmp_path, monkeypatch):
     f = tmp_path / "out.m4b"
     f.write_bytes(b"0123456789")
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "DLT": {"job_id": "J", "client_id": "c", "created_at": time.time(),
                 "book_title": "Libro", "output_m4b": str(f), "output_format": "m4b",
                 "is_gemini": False},
     })
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "S": {"kind": "ready", "download_token": "DLT", "client_id": "c",
               "created_at": time.time(), "ttl_sec": 7200}
     })
@@ -285,12 +287,12 @@ def test_share_dl_ready_serves_file(client, tmp_path, monkeypatch):
 def test_share_dl_ready_cold_storage_redirects(client, monkeypatch):
     # File NON in locale ma su cold storage (R2): deve fare 302 al presigned,
     # NON 410. Regressione: share "ready" di job ancora scaricabile online.
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "DLT": {"job_id": "J", "client_id": "c", "created_at": time.time(),
                 "book_title": "Libro", "output_m4b": "/evacuated/out.m4b",
                 "is_gemini": False},
     })
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "S": {"kind": "ready", "download_token": "DLT", "client_id": "c",
               "created_at": time.time(), "ttl_sec": 7200}
     })
@@ -310,16 +312,16 @@ def test_share_create_ready_stores_filename(client, monkeypatch, tmp_path):
     now = time.time()
     f = tmp_path / "out.m4b"
     f.write_bytes(b"x")
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
                 "created_at": now - 30, "is_gemini": False,
                 "book_title": "Cime Tempestose", "output_m4b": str(f)},
     })
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     r = client.post("/api/share/create", headers=HDR, json={"job_id": "JOBA"})
     assert r.status_code == 200
-    rec = audiobook_app._share_tokens[r.get_json()["share_token"]]
+    rec = token_store.share_tokens[r.get_json()["share_token"]]
     # nome download col titolo del libro, non il fallback generico
     assert rec["filename"] == "Cime_Tempestose.m4b"
 
@@ -328,16 +330,16 @@ def test_share_create_stores_fingerprint(client, monkeypatch, tmp_path):
     f = tmp_path / "out.m4b"
     f.write_bytes(b"x")
     now = time.time()
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
                 "created_at": now - 30, "is_gemini": False,
                 "book_title": "Libro", "output_m4b": str(f)},
     })
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     r = client.post("/api/share/create", headers=HDR,
                     json={"job_id": "JOBA", "filename": "x.m4b", "fingerprint": "FPX"})
-    rec = audiobook_app._share_tokens[r.get_json()["share_token"]]
+    rec = token_store.share_tokens[r.get_json()["share_token"]]
     assert rec["fingerprint"] == "FPX"
 
 
@@ -345,35 +347,35 @@ def test_share_create_reuses_alive_ready_resets_ttl(client, monkeypatch, tmp_pat
     f = tmp_path / "out.m4b"
     f.write_bytes(b"data")
     now = time.time()
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
                 "created_at": now - 30, "is_gemini": False,
                 "book_title": "Libro", "output_m4b": str(f)},
     })
     # share già viva ma vecchia, stesso fingerprint
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "EXIST": {"kind": "ready", "download_token": "DLT",
                   "client_id": "mobile-cid-12345", "created_at": now - 3000,
                   "ttl_sec": 7200, "filename": "Libro.m4b", "fingerprint": "FP1"},
     })
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     r = client.post("/api/share/create", headers=HDR,
                     json={"job_id": "JOBA", "filename": "x.m4b", "fingerprint": "FP1"})
     data = r.get_json()
     assert data["mode"] == "ready"
     assert data["share_token"] == "EXIST"  # stesso token/link, niente nuovo
     # TTL resettato: created_at aggiornato a ~now
-    assert audiobook_app._share_tokens["EXIST"]["created_at"] >= now - 5
+    assert token_store.share_tokens["EXIST"]["created_at"] >= now - 5
 
 
 def test_share_create_reuses_alive_upload(client, monkeypatch):
     now = time.time()
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "EXIST": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
                   "client_id": "mobile-cid-12345", "created_at": now - 3000,
                   "ttl_sec": 7200, "fingerprint": "FPU"},
     })
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "object_exists", lambda k: True)
     r = client.post("/api/share/create", headers=HDR,
@@ -385,17 +387,17 @@ def test_share_create_reuses_alive_upload(client, monkeypatch):
 
 def test_share_create_no_reuse_when_file_gone(client, monkeypatch):
     now = time.time()
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
                 "created_at": now - 30, "is_gemini": False,
                 "output_m4b": "/gone/out.m4b"},
     })
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "EXIST": {"kind": "ready", "download_token": "DLT",
                   "client_id": "mobile-cid-12345", "created_at": now - 100,
                   "ttl_sec": 7200, "fingerprint": "FP1"},
     })
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     r = client.post("/api/share/create", headers=HDR,
                     json={"job_id": "JOBA", "filename": "x.m4b", "fingerprint": "FP1"})
@@ -406,22 +408,22 @@ def test_share_create_no_reuse_when_file_gone(client, monkeypatch):
 
 def test_share_finalize_carries_fingerprint(client, monkeypatch):
     now = time.time()
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SID": {"kind": "pending", "s3_key": "shares/SID/x.m4b", "filename": "x.m4b",
                 "client_id": "mobile-cid-12345", "created_at": now, "ttl_sec": 3600,
                 "fingerprint": "FPF"},
     })
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size", lambda k: 1000)
     r = client.post("/api/share/finalize", headers=HDR,
                     json={"share_id": "SID", "filename": "x.m4b"})
     assert r.status_code == 200
-    rec = audiobook_app._share_tokens[r.get_json()["share_token"]]
+    rec = token_store.share_tokens[r.get_json()["share_token"]]
     assert rec["fingerprint"] == "FPF"
 
 
 def test_share_dl_expired_410(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
               "client_id": "c", "created_at": time.time() - 9999, "ttl_sec": 7200}
     })
@@ -439,8 +441,8 @@ def test_cleanup_expired_shares(monkeypatch):
     now = time.time()
     deleted = []
     monkeypatch.setattr(storage_backend, "delete_object", lambda key: deleted.append(key))
-    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "share_tokens", {
         "OLD_UP": {"kind": "upload", "s3_key": "shares/a/x.m4b",
                    "created_at": now - 9999, "ttl_sec": 7200},
         "OLD_RD": {"kind": "ready", "download_token": "DLT",
@@ -451,11 +453,11 @@ def test_cleanup_expired_shares(monkeypatch):
     n = audiobook_app._cleanup_expired_shares(now)
     assert n == 2
     assert deleted == ["shares/a/x.m4b"]  # solo l'upload scaduto cancella su R2
-    assert set(audiobook_app._share_tokens.keys()) == {"FRESH"}
+    assert set(token_store.share_tokens.keys()) == {"FRESH"}
 
 
 def test_share_dl_storage_error_returns_502(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
               "client_id": "c", "created_at": __import__("time").time(), "ttl_sec": 7200}
     })
@@ -468,7 +470,7 @@ def test_share_dl_storage_error_returns_502(client, monkeypatch):
 
 
 def test_share_claim_pending_not_claimable(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SIDP": {"kind": "pending", "s3_key": "shares/SIDP/x.m4b", "filename": "x.m4b",
                  "client_id": "c", "created_at": __import__("time").time(), "ttl_sec": 3600}
     })
@@ -478,7 +480,7 @@ def test_share_claim_pending_not_claimable(client, monkeypatch):
 
 
 def test_share_dl_pending_not_served(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+    monkeypatch.setattr(token_store, "share_tokens", {
         "SIDP": {"kind": "pending", "s3_key": "shares/SIDP/x.m4b", "filename": "x.m4b",
                  "client_id": "c", "created_at": __import__("time").time(), "ttl_sec": 3600}
     })

@@ -147,6 +147,8 @@ from tts_split import (
 
 import assembly_queue
 import load_metrics
+import token_store as _tkstore
+import routes_tokens
 import tts_engines
 import jsonl_audit
 import email_service
@@ -753,7 +755,7 @@ def _mark_token_downloaded(token_info):
         return
     token_info["downloaded_at"] = time.time()
     try:
-        _save_tokens()
+        _tkstore.save_tokens()
     except Exception as e:
         print(f"[tokens] _mark_token_downloaded persist failed: {e}")
 
@@ -779,29 +781,9 @@ def _mark_token_redirected(token_info):
         return
     token_info["redirected_at"] = time.time()
     try:
-        _save_tokens()
+        _tkstore.save_tokens()
     except Exception as e:
         print(f"[tokens] _mark_token_redirected persist failed: {e}")
-
-
-def _has_active_download_tokens(job_id, now=None):
-    """True se esiste almeno un download token non scaduto per il job_id.
-
-    Protegge job in stato analysed/cancelled dalla rimozione prematura
-    della directory quando esistono ancora link email validi.
-    I token vengono confrontati con _effective_retention_for_token_info
-    (+300s di margine come nel resto del cleanup)."""
-    if now is None:
-        now = time.time()
-    try:
-        for _t, info in list(_download_tokens.items()):
-            if info.get("job_id") != job_id:
-                continue
-            if (now - info.get("created_at", 0)) <= _effective_retention_for_token_info(info) + 300:
-                return True
-    except Exception:
-        pass
-    return False
 
 
 #  -  -  Admin activity digest (email log)  -  -
@@ -2139,81 +2121,8 @@ def _active_optimizing_for_client_unlocked(client_id):
 
 FAVICON_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6I2MyOWE2YyIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiNhMDc4NTAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgcng9IjE0IiBmaWxsPSJ1cmwoI2JnKSIvPgogIDxwYXRoIGQ9Ik0xNiA0NFYyMGMwLTIgMS41LTMuNSAzLjUtMy41QzIzIDE2LjUgMjggMTcgMzIgMTljNC0yIDktMi41IDEyLjUtMi41IDIgMCAzLjUgMS41IDMuNSAzLjV2MjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMzIgMTl2MjUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPHBhdGggZD0iTTE3IDM2YzAtOSA2LjctMTUgMTUtMTVzMTUgNiAxNSAxNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxyZWN0IHg9IjEzIiB5PSIzNCIgd2lkdGg9IjciIGhlaWdodD0iMTAiIHJ4PSIzIiBmaWxsPSJ3aGl0ZSIvPgogIDxyZWN0IHg9IjQ0IiB5PSIzNCIgd2lkdGg9IjciIGhlaWdodD0iMTAiIHJ4PSIzIiBmaWxsPSJ3aGl0ZSIvPgogIDxwYXRoIGQ9Ik0yMiAzNy41YzEuMi0xIDEuMi0zIDAtNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzI5YTZjIiBzdHJva2Utd2lkdGg9IjEuMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPHBhdGggZD0iTTQyIDM3LjVjLTEuMi0xLTEuMi0zIDAtNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzI5YTZjIiBzdHJva2Utd2lkdGg9IjEuMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPg=="
 
-_download_tokens = {}  # token -> {job_id, created_at, download_type, base_url, ...}
-_TOKENS_FILE = UPLOAD_DIR / "_download_tokens.json"
-_tokens_lock = threading.Lock()
-
-_transfer_tokens = {}  # transfer_token -> {"job_id":..., "created_at":...}
-_TRANSFER_TOKENS_FILE = UPLOAD_DIR / "_transfer_tokens.json"
-_transfer_lock = threading.Lock()
-
-
-def _load_transfer_tokens():
-    global _transfer_tokens
-    data = load_json(_TRANSFER_TOKENS_FILE, None,
-                     on_error=lambda e: print(f"[transfer] load failed: {e}"))
-    if data is not None:
-        _transfer_tokens = data
-
-
-def _save_transfer_tokens():
-    try:
-        with _transfer_lock:
-            atomic_write_json(_TRANSFER_TOKENS_FILE,
-                                              _transfer_tokens, indent=2)
-    except Exception as e:
-        print(f"[transfer] save failed: {e}")
-
-
-_share_tokens = {}  # share_token -> {"kind":"ready"|"upload", ...}
-_SHARE_TOKENS_FILE = UPLOAD_DIR / "_share_tokens.json"
-_share_lock = threading.Lock()
-
-
-def _load_share_tokens():
-    global _share_tokens
-    data = load_json(_SHARE_TOKENS_FILE, None,
-                     on_error=lambda e: print(f"[share] load failed: {e}"))
-    if data is not None:
-        _share_tokens = data
-
-
-def _save_share_tokens():
-    try:
-        with _share_lock:
-            atomic_write_json(_SHARE_TOKENS_FILE,
-                                              _share_tokens, indent=2)
-    except Exception as e:
-        print(f"[share] save failed: {e}")
-
-
-def _ensure_transfer_token(job_id):
-    """Ritorna (idempotente) il transfer token per il job, creandolo se assente."""
-    with _transfer_lock:
-        for tok, info in _transfer_tokens.items():
-            if isinstance(info, dict) and info.get("job_id") == job_id:
-                return tok
-        tok = secrets.token_urlsafe(24)
-        _transfer_tokens[tok] = {"job_id": job_id, "created_at": time.time()}
-    _save_transfer_tokens()
-    return tok
-
-
-def _ensure_admin_copy_token(job_id):
-    """Ritorna (idempotente) un transfer token dedicato alla COPIA AMMINISTRATIVA
-    del job verso l'app (indagine). Distinto dal transfer token utente: reca il
-    flag `admin_copy` così il claim non riassegna il job all'app chiamante e non
-    tocca lo stato dell'utente originale (vedi api_transfer_claim)."""
-    with _transfer_lock:
-        for tok, info in _transfer_tokens.items():
-            if (isinstance(info, dict) and info.get("job_id") == job_id
-                    and info.get("admin_copy")):
-                return tok
-        tok = secrets.token_urlsafe(24)
-        _transfer_tokens[tok] = {"job_id": job_id, "created_at": time.time(),
-                                 "admin_copy": True}
-    _save_transfer_tokens()
-    return tok
+# E3 (primo seam, 2026-10-09): download, transfer e share token vivono in
+# token_store (stesso dict mutato in place; `_tkstore.configure` piu' sotto).
 
 
 def _qr_data_uri(text):
@@ -2242,7 +2151,7 @@ def _transfer_payload_for(job_id):
             base = request.url_root.rstrip("/")
         except Exception:
             base = ""
-    tok = _ensure_transfer_token(job_id)
+    tok = _tkstore.ensure_transfer_token(job_id)
     # Path /t/<token>: deep link "App Link" verso l'app mobile. Con l'app
     # installata e il dominio verificato (assetlinks.json), la fotocamera di
     # sistema apre direttamente l'app; altrimenti la pagina /t/<token> fa da
@@ -2309,21 +2218,6 @@ def _app_scheme_url(https_url):
     from urllib.parse import urlsplit
     parts = urlsplit(https_url)
     return f"{_APP_SCHEME}://{parts.netloc}{parts.path}"
-
-
-def _find_available_download_token(job_id, cid, now=None):
-    """Download token del job ancora valido e di proprietà di [cid], o None.
-    Stessa logica di retention di /api/my_jobs (riusa _effective_retention_for_token_info)."""
-    now = now or time.time()
-    for tok, tinfo in list(_download_tokens.items()):
-        if not isinstance(tinfo, dict):
-            continue
-        if tinfo.get("job_id") != job_id or tinfo.get("client_id") != cid:
-            continue
-        created = tinfo.get("created_at", 0)
-        if (now - created) <= _effective_retention_for_token_info(tinfo):
-            return tok
-    return None
 
 
 def _safe_share_filename(name):
@@ -2595,149 +2489,13 @@ def _cold_m4b_valid(local_path):
         return False
 
 
-def _token_cold_available(token_info):
-    """True se almeno uno degli output snapshottati nel token esiste su cold."""
-    if not isinstance(token_info, dict):
-        return False
-    for k in ("output_m4b", "output_file", "output_zip", "optimized_abm_path",
-              "output_m4b_fallback_zip", "translated_path"):
-        if _cold_object_available(token_info.get(k, "")):
-            return True
-    return False
-
-
-def _read_tokens_file():
-    """Read raw token dict from disk. Returns {} on missing/invalid file."""
-    return load_json(_TOKENS_FILE, {},
-                     on_error=lambda e: print(f"[tokens] Failed to read tokens file: {e}"))
-
-
-def _merge_tokens_from_disk():
-    """Pick up tokens persisted by other workers (Gunicorn multi-worker safety).
-
-    Each worker keeps its own in-memory `_download_tokens`; the only shared
-    state is `_TOKENS_FILE`. Without periodic merge, worker B's cleanup loop
-    cannot see tokens created by worker A and would delete their job dirs as
-    orphan. In-memory entries always win on conflict (worker may have data
-    not yet flushed to disk).
-    """
-    disk = _read_tokens_file()
-    if not disk:
-        return
-    now = time.time()
-    with _tokens_lock:
-        for tok, info in disk.items():
-            try:
-                created = float(info.get("created_at", 0) or 0)
-            except (TypeError, ValueError):
-                continue
-            # Per token PREMIUM (is_gemini) la retention e' GEMINI_FILE_RETENTION_SEC,
-            # raddoppiata se non risulta alcun download (_effective_*).
-            if (now - created) > _effective_retention_for_token_info(info) + 300:
-                continue
-            if tok not in _download_tokens:
-                _download_tokens[tok] = info
-
-
-def _save_tokens():
-    """Persist download tokens to disk (survives restart).
-
-    Re-reads the file first and merges to avoid clobbering tokens written by
-    other workers since our last sync.
-    """
-    _merge_tokens_from_disk()
-    try:
-        with _tokens_lock:
-            # Save only serializable data
-            data = {}
-            for tok, info in _download_tokens.items():
-                data[tok] = {
-                    "job_id": info["job_id"],
-                    "created_at": info["created_at"],
-                    "download_type": info.get("download_type", "audio"),
-                    "base_url": info.get("base_url", ""),
-                    # Snapshot of job data needed for download after restart
-                    "book_title": info.get("book_title", ""),
-                    "output_zip": info.get("output_zip", ""),
-                    "output_name": info.get("output_name", ""),
-                    "output_file": info.get("output_file", ""),
-                    "epub_path": info.get("epub_path", ""),
-                    "podcast_safe_name": info.get("podcast_safe_name", ""),
-                    "podcast_ready": info.get("podcast_ready", False),
-                    "podcast_mp3s": info.get("podcast_mp3s", []),
-                    "podcast_info_title": info.get("podcast_info_title", ""),
-                    "podcast_info_author": info.get("podcast_info_author", ""),
-                    "podcast_info_language": info.get("podcast_info_language", ""),
-                    "original_filename": info.get("original_filename", ""),
-                    "lang": info.get("lang", "en"),
-                    "optimized_abm_path": info.get("optimized_abm_path", ""),
-                    "optimized_abm_name": info.get("optimized_abm_name", ""),
-                    # Traduzione libro (download_type="translated"): senza questi
-                    # due campi il token sopravvive al restart ma DIMENTICA dove
-                    # sta il file, e /dl/<token> mostra la pagina "traduzione
-                    # pronta" SENZA bottone (incidente 04/09/2026, job
-                    # 6t4YV4oSBMbxAyxjLB6T3Q: restart 3h dopo l'email -> link
-                    # pagato e mai scaricabile).
-                    "translated_path": info.get("translated_path", ""),
-                    "translated_name": info.get("translated_name", ""),
-                    # Kit di ripiego M4B (ZIP con MP3 + capitoli): stessa classe
-                    # di perdita, il bottone spariva dopo un restart.
-                    "output_m4b_fallback_zip": info.get("output_m4b_fallback_zip", ""),
-                    # Marker per scegliere retention: True se job ha generato con voce PREMIUM.
-                    "is_gemini": bool(info.get("is_gemini", False)),
-                    # Timestamp primo download reale del file via /dl/<token>/*.
-                    # 0/None = mai scaricato (attiva protezione 2x per voci PREMIUM).
-                    "downloaded_at": info.get("downloaded_at") or 0,
-                    # Timestamp del primo redirect 302 al cold storage: traccia
-                    # il tentativo, NON conta come download (vedi
-                    # _mark_token_redirected) e non riduce la retention.
-                    "redirected_at": info.get("redirected_at") or 0,
-                    # Fields required by /dl/<token> rendering after worker restart
-                    # or cross-worker token merge (Gunicorn multi-process).
-                    "output_format": info.get("output_format", ""),
-                    "output_m4b": info.get("output_m4b", ""),
-                    "ai_optimized": info.get("ai_optimized", False),
-                    # Mobile: client identifier for job reconstruction after restart
-                    "client_id": info.get("client_id", ""),
-                }
-            # Atomic write (tmp + fsync + rename) per evitare corruzione su crash
-            atomic_write_json(_TOKENS_FILE, data, indent=2)
-    except Exception as e:
-        print(f"[tokens] Failed to save tokens: {e}")
-
-
-def _load_tokens():
-    """Reload download tokens from disk on startup."""
-    global _download_tokens
-    if not _TOKENS_FILE.exists():
-        return
-    try:
-        with open(_TOKENS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        now = time.time()
-        loaded = 0
-        expired = 0
-        for tok, info in data.items():
-            # Skip expired tokens (retention dipende da is_gemini sul token,
-            # raddoppiata se downloaded_at non e' settato).
-            if (now - info.get("created_at", 0)) > _effective_retention_for_token_info(info) + 300:
-                expired += 1
-                continue
-            # Verify that job files still exist locally OR on cold storage.
-            # Con tiering S3 il locale può essere stato evacuato/rimosso mentre
-            # la copia cold è ancora servibile: in quel caso il token va
-            # MANTENUTO, altrimenti smette di proteggere la dir e l'orphan
-            # cleanup ne purgherebbe locale + cold (perdita totale PREMIUM).
-            job_dir = UPLOAD_DIR / info.get("job_id", "")
-            if not job_dir.exists() and not _token_cold_available(info):
-                expired += 1
-                continue
-            _download_tokens[tok] = info
-            loaded += 1
-        if loaded or expired:
-            print(f"[tokens] Loaded {loaded} tokens from disk ({expired} expired/invalid)")
-    except Exception as e:
-        print(f"[tokens] Failed to load tokens: {e}")
+# Policy che restano qui (retention effettiva di un token, disponibilita' su
+# cold): il token store le riceve, non le conosce.
+# Risolte a ogni chiamata (lambda), non catturate: i test le sostituiscono su
+# questo modulo e devono valere anche dentro il token store.
+_tkstore.configure(lambda: UPLOAD_DIR,
+                   lambda info: _effective_retention_for_token_info(info),
+                   lambda path: _cold_object_available(path))
 
 
 # ---------------------------------------------------------------------------
@@ -3264,7 +3022,7 @@ def _job_original_filename(job_id):
             name = job.get("original_filename", "")
             if name:
                 return name
-    for tinfo in list(_download_tokens.values()):
+    for tinfo in list(_tkstore.download_tokens.values()):
         if isinstance(tinfo, dict) and tinfo.get("job_id") == job_id:
             name = tinfo.get("original_filename", "")
             if name:
@@ -3808,37 +3566,10 @@ def get_app_page():
             {"Content-Type": "text/html; charset=utf-8"})
 
 
-def _render_transfer_landing(token):
-    # Fallback per il deep link /t/<token>: mostrato nel browser quando l'app NON
-    # è installata. Riusa la pagina install (bottoni store).
-    html_mod.escape(str(token or ""), quote=True)  # token non riflesso, ma validato
-    try:
-        al = (request.headers.get("Accept-Language") or "").strip().lower()
-        lang = "it" if al.startswith("it") else "en"
-    except Exception:
-        lang = "en"
-    T = {
-        "it": ("Apri in Audiobook Maker &amp; Player",
-               "Se hai l'app installata, questo link la apre per importare il processo. Altrimenti scaricala:"),
-        "en": ("Open in Audiobook Maker &amp; Player",
-               "If you have the app installed, this link opens it to import the job. Otherwise get the app:"),
-    }
-    title, body = _i18n.pick(T, lang, merge=False)
-    return _render_install_page(lang, title, body)
-
-
-@app.route("/t/<token>")
-def transfer_landing(token):
-    return (_render_transfer_landing(token), 200,
-            {"Content-Type": "text/html; charset=utf-8"})
-
-
-@app.route("/s/<token>")
-def share_landing(token):
-    # Fallback browser per il deep link /s/<token> quando l'app NON è installata
-    # (con app installata + dominio verificato, l'App Link apre l'app prima).
-    return (_render_transfer_landing(token), 200,
-            {"Content-Type": "text/html; charset=utf-8"})
+# E3 (primo seam, 2026-10-09): /t/<token> e /s/<token> nel blueprint
+# routes_tokens, registrato dopo configure (riceve la pagina install).
+routes_tokens.configure(_render_install_page)
+app.register_blueprint(routes_tokens.bp)
 
 
 @app.route("/privacy")
@@ -5298,7 +5029,7 @@ def admin_api_job_copy_qr(job_id):
         extra["dl_downloaded"] = bool(dl["downloaded_at"])
     if not _admin_copy_recoverable(job_id):
         return jsonify({"available": False, "job_id": job_id, **extra}), 200
-    tok = _ensure_admin_copy_token(job_id)
+    tok = _tkstore.ensure_admin_copy_token(job_id)
     url = f"{base}/t/{tok}"
     qr = _qr_data_uri(url)
     return jsonify({"available": True, "url": url, "qr": qr, "job_id": job_id, **extra})
@@ -8632,16 +8363,16 @@ _ACCT_PER_PAGE = 50
 
 def _download_tokens_index():
     """Indice `job_id -> [(token, info)]` costruito UNA volta per richiesta da
-    uno snapshot di _download_tokens preso sotto _tokens_lock.
+    uno snapshot di _tkstore.download_tokens preso sotto _tkstore.tokens_lock.
 
-    Due motivi, non uno: (a) _download_tokens e' mutato dai thread di
+    Due motivi, non uno: (a) _tkstore.download_tokens e' mutato dai thread di
     generazione (creazione token a fine job) e dal cleanup, quindi scorrerlo
     senza snapshot e' una `RuntimeError: dictionary changed size during
     iteration` in attesa del momento giusto — lo stesso schema che uccise il
     _cleanup_loop; (b) lo storico chiama _account_downloads_for per ogni riga
     mostrata, e una scansione lineare per riga costa O(righe x token)."""
-    with _tokens_lock:
-        items = list(_download_tokens.items())
+    with _tkstore.tokens_lock:
+        items = list(_tkstore.download_tokens.items())
     idx = {}
     for tok, ti in items:
         if not isinstance(ti, dict):
@@ -8661,7 +8392,7 @@ def _account_downloads_for(row, now=None, index=None):
     now = now if now is not None else time.time()
     job_id = row.get("job_id") or ""
     token = row.get("download_token") or ""
-    info = _download_tokens.get(token) if token else None
+    info = _tkstore.download_tokens.get(token) if token else None
     if info is None:
         if index is None:
             index = _download_tokens_index()
@@ -12114,7 +11845,7 @@ def api_my_jobs():
             })
         out[jid] = entry
 
-    for token, tinfo in list(_download_tokens.items()):
+    for token, tinfo in list(_tkstore.download_tokens.items()):
         if not isinstance(tinfo, dict) or tinfo.get("client_id") != cid:
             continue
         created = tinfo.get("created_at", 0)
@@ -12147,7 +11878,7 @@ def api_my_jobs():
 @app.route("/api/transfer/claim/<token>", methods=["POST"])
 def api_transfer_claim(token):
     """L'app reclama un job via transfer token: lo riassocia al cid chiamante."""
-    info = _transfer_tokens.get(token)
+    info = _tkstore.transfer_tokens.get(token)
     if not isinstance(info, dict):
         return jsonify({"error": "invalid_token"}), 404
     cid = _get_client_id()
@@ -12166,7 +11897,7 @@ def api_transfer_claim(token):
         base_rec = None
         non_admin_rec = None
         any_rec = None
-        for _tok, _rec in list(_download_tokens.items()):
+        for _tok, _rec in list(_tkstore.download_tokens.items()):
             if isinstance(_rec, dict) and _rec.get("job_id") == job_id:
                 any_rec = any_rec or _rec
                 if not _rec.get("admin_copy"):
@@ -12183,7 +11914,7 @@ def api_transfer_claim(token):
                 # all'utente originale (flusso invariato).
                 newtok = generation_engine._create_download_token(job_id)
                 if newtok:
-                    base_rec = _download_tokens.get(newtok)
+                    base_rec = _tkstore.download_tokens.get(newtok)
                     created_temp = newtok
             elif _job is not None:
                 # Job ANCORA IN CORSO: aggancia la copia admin e consegna a fine job.
@@ -12214,12 +11945,12 @@ def api_transfer_claim(token):
         clone["admin_copy"] = True
         clone["created_at"] = time.time()
         clone_tok = str(uuid.uuid4())
-        _download_tokens[clone_tok] = clone
+        _tkstore.download_tokens[clone_tok] = clone
         if created_temp:
             # Rimuovi il token base creato solo per estrarre lo snapshot: lasciarlo
             # esporrebbe il job nell'app dell'utente originale (flusso invariato).
-            _download_tokens.pop(created_temp, None)
-        _save_tokens()
+            _tkstore.download_tokens.pop(created_temp, None)
+        _tkstore.save_tokens()
         _log_activity(job_id, "", "ADMIN_COPY", client_id=cid,
                       client_ip=client_ip(), platform=_client_platform())
         print(f"[transfer] admin copy claimed for job {job_id} by cid {cid}")
@@ -12264,12 +11995,12 @@ def api_transfer_claim(token):
             print(f"[transfer] download token creation failed for {job_id}: {e}")
     # riassocia tutti i download token del job al cid (per la sezione "Pronti")
     changed = False
-    for tok, tinfo in list(_download_tokens.items()):
+    for tok, tinfo in list(_tkstore.download_tokens.items()):
         if isinstance(tinfo, dict) and tinfo.get("job_id") == job_id:
             tinfo["client_id"] = cid
             changed = True
     if changed:
-        _save_tokens()
+        _tkstore.save_tokens()
     if not moved and not changed:
         # job non più in memoria e nessun token (es. scaduto): nulla da agganciare
         return jsonify({"error": "job_unavailable", "error_code": "job_unavailable"}), 410
@@ -12299,30 +12030,30 @@ def api_share_create():
     # niente nuovo upload né nuovo token.
     reuse_tok, reuse_info = _find_reusable_share(cid, fingerprint, now)
     if reuse_tok:
-        with _share_lock:
+        with _tkstore.share_lock:
             reuse_info["created_at"] = now
             reuse_info["ttl_sec"] = ABM_SHARE_TTL_SEC
-        _save_share_tokens()
+        _tkstore.save_share_tokens()
         return jsonify({"mode": "ready", "share_token": reuse_tok,
                         "link": _share_link_for(reuse_tok),
                         "ttl_sec": ABM_SHARE_TTL_SEC})
 
     if job_id:
-        dltok = _find_available_download_token(job_id, cid, now)
+        dltok = _tkstore.find_available_download_token(job_id, cid, now)
         if dltok:
             stok = secrets.token_urlsafe(24)
             # Nome download col titolo del libro (se risolvibile), così il
             # destinatario salva con un nome sensato invece di "audiolibro.m4b".
             _, ready_name = _resolve_ready_file(dltok)
-            with _share_lock:
-                _share_tokens[stok] = {
+            with _tkstore.share_lock:
+                _tkstore.share_tokens[stok] = {
                     "kind": "ready", "download_token": dltok,
                     "client_id": cid, "created_at": now,
                     "ttl_sec": ABM_SHARE_TTL_SEC,
                     "filename": ready_name or filename,
                     "fingerprint": fingerprint,
                 }
-            _save_share_tokens()
+            _tkstore.save_share_tokens()
             return jsonify({"mode": "ready", "share_token": stok,
                             "link": _share_link_for(stok),
                             "ttl_sec": ABM_SHARE_TTL_SEC})
@@ -12338,13 +12069,13 @@ def api_share_create():
         print(f"[share] presign put failed: {e}")
         return jsonify({"error": "presign_failed",
                         "error_code": "presign_failed"}), 502
-    with _share_lock:
-        _share_tokens[share_id] = {
+    with _tkstore.share_lock:
+        _tkstore.share_tokens[share_id] = {
             "kind": "pending", "s3_key": key, "filename": filename,
             "client_id": cid, "created_at": now, "ttl_sec": ABM_SHARE_UPLOAD_TTL_SEC,
             "fingerprint": fingerprint,
         }
-    _save_share_tokens()
+    _tkstore.save_share_tokens()
     return jsonify({"mode": "upload", "share_id": share_id, "filename": filename,
                     "upload_url": url, "max_bytes": ABM_SHARE_MAX_BYTES,
                     "ttl_sec": ABM_SHARE_TTL_SEC})
@@ -12362,7 +12093,7 @@ def api_share_finalize():
     share_id = (body.get("share_id") or "").strip()
     if not share_id:
         return jsonify({"error": "bad_request", "error_code": "bad_request"}), 400
-    pending = _share_tokens.get(share_id)
+    pending = _tkstore.share_tokens.get(share_id)
     if not isinstance(pending, dict) or pending.get("kind") != "pending":
         return jsonify({"error": "not_found", "error_code": "not_found"}), 404
     if pending.get("client_id") != cid:
@@ -12381,21 +12112,21 @@ def api_share_finalize():
             storage_backend.delete_object(key)
         except Exception as e:
             print(f"[share] delete oversize failed: {e}")
-        with _share_lock:
-            _share_tokens.pop(share_id, None)
-        _save_share_tokens()
+        with _tkstore.share_lock:
+            _tkstore.share_tokens.pop(share_id, None)
+        _tkstore.save_share_tokens()
         return jsonify({"error": "too_large", "error_code": "too_large",
                         "max_bytes": ABM_SHARE_MAX_BYTES}), 413
     stok = secrets.token_urlsafe(24)
     now = time.time()
-    with _share_lock:
-        _share_tokens.pop(share_id, None)
-        _share_tokens[stok] = {
+    with _tkstore.share_lock:
+        _tkstore.share_tokens.pop(share_id, None)
+        _tkstore.share_tokens[stok] = {
             "kind": "upload", "s3_key": key, "filename": filename,
             "client_id": cid, "created_at": now, "ttl_sec": ABM_SHARE_TTL_SEC,
             "fingerprint": pending.get("fingerprint"),
         }
-    _save_share_tokens()
+    _tkstore.save_share_tokens()
     return jsonify({"share_token": stok, "link": _share_link_for(stok),
                     "ttl_sec": ABM_SHARE_TTL_SEC})
 
@@ -12429,7 +12160,7 @@ def _find_reusable_share(cid, fingerprint, now=None):
     if not fingerprint:
         return None, None
     now = now or time.time()
-    for stok, info in list(_share_tokens.items()):
+    for stok, info in list(_tkstore.share_tokens.items()):
         if (isinstance(info, dict)
                 and info.get("client_id") == cid
                 and info.get("fingerprint") == fingerprint
@@ -12459,7 +12190,7 @@ def _reconstruct_admin_download_record(job_id):
     """Ricostruisce uno snapshot 'download token' per un job FINALIZZATO non più
     in RAM, localizzando l'output primario (m4b>mp3>abm>zip) su disco locale (hot)
     o su cold storage (R2). Ritorna un dict record (NON ancora inserito in
-    _download_tokens) oppure None se nessun output è disponibile.
+    _tkstore.download_tokens) oppure None se nessun output è disponibile.
 
     Serve alla copia amministrativa (indagine): dopo un deploy/restart la RAM è
     azzerata e i job gratuiti/diretti non hanno un download token, ma i file
@@ -12512,7 +12243,7 @@ def _admin_copy_recoverable(job_id):
     with _jobs_lock:
         if jobs.get(job_id) is not None:
             return True
-    for _tok, _rec in list(_download_tokens.items()):
+    for _tok, _rec in list(_tkstore.download_tokens.items()):
         if isinstance(_rec, dict) and _rec.get("job_id") == job_id:
             return True
     return _reconstruct_admin_download_record(job_id) is not None
@@ -12529,7 +12260,7 @@ def _admin_user_dl_link(job_id, now=None):
     Ritorna dict {token, created_at, expires_at, downloaded_at} oppure None."""
     now = now or time.time()
     best = None
-    for tok, tinfo in list(_download_tokens.items()):
+    for tok, tinfo in list(_tkstore.download_tokens.items()):
         if not isinstance(tinfo, dict) or tinfo.get("job_id") != job_id:
             continue
         if tinfo.get("admin_copy"):
@@ -12580,7 +12311,7 @@ def _resolve_ready_file(dltok):
     Preferenza: m4b > mp3 > abm > zip. Considera disponibili anche i file
     evacuati su cold storage (_send_file_throttled fa il redirect a R2).
     (None, None) se token assente o nessun file disponibile."""
-    info = _download_tokens.get(dltok)
+    info = _tkstore.download_tokens.get(dltok)
     if not isinstance(info, dict):
         return None, None
     title = info.get("book_title") or "audiolibro"
@@ -12596,7 +12327,7 @@ def _resolve_ready_file(dltok):
 def api_share_claim(token):
     """Valida la share e ritorna l'URL di download share-scoped (/s/<token>/dl)
     che impone il TTL. 404 sconosciuta, 410 scaduta."""
-    info = _share_tokens.get(token)
+    info = _tkstore.share_tokens.get(token)
     if not isinstance(info, dict) or info.get("kind") not in ("ready", "upload"):
         return jsonify({"error": "invalid", "error_code": "invalid"}), 404
     now = time.time()
@@ -12618,7 +12349,7 @@ def api_share_claim(token):
 def share_download(token):
     """Consegna il file della share validando il TTL. ready → file locale via
     _send_file_throttled; upload → redirect alla presigned GET su R2."""
-    info = _share_tokens.get(token)
+    info = _tkstore.share_tokens.get(token)
     if (not isinstance(info, dict)
             or info.get("kind") not in ("ready", "upload")
             or not _share_alive(info)):
@@ -14942,13 +14673,13 @@ def _check_dl_token(token):
     (None, (body, 410)) con il token gia' rimosso e persistito se scaduto.
     La pagina /dl/<token> NON usa questo helper (risposta renderizzata, non
     plain-text)."""
-    token_info = _download_tokens.get(token)
+    token_info = _tkstore.download_tokens.get(token)
     if not token_info:
         return None, ("Link scaduto", 410)
     _ret = _effective_retention_for_token_info(token_info)
     if time.time() - token_info["created_at"] > _ret:
-        _download_tokens.pop(token, None)
-        _save_tokens()
+        _tkstore.download_tokens.pop(token, None)
+        _tkstore.save_tokens()
         return None, (f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410)
     return token_info, None
 
@@ -14981,7 +14712,7 @@ def _resolve_snapshot_path(path_snap, job_dir=None, legacy_flat=False):
 @app.route("/dl/<token>")
 def token_download_page(token):
     """Serve download page for email-linked token."""
-    token_info = _download_tokens.get(token)
+    token_info = _tkstore.download_tokens.get(token)
     if not token_info:
         return _render_dl_expired_page(), 410
 
@@ -14996,8 +14727,8 @@ def token_download_page(token):
 
     # Check retention expiration
     if elapsed > _ret:
-        _download_tokens.pop(token, None)
-        _save_tokens()
+        _tkstore.download_tokens.pop(token, None)
+        _tkstore.save_tokens()
         return _render_dl_expired_page(lang, retention_hours=round(_ret / 3600)), 410
 
     # Check job exists in memory OR files still on disk
@@ -15010,11 +14741,11 @@ def token_download_page(token):
     # storage, il download NON è scaduto (gli endpoint /dl/<token>/m4b|abm
     # servono dal presigned URL). Senza questo check la pagina dichiarava
     # "scaduto in anticipo" dopo eviction/rimozione del locale.
-    cold_available = _token_cold_available(token_info) if not files_on_disk else False
+    cold_available = _tkstore.token_cold_available(token_info) if not files_on_disk else False
 
     if not job_in_memory and not files_on_disk and not cold_available:
-        _download_tokens.pop(token, None)
-        _save_tokens()
+        _tkstore.download_tokens.pop(token, None)
+        _tkstore.save_tokens()
         return _render_dl_expired_page(lang, retention_hours=round(_ret / 3600)), 410
 
     remaining_sec = max(60, int(_ret - elapsed))
@@ -15890,7 +15621,7 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         # Determine format: prefer output_format from job, fallback to m4b detection.
         # "chapters" è inviato dal frontend per gli output multi-file (ZIP per capitoli):
         # forza fmt="zip" per saltare la rilevazione M4B quando il formato esplicito
-        # mancasse dal token (es. token persistiti prima del fix di _save_tokens).
+        # mancasse dal token (es. token persistiti prima del fix di _tkstore.save_tokens).
         fmt = output_format if output_format in ("m4b", "mp3", "zip", "zip_rss") else None
         if not fmt and dl_type == "chapters":
             fmt = "zip"
@@ -17167,7 +16898,7 @@ def _cleanup_job(job_id, reason=""):
         # G4: NON distruggere locale+cold finché il marker email protegge la dir
         # o esiste un download token ancora valido. Evita che una transizione
         # anomala a error/cancel cancelli un job già consegnato via email.
-        if _email_marker_protects(work_dir, now) or _has_active_download_tokens(job_id, now):
+        if _email_marker_protects(work_dir, now) or _tkstore.has_active_download_tokens(job_id, now):
             print(f"[cleanup] {job_id} entry removed but dir+cold preserved "
                   f"(email marker/token still valid) — {reason}")
             return
@@ -17177,7 +16908,7 @@ def _cleanup_job(job_id, reason=""):
         # G5: dir già assente — cancella il cold SOLO se non resta alcun token
         # vivo. Il cold è il tier durevole: non va purgato finché un link email
         # è valido (anche se il locale è sparito).
-        if not _has_active_download_tokens(job_id, now):
+        if not _tkstore.has_active_download_tokens(job_id, now):
             _delete_cold_for_job(job_id)
         else:
             print(f"[cleanup] {job_id} local gone but cold preserved "
@@ -17190,11 +16921,11 @@ def _cleanup_expired_shares(now=None):
     file su R2. Ritorna il numero di share rimosse."""
     now = now or time.time()
     removed = 0
-    with _share_lock:
-        for stok in list(_share_tokens.keys()):
-            info = _share_tokens.get(stok)
+    with _tkstore.share_lock:
+        for stok in list(_tkstore.share_tokens.keys()):
+            info = _tkstore.share_tokens.get(stok)
             if not isinstance(info, dict):
-                _share_tokens.pop(stok, None); removed += 1; continue
+                _tkstore.share_tokens.pop(stok, None); removed += 1; continue
             if (now - info.get("created_at", 0)) <= info.get("ttl_sec", ABM_SHARE_TTL_SEC):
                 continue
             if info.get("kind") in ("upload", "pending") and info.get("s3_key"):
@@ -17202,9 +16933,9 @@ def _cleanup_expired_shares(now=None):
                     storage_backend.delete_object(info["s3_key"])
                 except Exception as e:
                     print(f"[share] cleanup delete failed {info.get('s3_key')}: {e}")
-            _share_tokens.pop(stok, None); removed += 1
+            _tkstore.share_tokens.pop(stok, None); removed += 1
     if removed:
-        _save_share_tokens()
+        _tkstore.save_share_tokens()
     return removed
 
 
@@ -17486,7 +17217,7 @@ def _cleanup_supervisor():
 
     Incidente 2026-06-15: il thread _cleanup_loop e' morto con
     `RuntimeError: dictionary changed size during iteration` (race con un
-    mutatore non-lockato di jobs/_download_tokens). Senza supervisione un
+    mutatore non-lockato di jobs/_tkstore.download_tokens). Senza supervisione un
     `while True` che solleva un'eccezione termina il thread per SEMPRE: niente
     piu' hot-evict ne' retention-cleanup → il disco si e' riempito al 100% in
     ~17h. Qui ri-avviamo il loop su qualunque eccezione (la sleep iniziale del
@@ -17604,9 +17335,9 @@ def _cleanup_loop():
         _cleanup_expired_shares(now)
 
         # Multi-worker: absorb tokens created by other workers before deciding
-        # what to delete. Without this, this worker's view of _download_tokens
+        # what to delete. Without this, this worker's view of _tkstore.download_tokens
         # misses peers' tokens and the orphan-dir branch wipes their job dirs.
-        _merge_tokens_from_disk()
+        _tkstore.merge_tokens_from_disk()
 
         with _jobs_lock:
             to_remove = []
@@ -17623,7 +17354,7 @@ def _cleanup_loop():
                 if status == "cancelled":
                     # Non rimuovere job con download token ancora attivi
                     # (es. email inviata prima del cancel con link validi).
-                    if not _has_active_download_tokens(jid, now):
+                    if not _tkstore.has_active_download_tokens(jid, now):
                         to_remove.append((jid, "cancelled"))
                     continue
 
@@ -17639,7 +17370,7 @@ def _cleanup_loop():
                     # poi via come un analyzed qualunque.
                     if _abuse_keep_state(job, now) is not None:
                         _decision = _abuse_cleanup_decision(
-                            job, now, _has_active_download_tokens(jid, now))
+                            job, now, _tkstore.has_active_download_tokens(jid, now))
                         if _decision == "remove":
                             to_remove.append((jid, "abuse retention expired"))
                         continue
@@ -17647,7 +17378,7 @@ def _cleanup_loop():
                     if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 30:
                         # Non rimuovere job con download token ancora attivi
                         # (es. email inviata in generazione precedente).
-                        if not _has_active_download_tokens(jid, now):
+                        if not _tkstore.has_active_download_tokens(jid, now):
                             to_remove.append((jid, "stale analyzed"))
                     continue
 
@@ -17679,7 +17410,7 @@ def _cleanup_loop():
                     # traversa dal ramo token-orphan. Stessa forma di
                     # "optimized": il token attivo comanda, quindi i file non
                     # spariscono prima di quanto succeda gia' oggi.
-                    if _has_active_download_tokens(jid, now):
+                    if _tkstore.has_active_download_tokens(jid, now):
                         continue
                     tr_done = job.get("translated_at") or job.get("email_sent_at") or now
                     _ret = _effective_retention_for_job(job)
@@ -17709,7 +17440,7 @@ def _cleanup_loop():
                     # all'app via QR) governa la retention dei file: non rimuovere
                     # il job finché esiste un token valido, altrimenti si cancella
                     # un audiolibro ancora scaricabile (regressione transfer QR).
-                    if _has_active_download_tokens(jid, now):
+                    if _tkstore.has_active_download_tokens(jid, now):
                         continue
                     dl_at = job.get("downloaded_at")
                     email_sent_at = job.get("email_sent_at")
@@ -17744,12 +17475,12 @@ def _cleanup_loop():
         # Retention per-token: se il token e' marcato is_gemini (voce PREMIUM)
         # vale GEMINI_FILE_RETENTION_SEC, altrimenti EMAIL_FILE_RETENTION_SEC.
         # _effective_* raddoppia per voci PREMIUM mai scaricate (protezione costo).
-        with _tokens_lock:
-            expired_tokens = [(t, info) for t, info in list(_download_tokens.items())
+        with _tkstore.tokens_lock:
+            expired_tokens = [(t, info) for t, info in list(_tkstore.download_tokens.items())
                               if (now - info["created_at"]) > _effective_retention_for_token_info(info) + 300]
         for t, t_info in expired_tokens:
-            with _tokens_lock:
-                _download_tokens.pop(t, None)
+            with _tkstore.tokens_lock:
+                _tkstore.download_tokens.pop(t, None)
             jid = t_info.get("job_id", "")
             with _jobs_lock:
                 job_in_memory = jid in jobs
@@ -17771,16 +17502,16 @@ def _cleanup_loop():
                     # G5: un job può avere più token (es. audio + .abm). Abbiamo
                     # rimosso UNO scaduto, ma se un fratello è ancora valido NON
                     # distruggere dir + cold.
-                    if _has_active_download_tokens(jid, now):
+                    if _tkstore.has_active_download_tokens(jid, now):
                         continue
                     _delete_cold_for_job(jid)
                     shutil.rmtree(str(job_dir), ignore_errors=True)
                     print(f"[cleanup] Token-orphan dir removed: {jid}")
         if expired_tokens:
-            # _save_tokens() acquires _tokens_lock internally; wrapping it here
+            # _tkstore.save_tokens() acquires _tkstore.tokens_lock internally; wrapping it here
             # would deadlock on the non-reentrant lock and freeze every later
             # caller (including the post-COMPLETE email notification).
-            _save_tokens()
+            _tkstore.save_tokens()
 
         #  -  -  Cleanup orphan per-epoch output dirs  -  -
         # An output_{epoch}/ directory is removable when:
@@ -17789,9 +17520,9 @@ def _cleanup_loop():
         # - AND its mtime is older than the retention window
         with _jobs_lock:
             current_output_dirs = {jobs[j].get("output_dir", ""): j for j in list(jobs)}
-        with _tokens_lock:
+        with _tkstore.tokens_lock:
             referenced_paths = set()
-            for info in list(_download_tokens.values()):
+            for info in list(_tkstore.download_tokens.values()):
                 # translated_path/optimized_abm_path/kit M4B: anche questi sono
                 # l'UNICO output referenziato da un token (traduzione, .abm,
                 # ripiego M4B). Senza di loro la relativa output_<epoch> risulta
@@ -17860,8 +17591,8 @@ def _cleanup_loop():
         #  -  -  Cleanup cartelle orfane su disco  -  -
         with _jobs_lock:
             _known_job_ids = set(jobs.keys())
-        with _tokens_lock:
-            _known_token_jobs = set(info.get("job_id", "") for info in list(_download_tokens.values()))
+        with _tkstore.tokens_lock:
+            _known_token_jobs = set(info.get("job_id", "") for info in list(_tkstore.download_tokens.values()))
         _all_known = _known_job_ids | _known_token_jobs
         try:
             for entry in UPLOAD_DIR.iterdir():
@@ -17911,9 +17642,9 @@ def _cleanup_loop():
 
 # Startup: load persisted download tokens, init DeepSeek, start background threads
 # (works both under __main__ and Gunicorn)
-_load_tokens()
-_load_transfer_tokens()
-_load_share_tokens()
+_tkstore.load_tokens()
+_tkstore.load_transfer_tokens()
+_tkstore.load_share_tokens()
 _load_device_tokens()
 _load_payments()
 _load_vouchers()
@@ -17928,8 +17659,8 @@ _load_client_emails()
 generation_engine.configure(
     jobs=jobs,
     upload_dir=UPLOAD_DIR,
-    download_tokens=_download_tokens,
-    save_tokens_fn=_save_tokens,
+    download_tokens=_tkstore.download_tokens,
+    save_tokens_fn=_tkstore.save_tokens,
     log_activity_fn=_log_activity,
     invalidate_voices_cache_fn=_invalidate_voices_cache,
     jobs_lock=_jobs_lock,

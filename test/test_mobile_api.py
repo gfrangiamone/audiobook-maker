@@ -5,6 +5,8 @@ import pytest
 
 import audiobook_app
 
+import token_store
+
 
 @pytest.fixture
 def client():
@@ -89,10 +91,10 @@ def test_token_client_id_survives_save_load_roundtrip(monkeypatch, tmp_path):
     import pathlib
 
     tokens_file = tmp_path / "_download_tokens.json"
-    monkeypatch.setattr(audiobook_app, "_TOKENS_FILE", pathlib.Path(tokens_file))
+    monkeypatch.setattr(token_store, "TOKENS_FILE", pathlib.Path(tokens_file))
 
     token_key = "TOKRT"
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         token_key: {
             "job_id": "rtjob",
             "client_id": "mobile-cid-12345",
@@ -102,7 +104,7 @@ def test_token_client_id_survives_save_load_roundtrip(monkeypatch, tmp_path):
         }
     })
 
-    audiobook_app._save_tokens()
+    token_store.save_tokens()
 
     data = json.loads(tokens_file.read_text(encoding="utf-8"))
     assert token_key in data, "token non salvato"
@@ -185,7 +187,7 @@ def test_device_tokens_save_load_roundtrip(device_env):
 
 @pytest.fixture
 def my_jobs_env(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
+    monkeypatch.setattr(token_store, "download_tokens", {})
     seeded = []
 
     def seed_job(jid, **fields):
@@ -223,7 +225,7 @@ def test_my_jobs_active_job_with_progress(client, my_jobs_env):
 
 def test_my_jobs_completed_from_token(client, my_jobs_env):
     now = time.time()
-    audiobook_app._download_tokens["TOKMJ"] = {
+    token_store.download_tokens["TOKMJ"] = {
         "job_id": "mjdone",
         "client_id": "mobile-cid-12345",
         "created_at": now - 60,
@@ -246,7 +248,7 @@ def test_my_jobs_completed_from_token(client, my_jobs_env):
 
 
 def test_my_jobs_expired_token_hidden(client, my_jobs_env):
-    audiobook_app._download_tokens["TOKOLD"] = {
+    token_store.download_tokens["TOKOLD"] = {
         "job_id": "mjold",
         "client_id": "mobile-cid-12345",
         "created_at": time.time() - 10 * 365 * 86400,
@@ -257,7 +259,7 @@ def test_my_jobs_expired_token_hidden(client, my_jobs_env):
 
 
 def test_my_jobs_token_without_client_id_hidden(client, my_jobs_env):
-    audiobook_app._download_tokens["TOKANON"] = {
+    token_store.download_tokens["TOKANON"] = {
         "job_id": "mjanon",
         "created_at": time.time() - 60,
         "is_gemini": False,
@@ -271,7 +273,7 @@ def test_my_jobs_merges_memory_and_token_for_same_job(client, my_jobs_env):
     my_jobs_env("mjboth", status="done", client_id="mobile-cid-12345",
                 original_filename="libro.epub", output_format="m4b",
                 start_time=now - 120, info=None, last_poll=now)
-    audiobook_app._download_tokens["TOKBOTH"] = {
+    token_store.download_tokens["TOKBOTH"] = {
         "job_id": "mjboth",
         "client_id": "mobile-cid-12345",
         "created_at": now - 60,
@@ -463,25 +465,25 @@ def test_transfer_claim_reowns_job_and_token(monkeypatch, tmp_path):
             "start_time": __import__("time").time(),
         }
     # un download token del web per lo stesso job
-    audiobook_app._download_tokens["WTOK"] = {
+    token_store.download_tokens["WTOK"] = {
         "job_id": jid, "client_id": "web-cid-xyz", "created_at": __import__("time").time(),
         "is_gemini": False, "output_m4b": str(out), "output_format": "m4b",
     }
-    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     try:
-        ttok = audiobook_app._ensure_transfer_token(jid)
+        ttok = token_store.ensure_transfer_token(jid)
         assert ttok
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{ttok}", headers={"X-ABM-Cid": "app-cid-123"})
         assert r.status_code == 200
         assert r.get_json()["job_id"] == jid
         assert audiobook_app.jobs[jid]["client_id"] == "app-cid-123"  # job re-owned
-        assert audiobook_app._download_tokens["WTOK"]["client_id"] == "app-cid-123"  # token re-owned
+        assert token_store.download_tokens["WTOK"]["client_id"] == "app-cid-123"  # token re-owned
     finally:
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
-        audiobook_app._download_tokens.pop("WTOK", None)
+        token_store.download_tokens.pop("WTOK", None)
 
 
 def test_transfer_claim_keeps_web_owner_authorized(monkeypatch, tmp_path):
@@ -496,12 +498,12 @@ def test_transfer_claim_keeps_web_owner_authorized(monkeypatch, tmp_path):
             "output_zip": str(out), "output_format": "zip",
             "start_time": __import__("time").time(),
         }
-    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     monkeypatch.setattr(audiobook_app.generation_engine, "_create_download_token",
                         lambda _jid: None)
     try:
-        ttok = audiobook_app._ensure_transfer_token(jid)
+        ttok = token_store.ensure_transfer_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{ttok}", headers={"X-ABM-Cid": "app-cid-777"})
         assert r.status_code == 200
@@ -531,9 +533,9 @@ def test_transfer_claim_requires_cid(monkeypatch):
     with audiobook_app._jobs_lock:
         audiobook_app.jobs[jid] = {"status": "generating", "client_id": "w", "info": None,
                                    "start_time": __import__("time").time()}
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     try:
-        ttok = audiobook_app._ensure_transfer_token(jid)
+        ttok = token_store.ensure_transfer_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{ttok}")  # niente X-ABM-Cid
         assert r.status_code == 400
@@ -558,28 +560,28 @@ def test_transfer_claim_creates_token_for_tokenless_done_job(monkeypatch, tmp_pa
             "output_m4b": str(out), "output_format": "m4b",
             "original_filename": "libro.epub", "start_time": _time.time(),
         }
-    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "save_transfer_tokens", lambda: None)
     monkeypatch.setattr(generation_engine, "_save_tokens", lambda: None)
     # In prod configure() lega questi reference agli stessi dict di audiobook_app
     # una volta sola; nei test l'ordine di esecuzione può averli ribindati →
     # ri-allineali alle istanze correnti così _create_download_token opera sui
     # dict che my_jobs e il claim leggono.
     monkeypatch.setattr(generation_engine, "_jobs", audiobook_app.jobs)
-    monkeypatch.setattr(generation_engine, "_download_tokens", audiobook_app._download_tokens)
+    monkeypatch.setattr(generation_engine, "_download_tokens", token_store.download_tokens)
     created = []
     try:
-        ttok = audiobook_app._ensure_transfer_token(jid)
+        ttok = token_store.ensure_transfer_token(jid)
         c = audiobook_app.app.test_client()
         r = c.post(f"/api/transfer/claim/{ttok}", headers={"X-ABM-Cid": "app-cid-9"})
         assert r.status_code == 200
         # job protetto dal cleanup
         assert audiobook_app.jobs[jid].get("email_registered") is True
         # esattamente un download token, di proprietà dell'app, con il path m4b
-        created = [t for t, v in audiobook_app._download_tokens.items()
+        created = [t for t, v in token_store.download_tokens.items()
                    if isinstance(v, dict) and v.get("job_id") == jid]
         assert len(created) == 1
-        rec = audiobook_app._download_tokens[created[0]]
+        rec = token_store.download_tokens[created[0]]
         assert rec["client_id"] == "app-cid-9"
         assert rec["output_m4b"] == str(out)
         # my_jobs dell'app: job scaricabile (formats.m4b + download_token)
@@ -591,7 +593,7 @@ def test_transfer_claim_creates_token_for_tokenless_done_job(monkeypatch, tmp_pa
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(jid, None)
         for t in created:
-            audiobook_app._download_tokens.pop(t, None)
+            token_store.download_tokens.pop(t, None)
 
 
 # ---------------------------------------------------------------- Task 7
@@ -599,7 +601,7 @@ def test_transfer_claim_creates_token_for_tokenless_done_job(monkeypatch, tmp_pa
 def test_dl_token_m4b_supports_range(client, tmp_path, monkeypatch):
     m4b = tmp_path / "book.m4b"
     m4b.write_bytes(b"0123456789ABCDEF")
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+    monkeypatch.setattr(token_store, "download_tokens", {
         "TOKRANGE": {
             "job_id": "rj1",
             "client_id": "mobile-cid-12345",

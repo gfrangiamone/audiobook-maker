@@ -9,6 +9,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import token_store
 import db
 import email_service
 import voice_clone as vc
@@ -27,8 +28,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "ENABLE", True)
     monkeypatch.setattr(audiobook_app, "BASE_URL", "https://abm.test")
     monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
-    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
-    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setattr(token_store, "download_tokens", {})
+    monkeypatch.setattr(token_store, "save_tokens", lambda: None)
     monkeypatch.setattr(audiobook_app, "_file_available", lambda p: True)
     audiobook_app._ip_rl_buckets.pop("auth_request", None)
     box = {"codes": [], "deleted": []}
@@ -57,7 +58,7 @@ def _token(job_id, dl_type="audio", created_at=None, **extra):
             "download_type": dl_type, "base_url": "https://abm.test", "book_title": "B"}
     info.update(extra)
     tok = "tok-" + job_id
-    audiobook_app._download_tokens[tok] = info
+    token_store.download_tokens[tok] = info
     return tok
 
 
@@ -371,9 +372,9 @@ def test_downloads_for_job_id_fallback_picks_newest_token(env, monkeypatch):
     now = time.time()
     # Inserito per primo (vincerebbe con un semplice "primo match" in ordine
     # di dict) ma ormai scaduto: la scelta corretta e' il token piu' recente.
-    audiobook_app._download_tokens["tok-old"] = {
+    token_store.download_tokens["tok-old"] = {
         "job_id": "je", "created_at": now - 5000, "download_type": "audio", "output_m4b": ""}
-    audiobook_app._download_tokens["tok-new"] = {
+    token_store.download_tokens["tok-new"] = {
         "job_id": "je", "created_at": now - 1, "download_type": "audio", "output_m4b": ""}
     f = audiobook_app._account_downloads_for
     out = f({"job_id": "je", "download_token": ""}, now)
@@ -395,7 +396,7 @@ class _SpyTokens(dict):
         self.calls = []
 
     def items(self):
-        self.calls.append(audiobook_app._tokens_lock.locked())
+        self.calls.append(token_store.tokens_lock.locked())
         return super().items()
 
 
@@ -407,7 +408,7 @@ class _NoScanTokens(dict):
 def test_downloads_index_built_once_per_request_under_lock(logged, monkeypatch):
     c, acct = logged
     spy = _SpyTokens()
-    monkeypatch.setattr(audiobook_app, "_download_tokens", spy)
+    monkeypatch.setattr(token_store, "download_tokens", spy)
     monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 3600.0)
     now = time.time()
     for i in range(3):
@@ -435,7 +436,7 @@ def test_downloads_for_with_index_never_scans_tokens(env, monkeypatch):
     now = time.time()
     toks["tok-jz"] = {"job_id": "jz", "created_at": now - 1, "download_type": "audio",
                       "output_m4b": ""}
-    monkeypatch.setattr(audiobook_app, "_download_tokens", toks)
+    monkeypatch.setattr(token_store, "download_tokens", toks)
     monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 100.0)
     index = {"jz": [("tok-jz", toks["tok-jz"])]}
     out = audiobook_app._account_downloads_for({"job_id": "jz", "download_token": ""}, now, index)

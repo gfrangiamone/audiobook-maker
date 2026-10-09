@@ -5,6 +5,7 @@ cablato nelle rotte /dl/<token>/* e non solo dentro _send_file_throttled."""
 import importlib
 import time
 import pytest
+import token_store
 
 
 @pytest.fixture
@@ -34,8 +35,8 @@ def test_token_m4b_route_redirects_to_cold_after_eviction(app_env, monkeypatch):
     key = "jobX/output_1/book.m4b"
     _patch_cold(monkeypatch, key)
 
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tok123"] = {
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tok123"] = {
         "job_id": job_id,
         "created_at": time.time(),
         "output_m4b": missing_m4b,
@@ -56,8 +57,8 @@ def test_token_m4b_route_no_redirect_when_disabled(app_env, monkeypatch):
     import storage_backend
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
 
-    audiobook_app._download_tokens.clear()
-    audiobook_app._download_tokens["tok404"] = {
+    token_store.download_tokens.clear()
+    token_store.download_tokens["tok404"] = {
         "job_id": "jobY",
         "created_at": time.time(),
         "output_m4b": str(tmp_path / "jobY" / "output_1" / "book.m4b"),
