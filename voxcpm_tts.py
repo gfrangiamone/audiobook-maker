@@ -17,6 +17,7 @@ import base64
 import collections
 import json
 import logging
+import retry_util as _retry
 import os
 from i18n import norm_lang as _norm_lang
 from voice_utils import clone_token as _clone_token, parse_rate_pct as _parse_rate_pct
@@ -509,7 +510,7 @@ _RUNPOD_BASE = "https://api.runpod.ai/v2"
 _SUBMIT_RETRIES = 8
 _SUBMIT_PAUSA_SEC = 2.0
 _SUBMIT_PAUSA_MAX_SEC = 60.0
-_HTTP_TRANSIENT = (429, 500, 502, 503, 504)
+_HTTP_TRANSIENT = (429, 500, 502, 503, 504)   # cfr. retry_util.is_transient_http
 
 
 def _base():
@@ -593,39 +594,46 @@ def _errore_del_job(out, testo, job_id, completo=""):
     return VoxcpmJobError(testo, job_id)
 
 
+class _Transitorio(Exception):
+    """Un tentativo andato male per una causa che passa da sola (rete, 429,
+    5xx): retry_util lo ritenta, gli altri errori escono subito."""
+
+
 def _submit(payload, session, sleep):
-    ultimo = ""
-    pausa = _SUBMIT_PAUSA_SEC
-    for tentativo in range(_SUBMIT_RETRIES):
+    def _once(_tentativo):
         try:
             r = session.post(f"{_base()}/run", headers=_headers(),
                              json=payload, timeout=60)
         except requests.RequestException as e:
-            ultimo = str(e)
-        else:
-            if r.status_code < 400:
-                try:
-                    return r.json()["id"]
-                except (ValueError, KeyError, TypeError) as e:
-                    # Un 2xx senza un id valido non e' un transitorio da
-                    # ritentare: e' una risposta che il worker non sa dare.
-                    raise VoxcpmJobError(
-                        f"risposta di /run senza un id valido: {e}")
-            if r.status_code not in _HTTP_TRANSIENT:
-                raise VoxcpmJobError(f"HTTP {r.status_code}: {r.text[:200]}")
-            ultimo = f"HTTP {r.status_code}"
-        if tentativo < _SUBMIT_RETRIES - 1:
-            _LOG.warning(
-                "sottomissione del job fallita (%s), tentativo %d di %d: "
-                "riprovo fra %.0f s", ultimo, tentativo + 1, _SUBMIT_RETRIES,
-                pausa)
-            sleep(pausa)
-            pausa = min(pausa * 2, _SUBMIT_PAUSA_MAX_SEC)
-    # Tipo dedicato, non `VoxcpmJobError` nudo: chi orchestra il capitolo
-    # deve poter distinguere «il job non e' mai partito» da un guasto della
-    # sintesi, ed e' su quel tipo che `synthesize_chapter` risottomette.
-    raise VoxcpmSottomissioneFallita(
-        f"esauriti i tentativi di sottomissione ({ultimo})")
+            raise _Transitorio(str(e)) from e
+        if r.status_code < 400:
+            try:
+                return r.json()["id"]
+            except (ValueError, KeyError, TypeError) as e:
+                # Un 2xx senza un id valido non e' un transitorio da
+                # ritentare: e' una risposta che il worker non sa dare.
+                raise VoxcpmJobError(
+                    f"risposta di /run senza un id valido: {e}")
+        if r.status_code not in _HTTP_TRANSIENT:
+            raise VoxcpmJobError(f"HTTP {r.status_code}: {r.text[:200]}")
+        raise _Transitorio(f"HTTP {r.status_code}")
+
+    def _avviso(tentativo, e, pausa):
+        _LOG.warning(
+            "sottomissione del job fallita (%s), tentativo %d di %d: "
+            "riprovo fra %.0f s", e, tentativo + 1, _SUBMIT_RETRIES, pausa)
+
+    try:
+        return _retry.retry_call(
+            _once, attempts=_SUBMIT_RETRIES, sleep=sleep, on_retry=_avviso,
+            is_retryable=lambda e: isinstance(e, _Transitorio),
+            wait=lambda t, _e: _retry.backoff(t, base=_SUBMIT_PAUSA_SEC, cap=_SUBMIT_PAUSA_MAX_SEC))
+    except _Transitorio as e:
+        # Tipo dedicato, non `VoxcpmJobError` nudo: chi orchestra il capitolo
+        # deve poter distinguere «il job non e' mai partito» da un guasto della
+        # sintesi, ed e' su quel tipo che `synthesize_chapter` risottomette.
+        raise VoxcpmSottomissioneFallita(
+            f"esauriti i tentativi di sottomissione ({e})") from None
 
 
 # Tetto della GET /health chiamata dal campionatore di carico ogni 30 s: deve
@@ -1171,7 +1179,7 @@ def _scarica_ritentabile(codice):
     5xx/429 la causa e' transitoria. Un altro 4xx no: una firma scaduta o una
     chiave assente restano tali, e ritentare rimanderebbe solo il verdetto.
     """
-    return codice is None or codice >= 500 or codice == 429
+    return _retry.is_transient_http(codice)
 
 
 def _scarica(url, dest):
@@ -1190,8 +1198,12 @@ def _scarica(url, dest):
     Il messaggio non riporta `url`: e' una GET firmata, e finirebbe nei log.
     """
     tmp = dest + ".part"
-    pausa = _SCARICA_PAUSA_SEC
-    for tentativo in range(1, _SCARICA_TENTATIVI + 1):
+
+    def _dettaglio(e):
+        codice = getattr(getattr(e, "response", None), "status_code", None)
+        return codice, (f"HTTP {codice}" if codice else type(e).__name__)
+
+    def _once(_tentativo):
         try:
             with requests.get(url, stream=True, timeout=300) as r:
                 r.raise_for_status()
@@ -1200,27 +1212,29 @@ def _scarica(url, dest):
                         if pezzo:
                             f.write(pezzo)
             os.replace(tmp, dest)
-            return
-        except requests.RequestException as e:
-            codice = getattr(getattr(e, "response", None), "status_code", None)
-            dettaglio = f"HTTP {codice}" if codice else type(e).__name__
-            if (not _scarica_ritentabile(codice)
-                    or tentativo >= _SCARICA_TENTATIVI):
-                raise VoxcpmConsegnaFallita(
-                    f"scaricamento del capitolo da R2 fallito: {dettaglio}"
-                ) from e
-            _LOG.warning(
-                "scaricamento del capitolo da R2 fallito (%s), tentativo "
-                "%d di %d: riprovo fra %.0f s",
-                dettaglio, tentativo, _SCARICA_TENTATIVI, pausa)
         finally:
             # Un fallimento a meta' lascia un `.part` orfano: sul prossimo
             # tentativo scriverebbe su un file gia' li', ingannando chi
             # guarda solo la dimensione.
             if os.path.exists(tmp):
                 os.remove(tmp)
-        _dormi(pausa)
-        pausa = min(pausa * 2, _SCARICA_PAUSA_MAX_SEC)
+
+    def _avviso(tentativo, e, pausa):
+        _LOG.warning(
+            "scaricamento del capitolo da R2 fallito (%s), tentativo "
+            "%d di %d: riprovo fra %.0f s",
+            _dettaglio(e)[1], tentativo + 1, _SCARICA_TENTATIVI, pausa)
+
+    try:
+        _retry.retry_call(
+            _once, attempts=_SCARICA_TENTATIVI, sleep=_dormi, on_retry=_avviso,
+            is_retryable=lambda e: (isinstance(e, requests.RequestException)
+                                    and _scarica_ritentabile(_dettaglio(e)[0])),
+            wait=lambda t, _e: _retry.backoff(t, base=_SCARICA_PAUSA_SEC, cap=_SCARICA_PAUSA_MAX_SEC))
+    except requests.RequestException as e:
+        raise VoxcpmConsegnaFallita(
+            f"scaricamento del capitolo da R2 fallito: {_dettaglio(e)[1]}"
+        ) from e
 
 
 def _cancella_intermedio(key):

@@ -75,10 +75,7 @@
   "audiobook_app.py": 1,
   "community_moderator.py": 1,
   "gemini_tts.py": 1,
-  "generation_engine.py": 4,
-  "push_service.py": 1,
-  "speechify_tts.py": 1,
-  "tts_backend_state.py": 1,
-  "tts_split.py": 4
+  "generation_engine.py": 3,
+  "tts_backend_state.py": 1
  }
 }

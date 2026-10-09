@@ -25,6 +25,7 @@ import os
 from i18n import norm_lang as _norm_lang, pick as _i18n_pick
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 import llm_client
+import retry_util as _retry
 import llm_client
 import llm_client
 from env_utils import env_bool as _env_bool, env_float as _env_float, env_int as _env_int, env_str as _env_str
@@ -5880,18 +5881,20 @@ def _offload_to_cloud(job_id, output_dir, when):
                 continue
         except Exception:
             pass  # head fallita: procedi comunque con l'upload
-        ok = False
-        for attempt in range(3):
-            try:
-                storage_backend.upload_file(str(f), key)
-                if storage_backend.object_exists(key):
-                    ok = True
-                    break
-            except Exception as e:
-                print(f"[{job_id}] cloud offload error for {f.name} "
-                      f"(tentativo {attempt + 1}/3): {e}", flush=True)
-            if attempt < 2:
-                time.sleep(2 ** attempt)  # backoff solo tra i tentativi
+        def _upload(_attempt, f=f, key=key):
+            storage_backend.upload_file(str(f), key)
+            if not storage_backend.object_exists(key):
+                raise RuntimeError("upload riuscito ma oggetto assente su cold")
+
+        try:
+            _retry.retry_call(
+                _upload, attempts=3, wait=1.0,   # backoff 1, 2 s solo tra i tentativi
+                on_retry=lambda a, e, _w: print(f"[{job_id}] cloud offload error for {f.name} "
+                                                f"(tentativo {a + 1}/3): {e}", flush=True))
+            ok = True
+        except Exception as e:      # noqa: BLE001 - esauriti i tentativi
+            print(f"[{job_id}] cloud offload error for {f.name} (tentativo 3/3): {e}", flush=True)
+            ok = False
         if ok:
             uploaded_any = True
         else:

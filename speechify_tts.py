@@ -15,6 +15,7 @@ import os
 from env_utils import env_bool as _b, env_float as _f, env_int as _i
 import threading
 import time
+import retry_util as _retry
 import wave
 
 # Interruttore per modello (ABM_SIMBA32_ENABLE, default abilitato).
@@ -317,8 +318,8 @@ def compute_user_price_eur(chars):
 
 
 def _is_retryable(status_code):
-    """Determina se uno status HTTP e' retriabile: 429 o qualunque 5xx."""
-    return status_code == 429 or 500 <= status_code <= 599
+    """Status HTTP ritentabile: 429 o 5xx (retry_util.is_transient_http)."""
+    return _retry.is_transient_http(status_code, none_is_transient=False)
 
 
 class SpeechifyUnavailable(RuntimeError):
@@ -366,12 +367,16 @@ def _wave_open(fileobj):
 def _retry_after_seconds(resp, attempt):
     """Secondi da attendere: header Retry-After se presente, altrimenti backoff."""
     ra = resp.headers.get("Retry-After") if resp is not None else None
-    if ra is not None:
-        try:
-            return max(0.0, float(ra))
-        except (ValueError, TypeError):
-            pass
-    return min(30.0, 2.0 ** attempt)
+    secs = _retry.parse_retry_after(ra)
+    return secs if secs is not None else _retry.backoff(attempt, cap=30.0)
+
+
+class _SpeechifyRetry(Exception):
+    """Risposta 429/5xx: si ritenta (porta la response per Retry-After)."""
+
+    def __init__(self, resp):
+        super().__init__(f"HTTP {resp.status_code}")
+        self.resp = resp
 
 
 def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
@@ -410,8 +415,7 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
     use_stream = use_stream_api()
     url = API_BASE + (STREAM_ENDPOINT if use_stream else SPEECH_ENDPOINT)
 
-    last_error = None
-    for attempt in range(max_attempts):
+    def _once(attempt):
         with slot():  # gate globale: un permesso per l'intera chiamata
             resp = session.post(url, json=payload, headers=headers,
                                 timeout=120, stream=use_stream)
@@ -452,11 +456,14 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
             }
         if not _is_retryable(resp.status_code):
             raise SpeechifyFatalError(f"Speechify HTTP {resp.status_code} (fatal): {getattr(resp, 'text', '')[:200]}")
-        last_error = f"HTTP {resp.status_code}"
-        if attempt < max_attempts - 1:
-            time.sleep(_retry_after_seconds(resp, attempt))
+        raise _SpeechifyRetry(resp)
 
-    raise RuntimeError(f"Speechify synthesis failed after {max_attempts} attempts: {last_error}")
+    try:
+        return _retry.retry_call(_once, attempts=max_attempts,
+                                 is_retryable=lambda e: isinstance(e, _SpeechifyRetry),
+                                 wait=lambda attempt, e: _retry_after_seconds(e.resp, attempt))
+    except _SpeechifyRetry as e:
+        raise RuntimeError(f"Speechify synthesis failed after {max_attempts} attempts: {e}") from None
 
 
 def estimate_book_cost(chapters, language="en"):

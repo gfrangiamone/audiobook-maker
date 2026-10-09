@@ -6,6 +6,7 @@ sono mai bloccanti: send_push ritorna 'ok' | 'unregistered' | 'error'.
 """
 from gcp_auth import ServiceAccount
 import os
+import retry_util as _retry
 import threading
 import time
 
@@ -68,14 +69,15 @@ def send_push(fcm_token, title, body, data=None):
     }
     headers = {"Authorization": f"Bearer {creds.token}"}
     tok_prefix = fcm_token[:12]
-    for attempt in range(_SEND_RETRIES):
+    class _Retry(Exception):
+        pass
+
+    def _once(attempt):
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=15)
-        except Exception as e:
+        except Exception as e:      # noqa: BLE001 - rete: si ritenta
             print(f"[push] FCM request failed (attempt {attempt + 1}): {e}", flush=True)
-            if attempt < _SEND_RETRIES - 1:
-                time.sleep(2 ** attempt)
-            continue
+            raise _Retry() from e
         if resp.status_code == 200:
             return "ok"
         if resp.status_code == 404:
@@ -89,6 +91,10 @@ def send_push(fcm_token, title, body, data=None):
             return "error"
         print(f"[push] FCM error {resp.status_code} (attempt {attempt + 1}) "
               f"tok={tok_prefix}: {resp.text[:200]}", flush=True)
-        if attempt < _SEND_RETRIES - 1:
-            time.sleep(2 ** attempt)
-    return "error"
+        raise _Retry()
+
+    try:
+        return _retry.retry_call(_once, attempts=_SEND_RETRIES, wait=1.0,
+                                 is_retryable=lambda e: isinstance(e, _Retry))
+    except _Retry:
+        return "error"

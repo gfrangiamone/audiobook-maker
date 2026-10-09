@@ -11,6 +11,7 @@ Scope: synthesis + pricing + usage tracking + preview cap + availability.
 
 import io
 import os
+import retry_util as _retry
 from i18n import norm_lang as _norm_lang
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 from env_utils import env_bool as _b, env_float as _f, env_int as _i
@@ -2879,51 +2880,13 @@ def _throttle_rpm(model_key):
 
 # Match `retry in 6h12m51.7s`, `retryDelay: '22371s'`, `Please retry in 5.4s`,
 # o numeri puri di secondi nei messaggi di errore Google API.
-_RE_RETRY_HMS = re.compile(r"retry\s+in\s+(?:(\d+)h)?(?:(\d+)m)?([\d.]+)?s", re.IGNORECASE)
-_RE_RETRY_SECS = re.compile(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", re.IGNORECASE)
 
 
 def _parse_retry_after(err):
-    """Estrae retry-after in secondi dall'errore. Restituisce None se non trovato.
-
-    Tentativi (ordinati):
-      1. attributo `error.retry_delay` / `error.details[*].retry_delay.seconds`
-         (se l'SDK lo espone come oggetto strutturato)
-      2. parsing della stringa: 'retryDelay: 22371s'
-      3. parsing della stringa: 'retry in 6h12m51.7s' / 'retry in 5s'
-    """
-    # 1) Structured access via SDK
-    try:
-        details = getattr(err, "details", None) or []
-        for d in details:
-            rd = getattr(d, "retry_delay", None) or (d.get("retryDelay") if isinstance(d, dict) else None)
-            if rd is not None:
-                if isinstance(rd, str) and rd.endswith("s"):
-                    return float(rd[:-1])
-                secs = getattr(rd, "seconds", None) if not isinstance(rd, dict) else rd.get("seconds")
-                if secs is not None:
-                    return float(secs)
-    except Exception:
-        pass
-
-    # 2/3) String parsing
-    s = str(err)
-    m = _RE_RETRY_SECS.search(s)
-    if m:
-        try:
-            return float(m.group(1))
-        except ValueError:
-            pass
-    m = _RE_RETRY_HMS.search(s)
-    if m:
-        try:
-            h = int(m.group(1) or 0)
-            mn = int(m.group(2) or 0)
-            sc = float(m.group(3) or 0)
-            return h * 3600 + mn * 60 + sc
-        except ValueError:
-            pass
-    return None
+    """Retry-after in secondi dall'errore (retry_util.retry_after_from_error):
+    `details[*].retry_delay` dell'SDK, poi `retryDelay: 22371s` o
+    `retry in 6h12m51.7s` nel messaggio. None se non trovato."""
+    return _retry.retry_after_from_error(err)
 
 
 def _is_daily_quota_error(err):
@@ -3552,7 +3515,7 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                     ) from te
                 wait = max(1.0, retry_after)
             else:
-                wait = min(30.0, 2 ** attempt)
+                wait = _retry.backoff(attempt, cap=30.0)
 
             if attempt < max_attempts:
                 print(f"[gemini-tts] Attempt {attempt}/{max_attempts} failed "

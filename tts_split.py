@@ -18,6 +18,7 @@ import asyncio
 import os
 from i18n import norm_lang as _norm_lang
 import re
+import retry_util as _retry
 import tempfile
 import time
 import unicodedata
@@ -853,6 +854,17 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
 # edge-tts generation
 # ---------------------------------------------------------------------------
 
+def _gemini_fatal(mod):
+    """Eccezioni di `mod` (gemini_tts, importato tardi dal chiamante) che non
+    si ritentano e non si silenziano: il chiamante decide se sospendere il
+    job."""
+    return (mod.GeminiQuotaExhausted, mod.GeminiBudgetExceeded, mod.GeminiUnavailable)
+
+
+class _EdgeTruncated(Exception):
+    """L'MP3 di edge-tts e' arrivato troncato: si ritenta come un errore."""
+
+
 async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     """Singola chiamata edge-tts con retry/backoff esponenziale.
 
@@ -868,35 +880,36 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     esplicito, non testo mancante nascosto (che passava inosservato con
     failed_chunks=0 e job COMPLETE).
     """
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-            await asyncio.wait_for(
-                communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
-            )
-            if _edge_output_looks_truncated(output_path, text, rate):
-                try:
-                    size = os.path.getsize(output_path)
-                except OSError:
-                    size = 0
-                snippet = text[:60].replace('\n', ' ')
-                print(f"[tts] Attempt {attempt+1}/{max_retries} TRUNCATED output "
-                      f"({len(text)} chars -> {size}B ~{size/_EDGE_MP3_BYTES_PER_SEC:.1f}s: "
-                      f"\"{snippet}...\"): retry")
-                last_error = "truncated_output (stream chiuso a meta')"
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                continue
-            return True
-        except Exception as e:
-            last_error = e
-            wait = 2 ** attempt
-            snippet = text[:60].replace('\n', ' ')
+    snippet = text[:60].replace('\n', ' ')
+
+    async def _once(attempt):
+        communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
+        await asyncio.wait_for(
+            communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
+        )
+        if _edge_output_looks_truncated(output_path, text, rate):
+            try:
+                size = os.path.getsize(output_path)
+            except OSError:
+                size = 0
+            print(f"[tts] Attempt {attempt+1}/{max_retries} TRUNCATED output "
+                  f"({len(text)} chars -> {size}B ~{size/_EDGE_MP3_BYTES_PER_SEC:.1f}s: "
+                  f"\"{snippet}...\"): retry")
+            raise _EdgeTruncated("truncated_output (stream chiuso a meta')")
+        return True
+
+    def _log(attempt, e, _wait):
+        if not isinstance(e, _EdgeTruncated):
             print(f"[tts] Attempt {attempt+1}/{max_retries} failed "
                   f"({len(text)} chars: \"{snippet}...\"): {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(wait)
+
+    try:
+        return await _retry.retry_call_async(_once, attempts=max_retries, wait=1.0, on_retry=_log)
+    except Exception as e:      # noqa: BLE001 - esauriti i tentativi: silenzio esplicito
+        last_error = e if not isinstance(e, _EdgeTruncated) else str(e)
+        if not isinstance(e, _EdgeTruncated):
+            print(f"[tts] Attempt {max_retries}/{max_retries} failed "
+                  f"({len(text)} chars: \"{snippet}...\"): {e}")
     print(f"[tts] WARNING: all {max_retries} attempts failed "
           f"({len(text)} chars). Last: {last_error}")
     _generate_silence_mp3(output_path, duration_sec=1)
@@ -1216,37 +1229,36 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                 if debug_prompt_path:
                     base, ext = os.path.splitext(debug_prompt_path)
                     piece_debug_path = f"{base}.part{idx:03d}{ext or '.txt'}"
-                for attempt in range(max_retries):
-                    try:
-                        result = _gemini.synthesize(
+                try:
+                    result = _retry.retry_call(
+                        lambda _a: _gemini.synthesize(
                             piece_text, voice_id, output_path=tmp_path,
                             style_instruction=style_instruction,
                             rate=rate,
                             debug_prompt_path=piece_debug_path,
                             accent_directive=accent_directive,
                             job_id=job_id,
-                        )
-                        piece_ok = True
-                        aggregate["bytes_written"] += int(result.get("bytes_written", 0))
-                        aggregate["audio_seconds_real"] += float(result.get("audio_seconds_real", 0.0))
-                        aggregate["input_tokens"] += int(result.get("input_tokens", 0))
-                        aggregate["output_tokens"] += int(result.get("output_tokens", 0))
-                        aggregate["model_key"] = result.get("model_key") or aggregate["model_key"]
-                        aggregate["voice_name"] = result.get("voice_name") or aggregate["voice_name"]
-                        aggregate["attempts_used"] = max(aggregate["attempts_used"], int(result.get("attempts_used", 1)))
-                        aggregate["backend"] = result.get("backend") or aggregate["backend"]
-                        if result.get("backend") == "cloudflare":
-                            aggregate["cf_used"] = True
-                        if not result.get("tokens_measured"):
-                            aggregate["tokens_measured"] = False
-                        break
-                    except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded,
-                            _gemini.GeminiUnavailable):
-                        raise
-                    except Exception as e:
-                        last_error = e
-                        if attempt < max_retries - 1:
-                            time.sleep(2 ** attempt)
+                        ),
+                        attempts=max_retries, wait=1.0,
+                        is_retryable=lambda e: not isinstance(e, _gemini_fatal(_gemini)))
+                except _gemini_fatal(_gemini):
+                    raise
+                except Exception as e:      # noqa: BLE001 - esauriti i tentativi
+                    last_error = e
+                else:
+                    piece_ok = True
+                    aggregate["bytes_written"] += int(result.get("bytes_written", 0))
+                    aggregate["audio_seconds_real"] += float(result.get("audio_seconds_real", 0.0))
+                    aggregate["input_tokens"] += int(result.get("input_tokens", 0))
+                    aggregate["output_tokens"] += int(result.get("output_tokens", 0))
+                    aggregate["model_key"] = result.get("model_key") or aggregate["model_key"]
+                    aggregate["voice_name"] = result.get("voice_name") or aggregate["voice_name"]
+                    aggregate["attempts_used"] = max(aggregate["attempts_used"], int(result.get("attempts_used", 1)))
+                    aggregate["backend"] = result.get("backend") or aggregate["backend"]
+                    if result.get("backend") == "cloudflare":
+                        aggregate["cf_used"] = True
+                    if not result.get("tokens_measured"):
+                        aggregate["tokens_measured"] = False
                 if not piece_ok:
                     snippet = piece_text[:60].replace('\n', ' ')
                     print(f"[gemini-tts] Split-piece {idx+1}/{len(pieces)} failed "
@@ -1395,31 +1407,33 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
             return _fail("byte_split_failed", f"{len(pieces)} sub-chunk")
 
     last_error = None
-    for attempt in range(max_retries):
-        try:
-            result = _gemini.synthesize(
+    snippet = clean[:60].replace('\n', ' ')
+
+    def _log(attempt, e, _wait):
+        print(f"[gemini-tts] Attempt {attempt+1}/{max_retries} failed for chunk "
+              f"({len(clean)} chars: \"{snippet}...\"): {e}")
+
+    try:
+        return _retry.retry_call(
+            lambda _a: _gemini.synthesize(
                 clean, voice_id, output_path=output_path,
                 style_instruction=style_instruction,
                 rate=rate,
                 debug_prompt_path=debug_prompt_path,
                 accent_directive=accent_directive,
                 job_id=job_id,
-            )
-            return result
-        except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded,
-                _gemini.GeminiUnavailable):
-            # Non silenziare: il caller decide se sospendere il job.
-            # GeminiUnavailable (kill-switch/capability) e' istantaneo e
-            # permanente per il processo: silenziarlo significherebbe
-            # silenziare l'INTERO libro (incidente 2026-06).
-            raise
-        except Exception as e:
-            last_error = e
-            snippet = clean[:60].replace('\n', ' ')
-            print(f"[gemini-tts] Attempt {attempt+1}/{max_retries} failed for chunk "
-                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
+            ),
+            attempts=max_retries, wait=1.0, on_retry=_log,
+            is_retryable=lambda e: not isinstance(e, _gemini_fatal(_gemini)))
+    except _gemini_fatal(_gemini):
+        # Non silenziare: il caller decide se sospendere il job.
+        # GeminiUnavailable (kill-switch/capability) e' istantaneo e
+        # permanente per il processo: silenziarlo significherebbe
+        # silenziare l'INTERO libro (incidente 2026-06).
+        raise
+    except Exception as e:      # noqa: BLE001 - esauriti i tentativi
+        last_error = e
+        _log(max_retries - 1, e, 0)
 
     print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
           f"generating silence ({len(clean)} chars). Last error: {last_error}")
@@ -1488,31 +1502,34 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
         return _fail("empty_after_sanitize")
 
     last_error = None
-    for attempt in range(max_retries):
-        try:
-            return _spx.synthesize(clean, voice_id, output_path,
-                                   emotion=emotion, rate=rate)
-        except _spx.SpeechifyUnavailable:
-            raise  # non silenziare: il caller decide
-        except _spx.SpeechifyFatalError as e:
-            # 4xx non ritentabile (es. SSML invalido): ritentare costa
-            # chiamate a vuoto con esito identico.
-            last_error = e
-            snippet = clean[:60].replace('\n', ' ')
-            print(f"[speechify] Fatal error, no retry "
-                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
-            break
-        except Exception as e:
-            # Errori di rete (Read timed out, ConnectionError...) e retry
-            # HTTP esauriti in synthesize: si ritenta con backoff. Prima
-            # (max_retries=1) un singolo timeout sostituiva un chunk
-            # PREMIUM pagato con 1 s di silenzio.
-            last_error = e
-            snippet = clean[:60].replace('\n', ' ')
-            print(f"[speechify] Attempt {attempt+1}/{max_retries} failed "
-                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
+    snippet = clean[:60].replace('\n', ' ')
+
+    def _log(attempt, e, _wait):
+        print(f"[speechify] Attempt {attempt+1}/{max_retries} failed "
+              f"({len(clean)} chars: \"{snippet}...\"): {e}")
+
+    try:
+        # Errori di rete (Read timed out, ConnectionError...) e retry HTTP
+        # esauriti in synthesize: si ritenta con backoff. Prima
+        # (max_retries=1) un singolo timeout sostituiva un chunk PREMIUM
+        # pagato con 1 s di silenzio.
+        return _retry.retry_call(
+            lambda _a: _spx.synthesize(clean, voice_id, output_path,
+                                       emotion=emotion, rate=rate),
+            attempts=max_retries, wait=1.0, on_retry=_log,
+            is_retryable=lambda e: not isinstance(
+                e, (_spx.SpeechifyUnavailable, _spx.SpeechifyFatalError)))
+    except _spx.SpeechifyUnavailable:
+        raise  # non silenziare: il caller decide
+    except _spx.SpeechifyFatalError as e:
+        # 4xx non ritentabile (es. SSML invalido): ritentare costa
+        # chiamate a vuoto con esito identico.
+        last_error = e
+        print(f"[speechify] Fatal error, no retry "
+              f"({len(clean)} chars: \"{snippet}...\"): {e}")
+    except Exception as e:      # noqa: BLE001 - esauriti i tentativi
+        last_error = e
+        _log(max_retries - 1, e, 0)
 
     print(f"[speechify] WARNING: synthesis failed, silence "
           f"({len(clean)} chars). Last error: {last_error}")
