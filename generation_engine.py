@@ -24,6 +24,7 @@ import json
 import os
 from i18n import norm_lang as _norm_lang, pick as _i18n_pick
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
+import jsonl_audit as _jsonl_audit
 import llm_client
 import retry_util as _retry
 import pricing_common
@@ -178,7 +179,8 @@ BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
 _jobs = None            # reference to jobs dict in audiobook_app
 _upload_dir = None      # Path to data directory
-_llm_leak_audit = _MonthlyJsonl("llm_leak_audit", lambda: _upload_dir, compact=False)
+_llm_leak_audit = _MonthlyJsonl("llm_leak_audit", lambda: _upload_dir, compact=False,
+                                keep_months=_jsonl_audit.audit_keep_months)
 _download_tokens = None # reference to token dict in audiobook_app
 _save_tokens = None     # callable: persist tokens to disk
 _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op)
@@ -5339,7 +5341,8 @@ def _data_dir_fn():
     return Path(_env_str("ABM_DATA_DIR", "."))
 
 
-_code_tagliate_store = _MonthlyJsonl("voxcpm_code_tagliate", _data_dir_fn)
+_code_tagliate_store = _MonthlyJsonl("voxcpm_code_tagliate", _data_dir_fn,
+                                     keep_months=_jsonl_audit.audit_keep_months)
 # I campi del giudizio del worker che valgono la pena di essere conservati,
 # nell'ordine in cui si leggono. Fuori da questa lista non passa niente: il
 # worker puo' aggiungere chiavi sue, e un dataset che cambia forma da solo non

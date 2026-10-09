@@ -58,6 +58,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
 | `ABM_VOUCHER_BONUS_PERCENT` | `10` (% maggiorazione buono vs pagamento originale) | `audiobook_app.py` | 111 |
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
+| `ABM_COST_AUDIT_KEEP_MONTHS` | `48` (mesi di file `gemini_cost_audit_*`, `translation_cost_audit_*`, `optimization_cost_audit_*` conservati: 4 anni, uso fiscale; `0` = mai purgare. Purge giornaliera da `jsonl_audit.purge_all()` nel campionatore del carico) | `jsonl_audit.py` | 40 |
+| `ABM_AUDIT_KEEP_MONTHS` | `6` (mesi conservati per gli audit dei judge `*_judge_audit_*`/`voice_language_audit_*`, `llm_leak_audit_*` e `voxcpm_code_tagliate_*`; `0` = mai. Stessa purge giornaliera; i judge non purgano senza `ABM_DATA_DIR`) | `jsonl_audit.py` | 45 |
 | `ABM_AUTO_REFUND_UNUSED_CAPTURES` | `true` (se un capture PayPal viene incassato ma MAI consumato — `used=False`, es. avvio traduzione non partito per redirect mobile — e il job viene smaltito, emette automaticamente un voucher di rimborso all'email del pagante. Se `false`: marca solo `needs_manual_refund` e lascia all'admin il rimborso PayPal manuale) | `payment.py` | 64–66 |
 | `ABM_UNUSED_CAPTURE_MIN_AGE_SEC` | `1800` (30 min; età minima di un capture non consumato prima di considerarlo abbandonato per detection/alert/auto-refund — evita di toccare un capture appena fatto ancora in attesa che parta `/api/translate`) | `payment.py` | 70–71 |
 | `ABM_PRICE_LOCK_TTL_SEC` | `1800` (30 min; validità del **price lock**: l'importo quotato alla creazione dell'ordine PayPal resta il dovuto alla conferma, invece del ricalcolo live. Serve perché la stima TTS PREMIUM dipende da una media mobile empirica (`gemini_tts_rate_log.json`) che si muove fra pagamento e conferma: una deriva > 0,05 € mandava in 402 `invalid_payment` un utente già pagante, lasciando la capture orfana fino al purge "stale analyzed" → rimborso manuale. Il lock è registrato per `order_id` insieme alla firma degli input di prezzo — voce, capitoli, velocità, lingua, AI on/off — e non si applica se uno di questi cambia. Oltre il TTL si torna al ricalcolo live. Incidente 21/08/2026, job `N-RUN2qrc2blK82lRX_NdA`: 5,86 € pagati vs 6,00 € pretesi 40 s dopo) | `audiobook_app.py` | 666 |
@@ -812,7 +814,7 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 | `cancel_progress_pct` | (solo `cancelled_*`) % progresso al momento del cancel |
 | `cancel_partial_audio_delivered` | (solo `cancelled_*`) Bool: MP3 parziale consegnato all'utente via token download |
 
-**Retention:** manuale — i file sono piccoli (qualche KB/mese a regime). Ruotare/archiviare a discrezione admin.
+**Retention:** `ABM_COST_AUDIT_KEEP_MONTHS` (default 48 mesi, uso fiscale) per i tre audit di costo, `ABM_AUDIT_KEEP_MONTHS` (default 6) per audit dei judge, leak LLM e code tagliate: `jsonl_audit.purge_all()` (riga 50) gira una volta al giorno nel campionatore del carico (`_load_metrics_sampler`, insieme a `load_metrics.purge()`) e cancella i file mensili oltre la finestra (il mese corrente conta 1). Fino al 2026-10-09 la retention era manuale.
 
 **Parametri di tuning:** se `delta_pct_avg` si discosta sistematicamente (vedi `/admin/logs` → "Audit Gemini" → "Calcola parametri suggeriti"), valutare:
 - aumento margin_percent del modello se delta negativo (`ABM_GEMINI_<model>_MARGIN_PERCENT`)
@@ -1164,7 +1166,7 @@ Le durate (attesa in coda assembly, encode FFmpeg, durata job) sono in istogramm
 | `ABM_LOAD_METRICS_ENABLED` | `true` | Abilita il campionatore di carico. Se `false` il thread non parte e `/api/admin/load_stats` restituisce i soli bucket già su disco. | `load_metrics.py` | 37 |
 | `ABM_LOAD_METRICS_SAMPLE_SEC` | `30` | Periodo di campionamento dei gauge (job in elaborazione, RAM, CPU, swap, disco, coda assembly). | `load_metrics.py` | 39 |
 | `ABM_LOAD_METRICS_BUCKET_SEC` | `300` | Ampiezza del bucket di aggregazione (5 minuti): un bucket chiuso = una riga JSONL. | `load_metrics.py` | 40 |
-| `ABM_LOAD_METRICS_RETENTION_MONTHS` | `4` | Mesi di file `load_metrics_YYYY-MM.jsonl` conservati; i più vecchi vengono rimossi da `purge()`. | `load_metrics.py` | 41 |
+| `ABM_LOAD_METRICS_RETENTION_MONTHS` | `6` (fino al 2026-10-09: 4) | Mesi di file `load_metrics_YYYY-MM.jsonl` conservati; i più vecchi vengono rimossi da `purge()`. | `load_metrics.py` | 41 |
 | `ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS` | `31` | Giorni di conservazione dei gauge della sonda RunPod VoxCPM2 (`vx_run`, `vx_busy`): `purge()` (una volta al giorno) li toglie dalle righe più vecchie riscrivendo il file mensile (tmp + rename); il resto della riga resta per `ABM_LOAD_METRICS_RETENTION_MONTHS`. | `load_metrics.py` | 45 |
 
 ### 16.2 API del modulo

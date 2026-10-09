@@ -147,6 +147,7 @@ from tts_split import (
 
 import assembly_queue
 import load_metrics
+import jsonl_audit
 import email_service
 import push_service
 import metrics_store
@@ -17408,6 +17409,12 @@ def _load_metrics_sampler():
             if now - last_purge[0] > 86400:
                 last_purge[0] = now
                 load_metrics.purge()
+                # Stessa cadenza per gli audit JSONL (costi 48 mesi, judge/leak/
+                # code tagliate 6): ogni store registrato purga con la sua retention.
+                gone = jsonl_audit.purge_all()
+                if gone:
+                    print("[audit-retention] rimossi: " + ", ".join(
+                        f"{k} x{len(v)}" for k, v in sorted(gone.items())), flush=True)
         except Exception as e:
             print(f"[load-metrics] errore di campionamento (non fatale): {e}")
 
@@ -18095,6 +18102,8 @@ def _ensure_background_threads():
           f"{'on' if load_metrics.ENABLED else 'off'} "
           f"(sample {load_metrics.SAMPLE_SEC}s, bucket {load_metrics.BUCKET_SEC}s, "
           f"retention {load_metrics.RETENTION_MONTHS} mesi)")
+    print(f"[startup] Audit JSONL retention: costi {jsonl_audit.cost_keep_months()} mesi, "
+          f"judge/leak/code tagliate {jsonl_audit.audit_keep_months()} mesi (purge giornaliera)")
     if _llm_available():
         print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")
     if ADMIN_EMAIL:

@@ -13,6 +13,7 @@ Writer e reader: `jsonl_audit.MonthlyJsonl`.
 from pathlib import Path
 
 from env_utils import env_str
+import jsonl_audit
 from jsonl_audit import MonthlyJsonl
 
 _DATA_DIR = None
@@ -22,7 +23,7 @@ def _dir():
     return _DATA_DIR if _DATA_DIR is not None else Path(env_str("ABM_DATA_DIR", "."))
 
 
-_store = MonthlyJsonl("translation_cost_audit", _dir)
+_store = MonthlyJsonl("translation_cost_audit", _dir, keep_months=jsonl_audit.cost_keep_months)
 
 
 def _current_file():

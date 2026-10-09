@@ -122,4 +122,4 @@ def test_jsonl_audit_is_a_leaf():
     src = pathlib.Path(jsonl_audit.__file__).read_text(encoding="utf-8")
     mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
-    assert mods <= {"json", "threading", "datetime", "pathlib", "fileio"}
+    assert mods <= {"json", "threading", "datetime", "pathlib", "fileio", "env_utils"}   # foglie: fileio, env_utils

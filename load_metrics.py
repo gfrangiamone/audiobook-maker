@@ -40,7 +40,7 @@ ENABLED = (os.environ.get("ABM_LOAD_METRICS_ENABLED", "true").strip().lower()
            not in ("0", "false", "no", "off"))
 SAMPLE_SEC = int(os.environ.get("ABM_LOAD_METRICS_SAMPLE_SEC", "30"))
 BUCKET_SEC = int(os.environ.get("ABM_LOAD_METRICS_BUCKET_SEC", "300"))
-RETENTION_MONTHS = int(os.environ.get("ABM_LOAD_METRICS_RETENTION_MONTHS", "4"))
+RETENTION_MONTHS = int(os.environ.get("ABM_LOAD_METRICS_RETENTION_MONTHS", "6"))
 # I gauge della sonda RunPod di VoxCPM2 vivono meno del resto: servono solo a
 # dire se nelle ultime settimane un worker sempre attivo sarebbe convenuto.
 # Oltre questa eta' vengono tolti dalle righe, che restano per il resto.
@@ -573,8 +573,9 @@ def _strip_voxcpm_gauges(data_dir, now):
 def purge(now=None):
     """Elimina i file mensili oltre la retention. Ritorna quanti ne ha rimossi.
 
-    RETENTION_MONTHS conta i mesi da conservare incluso quello corrente: con 4
-    la finestra a 28 giorni e' sempre coperta, con margine per un mese corto.
+    RETENTION_MONTHS conta i mesi da conservare incluso quello corrente: 6
+    (dal 2026-10-09, prima 4) come gli altri audit non fiscali; la finestra a
+    28 giorni e' sempre coperta, con margine per un mese corto.
     """
     try:
         now = time.time() if now is None else now

@@ -12,6 +12,12 @@ i file da soli (`gemini_tts.get_daily_spent_eur`, `voxcpm_digest`).
   record in ordine di file, righe vuote o corrotte saltate, filtri per
   uguaglianza (valori falsy ignorati) e per data ISO `YYYY-MM-DD` su `ts`.
 - `purge(keep_months)`: cancella i file piu' vecchi di N mesi.
+- `keep_months` (int o funzione) nel costruttore registra lo store per
+  `purge_all()`, che il campionatore del carico chiama una volta al giorno:
+  `cost_keep_months()` (`ABM_COST_AUDIT_KEEP_MONTHS`, 48) per gli audit di
+  costo, `audit_keep_months()` (`ABM_AUDIT_KEEP_MONTHS`, 6) per judge, leak
+  LLM e code tagliate. Un lettore secondario (stesso prefisso, altra
+  cartella iniettata) non passa `keep_months` e non viene registrato.
 
 `data_dir_fn` e' una funzione: la cartella si risolve a ogni chiamata, mai
 all'import (i test cambiano `ABM_DATA_DIR` a runtime). `compact=True` usa
@@ -24,7 +30,37 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from env_utils import env_int as _env_int
 from fileio import data_dir as _default_data_dir
+
+# Store registrati per purge_all(): solo quelli costruiti con keep_months.
+_STORES = []
+
+
+def cost_keep_months():
+    """Mesi di audit di costo conservati (fiscale: 48 = 4 anni; 0 = mai purgare)."""
+    return _env_int("ABM_COST_AUDIT_KEEP_MONTHS", 48, floor=0)
+
+
+def audit_keep_months():
+    """Mesi conservati per audit dei judge, leak LLM e code tagliate (0 = mai)."""
+    return _env_int("ABM_AUDIT_KEEP_MONTHS", 6, floor=0)
+
+
+def purge_all(*, now=None):
+    """Purge di ogni store registrato con la sua retention. Ritorna
+    `{prefix: [path rimossi]}`; uno store che non sa risolvere la cartella
+    (es. non ancora configurato) viene saltato, mai propagato."""
+    removed = {}
+    for st in list(_STORES):
+        try:
+            keep = st.keep_months() if callable(st.keep_months) else st.keep_months
+            gone = st.purge(keep, now=now)
+        except Exception:       # noqa: BLE001 - manutenzione best-effort
+            continue
+        if gone:
+            removed.setdefault(st.prefix, []).extend(gone)
+    return removed
 
 
 def month_now():
@@ -39,15 +75,22 @@ def ts_now():
 
 class MonthlyJsonl:
     def __init__(self, prefix, data_dir_fn=None, *, compact=True, ascii=False,
-                 require_dir=False):
+                 require_dir=False, keep_months=None):
         """`require_dir=True`: se la cartella non esiste non si scrive (e non
-        si crea), come fanno gli audit dei judge; altrimenti `mkdir -p`."""
+        si crea), come fanno gli audit dei judge; altrimenti `mkdir -p`.
+        `keep_months` (int o funzione senza argomenti) registra lo store per
+        `purge_all()`."""
         self.prefix = prefix
         self._dir_fn = data_dir_fn or _default_data_dir
         self._kw = ({"separators": (",", ":")} if compact else {})
         self._ascii = ascii
         self._require_dir = require_dir
         self._lock = threading.Lock()
+        self.keep_months = keep_months
+        if keep_months is not None:
+            # Un prefisso, uno store: il reload di un modulo nei test non
+            # duplica la purge.
+            _STORES[:] = [s for s in _STORES if s.prefix != prefix] + [self]
 
     def data_dir(self):
         return Path(self._dir_fn())

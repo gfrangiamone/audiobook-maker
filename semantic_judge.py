@@ -262,7 +262,30 @@ def clip(text, head, tail=0, marker=None):
     return t[:head].rstrip() + (" [...]" if marker is None else marker)
 
 
+def _audit_keep():
+    """Retention dei judge (ABM_AUDIT_KEEP_MONTHS); senza ABM_DATA_DIR non si
+    purga niente (la cartella risolverebbe alla cwd)."""
+    import jsonl_audit
+    return jsonl_audit.audit_keep_months() if _env("ABM_DATA_DIR") else 0
+
+
+def _audit_store(prefix):
+    store = _audit_stores.get(prefix)
+    if store is None:
+        store = _audit_stores[prefix] = _MonthlyJsonl(
+            prefix, lambda: _env("ABM_DATA_DIR") or ".", compact=False, require_dir=True,
+            keep_months=_audit_keep)
+    return store
+
+
+# I prefissi noti si registrano subito: la purge giornaliera deve vedere anche
+# i file di un judge che dopo il riavvio non ha ancora scritto.
+AUDIT_PREFIXES = ("llm_output_judge_audit", "section_judge_audit", "transcript_judge_audit",
+                  "translation_judge_audit", "voice_language_audit")
 _audit_stores: dict = {}
+for _p in AUDIT_PREFIXES:
+    _audit_store(_p)
+del _p
 
 
 def append_monthly_audit(prefix, rec, tag=""):
@@ -270,10 +293,7 @@ def append_monthly_audit(prefix, rec, tag=""):
     esiste (mai creata). Best-effort: un errore si stampa con `tag` e non
     si propaga, l'audit non ferma mai un job. Ritorna True se scritto."""
     try:
-        store = _audit_stores.get(prefix)
-        if store is None:
-            store = _audit_stores[prefix] = _MonthlyJsonl(
-                prefix, lambda: _env("ABM_DATA_DIR") or ".", compact=False, require_dir=True)
+        store = _audit_store(prefix)
         if not _env("ABM_DATA_DIR"):
             return False
         return store.append(rec)
