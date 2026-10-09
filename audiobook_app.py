@@ -809,6 +809,30 @@ def _has_active_download_tokens(job_id, now=None):
 # Token admin per UI web /admin/vouchers. Se vuoto, l'endpoint è disabilitato.
 ADMIN_TOKEN = os.environ.get("ABM_ADMIN_TOKEN", "").strip()
 
+
+def admin_required(status=403, *, message="Unauthorized", as_json=True, sleep=False,
+                   disabled=None, disabled_json=True):
+    """Guardia admin per una route: 404 se `disabled` e' dato e ADMIN_TOKEN
+    manca (UI spenta), poi `_admin_auth_ok(_admin_auth_from_request())`;
+    su rifiuto risponde `message` con `status`, in JSON ({"error": ...}) o
+    testo, dopo `sleep` (0,5 s contro il brute-force) se richiesto. I
+    parametri riproducono le risposte storiche delle 36 route: cambiarle
+    e' un'altra modifica. Va messo sotto `@app.route`."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if disabled is not None and not ADMIN_TOKEN:
+                return (jsonify({"error": disabled}), 404) if disabled_json else (disabled, 404)
+            if not _admin_auth_ok(_admin_auth_from_request()):
+                if sleep:
+                    time.sleep(0.5)  # rallenta brute-force
+                return (jsonify({"error": message}), status) if as_json else (message, status)
+            return fn(*args, **kwargs)
+        return wrapper
+    return deco
+
 #  -  -  Client tracking & rate limiting  -  - 
 # Max concurrent generating jobs per client device (cookie-based).
 # Set via ABM_MAX_CONCURRENT_PER_CLIENT env var; default 2.
@@ -4594,13 +4618,10 @@ def _log_card_html(sid, s, client_session_count, client_color_map, now):
 
 
 @app.route("/admin/log-activity/day")
+@admin_required(403, as_json=False, disabled="Logs UI disabled.", disabled_json=False)
 def admin_logs_day():
     """Schede di un giorno di /admin/log-activity (frammento HTML), chieste
     dalla pagina quando si apre un giorno non renderizzato in apertura."""
-    if not ADMIN_TOKEN:
-        return "Logs UI disabled.", 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return "Unauthorized", 403
     ym = request.args.get("ym", "")
     day = request.args.get("day", "")
     if (not re.fullmatch(r"\d{4}-\d{2}", ym)
@@ -4995,6 +5016,8 @@ def admin_api_suspend():
     return jsonify({"suspended": suspended})
 
 
+
+
 def _admin_auth_ok(provided):
     """Costante-time check del token admin."""
     if not ADMIN_TOKEN or not provided:
@@ -5019,9 +5042,8 @@ def _admin_auth_from_request():
 
 
 @app.route("/api/admin/funnel")
+@admin_required(403, message="forbidden")
 def api_admin_funnel():
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "forbidden"}), 403
     days = max(1, min(365, int(request.args.get("days", 30))))
     return jsonify(_funnel_data(_last_n_days(days)))
 
@@ -5077,16 +5099,12 @@ def admin_vouchers_page():
 
 
 @app.route("/admin/api/vouchers", methods=["GET", "POST"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_vouchers():
     """GET: elenca voucher. POST: crea nuovo voucher.
 
     Autenticazione via header X-Admin-Token (confronto costante-time).
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)  # rallenta brute-force
-        return jsonify({"error": "Unauthorized"}), 401
 
     ip = client_ip()
 
@@ -5194,13 +5212,9 @@ def admin_api_vouchers():
 
 
 @app.route("/admin/api/vouchers/<code>/revoke", methods=["POST"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_voucher_revoke(code):
     """Revoca (marca usato) un voucher."""
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
     code = (code or "").strip().upper()
     reason = ((request.json or {}).get("reason") or "").strip()[:200]
     with payment._vouchers_lock:
@@ -5219,13 +5233,9 @@ def admin_api_voucher_revoke(code):
 
 
 @app.route("/admin/api/vouchers/<code>/notify", methods=["POST"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_voucher_notify(code):
     """Invia al destinatario un'email (in inglese) con i dati del voucher."""
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
     if not _smtp_available():
         return jsonify({"error": "SMTP not configured"}), 503
     code = (code or "").strip().upper()
@@ -5254,16 +5264,12 @@ def admin_api_voucher_notify(code):
 
 
 @app.route("/admin/api/job/<path:job_id>/copy-qr", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_job_copy_qr(job_id):
     """Restituisce un QR (data-URI PNG) + deep link per copiare il job sull'app
     'Audiobook Maker & Player' a scopo di indagine admin. Il claim del token
     NON altera il job dell'utente originale (vedi api_transfer_claim, ramo
     admin_copy)."""
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
     if not job_id or "/" in job_id or "\\" in job_id or ".." in job_id:
         return jsonify({"error": "invalid job_id"}), 400
     # Il QR ha senso solo se la copia è effettivamente consegnabile all'app: job
@@ -5774,6 +5780,7 @@ def _audit_hide_zero(args):
 
 
 @app.route("/admin/api/gemini_cost_audit", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_gemini_cost_audit():
     """List Gemini TTS audit records with filters + aggregates. Admin-only.
 
@@ -5782,11 +5789,6 @@ def admin_api_gemini_cost_audit():
     Ogni record viene arricchito con campi `_eff_*` che applicano i rimborsi
     da cancellazione anticipata su ricavo/margine/delta.
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import gemini_cost_audit
     model = request.args.get("model")
@@ -5886,6 +5888,7 @@ def admin_api_gemini_cost_audit():
 
 
 @app.route("/admin/api/gemini_kill_switch", methods=["GET", "POST"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_gemini_kill_switch():
     """Kill-switch admin per disattivare runtime le voci PREMIUM.
 
@@ -5896,11 +5899,6 @@ def admin_api_gemini_kill_switch():
     pannello Voci PREMIUM scompare dalla UI utente (incluse stime e flusso
     di pagamento Premium, che gia` gateano su is_available()).
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     if gemini_tts is None:
         return jsonify({"error": "Gemini TTS module not loaded"}), 503
@@ -6057,6 +6055,7 @@ def _tts_backend_payload(model_key, configured_backend):
 
 
 @app.route("/admin/api/tts_backend", methods=["GET", "POST"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_tts_backend():
     """Stato del backend TTS (Cloudflare/Vertex), rientro manuale su
     Cloudflare e azzeramento del ledger di spesa dopo una ricarica.
@@ -6145,11 +6144,6 @@ def admin_api_tts_backend():
     Qui viaggia cosi' com'e' nel JSON di risposta; il rendering HTML lato
     client deve trattarlo come testo non fidato (escape), mai come markup.
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
     if gemini_tts is None:
         return jsonify({"error": "Gemini TTS module not loaded"}), 503
 
@@ -6283,13 +6277,9 @@ def admin_api_tts_backend():
 
 
 @app.route("/admin/api/gemini_model_availability", methods=["GET", "POST"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_gemini_model_availability():
     """Stato "non disponibile" dei modelli Gemini senza failover e reset manuale."""
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
     if gemini_tts is None:
         return jsonify({"error": "Gemini TTS module not loaded"}), 503
     import gemini_availability
@@ -6319,6 +6309,7 @@ def _gemini_capability_ok():
 
 
 @app.route("/admin/api/gemini_cost_audit/languages", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_gemini_cost_audit_languages():
     """Restituisce le lingue distinte realmente presenti nei record audit Gemini.
 
@@ -6326,11 +6317,6 @@ def admin_api_gemini_cost_audit_languages():
     lingua con i codici effettivamente generati, evitando di confondere
     "lingue UI" con "lingue di generazione TTS".
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import gemini_cost_audit
     seen = set()
@@ -6342,6 +6328,7 @@ def admin_api_gemini_cost_audit_languages():
 
 
 @app.route("/admin/api/translation_cost_audit", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_translation_cost_audit():
     """List record audit traduzioni con filtri + aggregati. Admin-only.
 
@@ -6349,11 +6336,6 @@ def admin_api_translation_cost_audit():
     corso. Ogni record e' arricchito con `_eff_*` (ricavo/margine effettivi
     dopo refund) da _apply_cancel_effective.
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import translation_cost_audit
     model = request.args.get("model")
@@ -6435,14 +6417,10 @@ def admin_api_translation_cost_audit():
 
 
 @app.route("/admin/api/translation_cost_audit/languages", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_translation_cost_audit_languages():
     """Codici lingua origine/destinazione e modelli distinti nei record audit
     traduzioni. Popola i filtri di /admin/audit-translations."""
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import translation_cost_audit
     src, dst, models = set(), set(), set()
@@ -6462,6 +6440,7 @@ def admin_api_translation_cost_audit_languages():
 
 
 @app.route("/admin/api/optimization_cost_audit", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_optimization_cost_audit():
     """List record audit ottimizzazione AI con filtri + aggregati. Admin-only.
 
@@ -6469,11 +6448,6 @@ def admin_api_optimization_cost_audit():
     Ogni record e' arricchito con `_eff_*` da _apply_cancel_effective (la fee
     fissa PayPal e' ripartita proporzionalmente via combined_total_eur).
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import optimization_cost_audit
     language = request.args.get("language")
@@ -6558,6 +6532,7 @@ def admin_api_optimization_cost_audit():
 
 
 @app.route("/admin/api/voice_clone_audit", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_voice_clone_audit():
     """Una riga per voce campionata: incassi, costo GPU delle demo, margini,
     dispositivi, attivazione/scadenza, libri generati. Admin-only.
@@ -6567,11 +6542,6 @@ def admin_api_voice_clone_audit():
     (YYYY-MM-DD, UTC) sulla data di pagamento; per le bozze la creazione.
     Mai il token della voce: solo l'id `vc_...`.
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import voice_clone_audit
     try:
@@ -6608,6 +6578,7 @@ def admin_api_voice_clone_audit():
 
 
 @app.route("/admin/api/accounts_audit", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_accounts_audit():
     """Anagrafica degli account dell'area personale: data di registrazione,
     ultimo accesso, sessioni attive, storico e cancellazione. Admin-only.
@@ -6617,11 +6588,6 @@ def admin_api_accounts_audit():
     posto dell'indirizzo: li trova solo per id). `date_from`/`date_to`
     (YYYY-MM-DD, UTC) sulla data di registrazione.
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
     if not accounts.enabled():
         return jsonify({"error": "accounts disabled"}), 503
     try:
@@ -6657,14 +6623,10 @@ def admin_api_accounts_audit():
 
 
 @app.route("/admin/api/optimization_cost_audit/languages", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_optimization_cost_audit_languages():
     """Codici lingua distinti nei record audit ottimizzazione. Popola i filtri
     della tab AI Optimization."""
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import optimization_cost_audit
     langs = set()
@@ -6676,13 +6638,9 @@ def admin_api_optimization_cost_audit_languages():
 
 
 @app.route("/admin/api/gemini_cost_audit/recalc-params", methods=["GET"])
+@admin_required(401, sleep=True, disabled="Admin UI disabled")
 def admin_api_gemini_recalc_params():
     """Aggrega audit records completed per (model, lang) e suggerisce tuning."""
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin UI disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        time.sleep(0.5)
-        return jsonify({"error": "Unauthorized"}), 401
 
     import gemini_cost_audit
     # Doppio raggruppamento:
@@ -8196,9 +8154,8 @@ def _translate_news_async(item_id: str, title: str, body: str) -> None:
 
 
 @app.route("/admin/api/news", methods=["POST"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_news_create():
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     body = request.get_json(silent=True) or {}
     tag = (body.get("tag") or "info").strip().lower()
     if tag not in _NEWS_TAGS:
@@ -8226,9 +8183,8 @@ def admin_api_news_create():
 
 
 @app.route("/admin/api/news/<item_id>", methods=["POST"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_news_update(item_id):
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     body = request.get_json(silent=True) or {}
     action = body.get("action")
     store = community_store.news()
@@ -8249,9 +8205,8 @@ def admin_api_news_update(item_id):
 
 
 @app.route("/admin/api/news/list", methods=["GET"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_news_list():
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     items = community_store.news().all(include_archived=True)
     items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
     return jsonify({"items": items})
@@ -9203,22 +9158,20 @@ def api_support_contact():
 
 
 @app.route("/admin/api/feedback/list", methods=["GET"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_feedback_list():
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     items = community_store.feedback().all(include_archived=True)
     items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
     return jsonify({"items": items})
 
 
 @app.route("/admin/api/feedback/translate-missing", methods=["POST"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_feedback_translate_missing():
     """Backfill: translate any feedback items that have a comment but no
     populated comment_i18n. Synchronous; returns a summary so the admin
     can confirm what happened.
     """
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     if not community_translator.is_available():
         return jsonify({"error": "llm unavailable"}), 503
     items = community_store.feedback().all(include_archived=True)
@@ -9264,9 +9217,8 @@ def admin_api_feedback_translate_missing():
 
 
 @app.route("/admin/api/feedback/<item_id>", methods=["POST"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_feedback_update(item_id):
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     body = request.get_json(silent=True) or {}
     action = body.get("action")
     store = community_store.feedback()
@@ -9282,6 +9234,7 @@ def admin_api_feedback_update(item_id):
 
 
 @app.route("/admin/api/feedback/<item_id>/reply", methods=["POST"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_feedback_reply(item_id):
     """Create or update an admin reply to a feedback item.
     Translates the reply into all 7 UI languages via LLM.
@@ -9289,8 +9242,6 @@ def admin_api_feedback_reply(item_id):
     the original `admin_reply_at` timestamp and tracking edits with
     `admin_reply_edited_at`).
     """
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     body = request.get_json(silent=True) or {}
     reply_text = (body.get("reply") or "").strip()
     if not reply_text:
@@ -9332,10 +9283,9 @@ def admin_api_feedback_reply(item_id):
 
 
 @app.route("/admin/api/feedback/<item_id>/reply", methods=["DELETE"])
+@admin_required(403, message="forbidden", as_json=False)
 def admin_api_feedback_reply_delete(item_id):
     """Remove an admin reply from a feedback item."""
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return ("forbidden", 403)
     store = community_store.feedback()
     existing = store.get(item_id)
     if not existing:
@@ -9369,12 +9319,11 @@ def admin_community_page():
 
 
 @app.route("/admin/api/abuse/clear/<group>", methods=["POST"])
+@admin_required(403, message="forbidden")
 def admin_abuse_clear(group):
     """Ripristino di un gruppo bloccato dalla moderazione anti-abuso: azzera il
     verdetto. L'utente rilancia dal job in `analyzed` con riuso dei chunk.
     Nessun refund: il job non era pagato."""
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "forbidden"}), 403
     if not _ABUSE_GROUP_RE.match(group or ""):
         return jsonify({"error": "invalid group"}), 400
     try:
@@ -9386,6 +9335,7 @@ def admin_abuse_clear(group):
 
 
 @app.route("/api/admin/load_stats")
+@admin_required(403)
 def api_admin_load_stats():
     """Statistiche di CARICO aggregate sulla finestra richiesta.
 
@@ -9393,8 +9343,6 @@ def api_admin_load_stats():
     espone la capacita' residua e lo stato di salute dell'istanza, che non
     devono essere leggibili dall'esterno.
     """
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "Unauthorized"}), 403
     window = (request.args.get("window") or "24h").strip()
     try:
         slots = assembly_queue.MAX_CONCURRENT_ASSEMBLY
@@ -9416,6 +9364,7 @@ _USER_STATS_CACHE_MAX = 6
 
 
 @app.route("/api/admin/user_stats")
+@admin_required(403)
 def api_admin_user_stats():
     """Analisi dell'utenza (concentrazione free/premium) del mese richiesto.
 
@@ -9426,8 +9375,6 @@ def api_admin_user_stats():
     (il log non riporta gli importi) via job_id; le email dei clienti
     restano nel record e non escono mai da qui.
     """
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "Unauthorized"}), 403
     ym = (request.args.get("ym") or "").strip()
     if not _YM_RE.match(ym):
         return jsonify({"error": "Invalid month (expected YYYY-MM)"}), 400
@@ -11468,6 +11415,7 @@ _JOBS_PROGRESS_MAX_IDS = 500
 
 
 @app.route("/api/admin/jobs_progress")
+@admin_required(403)
 def api_admin_jobs_progress():
     """Avanzamento di N job in UNA richiesta, per il polling di /admin/log-activity.
 
@@ -11479,8 +11427,6 @@ def api_admin_jobs_progress():
 
     Risposta: {job_id: {"status", "pct"}}; gli id sconosciuti sono omessi.
     """
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "Unauthorized"}), 403
     raw = request.args.get("ids", "") or ""
     ids = [s.strip() for s in raw.split(",")]
     ids = [s for s in ids if s][:_JOBS_PROGRESS_MAX_IDS]
@@ -12843,11 +12789,10 @@ def api_paypal_create_order():
 
 
 @app.route("/api/paypal_debug_order/<order_id>", methods=["GET"])
+@admin_required(403)
 def api_paypal_debug_order(order_id):
     """Diagnostic: fetch order from PayPal to inspect payee/status/etc.
     Admin-only: returns payer PII (email, name, address) — must never be public."""
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "Unauthorized"}), 403
     import requests
     if not _paypal_available():
         return jsonify({"error": "PayPal not configured"}), 503
@@ -14945,14 +14890,11 @@ def api_cancel_optimize(job_id):
 
 
 @app.route("/api/active_jobs")
+@admin_required(401, disabled="Admin monitor disabled")
 def api_active_jobs():
     """Return list of currently generating jobs (for admin monitor).
     Protected by admin token.
     """
-    if not ADMIN_TOKEN:
-        return jsonify({"error": "Admin monitor disabled"}), 404
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "Unauthorized"}), 401
 
     with _jobs_lock:
         snapshot = list(jobs.items())
