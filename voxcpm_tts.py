@@ -378,6 +378,12 @@ class VoxcpmJobError(RuntimeError):
         self.job_id = job_id
 
 
+class VoxcpmUnavailable(VoxcpmJobError):
+    """Motore non configurato (endpoint o chiave mancanti): il job non puo'
+    partire. Stesso ruolo di GeminiUnavailable/SpeechifyUnavailable nel path
+    di errore di run_generation (messaggio utente generico, rimborso)."""
+
+
 class VoxcpmRimbalzato(VoxcpmJobError):
     """Respinto da un worker gia' in spegnimento: non e' un guasto nostro.
 
@@ -509,7 +515,7 @@ _HTTP_TRANSIENT = (429, 500, 502, 503, 504)   # cfr. retry_util.is_transient_htt
 def _base():
     ep = endpoint_id()
     if not ep or not api_key():
-        raise VoxcpmJobError(
+        raise VoxcpmUnavailable(
             "endpoint VoxCPM non configurato: servono ABM_VOXCPM_ENDPOINT_ID "
             "e ABM_VOXCPM_API_KEY")
     return f"{_RUNPOD_BASE}/{ep}"

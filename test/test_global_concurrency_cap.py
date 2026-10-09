@@ -138,7 +138,11 @@ def test_payment_preflight_runs_when_server_has_capacity(client, clean_jobs):
          patch("audiobook_app.gemini_tts", gem), \
          patch("audiobook_app._effective_max_text_chars",
                return_value=10 ** 9) as preflight, \
+         patch("gemini_tts.estimate_book_cost",
+               side_effect=RuntimeError("stima non disponibile nel test")), \
          patch("audiobook_app.threading.Thread"):
+        # La stima (registro tts_engines, modulo reale) fallisce apposta: il
+        # test verifica solo che il preflight premium venga raggiunto.
         client.post("/api/generate", json={"job_id": "CAND",
                                            "voice": _GEMINI_VOICE})
     assert preflight.call_count >= 1

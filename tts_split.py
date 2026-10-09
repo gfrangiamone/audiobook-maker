@@ -30,6 +30,7 @@ from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 from voice_utils import rate_speed_factor as _rate_speed_factor_vu
+import tts_engines as _engines
 
 from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
@@ -102,111 +103,52 @@ def _edge_output_looks_truncated(output_path, text, rate="+0%"):
 
 
 def _pick_chunk_max_chars(voice_id, language):
-    """Sceglie il limite caratteri/chunk in base al motore e alla lingua.
+    """Limite caratteri/chunk per motore e lingua, dal registro `tts_engines`.
 
-    Gemini: delega a gemini_tts.get_max_chunk_chars(lang) (default 700 char
-    per stabilita` acustica; override env ABM_GEMINI_CHUNK_CHARS o
-    ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>). Richiede Tier 2/3.
-
-    Speechify: speechify_tts.chunk_max_chars() (default 1800, override env
-    ABM_SPEECHIFY_CHUNK_CHARS, clampato per sicurezza). L'endpoint rifiuta con
-    HTTP 400 un `input` SSML > 2000 char; il testo del chunk piu' l'overhead dei
-    tag SSML (<speak>/<prosody>/<speechify:style>) deve stare sotto 2000, quindi
-    il cap sul testo resta sotto quel limite (default 1800, ~100 char di margine
-    per i tag; il clamp lato speechify_tts impedisce override pericolosi).
-
-    VoxCPM: voxcpm_tts.chunk_max_chars() (default 280, override env
-    ABM_VOXCPM_CHUNK_CHARS). Non e' un limite dell'API ma di qualita': il
-    modello riancora il timbro al campione solo all'inizio di ogni chunk, e su
-    chunk lunghi la voce deriva. Il worker non rispezza i chunk che riceve.
-    Attenzione: per VoxCPM il tetto vero non e' questo ma quello allargato da
-    _pick_sentence_slack (280 x 1,15 = 322), che una frase intera puo'
-    raggiungere pur di non finire spezzata su una virgola.
-
-    Edge: 2000 sempre (motore senza vincoli stringenti di RPD).
+    Gemini: `gemini_tts.get_max_chunk_chars(lang)` (default 700 per stabilita'
+    acustica; override `ABM_GEMINI_CHUNK_CHARS` o per lingua). Speechify:
+    `speechify_tts.chunk_max_chars()` (default 1800: l'endpoint rifiuta un
+    SSML > 2000 caratteri, tag compresi). VoxCPM: `voxcpm_tts.chunk_max_chars()`
+    (default 280, limite di qualita': il timbro deriva sui chunk lunghi; il
+    tetto vero e' allargato da `_pick_sentence_slack`). Edge: `CHUNK_MAX_CHARS`.
     """
-    if _is_gemini_voice(voice_id):
-        lang_code = (language or "").lower().split("-")[0]
-        try:
-            import gemini_tts
-            return gemini_tts.get_max_chunk_chars(lang_code)
-        except Exception:
-            return 700
-    if _is_speechify_voice(voice_id):
-        try:
-            import speechify_tts
-            return speechify_tts.chunk_max_chars()
-        except Exception:
-            return 1800
-    if _is_voxcpm_voice(voice_id):
-        try:
-            import voxcpm_tts
-            return voxcpm_tts.chunk_max_chars()
-        except Exception:
-            return 300
-    return CHUNK_MAX_CHARS
+    eng = _engines.premium_for_voice(voice_id)
+    return eng.chunk_max_chars(language) if eng else CHUNK_MAX_CHARS
 
 
 def _pick_chunk_max_bytes(voice_id):
-    """Cap byte UTF-8 per chunk per voci Gemini, None per altri motori.
-
-    Si applica al SOLO testo da sintetizzare, in linea con la semantica di
-    MAX_BYTES_PER_CALL: e` un target qualita` acustica sul testo audio, non
-    sul payload API. I prefissi style/rate aggiunti da synthesize() sono
-    direttive di prompt e non concorrono al budget byte qui.
-    """
-    if not _is_gemini_voice(voice_id):
-        return None
-    try:
-        import gemini_tts
-        return int(gemini_tts.MAX_BYTES_PER_CALL)
-    except Exception:
-        return 700
+    """Cap byte UTF-8 per chunk per voci Gemini (`MAX_BYTES_PER_CALL`, sul solo
+    testo da sintetizzare: i prefissi style/rate di synthesize() non contano),
+    None per gli altri motori."""
+    eng = _engines.premium_for_voice(voice_id)
+    return eng.chunk_max_bytes() if eng else None
 
 
 def _pick_pre_split(voice_id):
-    """Normalizzazione da applicare al testo INTERO, appena prima di spezzarlo.
+    """Normalizzazione del testo INTERO prima del taglio, dal registro.
 
     Serve alle regole di punteggiatura che guardano cosa viene DOPO il segno:
-    applicate ai chunk gia` tagliati vedono un confine artificiale al posto del
-    testo che segue, e decidono il verdetto sbagliato.
-
-    VoxCPM: voxcpm_tts.normalizza_puntini. I puntini di sospensione diventano
-    virgola se la frase continua, punto se ne comincia un'altra. Ma
-    split_text_into_chunks tratta i puntini come fine frase: sui puntini a
-    meta` frase il taglio cadeva li`, la coda restava in fondo al chunk e la
-    regola leggeva «fine testo» -> punto, mettendo una pausa lunga in mezzo
-    alla frase («per un affare umano. Il paragone e...»).
-
-    Poi voxcpm_tts.chiudi_capitolo: un punto in fondo al capitolo che non
-    finisce una frase, cosi' il worker non smussa il confine fra due capitoli
-    sintetizzati nello stesso job (vedi generation_engine._voxcpm_lotti).
-
-    Gli altri motori leggono «...» come pausa lunga e non vanno toccati: None.
+    applicate ai chunk gia' tagliati vedono un confine artificiale e decidono
+    il verdetto sbagliato. Solo VoxCPM (`voxcpm_tts.prepara_capitolo`: puntini
+    di sospensione -> virgola o punto, punto in fondo al capitolo); gli altri
+    motori leggono «...» come pausa lunga e non vanno toccati: None.
     """
-    if _is_voxcpm_voice(voice_id):
-        try:
-            import voxcpm_tts
-            return voxcpm_tts.prepara_capitolo
-        except Exception:
-            return None
-    return None
+    eng = _engines.premium_for_voice(voice_id)
+    return eng.pre_split() if eng else None
 
 
 # Quanto una frase puo' sforare il cap pur di NON essere spezzata sulle
-# virgole. Vale solo per VoxCPM, ed e' il rimedio a un difetto suo: il worker
-# sintetizza ogni chunk come enunciato a se' e li concatena campione su
-# campione, quindi un taglio a meta' frase si sente due volte — la virgola
-# finale, sospesa, il modello la puo' pronunciare («punto»), e fra i due
-# enunciati restano in fila la coda di silenzio del primo e l'attacco del
-# secondo, una pausa piu' lunga di un punto fermo dove il testo aveva una
-# virgola. Collaudo del 9/9/2026: «il paragone e', il piu' delle volte,» /
-# «a favore dell'affare umano».
-#
+# virgole. Vale solo per VoxCPM (`tts_engines.ENGINES["voxcpm"].sentence_slack`)
+# ed e' il rimedio a un difetto suo: il worker sintetizza ogni chunk come
+# enunciato a se' e li concatena campione su campione, quindi un taglio a
+# meta' frase si sente due volte: la virgola finale, sospesa, il modello la
+# puo' pronunciare («punto»), e fra i due enunciati restano in fila la coda
+# di silenzio del primo e l'attacco del secondo. Collaudo del 9/9/2026: «il
+# paragone e', il piu' delle volte,» / «a favore dell'affare umano».
 # La frase tenuta intera allunga il chunk, e chunk lunghi fanno derivare il
 # timbro: per questo il cap base e' sceso a 280 (voxcpm_tts.CHUNK_MAX_CHARS),
 # cosi' il tetto con lo sforamento resta intorno ai 300 misurati sul worker.
-_VOXCPM_SENTENCE_SLACK = 0.15
+_VOXCPM_SENTENCE_SLACK = _engines.ENGINES["voxcpm"].sentence_slack
 
 
 def _pick_sentence_slack(voice_id):
@@ -216,7 +158,8 @@ def _pick_sentence_slack(voice_id):
     dell'API per Gemini, lunghezza SSML per Speechify) o non hanno il
     problema, e allargarli non si fa.
     """
-    return _VOXCPM_SENTENCE_SLACK if _is_voxcpm_voice(voice_id) else 0.0
+    eng = _engines.premium_for_voice(voice_id)
+    return eng.sentence_slack if eng else 0.0
 
 
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo

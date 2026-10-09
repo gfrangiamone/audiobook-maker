@@ -65,6 +65,7 @@ import translation_cost_audit
 import optimization_cost_audit
 import speechify_tts
 import voxcpm_tts
+import tts_engines as _tts_engines
 import voxcpm_ranking
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
@@ -3471,7 +3472,7 @@ def run_optimization(job_id, selected_chapters=None):
                     _lang_autogen = (_ui_lang_autogen
                                      or _norm_lang(getattr(info, "language", ""))
                                      or "it")
-                    _est_autogen = gemini_tts.estimate_book_cost(
+                    _est_autogen = _tts_engines.estimate("gemini", 
                         info.chapters, voice,
                         language=_lang_autogen, rate_pct=rate,
                     )
@@ -3488,7 +3489,7 @@ def run_optimization(job_id, selected_chapters=None):
             if (_is_speechify_voice(voice) and speechify_tts.is_available()
                     and not job.get("speechify_estimate")):
                 try:
-                    _est_spx_ag = speechify_tts.estimate_book_cost(
+                    _est_spx_ag = _tts_engines.estimate("speechify", 
                         info.chapters,
                         language=((job.get("opt_lang") or "").lower()
                                   or _norm_lang(getattr(info, "language", ""))
@@ -3504,7 +3505,7 @@ def run_optimization(job_id, selected_chapters=None):
             if (_is_voxcpm_voice(voice) and voxcpm_tts.is_available()
                     and not job.get("voxcpm_estimate")):
                 try:
-                    job["voxcpm_estimate"] = voxcpm_tts.estimate_book_cost(
+                    job["voxcpm_estimate"] = _tts_engines.estimate("voxcpm", 
                         info.chapters,
                         language=((job.get("opt_lang") or "").lower()
                                   or _norm_lang(getattr(info, "language", ""))
@@ -4033,15 +4034,7 @@ def _engine_for_voice(voice):
       - "gemini:..."  -> Gemini TTS (PCM native)
       - altrimenti    -> Microsoft Edge TTS (MP3, default)
     """
-    if not voice:
-        return "edge"
-    if _is_voxcpm_voice(voice):
-        return "voxcpm"
-    if _is_speechify_voice(voice):
-        return "speechify"
-    if _is_gemini_voice(voice):
-        return "gemini"
-    return "edge"
+    return _tts_engines.engine_for_voice(voice)
 
 
 def _ranking_point_allowed(voice):
@@ -4062,11 +4055,8 @@ def _pcm_sample_rate(job, use_speechify, use_voxcpm):
     (nessun campo di job da rileggere: il worker non lo varia mai). Gli altri
     motori (Gemini incluso) restano a 24000, lo standard usato ovunque nel
     resto della pipeline."""
-    if use_speechify:
-        return job.get("speechify_sample_rate", 48000)
-    if use_voxcpm:
-        return 48000
-    return 24000
+    eng = _tts_engines.ENGINES.get(_premium_engine(False, use_speechify, use_voxcpm))
+    return eng.sample_rate(job) if eng else 24000
 
 
 def _voxcpm_chapter_groups(plan, reusable):
@@ -5962,8 +5952,7 @@ def _early_abort_params():
 # output, annullato, eccezione).
 # Nomi, non funzioni: risolti a ogni chiamata nel modulo, cosi' i test che
 # sostituiscono `_write_voxcpm_audit` & co. vengono visti anche da qui.
-_PREMIUM_AUDIT = {"gemini": "_write_gemini_audit", "speechify": "_write_speechify_audit",
-                  "voxcpm": "_write_voxcpm_audit"}
+_PREMIUM_AUDIT = {name: eng.audit_writer for name, eng in _tts_engines.ENGINES.items()}
 
 
 def _premium_engine(use_gemini, use_speechify, use_voxcpm):
@@ -8142,17 +8131,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # propagata dal chunk loop invece di silenziare l'intero libro
         # (incidente 2026-06). Messaggio utente generico (mai nominare il
         # provider nella UI) + rimborso integrale via path failed_refunded.
-        _is_unavailable = False
-        if use_gemini and gemini_tts is not None:
-            try:
-                _is_unavailable = isinstance(e, gemini_tts.GeminiUnavailable)
-            except Exception:
-                _is_unavailable = False
-        if use_speechify:
-            try:
-                _is_unavailable = isinstance(e, speechify_tts.SpeechifyUnavailable)
-            except Exception:
-                _is_unavailable = False
+        # Vale per i tre motori (VoxcpmUnavailable compreso, dal 2026-10-09).
+        _is_unavailable = isinstance(e, _tts_engines.unavailable_exceptions())
         if _is_unavailable:
             _user_msg = ("Generazione interrotta: il motore voci PREMIUM non "
                          "e' disponibile al momento. Hai diritto al rimborso "

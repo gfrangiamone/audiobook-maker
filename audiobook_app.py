@@ -147,6 +147,7 @@ from tts_split import (
 
 import assembly_queue
 import load_metrics
+import tts_engines
 import jsonl_audit
 import email_service
 import push_service
@@ -1809,11 +1810,11 @@ def _recovery_generate_gate(job_id, rec, info):
     if is_gem:
         if gemini_tts is None:
             raise _RecoveryRejected("modulo gemini_tts non disponibile")
-        est = gemini_tts.estimate_book_cost(chs, voice, language=lang,
+        est = tts_engines.estimate("gemini", chs, voice, language=lang,
                                             rate_pct=rec.get("rate", "+0%"))
         key = "gemini_estimate"
     elif is_spx:
-        est = speechify_tts.estimate_book_cost(chs, language="en")
+        est = tts_engines.estimate("speechify", chs, language="en")
         key = "speechify_estimate"
     else:
         if voxcpm_tts is None:
@@ -1826,7 +1827,7 @@ def _recovery_generate_gate(job_id, rec, info):
             _err = voice_clone.check_use(voice, (rec.get("client_id") or "").strip(), lang, _vc_locale)
             if _err:
                 raise _RecoveryRejected(f"voce campione non usabile: {_err}")
-        est = voxcpm_tts.estimate_book_cost(chs, language=lang)
+        est = tts_engines.estimate("voxcpm", chs, language=lang)
         key = "voxcpm_estimate"
     if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
         raise _RecoveryRejected("stima ex-ante su testo vuoto")
@@ -10600,7 +10601,7 @@ def api_generate():
             # Il rate scelto influisce sulla stima (estimate_audio_seconds scala
             # con rate_pct): il ricalcolo server-side deve usarlo per allinearsi
             # alla stima vista dall'utente e validare correttamente il pagamento.
-            est_pre = gemini_tts.estimate_book_cost(chs_pre, voice, language=lang_pre, rate_pct=rate)
+            est_pre = tts_engines.estimate("gemini", chs_pre, voice, language=lang_pre, rate_pct=rate)
             gemini_eur_pre = round(est_pre["user_price_eur"], 2)
             # Persisti la stima sul job: serve all'audit Gemini per popolare
             # i campi *_est (input_tokens_est, output_tokens_est, audio_seconds_est,
@@ -10911,7 +10912,7 @@ def api_generate():
                         or "it")
             job["gen_lang"] = lang_pre
             try:
-                est_pre = voxcpm_tts.estimate_book_cost(chs_pre, language=lang_pre)
+                est_pre = tts_engines.estimate("voxcpm", chs_pre, language=lang_pre)
                 # Persisti la stima sul job: serve all'eventuale audit VoxCPM
                 # (Task 11) per popolare i campi *_est.
                 job["voxcpm_estimate"] = est_pre
@@ -10923,7 +10924,7 @@ def api_generate():
             # con /api/combined_estimate.
             job["gen_lang"] = "en"
             try:
-                est_pre = speechify_tts.estimate_book_cost(chs_pre, language="en")
+                est_pre = tts_engines.estimate("speechify", chs_pre, language="en")
                 # Persisti la stima sul job: serve all'eventuale audit Speechify
                 # per popolare i campi *_est.
                 job["speechify_estimate"] = est_pre
@@ -13074,7 +13075,7 @@ def api_gemini_estimate():
     # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
     lang = ui_lang or _i18n.norm_lang(getattr(info, "language", "")) or "it"
     try:
-        est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
+        est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate)
     except Exception as e:
         return jsonify({"error": f"estimate failed: {e}"}), 500
 
@@ -13147,7 +13148,7 @@ def api_combined_estimate():
     _premium_list_eur = 0.0
     if _is_gemini_voice(voice_id):
         try:
-            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
+            est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
@@ -13165,7 +13166,7 @@ def api_combined_estimate():
     speechify_breakdown = {}
     if _is_speechify_voice(voice_id):
         try:
-            est_spx = speechify_tts.estimate_book_cost(chs, language="en")
+            est_spx = tts_engines.estimate("speechify", chs, language="en")
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         speechify_eur = round(est_spx["user_price_eur"], 2)
@@ -13183,7 +13184,7 @@ def api_combined_estimate():
     voxcpm_breakdown = {}
     if _is_voxcpm_voice(voice_id):
         try:
-            est_vox = voxcpm_tts.estimate_book_cost(chs, language=lang)
+            est_vox = tts_engines.estimate("voxcpm", chs, language=lang)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         # list_price_eur, non user_price_eur: quest'ultimo e' gia' azzerato da
@@ -13420,7 +13421,7 @@ def api_paypal_create_order_gemini():
         try:
             # rate_pct: la stima dipende dalla velocità scelta, quindi va
             # passata anche qui per coerenza con /api/combined_estimate.
-            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
+            est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
@@ -13429,7 +13430,7 @@ def api_paypal_create_order_gemini():
     speechify_eur = 0.0
     if _is_speechify_voice(voice_id):
         try:
-            est = speechify_tts.estimate_book_cost(chs, language="en")
+            est = tts_engines.estimate("speechify", chs, language="en")
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         speechify_eur = round(est["user_price_eur"], 2)
@@ -13441,7 +13442,7 @@ def api_paypal_create_order_gemini():
             # `lang` gia' risolto sopra (UI > metadata > "it"), stessa
             # priorita' di /api/combined_estimate: necessario per non
             # produrre un amount mismatch server-side (Fix round 1).
-            est = voxcpm_tts.estimate_book_cost(chs, language=lang)
+            est = tts_engines.estimate("voxcpm", chs, language=lang)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         voxcpm_eur = round(est["user_price_eur"], 2)
@@ -13856,7 +13857,7 @@ def api_optimize():
         # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
         _chs_for_est = _pricing_chapters(job_id, job, _chs_for_est)
         try:
-            _est_gemini = gemini_tts.estimate_book_cost(
+            _est_gemini = tts_engines.estimate("gemini", 
                 _chs_for_est, _voice_for_est,
                 language=_lang_for_est, rate_pct=_rate_for_est,
             )
@@ -14053,7 +14054,7 @@ def api_optimize():
         # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
         _chs_for_est_spx = _pricing_chapters(job_id, job, _chs_for_est_spx)
         try:
-            _est_spx = speechify_tts.estimate_book_cost(_chs_for_est_spx, language="en")
+            _est_spx = tts_engines.estimate("speechify", _chs_for_est_spx, language="en")
             _speechify_eur_quota = round(_est_spx.get("user_price_eur", 0.0), 2)
             _speechify_list_quota = round(_est_spx.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_spx:
@@ -14210,7 +14211,7 @@ def api_optimize():
         else:
             _chs_for_est_vox = _all_chs_vox
         try:
-            _est_vox = voxcpm_tts.estimate_book_cost(_chs_for_est_vox, language=_lang_for_vox)
+            _est_vox = tts_engines.estimate("voxcpm", _chs_for_est_vox, language=_lang_for_vox)
             _voxcpm_eur_quota = round(_est_vox.get("user_price_eur", 0.0), 2)
             _voxcpm_list_quota = round(_est_vox.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_vox:

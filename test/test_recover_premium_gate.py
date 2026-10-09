@@ -91,6 +91,10 @@ def _fake_gemini(monkeypatch, list_price=8.99, google_cost=3.0):
                     "output_tokens_est": 10, "audio_seconds_est": 60.0,
                     "model_key": "flash31"}
     monkeypatch.setattr(audiobook_app, "gemini_tts", _G)
+    # La stima passa dal registro tts_engines, che legge il modulo reale a
+    # ogni chiamata: il double va installato anche li' (E1d, 2026-10-09).
+    import gemini_tts
+    monkeypatch.setattr(gemini_tts, "estimate_book_cost", _G.estimate_book_cost)
     return _G
 
 
