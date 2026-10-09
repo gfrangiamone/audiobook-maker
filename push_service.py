@@ -4,7 +4,7 @@ Pattern email_service: configurazione da env, nessun import di audiobook_app.
 Disabilitato se ABM_FCM_CREDENTIALS_FILE non e' impostata. I fallimenti non
 sono mai bloccanti: send_push ritorna 'ok' | 'unregistered' | 'error'.
 """
-import json
+from gcp_auth import ServiceAccount
 import os
 import threading
 import time
@@ -25,30 +25,23 @@ def is_available():
     return bool(_FCM_CREDENTIALS_FILE) and os.path.isfile(_FCM_CREDENTIALS_FILE)
 
 
+def _sa():
+    """Service account FCM (cache e refresh in gcp_auth), creato alla prima
+    chiamata cosi' il file manca solo quando serve davvero."""
+    global _creds
+    with _creds_lock:
+        if _creds is None:
+            _creds = ServiceAccount(_FCM_CREDENTIALS_FILE, [_FCM_SCOPE])
+        return _creds
+
+
 def _load_project_id():
-    global _project_id
-    if not _project_id:
-        with open(_FCM_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-            _project_id = json.load(f).get("project_id", "")
-    return _project_id
+    return _sa().project_id()
 
 
 def _get_credentials():
     """Credenziali google-auth con cache e refresh. Caller gestisce le eccezioni."""
-    global _creds, _project_id
-    from google.auth.transport.requests import Request as _GAuthRequest
-    from google.oauth2 import service_account
-    with _creds_lock:
-        if _creds is None:
-            _creds = service_account.Credentials.from_service_account_file(
-                _FCM_CREDENTIALS_FILE, scopes=[_FCM_SCOPE])
-            # Carica project_id dallo stesso file, dentro il lock.
-            if not _project_id:
-                with open(_FCM_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-                    _project_id = json.load(f).get("project_id", "")
-        if not _creds.valid:
-            _creds.refresh(_GAuthRequest())
-        return _creds
+    return _sa().credentials()
 
 
 def send_push(fcm_token, title, body, data=None):

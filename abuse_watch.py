@@ -21,6 +21,7 @@ Spec: docs/superpowers/specs/2026-09-03-quota-containment-design.md
 """
 import hashlib
 import json
+import llm_client
 import os
 from client_identity import DEFAULT_IP_SALT as _DEFAULT_SALT, ip_salt as _ip_salt, salted_hash as _salted_hash
 from env_utils import env_float as _env_float, env_int
@@ -981,40 +982,13 @@ def _semantic_verdict(group, cid=""):
 # ---------------------------------------------------------------------------
 
 def _parse_verdict(text):
-    text = (text or "").strip()
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    # Strip markdown fence if present (```json ... ``` or ``` ... ```)
-    if text.startswith("```"):
-        lines = text.split("\n")
-        if len(lines) > 2 and lines[-1].strip() == "```":
-            text = "\n".join(lines[1:-1]).strip()
-    a, b = text.find("{"), text.rfind("}")
-    if a != -1 and b > a:
-        try:
-            return json.loads(text[a:b + 1])
-        except Exception:
-            return None
-    return None
+    """Il verdetto JSON della risposta (fence e prosa intorno tollerati)."""
+    return llm_client.extract_json_object(text)
 
 
 def _call_llm(user, timeout):
-    import generation_engine as ge
-    client = ge._llm_client
-    if client is None:
-        raise RuntimeError("LLM client not configured")
-    resp = client.chat.completions.create(
-        model=ge.LLM_MODEL,
-        messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                  {"role": "user", "content": user}],
-        max_tokens=400,
-        temperature=0.0,
-        timeout=timeout,
-        extra_body=ge.THINKING_OFF_BODY,
-    )
-    return (resp.choices[0].message.content or "").strip()
+    return llm_client.chat_once(SYSTEM_PROMPT, user, max_tokens=400, temperature=0.0,
+                                timeout=timeout)
 
 
 def judge(group, timeout=20.0, attempts=2, cid=""):
@@ -1034,9 +1008,8 @@ def judge(group, timeout=20.0, attempts=2, cid=""):
             v = None
         if v is not None:
             return v
-        import generation_engine as ge
         try:
-            available = bool(ge._llm_available())
+            available = llm_client.available()
         except Exception:
             available = False
         if not available:

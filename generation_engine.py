@@ -24,6 +24,9 @@ import json
 import os
 from i18n import norm_lang as _norm_lang, pick as _i18n_pick
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
+import llm_client
+import llm_client
+import llm_client
 from env_utils import env_bool as _env_bool, env_float as _env_float, env_int as _env_int, env_str as _env_str
 import re
 import shutil
@@ -93,10 +96,10 @@ from tts_split import (
 # I default attuali sono tarati su DeepSeek-Chat (provider corrente). Cambiare
 # provider richiede solo di rivalorizzare le env var (no code change).
 
-# Connection
-LLM_API_KEY  = os.environ.get("ABM_LLM_API_KEY", "")
-LLM_API_BASE = os.environ.get("ABM_LLM_API_BASE", "https://api.deepseek.com")
-LLM_MODEL    = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
+# Connection (letture congelate all'avvio: i test le sostituiscono sul modulo)
+LLM_API_KEY  = llm_client.api_key()
+LLM_API_BASE = llm_client.api_base()
+LLM_MODEL    = _env_str("ABM_LLM_MODEL", llm_client.DEFAULT_MODEL)
 
 # Generation behavior
 LLM_THINKING         = _env_bool("ABM_LLM_THINKING", False)
@@ -134,56 +137,23 @@ GEN_SLOT_WAIT_SEC = _env_float("ABM_GEN_SLOT_WAIT_SEC", 900.0)
 GEN_SLOT_POLL_SEC = _env_float("ABM_GEN_SLOT_POLL_SEC", 5.0)
 
 # --- Thinking / reasoning ---------------------------------------------------
-# ATTENZIONE: sull'API DeepSeek (deepseek-v4-pro / deepseek-v4-flash) il
-# thinking e' ABILITATO DI DEFAULT con effort "high" quando la richiesta non
-# contiene ne' `thinking` ne' `reasoning_effort`. Omettere i parametri quindi
-# NON disabilita il ragionamento: costa token (`reasoning_content`), rallenta
-# e su chiamate con `max_tokens` piccoli (lang-detect, moderazione) puo'
-# svuotare la risposta. Per disattivarlo serve l'opt-out esplicito
-# `extra_body={"thinking": {"type": "disabled"}}`.
-# I due parametri sono mutuamente esclusivi: con `thinking.type` non si invia
-# mai `reasoning_effort`. Valori accettati da `reasoning_effort`: low/high/max
-# ("none" non esiste lato API: si spegne solo via thinking.type="disabled").
-_REASONING_OFF   = ("none", "off", "no", "false", "disabled", "0", "")
-_REASONING_VALID = ("low", "high", "max")
-
-# Body di opt-out riusabile dalle chiamate one-shot (lang-detect, community).
-THINKING_OFF_BODY = {"thinking": {"type": "disabled"}}
+# Il perche' dell'opt-out esplicito (DeepSeek v4 ragiona di default) e le
+# regole dei parametri stanno in llm_client.thinking_kwargs. Qui solo i
+# default letti dall'ambiente, che i test sostituiscono sul modulo.
+THINKING_OFF_BODY = llm_client.THINKING_OFF_BODY
 
 
 def llm_thinking_kwargs(effort=None, thinking=None):
-    """kwargs OpenAI-compatibili per governare il thinking del modello.
-
-    Ritorna SEMPRE una configurazione esplicita (mai il default del provider):
-    - reasoning off (default `ABM_LLM_REASONING_EFFORT=none`, `ABM_LLM_THINKING=false`)
-      -> {"extra_body": {"thinking": {"type": "disabled"}}}
-    - `ABM_LLM_THINKING=true` con effort "none" -> thinking enabled (effort di default)
-    - effort low/high/max -> {"reasoning_effort": effort}
-    """
-    effort = (LLM_REASONING_EFFORT if effort is None else str(effort)).strip().lower()
-    thinking = LLM_THINKING if thinking is None else bool(thinking)
-    if effort in _REASONING_OFF:
-        state = "enabled" if thinking else "disabled"
-        return {"extra_body": {"thinking": {"type": state}}}
-    if effort == "medium":
-        # Non supportato da DeepSeek v4: degrada al valore utile piu' vicino.
-        effort = "high"
-    if effort not in _REASONING_VALID:
-        print(f"[llm] ABM_LLM_REASONING_EFFORT={effort!r} non valido "
-              f"(ammessi: none/low/high/max): thinking disabilitato")
-        return {"extra_body": {"thinking": {"type": "disabled"}}}
-    return {"reasoning_effort": effort}
+    """kwargs per il thinking con i default `ABM_LLM_REASONING_EFFORT` /
+    `ABM_LLM_THINKING` (vedi `llm_client.thinking_kwargs`)."""
+    return llm_client.thinking_kwargs(
+        LLM_REASONING_EFFORT if effort is None else effort,
+        LLM_THINKING if thinking is None else bool(thinking))
 
 
 def llm_thinking_summary():
     """Descrizione compatta della configurazione thinking effettiva (log)."""
-    kw = llm_thinking_kwargs()
-    effort = kw.get("reasoning_effort")
-    if effort:
-        return f"reasoning_effort={effort}"
-    body = kw.get("extra_body") or {}
-    state = ((body.get("thinking") or {}).get("type")) if isinstance(body, dict) else None
-    return f"thinking={state}"
+    return llm_client.thinking_summary(llm_thinking_kwargs())
 
 # Safe chunk size in chars: garantisce che l'output entri in MAX_TOKENS.
 # Con default 65536 token output → ~195k char/chunk. Prompt ricaricato identico
@@ -193,6 +163,10 @@ LLM_SAFE_OUTPUT_CHUNK = int(LLM_MAX_TOKENS * LLM_CHARS_PER_TOKEN * LLM_OUTPUT_SA
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
 _llm_client = None
+# Il client vive qui (e i test lo sostituiscono qui): llm_client lo chiede a
+# questo modulo a ogni chiamata, cosi' community/abuse non ci importano piu'.
+llm_client.configure(client_fn=lambda: _llm_client, model_fn=lambda: LLM_MODEL,
+                     available_fn=lambda: _llm_available())
 
 BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
@@ -561,18 +535,16 @@ def _init_llm():
     if not LLM_API_KEY:
         print("[startup] LLM text optimization disabled (ABM_LLM_API_KEY not set)")
         return
-    try:
-        from openai import OpenAI
-        _llm_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE)
-        # Verifica almeno il prompt generico
-        generic_path = _SCRIPT_DIR / "prompt_opt_AI" / "prompt_tts_generic.md"
-        if not generic_path.exists():
-            print(f"WARNING: {generic_path} not found \u2014 LLM optimization may fail.", flush=True)
-        else:
-            print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {llm_thinking_summary()})")
-    except ImportError:
+    _llm_client = llm_client.build_client(LLM_API_KEY, LLM_API_BASE)
+    if _llm_client is None:
         print("WARNING: openai library not installed \u2014 LLM optimization disabled. Run: pip install openai", flush=True)
-        _llm_client = None
+        return
+    # Verifica almeno il prompt generico
+    generic_path = llm_client.PROMPT_DIR / "prompt_tts_generic.md"
+    if not generic_path.exists():
+        print(f"WARNING: {generic_path} not found \u2014 LLM optimization may fail.", flush=True)
+    else:
+        print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {llm_thinking_summary()})")
 
 
 def _llm_available():
@@ -646,20 +618,12 @@ def detect_book_language(info):
     if not sample:
         return ""
     try:
-        resp = _llm_client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": _LANG_DETECT_PROMPT},
-                {"role": "user", "content": sample},
-            ],
-            temperature=0,
-            max_tokens=8,
-            timeout=LANG_DETECT_TIMEOUT_SEC,
-            # Thinking sempre off: con max_tokens=8 il budget verrebbe bruciato
-            # dal reasoning_content e la risposta arriverebbe vuota.
-            extra_body=THINKING_OFF_BODY,
-        )
-        raw = (resp.choices[0].message.content or "").strip()
+        # Thinking sempre off (default di chat_once): con max_tokens=8 il
+        # budget verrebbe bruciato dal reasoning_content e la risposta
+        # arriverebbe vuota.
+        raw = llm_client.chat_once(_LANG_DETECT_PROMPT, sample, temperature=0,
+                                   max_tokens=8, timeout=LANG_DETECT_TIMEOUT_SEC,
+                                   llm=_llm_client, model_name=LLM_MODEL)
     except Exception as e:
         print(f"[lang-detect] LLM call failed (non-fatal): {e}")
         return ""
@@ -1040,10 +1004,7 @@ class _LLMStallError(Exception):
 # Frammenti del messaggio con cui il provider rinuncia a una richiesta rimasta
 # in coda ("unable to start processing ... try again later"): errore senza
 # status HTTP, quindi invisibile al controllo per codice.
-_LLM_OVERLOAD_MARKERS = (
-    "unable to start processing", "try again later", "overloaded",
-    "server is busy", "server busy",
-)
+_LLM_OVERLOAD_MARKERS = llm_client.OVERLOAD_MARKERS
 
 
 class _FirstEventWatchdog:
@@ -1155,35 +1116,13 @@ def _write_llm_audit(*, job=None, job_id=None, chapter_num=None,
         print(f"[llm-audit] write failed: {e}")
 
 
-_llm_prompts = {} # Cache per i prompt multilingua
-
 def _get_llm_prompt(lang_code="it"):
     """
     Ritorna il prompt specifico per la lingua, o quello generico come fallback.
     lang_code può essere un codice ISO (it, en, fr...) o un locale (it-IT).
     """
-    global _llm_prompts
-    lang = _norm_lang((lang_code or "it"))
-    if lang in _llm_prompts:
-        return _llm_prompts[lang]
-    
-    prompt_dir = _SCRIPT_DIR / "prompt_opt_AI"
-    filename = f"prompt_tts_{lang}.md"
-    path = prompt_dir / filename
-    
-    if not path.exists():
-        path = prompt_dir / "prompt_tts_generic.md"
-        
-    if path.exists():
-        try:
-            print(f"[LLM] Using prompt file: {path.name}")
-            content = path.read_text(encoding="utf-8").strip()
-            _llm_prompts[lang] = content
-            return content
-        except Exception as e:
-            print(f"Error reading prompt {path}: {e}")
-            
-    return ""
+    lang = _norm_lang(lang_code or "it")
+    return llm_client.tts_prompt(lang, log=lambda name: print(f"[LLM] Using prompt file: {name}"))
 
 def _call_llm(user_content, job=None, max_retries=None):
     """Call LLM API with streaming. Returns optimized text.
@@ -1400,26 +1339,9 @@ def _call_llm(user_content, job=None, max_retries=None):
             err_name = type(e).__name__
             # Provider sovraccarico: nessun evento in tempo, oppure la rinuncia
             # esplicita dopo la coda. Transitorio, ma con pause lunghe.
-            overload = isinstance(e, _LLMStallError) or any(
-                m in str(e).lower() for m in _LLM_OVERLOAD_MARKERS)
-            # Errori di rete client-side (httpx/openai connection wrappers).
-            transient = overload or any(s in err_name for s in (
-                "ReadError", "ConnectError", "ConnectTimeout", "ReadTimeout",
-                "RemoteProtocolError", "APIConnectionError", "APITimeoutError",
-            ))
-            # Errori provider-side: 429/5xx → retry con backoff. Necessario perche'
-            # openai.InternalServerError (503), RateLimitError (429), APIStatusError
-            # non matchano la lista per-nome ma sono comunque transient.
-            # status_code e' esposto sia da openai.APIStatusError sia (via response)
-            # da alcune subclassi; usiamo getattr con fallback su response.status_code.
-            if not transient:
-                _sc = getattr(e, "status_code", None)
-                if _sc is None:
-                    _resp = getattr(e, "response", None)
-                    if _resp is not None:
-                        _sc = getattr(_resp, "status_code", None)
-                if isinstance(_sc, int) and _sc in (429, 500, 502, 503, 504):
-                    transient = True
+            overload = isinstance(e, _LLMStallError) or llm_client.is_overload(e)
+            # Rete client-side o 429/5xx del provider: ritentabile (llm_client).
+            transient = overload or llm_client.is_transient(e)
             if not transient or attempt >= max_retries - 1:
                 raise e
             if overload:

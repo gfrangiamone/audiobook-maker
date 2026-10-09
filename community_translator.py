@@ -1,7 +1,7 @@
 """Translate feedback/news content into all UI languages via LLM.
 
-Reuses the LLM client and configuration already initialized in
-generation_engine.py. Exposes a synchronous translate() that returns a
+Reuses the shared LLM client (`llm_client`, which asks generation_engine
+for it). Exposes a synchronous translate() that returns a
 dict shaped as:
 
     {
@@ -21,7 +21,7 @@ import re
 import threading
 import traceback
 
-import generation_engine as ge
+import llm_client
 import semantic_judge as sj
 
 
@@ -103,81 +103,21 @@ def needs_translation(orig: str, i18n: dict | None, src_lang: str = "") -> bool:
 
 def is_available() -> bool:
     """True if the LLM client is initialized."""
-    return ge._llm_available()
+    return llm_client.available()
 
 
-def _extract_json_object(raw: str) -> dict | None:
-    """Best-effort JSON extraction: try strict parse, then locate the first
-    balanced {...} block in the text and parse that.
-    """
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    # Strip Markdown code fences if present
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```\s*$", "", raw)
-    try:
-        obj = json.loads(raw)
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        pass
-    # Find first { and matching } via depth scan
-    start = raw.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(raw)):
-        c = raw[i]
-        if esc:
-            esc = False
-            continue
-        if c == "\\":
-            esc = True
-            continue
-        if c == '"':
-            in_str = not in_str
-            continue
-        if in_str:
-            continue
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    obj = json.loads(raw[start:i + 1])
-                    return obj if isinstance(obj, dict) else None
-                except Exception:
-                    return None
-    return None
+_extract_json_object = llm_client.extract_json_object
 
 
 def _call_llm(payload: dict[str, str], *, timeout: float, use_json_mode: bool,
               system_prompt: str | None = None, temperature: float = 0.2) -> str | None:
-    client = ge._llm_client
-    if client is None:
+    if llm_client.client() is None:
         return None
-    user_content = json.dumps(payload, ensure_ascii=False)
-    kwargs: dict = dict(
-        model=ge.LLM_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt or _TRANSLATE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
-        max_tokens=4096,
-        temperature=temperature,
-        timeout=timeout,
-        # Thinking off esplicito: il provider lo attiva di default (vedi
-        # generation_engine.llm_thinking_kwargs) e qui serve solo latenza/costo.
-        extra_body=ge.THINKING_OFF_BODY,
-    )
-    if use_json_mode:
-        kwargs["response_format"] = {"type": "json_object"}
-    completion = client.chat.completions.create(**kwargs)
-    return (completion.choices[0].message.content or "").strip()
+    # Thinking off (default di chat_once): qui serve solo latenza/costo.
+    return llm_client.chat_once(system_prompt or _TRANSLATE_SYSTEM_PROMPT,
+                                json.dumps(payload, ensure_ascii=False),
+                                max_tokens=4096, temperature=temperature, timeout=timeout,
+                                json_mode=use_json_mode)
 
 
 _TO_ITALIAN_SYSTEM_PROMPT = (

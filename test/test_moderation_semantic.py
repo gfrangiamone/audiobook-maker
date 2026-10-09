@@ -11,6 +11,7 @@ import pytest
 
 import community_moderator as cm
 import semantic_judge as sj
+import generation_engine as ge   # detiene il client LLM: llm_client lo chiede a lui
 
 
 # Senza `typesafe-sdk` installato le classi delle domande sono None e il
@@ -130,7 +131,7 @@ def test_url_rejected_before_any_judgement():
 def test_clean_comment_approved_without_llm_fallback(with_key):
     """Giudizio ottenuto: il motore LLM di ripiego non viene sfiorato."""
     with patch.object(sj, "ask", return_value=clean_response()), \
-         patch.object(cm.ge, "_llm_available", side_effect=AssertionError("ripiego")):
+         patch.object(ge, "_llm_available", side_effect=AssertionError("ripiego")):
         out = cm.validate("Anna", "Ottimo, ho convertito due libri in un'ora")
     assert out == {"approved": True, "reason": "ok", "unvalidated": False}
 
@@ -191,7 +192,7 @@ def test_partial_answer_falls_back_instead_of_approving(with_key):
     un'approvazione. Si passa al motore LLM."""
     partial = fake_response(spam=0.01, profanity=0.01)
     with patch.object(sj, "ask", return_value=partial), \
-         patch.object(cm.ge, "_llm_available", return_value=True), \
+         patch.object(ge, "_llm_available", return_value=True), \
          patch.object(cm, "_call_llm", return_value={"approved": False, "reason": "spam"}) as llm:
         out = cm.validate("x", "y")
     assert llm.called
@@ -200,7 +201,7 @@ def test_partial_answer_falls_back_instead_of_approving(with_key):
 
 def test_falls_back_to_llm_when_unconfigured(no_key):
     """Senza chiave il comportamento e' esattamente quello di prima."""
-    with patch.object(cm.ge, "_llm_available", return_value=True), \
+    with patch.object(ge, "_llm_available", return_value=True), \
          patch.object(cm, "_call_llm", return_value={"approved": True, "reason": "ok"}) as llm:
         out = cm.validate("Anna", "Bel lavoro")
     assert llm.called
@@ -209,7 +210,7 @@ def test_falls_back_to_llm_when_unconfigured(no_key):
 
 def test_both_engines_down_allows_unvalidated(no_key):
     """Fail-open invariato: il commento passa marcato, non viene perso."""
-    with patch.object(cm.ge, "_llm_available", return_value=False):
+    with patch.object(ge, "_llm_available", return_value=False):
         out = cm.validate("Anna", "Bel lavoro")
     assert out == {"approved": True, "reason": "llm_error", "unvalidated": True}
 

@@ -10,6 +10,8 @@ Config (env, con fallback ABM_LLM_*): vedi PARAMETRI_CONFIGURAZIONE.md.
 
 import io
 import json
+import llm_client
+from gcp_auth import ServiceAccount
 import os
 from env_utils import env_float, env_int, env_str
 import re
@@ -238,19 +240,13 @@ def split_text_into_chunks(text, max_chars):
 # ---------------------------------------------------------------------------
 
 def load_tts_prompt(lang, log=print):
-    """Carica il prompt di ottimizzazione TTS per la lingua (fallback generic)."""
-    path = PROMPT_DIR / f"prompt_tts_{lang}.md"
-    if not path.exists():
-        path = PROMPT_DIR / "prompt_tts_generic.md"
-    if path.exists():
-        try:
-            log(f"[prompt] Ottimizzazione TTS: uso {path.name}")
-            return path.read_text(encoding="utf-8").strip()
-        except Exception as e:
-            log(f"[prompt] WARNING: lettura {path} fallita: {e}")
-    else:
+    """Carica il prompt di ottimizzazione TTS per la lingua (fallback generic),
+    dalla cache condivisa di `llm_client`."""
+    prompt = llm_client.tts_prompt(lang, prompt_dir=PROMPT_DIR,
+                                   log=lambda name: log(f"[prompt] Ottimizzazione TTS: uso {name}"))
+    if not prompt:
         log(f"[prompt] WARNING: nessun prompt TTS trovato in {PROMPT_DIR}")
-    return ""
+    return prompt
 
 
 def build_system_prompt(source, target, optimize):
@@ -283,15 +279,7 @@ def build_system_prompt(source, target, optimize):
     return base
 
 
-# ---------------------------------------------------------------------------
-# _strip_fences (copiato invariato da scripts/translate_abm.py:433-437)
-# ---------------------------------------------------------------------------
-
-def _strip_fences(text):
-    """Rimuove un eventuale wrapping completo in fence markdown."""
-    stripped = text.strip()
-    m = re.match(r"^```[a-zA-Z]*\n(.*)\n```$", stripped, re.DOTALL)
-    return m.group(1).strip() if m else stripped
+_strip_fences = llm_client.strip_fences
 
 
 # ---------------------------------------------------------------------------
@@ -367,26 +355,20 @@ def make_client_provider(backend):
                         timeout=request_timeout())
         return (lambda: client), mdl, api_base()
 
-    from google.oauth2 import service_account
-    from google.auth.transport.requests import Request as _GAuthRequest
-
-    creds = service_account.Credentials.from_service_account_file(
-        gcp_creds_file(),
-        scopes=["https://www.googleapis.com/auth/cloud-platform"],
-    )
+    sa = ServiceAccount(gcp_creds_file(),
+                        ["https://www.googleapis.com/auth/cloud-platform"])
     base_url = _vertex_base_url()
     model = mdl if "/" in mdl else f"google/{mdl}"
-    state = {"client": None}
+    state = {"client": None, "token": None}
 
     def provider():
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        expiry = getattr(creds, "expiry", None)
-        near_expiry = (expiry is not None and
-                       (expiry - now).total_seconds() < 300)
-        if not creds.valid or near_expiry or state["client"] is None:
-            creds.refresh(_GAuthRequest())
-            state["client"] = OpenAI(api_key=creds.token, base_url=base_url,
+        # Il token si rinnova da solo prima della scadenza (gcp_auth); il
+        # client OpenAI si ricrea quando il bearer cambia.
+        token = sa.token()
+        if state["client"] is None or token != state["token"]:
+            state["client"] = OpenAI(api_key=token, base_url=base_url,
                                      timeout=request_timeout())
+            state["token"] = token
         return state["client"]
 
     return provider, model, base_url
@@ -403,25 +385,21 @@ def make_fallback_provider(primary_model=""):
     configurato o coincide col primario. extra_kwargs spegne il thinking
     (default "on" sui DeepSeek v4) e alza max_tokens come fa l'ottimizzazione.
     """
-    key = os.environ.get("ABM_LLM_API_KEY", "").strip()
+    key = llm_client.api_key()
     mdl = fallback_model()
     if not key or not mdl or mdl == primary_model:
         return None
-    from openai import OpenAI
-
-    base = (os.environ.get("ABM_LLM_API_BASE", "").strip()
-            or "https://api.deepseek.com")
+    base = llm_client.api_base()
     state = {"client": None}
 
     def provider():
         if state["client"] is None:
-            state["client"] = OpenAI(api_key=key, base_url=base,
-                                     timeout=request_timeout())
+            state["client"] = llm_client.build_client(key, base, timeout=request_timeout())
         return state["client"]
 
     extra = {
         "max_tokens": _env_num(int, "ABM_LLM_MAX_TOKENS", 65536),
-        "extra_body": {"thinking": {"type": "disabled"}},
+        "extra_body": llm_client.THINKING_OFF_BODY,
     }
     return provider, mdl, extra
 

@@ -30,7 +30,7 @@
   "gemini_availability.py": 1,
   "gemini_transport.py": 2,
   "gemini_tts.py": 31,
-  "generation_engine.py": 12,
+  "generation_engine.py": 9,
   "load_metrics.py": 5,
   "output_reuse.py": 1,
   "payment.py": 22,
@@ -40,7 +40,6 @@
   "storage_backend.py": 11,
   "storage_tiering.py": 2,
   "templates/index_page.py": 2,
-  "translation_core.py": 2,
   "tts_backend_state.py": 5,
   "tts_split.py": 1,
   "voice_clone.py": 1,
@@ -59,16 +58,8 @@
   "voice_clone_demo.py": 1,
   "voxcpm_tts.py": 1
  },
- "import_generation_engine": {
-  "abuse_watch.py": 2,
-  "community_moderator.py": 1,
-  "community_translator.py": 1
- },
  "llm_call_by_hand": {
-  "abuse_watch.py": 1,
-  "community_moderator.py": 1,
-  "community_translator.py": 1,
-  "generation_engine.py": 2,
+  "generation_engine.py": 1,
   "translation_core.py": 1
  },
  "mirror_comment": {

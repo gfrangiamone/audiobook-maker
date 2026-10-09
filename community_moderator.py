@@ -6,23 +6,21 @@ Two engines, in order:
    con risposta gia' tipizzata. Le soglie di rifiuto stanno qui sotto, in
    codice, non dentro un prompt: si cambiano senza riscrivere le istruzioni
    e senza rimettere mano a un parser JSON.
-2. il client LLM di `generation_engine`, che resta come ripiego quando il
-   primo non e' configurato o non risponde.
+2. il client LLM condiviso (`llm_client`, che lo chiede a `generation_engine`
+   senza importarlo), come ripiego quando il primo non e' configurato o non
+   risponde.
 
-Come `community_translator.py`: nessun import circolare, `validate()`
-sincrona, e fail-open (un commento passa marcato `unvalidated` se nessuno
+Come `community_translator.py`: `validate()` sincrona e fail-open (un commento passa marcato `unvalidated` se nessuno
 dei due motori ha risposto).
 """
 from __future__ import annotations
 
-import json
-import os
 from env_utils import env_float as _env_float
 import re
 import time
 import traceback
 
-import generation_engine as ge
+import llm_client
 import semantic_judge as sj
 
 
@@ -169,68 +167,19 @@ def _typesafe_verdict(name: str, comment: str) -> dict | None:
 
 def _call_llm(text: str, *, timeout: float) -> dict | None:
     """Call LLM for moderation. Returns parsed JSON dict or None."""
-    client = ge._llm_client
-    if client is None:
+    if llm_client.client() is None:
         return None
-    kwargs = dict(
-        model=ge.LLM_MODEL,
-        messages=[
-            {"role": "system", "content": _MODERATION_SYSTEM_PROMPT},
-            {"role": "user", "content": text},
-        ],
-        max_tokens=256,
-        temperature=0.0,
-        timeout=timeout,
-        # Thinking off esplicito: con max_tokens=256 il reasoning_content
-        # brucerebbe il budget e il verdetto JSON arriverebbe troncato.
-        extra_body=ge.THINKING_OFF_BODY,
-    )
     try:
-        completion = client.chat.completions.create(**kwargs)
-        raw = (completion.choices[0].message.content or "").strip()
+        # Thinking off (default di chat_once): con max_tokens=256 il
+        # reasoning_content brucerebbe il budget e il verdetto arriverebbe
+        # troncato.
+        raw = llm_client.chat_once(_MODERATION_SYSTEM_PROMPT, text, max_tokens=256,
+                                   temperature=0.0, timeout=timeout)
     except Exception as e:
         print(f"[community_moderator] LLM call failed: {type(e).__name__}: {e}")
         traceback.print_exc()
         return None
-    if not raw:
-        return None
-    # Try strict JSON parse first; fallback to extracting first {...} block
-    try:
-        obj = json.loads(raw)
-        if isinstance(obj, dict):
-            return obj
-    except json.JSONDecodeError:
-        pass
-    start = raw.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(raw)):
-        c = raw[i]
-        if esc:
-            esc = False
-            continue
-        if c == "\\":
-            esc = True
-            continue
-        if c == '"':
-            in_str = not in_str
-            continue
-        if in_str:
-            continue
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    obj = json.loads(raw[start:i + 1])
-                    return obj if isinstance(obj, dict) else None
-                except json.JSONDecodeError:
-                    return None
-    return None
+    return llm_client.extract_json_object(raw) if raw else None
 
 
 def validate(name: str, comment: str) -> dict:
@@ -258,7 +207,7 @@ def validate(name: str, comment: str) -> dict:
         return verdict
 
     # Step 3: LLM content check (only if no URL)
-    if not ge._llm_available():
+    if not llm_client.available():
         print("[community_moderator] LLM unavailable; allowing unvalidated")
         return {"approved": True, "reason": "llm_error", "unvalidated": True}
 
