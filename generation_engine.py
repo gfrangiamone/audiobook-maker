@@ -4181,7 +4181,7 @@ def _voxcpm_ritaglia_lotto(lotto, stats, sorgente, work_dir):
     with open(sorgente, "rb") as src:
         for posto, ((ci, indici), (_, _, s0, lung)) in enumerate(
                 zip(lotto, confini)):
-            dest = work_dir / f"chunk_{indici[0]:06d}.pcm"
+            dest = chunk_reuse.chunk_path(work_dir, indici[0], "pcm")
             tmp = str(dest) + ".part"
             src.seek(s0 * 2)
             resto = lung * 2
@@ -4418,7 +4418,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
         """Sintetizza un lotto. Ritorna `[(ci, indici, stats), ...]`."""
         if len(lotto) == 1 or not lotti_ok.is_set():
             return [_sintetizza(ci, indici, indici, str(
-                work_dir / f"chunk_{indici[0]:06d}.pcm"))
+                chunk_reuse.chunk_path(work_dir, indici[0], "pcm")))
                 for ci, indici in lotto]
         primo = lotto[0][0]
         tutti = [i for _, indici in lotto for i in indici]
@@ -4446,7 +4446,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             with barra:
                 parziali.pop(primo, None)
         fuori = [_sintetizza(ci, indici, indici, str(
-            work_dir / f"chunk_{indici[0]:06d}.pcm")) for ci, indici in lotto]
+            chunk_reuse.chunk_path(work_dir, indici[0], "pcm"))) for ci, indici in lotto]
         st0 = fuori[0][2]
         for k in ("tts_seconds", "jobs", "redone", "bounced"):
             st0[k] = st0.get(k, 0) + stats.get(k, 0)
@@ -4597,7 +4597,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         continue
                     # Coda del capitolo: file vuoto, e un esito a zero perche' le
                     # misure del capitolo sono gia' contate sul primo chunk.
-                    parte = work_dir / f"chunk_{i:06d}.pcm"
+                    parte = chunk_reuse.chunk_path(work_dir, i, "pcm")
                     with open(parte, "wb"):
                         pass
                     esiti[i] = {"sample_rate": stats.get("sample_rate") or 48000,
@@ -5198,7 +5198,7 @@ def _speechify_presynth(job, plan, work_dir, voice, emotion, rate,
         # _CancelledError del chiamante (refund premium via cancel path).
         if check_cancelled():
             raise _CancelledError("Job cancelled")
-        pp = str(work_dir / f"chunk_{idx:06d}.pcm")
+        pp = str(chunk_reuse.chunk_path(work_dir, idx, "pcm"))
         fi = {}
         res = generate_chunk_pcm_speechify(
             blk["text"], voice, pp, emotion=emotion, rate=rate, failure_info=fi)
@@ -7004,17 +7004,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # Chunk gia' su disco da un tentativo precedente con la stessa
                 # impronta: nessuna chiamata TTS, nessun costo, nessun usage da
                 # registrare (era gia' stato contabilizzato al primo tentativo).
-                return {"reused": True}, str(work_dir / f"chunk_{i:06d}.{_chunk_ext}")
+                return {"reused": True}, str(chunk_reuse.chunk_path(work_dir, i, _chunk_ext))
             if use_voxcpm:
                 # L'audio l'ha gia' scritto la pre-sintesi per capitolo: qui
                 # non si chiama nessuna API, si consegna il file-parte. Per i
                 # chunk di coda quel file e' vuoto ed e' corretto che lo sia,
                 # perche' l'audio del capitolo sta tutto sul primo.
-                part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                part_path = str(chunk_reuse.chunk_path(work_dir, i, "pcm"))
                 return _voxcpm_chunk_result(i, _voxcpm_pre, _reusable_chunks,
                                             job_id), part_path
             if use_speechify:
-                part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                part_path = str(chunk_reuse.chunk_path(work_dir, i, "pcm"))
                 pre = _speechify_pre.get(i)
                 if pre is not None:
                     if isinstance(pre, dict) and not job.get("speechify_sample_rate"):
@@ -7030,7 +7030,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _accumulate_speechify_actual(job, block, result)
                 return result, part_path
             if use_gemini:
-                part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                part_path = str(chunk_reuse.chunk_path(work_dir, i, "pcm"))
                 debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
                 # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo chunk
                 # del capitolo faceva percepire stile diverso tra preview (1
@@ -7171,7 +7171,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
                 return result, part_path
             else:
-                part_path = str(work_dir / f"chunk_{i:06d}.mp3")
+                part_path = str(chunk_reuse.chunk_path(work_dir, i, "mp3"))
                 try:
                     result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
                 except Exception as _edge_err:
@@ -7229,6 +7229,27 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # campo da rileggere, vedi `_pcm_sample_rate`).
         _pcm_sr = _pcm_sample_rate(job, use_speechify, use_voxcpm)
 
+        def _log_progress(i):
+            """Riga di avanzamento ogni 10 chunk (e sull'ultimo), per entrambi i rami."""
+            if i > 0 and (i % 10 == 0 or i == total_chunks - 1):
+                pct = (i + 1) / total_chunks * 100
+                print(f"[{job_id}] Progress: chunk {i+1}/{total_chunks} "
+                      f"({pct:.0f}%), failed_chunks={failed_chunks}, "
+                      f"elapsed={time.time()-start_time:.0f}s")
+
+        def _count_failure_and_maybe_abort(i):
+            """Conta un chunk fallito e, su Gemini, ferma la generazione quando la
+            quota di fallimenti sul campione supera la soglia (early-abort)."""
+            nonlocal failed_chunks
+            failed_chunks += 1
+            if use_gemini and _ea_ratio <= 1.0:
+                _proc = i + 1
+                if _proc >= _ea_min and (failed_chunks / _proc) > _ea_ratio:
+                    print(f"[{job_id}] Gemini EARLY-ABORT: {failed_chunks}/{_proc} "
+                          f"({failed_chunks/_proc:.1%}) > {_ea_ratio:.0%} su campione "
+                          f">= {_ea_min} -> stop generazione e refund.")
+                    raise _GeminiQualityAbort(failed_chunks, _proc)
+
         if single_file:
             all_parts = []
             m4b_chapters = []
@@ -7265,12 +7286,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     raise _CancelledError("Job cancelled")
                 _update_progress(i, block)
 
-                # Periodic progress logging ogni 10 chunk
-                if i > 0 and (i % 10 == 0 or i == total_chunks - 1):
-                    pct = (i + 1) / total_chunks * 100
-                    print(f"[{job_id}] Progress: chunk {i+1}/{total_chunks} "
-                          f"({pct:.0f}%), failed_chunks={failed_chunks}, "
-                          f"elapsed={time.time()-start_time:.0f}s")
+                _log_progress(i)
 
                 ch_idx = block["chapter_index"]
                 ch_title = block["chapter_title"]
@@ -7307,14 +7323,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 result, part_path = _synthesize_chunk(i, block)
                 _carry_tick(i)
                 if result is False:
-                    failed_chunks += 1
-                    if use_gemini and _ea_ratio <= 1.0:
-                        _proc = i + 1
-                        if _proc >= _ea_min and (failed_chunks / _proc) > _ea_ratio:
-                            print(f"[{job_id}] Gemini EARLY-ABORT: {failed_chunks}/{_proc} "
-                                  f"({failed_chunks/_proc:.1%}) > {_ea_ratio:.0%} su campione "
-                                  f">= {_ea_min} -> stop generazione e refund.")
-                            raise _GeminiQualityAbort(failed_chunks, _proc)
+                    _count_failure_and_maybe_abort(i)
                 # Bump per il gap che verra` inserito PRIMA di questo part_path
                 # (Premium Gemini): aggiorna i timing M4B per il capitolo corrente.
                 if gap_ms_inter and all_parts:
@@ -7537,54 +7546,48 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             failed_chunks = 0
             chapter_by_idx = {ch.index: ch for ch in info.chapters}
             output_num_by_idx = {ch.index: pos + 1 for pos, ch in enumerate(info.chapters)}
+
+            def _flush_chapter(ch_idx, parts, *, reset_attempts):
+                """Chiude il capitolo `ch_idx`: concatena/encoda le parti in un MP3
+                numerato, aggiorna i capitoli M4B e cancella le parti. Con
+                `reset_attempts`, al primo capitolo scritto di un job recuperato
+                azzera i tentativi (progresso reale, anti-burn del cap)."""
+                nonlocal current_ms
+                ch = chapter_by_idx[ch_idx]
+                safe_title = _safe_filename(ch.title)[:50] or f"ch_{ch_idx}"
+                out_num = output_num_by_idx.get(ch_idx, ch_idx)
+                mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
+                if use_pcm:
+                    if not pcm_to_mp3(parts, mp3_path, gap_ms=gap_ms_inter, sample_rate=_pcm_sr,
+                                      extra_tags=gen_tags):
+                        # Capitolo non codificabile (o troncato): lo ZIP
+                        # risulterebbe incompleto senza che nulla lo segnali.
+                        raise _AssemblyError(
+                            f"chapter {out_num} ({ch.title!r}) encode failed")
+                else:
+                    _concatenate_mp3(parts, mp3_path, extra_tags=gen_tags)
+                mp3_files.append(mp3_path)
+                duration = _get_audio_duration_ms(mp3_path)
+                m4b_chapters.append({"title": ch.title, "start": current_ms, "end": current_ms + duration})
+                current_ms += duration
+                for p in parts:
+                    if os.path.exists(p) and p != silence_path:
+                        os.remove(p)
+                if reset_attempts and job.get("recovered") and not job.get("_attempts_reset"):
+                    job["_attempts_reset"] = True
+                    try:
+                        pending_jobs.reset_attempts(job_id)
+                    except Exception:
+                        pass
+
             for i, block in enumerate(plan):
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
                 _update_progress(i, block)
-                # Periodic progress logging ogni 10 chunk (multi-file)
-                if i > 0 and (i % 10 == 0 or i == total_chunks - 1):
-                    pct = (i + 1) / total_chunks * 100
-                    print(f"[{job_id}] Progress: chunk {i+1}/{total_chunks} "
-                          f"({pct:.0f}%), failed_chunks={failed_chunks}, "
-                          f"elapsed={time.time()-start_time:.0f}s")
+                _log_progress(i)
                 if block["chapter_index"] != current_chapter_idx:
                     if current_chapter_parts and current_chapter_idx >= 0:
-                        ch = chapter_by_idx[current_chapter_idx]
-                        safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
-                        out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
-                        mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
-                        if use_pcm:
-                            if not pcm_to_mp3(current_chapter_parts, mp3_path,
-                                              gap_ms=gap_ms_inter, sample_rate=_pcm_sr,
-                                              extra_tags=gen_tags):
-                                # Capitolo non codificabile (o troncato): lo ZIP
-                                # risulterebbe incompleto senza che nulla lo segnali.
-                                raise _AssemblyError(
-                                    f"chapter {out_num} ({ch.title!r}) encode failed")
-                        else:
-                            _concatenate_mp3(current_chapter_parts, mp3_path, extra_tags=gen_tags)
-                        mp3_files.append(mp3_path)
-
-                        duration = _get_audio_duration_ms(mp3_path)
-                        m4b_chapters.append({
-                            "title": ch.title,
-                            "start": current_ms,
-                            "end": current_ms + duration
-                        })
-                        current_ms += duration
-
-                        for p in current_chapter_parts:
-                            if os.path.exists(p) and p != silence_path:
-                                os.remove(p)
-
-                        # Primo capitolo (mp3) scritto: su un job recuperato azzera i
-                        # tentativi (progresso reale), anti-burn del cap su deploy ravvicinati.
-                        if job.get("recovered") and not job.get("_attempts_reset"):
-                            job["_attempts_reset"] = True
-                            try:
-                                pending_jobs.reset_attempts(job_id)
-                            except Exception:
-                                pass
+                        _flush_chapter(current_chapter_idx, current_chapter_parts, reset_attempts=True)
                     current_chapter_parts = []
                     current_chapter_idx = block["chapter_index"]
                     # Silenzio all'inizio del capitolo
@@ -7594,14 +7597,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 result, part_path = _synthesize_chunk(i, block)
                 _carry_tick(i)
                 if result is False:
-                    failed_chunks += 1
-                    if use_gemini and _ea_ratio <= 1.0:
-                        _proc = i + 1
-                        if _proc >= _ea_min and (failed_chunks / _proc) > _ea_ratio:
-                            print(f"[{job_id}] Gemini EARLY-ABORT: {failed_chunks}/{_proc} "
-                                  f"({failed_chunks/_proc:.1%}) > {_ea_ratio:.0%} su campione "
-                                  f">= {_ea_min} -> stop generazione e refund.")
-                            raise _GeminiQualityAbort(failed_chunks, _proc)
+                    _count_failure_and_maybe_abort(i)
                 current_chapter_parts.append(part_path)
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
@@ -7617,31 +7613,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] All chunks processed (multi-file): {total_chunks} total, {failed_chunks} failed, {len(mp3_files)} chapters assembled")
 
             if current_chapter_parts and current_chapter_idx >= 0:
-                ch = chapter_by_idx[current_chapter_idx]
-                safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
-                out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
-                mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
-                if use_pcm:
-                    if not pcm_to_mp3(current_chapter_parts, mp3_path,
-                                      gap_ms=gap_ms_inter, sample_rate=_pcm_sr,
-                                      extra_tags=gen_tags):
-                        raise _AssemblyError(
-                            f"chapter {out_num} ({ch.title!r}) encode failed")
-                else:
-                    _concatenate_mp3(current_chapter_parts, mp3_path, extra_tags=gen_tags)
-                mp3_files.append(mp3_path)
-
-                duration = _get_audio_duration_ms(mp3_path)
-                m4b_chapters.append({
-                    "title": ch.title,
-                    "start": current_ms,
-                    "end": current_ms + duration
-                })
-                current_ms += duration
-
-                for p in current_chapter_parts:
-                    if os.path.exists(p) and p != silence_path:
-                        os.remove(p)
+                _flush_chapter(current_chapter_idx, current_chapter_parts, reset_attempts=False)
 
             # Coda di ammissione: da qui parte la parte CPU-bound del ramo
             # multi-file (deflate dello ZIP + concat + encode M4B). Gli encode

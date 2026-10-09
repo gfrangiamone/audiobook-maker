@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from pathlib import Path
 from fileio import load_json, write_json_safe
 
 MANIFEST_NAME = ".chunks_manifest.json"
@@ -33,6 +34,12 @@ SCHEMA_VERSION = 1
 # VoxCPM e' incluso ma con una regola diversa (vedi `_voxcpm_reusable_indices`):
 # il job e' per capitolo, non per chunk, quindi il riuso e' per capitolo intero.
 REUSABLE_ENGINES = ("gemini", "edge", "google", "voxcpm")
+
+
+def chunk_path(work_dir, i, ext):
+    """Il file del chunk `i` nella cartella di lavoro: `chunk_000042.pcm`.
+    Unico posto che conosce il nome (prima otto f-string sparse)."""
+    return Path(work_dir) / f"chunk_{i:06d}.{ext}"
 
 
 def plan_sha(plan) -> str:
@@ -105,10 +112,9 @@ def reusable_indices(work_dir, fp: dict, total_chunks: int, ext: str,
         return set()
     if (fp or {}).get("engine") == "voxcpm":
         return _voxcpm_reusable_indices(work_dir, total_chunks, ext, plan)
-    base = str(work_dir)
     present = {}
     for i in range(total_chunks):
-        p = os.path.join(base, f"chunk_{i:06d}.{ext}")
+        p = str(chunk_path(work_dir, i, ext))
         try:
             size = os.path.getsize(p)
         except OSError:
@@ -159,14 +165,14 @@ def _voxcpm_reusable_indices(work_dir, total_chunks: int, ext: str,
     for ci in ordine:
         indici = per_capitolo[ci]
         testa = indici[0]
-        head_path = os.path.join(base, f"chunk_{testa:06d}.{ext}")
+        head_path = str(chunk_path(work_dir, testa, ext))
         try:
             head_size = os.path.getsize(head_path)
         except OSError:
             continue
         if head_size <= 0:
             continue
-        if all(os.path.exists(os.path.join(base, f"chunk_{i:06d}.{ext}"))
+        if all(os.path.exists(str(chunk_path(work_dir, i, ext)))
                for i in indici[1:]):
             out.update(indici)
     return out
