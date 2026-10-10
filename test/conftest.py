@@ -2,6 +2,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 import sys
+import routes_admin_logs
 
 import pytest
 
@@ -13,7 +14,7 @@ def _reset_log_sessions_cache():
     devono vedere il risultato di un test precedente."""
     app = sys.modules.get("audiobook_app")
     if app is not None:
-        app._LOG_SESSIONS_CACHE.clear()
+        routes_admin_logs._LOG_SESSIONS_CACHE.clear()
     yield
 
 

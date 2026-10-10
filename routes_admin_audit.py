@@ -42,7 +42,6 @@ from voice_utils import (is_gemini_voice as _is_gemini_voice, is_speechify_voice
 bp = Blueprint("admin_audit", __name__)
 
 _cfg = {}
-jobs = None
 _jobs_lock = None
 generation_engine = None
 
@@ -57,7 +56,7 @@ def configure(*, admin_required, admin_token, admin_auth_ok, admin_auth_from_req
                 log_activity=log_activity, client_ip=client_ip,
                 invalidate_voices_cache=invalidate_voices_cache,
                 vc_translate_reject_note=vc_translate_reject_note)
-    globals()["jobs"] = jobs
+    _cfg["jobs"] = jobs
     globals()["_jobs_lock"] = jobs_lock
     generation_engine = engine
 
@@ -67,6 +66,11 @@ def configure(*, admin_required, admin_token, admin_auth_ok, admin_auth_from_req
 # nei test vale anche qui.
 def _admin_token():
     return _cfg["admin_token"]()
+
+
+def _jobs():
+    # `jobs` come funzione: i test ribindano `audiobook_app.jobs`.
+    return _cfg["jobs"]()
 
 
 def _admin_auth_ok(provided):
@@ -152,7 +156,7 @@ def _synth_running_gemini_audit_records():
     out = []
     now_iso = datetime.now(timezone.utc).isoformat()
     with _jobs_lock:
-        snapshot = list(jobs.items())
+        snapshot = list(_jobs().items())
     for job_id, job in snapshot:
         try:
             if not isinstance(job, dict):
@@ -288,7 +292,7 @@ def _synth_running_translation_audit_records():
     out = []
     now_iso = datetime.now(timezone.utc).isoformat()
     with _jobs_lock:
-        snapshot = list(jobs.items())
+        snapshot = list(_jobs().items())
     for job_id, job in snapshot:
         try:
             if not isinstance(job, dict):
@@ -353,7 +357,7 @@ def _synth_running_optimization_audit_records():
     out = []
     now_iso = datetime.now(timezone.utc).isoformat()
     with _jobs_lock:
-        snapshot = list(jobs.items())
+        snapshot = list(_jobs().items())
     for job_id, job in snapshot:
         try:
             if not isinstance(job, dict):

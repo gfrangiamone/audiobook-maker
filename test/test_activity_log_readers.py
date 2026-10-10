@@ -5,6 +5,7 @@ import pytest
 
 import activity_log
 import audiobook_app
+import routes_admin_logs
 
 
 def _line(job, ts, op, fn="a.epub", cid="c", ip="1.1.1.1", voice="it-IT-X",
@@ -138,7 +139,7 @@ def test_export_xlsx_regge_byte_non_utf8(logs, monkeypatch):
 
 
 def test_power_users_data_legge_il_mese_corrente(logs, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "POWER_USER_JOBS_PER_DAY", 3)
+    monkeypatch.setattr(routes_admin_logs, "POWER_USER_JOBS_PER_DAY", 3)
     now = datetime.now()
     righe = []
     for i in range(3):
@@ -146,7 +147,7 @@ def test_power_users_data_legge_il_mese_corrente(logs, monkeypatch):
         righe.append((when, _line(f"p{i}", when.strftime("%Y-%m-%d %H:%M:%S"),
                                   "GENERATE", cid="heavy", voice="en-US-AriaNeural")))
     _write_by_month(logs, righe)
-    data = audiobook_app._power_users_data()
+    data = routes_admin_logs._power_users_data()
     assert [r["client_id"] for r in data["rows"]] == ["heavy"]
     assert data["rows"][0]["jobs_24h"] == 3
 

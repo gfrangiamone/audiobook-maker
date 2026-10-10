@@ -10,6 +10,7 @@ import pytest
 
 import activity_log
 import audiobook_app
+import routes_admin_logs
 
 YM = "2026-08"
 
@@ -33,11 +34,11 @@ def logdir(tmp_path, monkeypatch):
     monkeypatch.delenv("ABM_ACTIVITY_LOG_DIR", raising=False)
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", tmp_path)
     activity_log.reset()
-    audiobook_app._LOG_SESSIONS_CACHE.clear()
+    routes_admin_logs._LOG_SESSIONS_CACHE.clear()
     (tmp_path / f"activity_{YM}.log").write_text("\n".join(LINES) + "\n", encoding="utf-8")
     yield tmp_path
     activity_log.reset()
-    audiobook_app._LOG_SESSIONS_CACHE.clear()
+    routes_admin_logs._LOG_SESSIONS_CACHE.clear()
 
 
 def _get(url, auth=True):
@@ -161,22 +162,22 @@ def test_giorno_ui_disattivata_senza_token(logdir):
 # ---------------------------------------------------------------- cache e parse
 
 def test_cache_riusata_finche_il_log_non_cambia(logdir):
-    first = audiobook_app._log_sessions_cached(YM)
-    assert audiobook_app._log_sessions_cached(YM) is first
+    first = routes_admin_logs._log_sessions_cached(YM)
+    assert routes_admin_logs._log_sessions_cached(YM) is first
     with open(logdir / f"activity_{YM}.log", "a", encoding="utf-8") as f:
         f.write(_line("D4a", "2026-08-04 09:00:00") + "\n")
-    second = audiobook_app._log_sessions_cached(YM)
+    second = routes_admin_logs._log_sessions_cached(YM)
     assert second is not first and "D4a" in second[0]
-    assert len([k for k in audiobook_app._LOG_SESSIONS_CACHE if k[0] == YM]) == 1
+    assert len([k for k in routes_admin_logs._LOG_SESSIONS_CACHE if k[0] == YM]) == 1
 
 
 def test_cache_distingue_le_cartelle(logdir, tmp_path_factory, monkeypatch):
-    audiobook_app._log_sessions_cached(YM)
+    routes_admin_logs._log_sessions_cached(YM)
     other = tmp_path_factory.mktemp("other")
     (other / f"activity_{YM}.log").write_text(_line("X1", "2026-08-05 09:00:00") + "\n",
                                               encoding="utf-8")
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", other)
-    assert list(audiobook_app._log_sessions_cached(YM)[0]) == ["X1"]
+    assert list(routes_admin_logs._log_sessions_cached(YM)[0]) == ["X1"]
 
 
 def test_parse_scarta_timestamp_non_canonici(logdir):

@@ -1,5 +1,6 @@
 """Test funnel endpoint /api/admin/funnel and helper _funnel_data."""
 import pytest
+import routes_admin_logs
 from unittest.mock import patch
 
 TOKEN = "test-admin-token-funnel"
@@ -19,7 +20,7 @@ def test_funnel_data_totals(monkeypatch):
         "app_open": {"android": 10, "ios": 2, "unknown": 0},
         "web_visit_from_app": {"android": 5, "ios": 1, "unknown": 0},
         "payment_from_app": {"android": 2, "ios": 0, "unknown": 0}})
-    d = app._funnel_data(["2026-06-19"])
+    d = routes_admin_logs._funnel_data(["2026-06-19"])
     assert d["app_open"]["total"] == 12
     assert d["web_visit_from_app"]["total"] == 6
     assert d["payment_from_app"]["total"] == 2
@@ -33,7 +34,7 @@ def test_funnel_zero_web(monkeypatch):
         "app_open": {"android": 0, "ios": 0, "unknown": 0},
         "web_visit_from_app": {"android": 0, "ios": 0, "unknown": 0},
         "payment_from_app": {"android": 0, "ios": 0, "unknown": 0}})
-    d = app._funnel_data(["2026-06-19"])
+    d = routes_admin_logs._funnel_data(["2026-06-19"])
     assert d["conversion_rate"] == 0.0
 
 

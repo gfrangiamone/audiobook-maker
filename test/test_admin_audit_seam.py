@@ -54,7 +54,7 @@ def test_guard_and_policies_resolve_on_the_app_at_request_time(monkeypatch):
 
 
 def test_shared_state_is_the_same_object(monkeypatch):
-    assert ra.jobs is audiobook_app.jobs and ra._jobs_lock is audiobook_app._jobs_lock
+    assert ra._jobs() is audiobook_app.jobs and ra._jobs_lock is audiobook_app._jobs_lock
     import generation_engine
     assert ra.generation_engine is generation_engine
     assert audiobook_app._ACTIVE_JOB_STATUSES is ra._ACTIVE_JOB_STATUSES
