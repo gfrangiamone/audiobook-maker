@@ -3,7 +3,7 @@ generation_engine.py — Ottimizzazione LLM e generazione audio per Audiobook Ma
 
 Funzioni principali:
   - configure(): inietta i riferimenti globali condivisi (jobs, upload_dir, ecc.)
-  - _CancelledError, _SimpleChapter, _SimpleBookInfo: classi helper
+  - _CancelledError: eccezione di cancellazione (il modello del libro e' book_model)
   - parse_txt, parse_abm: parser file di testo/progetto
   - _init_llm, _llm_available: inizializzazione client LLM
   - _call_llm, _optimize_chapter_text: ottimizzazione LLM
@@ -24,6 +24,7 @@ import json
 import os
 from i18n import norm_lang as _norm_lang, pick as _i18n_pick
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
+from book_model import BookInfo, Chapter
 import jsonl_audit as _jsonl_audit
 import llm_client
 import retry_util as _retry
@@ -688,27 +689,7 @@ def _job_dir_gone(job, work_dir):
         return False
 
 
-class _SimpleChapter:
-    """Lightweight chapter object compatible with BookInfo.chapters interface."""
-    def __init__(self, index, title, text):
-        self.index = index
-        self.title = title
-        self.text = text
-        self.word_count = len(text.split())
-        self.char_count = len(text)
-
-
-class _SimpleBookInfo:
-    """Lightweight book info for TXT files, duck-typed to match BookInfo."""
-    def __init__(self, title, author, text):
-        self.title = title
-        self.author = author
-        self.language = ""
-        ch = _SimpleChapter(1, title, text)
-        self.chapters = [ch]
-        self.total_words = ch.word_count
-        self.total_chars = ch.char_count
-        self.estimated_duration_minutes = self.total_words / 150
+# F1a: il modello del libro e' book_model.Chapter/BookInfo anche per TXT e ABM.
 
 
 # ---------------------------------------------------------------------------
@@ -716,7 +697,7 @@ class _SimpleBookInfo:
 # ---------------------------------------------------------------------------
 
 def parse_txt(file_path):
-    """Parse a plain text file into a _SimpleBookInfo."""
+    """Parse a plain text file into a one-chapter BookInfo."""
     path = Path(file_path)
     # Try UTF-8 first, fall back to latin-1
     for enc in ("utf-8", "utf-8-sig", "latin-1"):
@@ -743,7 +724,7 @@ def parse_txt(file_path):
 
     # Title = filename without extension
     title = path.stem.replace("_", " ").replace("-", " ").strip() or "Text"
-    return _SimpleBookInfo(title=title, author="", text=text)
+    return BookInfo.from_text(title, "", text)
 
 
 def parse_abm(file_path):
@@ -813,20 +794,12 @@ def parse_abm(file_path):
             if not ch_text:
                 continue
 
-            chapters.append(_SimpleChapter(index=ch_index, title=ch_title, text=ch_text))
+            chapters.append(Chapter(index=ch_index, title=ch_title, text=ch_text))
 
         if not chapters:
             raise ValueError("Invalid .abm file: no readable chapter content found")
 
-        # Build BookInfo-compatible object
-        info = _SimpleBookInfo.__new__(_SimpleBookInfo)
-        info.title = title
-        info.author = author
-        info.language = language
-        info.chapters = chapters
-        info.total_words = sum(ch.word_count for ch in chapters)
-        info.total_chars = sum(ch.char_count for ch in chapters)
-        info.estimated_duration_minutes = info.total_words / 150
+        info = BookInfo(title=title, author=author, language=language, chapters=chapters).recompute_totals()
 
         # Extract cover if present
         cover_info = None
@@ -3369,10 +3342,7 @@ def run_optimization(job_id, selected_chapters=None):
                 except Exception:
                     pass
 
-        # Recalculate BookInfo totals
-        info.total_words = sum(ch.word_count for ch in info.chapters)
-        info.total_chars = sum(ch.char_count for ch in info.chapters)
-        info.estimated_duration_minutes = info.total_words / 150
+        info.recompute_totals()
 
         total_elapsed = time.time() - start_time
         job["opt_progress_current"] = total_chapters
@@ -3453,9 +3423,7 @@ def run_optimization(job_id, selected_chapters=None):
                 if filtered:
                     info = copy(info)
                     info.chapters = filtered
-                    info.total_words = sum(ch.word_count for ch in filtered)
-                    info.total_chars = sum(ch.char_count for ch in filtered)
-                    info.estimated_duration_minutes = info.total_words / 150
+                    info.recompute_totals()
 
             # Persisti la stima Gemini per l'audit (popola i campi *_est del
             # JSONL altrimenti sempre 0 in questo path: il flusso auto-gen

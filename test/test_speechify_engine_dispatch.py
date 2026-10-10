@@ -28,13 +28,14 @@ def _make_speechify_job(ge, tmp_path, monkeypatch, text="Hello world."):
     """Harness minimale per run_generation su voce Speechify, ricalcato sul
     pattern usato da test_pending_failed_on_refund.py / test_generation_engine_accumulation.py:
     registra un job in ge._jobs, punta ge._upload_dir su una dir isolata, e
-    costruisce un _SimpleBookInfo a 1 capitolo (real _plan_chunks path).
+    costruisce un BookInfo a 1 capitolo (real _plan_chunks path).
     """
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir(exist_ok=True)
     monkeypatch.setattr(ge, "_upload_dir", upload_dir)
 
-    info = ge._SimpleBookInfo("Test Book", "Test Author", text)
+    from book_model import BookInfo
+    info = BookInfo.from_text("Test Book", "Test Author", text)
 
     job_id = "spx_smoke_1"
     job = {

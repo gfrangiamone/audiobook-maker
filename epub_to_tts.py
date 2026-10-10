@@ -20,11 +20,15 @@ import os
 import re
 import sys
 import unicodedata
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from text_reflow import dehyphenate_breaks, reflow_book, strip_soft_hyphens
+from book_model import (BookInfo, Chapter, WORDS_PER_MINUTE, NON_CONTENT_FILENAMES_EXACT,
+                        NON_CONTENT_FILENAMES_SUBSTR, NON_CONTENT_TITLE_PHRASES, NON_CONTENT_TITLE_EXACT,
+                        title_is_non_content as _title_is_non_content,
+                        is_backnote_toc_title as _is_backnote_toc_title,
+                        synthetic_section_title as _synthetic_section_title, print_book_info)
 
 try:
     import ebooklib
@@ -119,132 +123,7 @@ EPUB_TYPES_TO_SKIP = {
 
 # ── Nomi file tipici di sezioni non-audio ──
 # Match ESATTO sullo stem (dopo strip di - e _) — per nomi brevi/ambigui
-NON_CONTENT_FILENAMES_EXACT = {
-    "toc", "nav", "contents", "cover", "colophon",
-    "copyright", "titlepage", "halftitle", "frontmatter", "backmatter",
-    "landmarks", "dedication", "epigraph", "notes", "endnotes",
-    "footnotes", "biblio", "bibliography", "references", "glossary",
-    # NON includiamo "index" — troppo ambiguo, in molti EPUB è il file principale
-}
-# Match SUBSTRING sullo stem — solo per termini lunghi e inequivocabili
-NON_CONTENT_FILENAMES_SUBSTR = {
-    "bibliography", "footnotes", "endnotes", "glossary",
-    "colophon", "frontmatter", "backmatter", "tableofcontents",
-}
-
-# Frasi che identificano sezioni di apparato critico (non narrative). Lista
-# canonica condivisa da is_content_chapter e _is_title_content. pdf_to_tts
-# ha ancora una propria NON_CONTENT_TITLES (divergente: vedi
-# md_files/RAZIONALIZZAZIONE_CODICE.md §5.1). Il match e' per PAROLA INTERA (vedi
-# _title_is_non_content): un token corto come "note"/"toc"/"cover"/"index"
-# NON deve scartare titoli legittimi ("Notevole...", "Autocrazia",
-# "Discovering...", "Indexed...").
-NON_CONTENT_TITLE_PHRASES = [
-    # ── Indice / TOC ──
-    "indice", "indice generale", "indice dei contenuti", "indice analitico",
-    "sommario", "table of contents", "contents", "toc",
-    "table des matières", "sommaire", "índice", "índice general",
-    "inhaltsverzeichnis", "inhalt",
-    # ── Copyright / Colophon ──
-    "copyright", "colophon", "note legali", "informazioni legali",
-    "avviso legale", "legal notice", "all rights reserved",
-    "copyright notice", "mentions légales", "aviso legal",
-    "impressum",
-    # ── Copertina / Frontespizio ──
-    "frontespizio", "title page", "cover", "copertina",
-    "half title", "halftitle", "page de titre",
-    # ── Quarta di copertina / sinossi ──
-    "quarta di copertina", "risvolto di copertina", "risvolto",
-    "back cover", "quatrième de couverture", "quatrieme de couverture",
-    "klappentext", "contraportada", "plot summary",
-    # ── Dedica / Epigrafe ──
-    "dedica", "dedication", "dédicace", "dedicatoria",
-    "epigrafe", "epigraph", "épigraphe",
-    # ── Bibliografia / Riferimenti ──
-    "bibliografia", "bibliography", "bibliographie", "bibliografía",
-    "riferimenti bibliografici", "riferimenti", "references",
-    "opere citate", "works cited", "fonti", "sources",
-    "letture consigliate", "further reading", "suggested reading",
-    "per approfondire", "lectures complémentaires",
-    # ── Note ──
-    "note", "notes", "note al testo", "note a piè di pagina",
-    "note finali", "endnotes", "footnotes", "anmerkungen",
-    "note dell'autore", "note del traduttore", "note del curatore",
-    "note bibliografiche", "note critiche",
-    # ── Glossario ──
-    "glossario", "glossary", "glossaire", "glosario", "glossar",
-    # ── Indice analitico ──
-    "indice analitico", "indice dei nomi", "indice dei luoghi",
-    "indice delle opere", "indice tematico",
-    "index", "name index", "subject index", "word index",
-    # ── Appendice (se puro riferimento) ──
-    "appendice", "appendix", "annexe", "apéndice", "anhang",
-    # ── Informazioni autore ──
-    "about the author", "sull'autore", "l'autore", "l'autrice",
-    "biography", "biografia", "biographie",
-    "about the translator", "nota del traduttore",
-    "dello stesso autore", "also by", "du même auteur",
-    "altre opere", "other books",
-    # ── Ringraziamenti ──
-    "ringraziamenti", "acknowledgements", "acknowledgments",
-    "remerciements", "agradecimientos", "danksagung",
-    # ── Errata / Crediti ──
-    "errata", "errata corrige", "credits", "crediti",
-    "photo credits", "image credits", "illustration credits",
-    # ── Indice riferimenti (testi religiosi/critici) ──
-    "indice dei riferimenti",
-]
-
-
-# Caratteri di freccia "indietro" usati dai back-link a nota (return-to-text).
-# Un titolo TOC che è SOLO una di queste frecce seguita da cifre è un rimando
-# di apparato (es. "←7"), non un capitolo.
-_BACKNOTE_ARROWS = "←↩⇐⬅⟵‹◀↺⎌"
-_BACKNOTE_TITLE_RE = re.compile(
-    rf"^\s*(?:<[-‐-―]|[{_BACKNOTE_ARROWS}])\s*\d*\s*$"
-)
-
-
-def _is_backnote_toc_title(title) -> bool:
-    """True se il titolo TOC è un back-link a nota (freccia indietro + numero).
-
-    Alcuni EPUB esportati da Word listano nel TOC i rimandi di ritorno dalle
-    note ("←1", "←2", … o la forma ASCII "<-1"): non sono capitoli ma apparato.
-    Vanno ignorati, altrimenti mis-ancorano lo spine e mistitolano i capitoli.
-    Match volutamente stretto: un titolo reale non inizia mai con una freccia
-    indietro isolata.
-    """
-    if not title:
-        return False
-    return bool(_BACKNOTE_TITLE_RE.match(str(title)))
-
-
-# Titoli di apparato che valgono SOLO come titolo intero. "Trama" e
-# "Sinossi" intitolano la quarta di copertina, ma sono anche parole comuni:
-# "La trama del destino" e "Sinossi dei Vangeli" sono capitoli veri. Il match
-# per parola intera li scarterebbe tutti, quello esatto prende solo la
-# sezione di apparato.
-NON_CONTENT_TITLE_EXACT = {
-    "trama", "sinossi", "synopsis", "sinopsis", "resumen", "blurb",
-}
-
-
-def _title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
-    """True se il titolo corrisponde a una frase di apparato critico.
-
-    Match per PAROLA INTERA usando confini \\w Unicode (i caratteri accentati
-    sono word-char in Python 3): "note" matcha "Note" / "Note al testo" ma NON
-    "Notevole"; "toc" non matcha "Autocrazia"; "cover" non matcha "Discovering".
-    Per frasi multi-parola i confini si applicano agli estremi della frase.
-    """
-    tl = (title or "").lower()
-    # I titoli ambigui valgono solo per intero, non come parola.
-    if tl.strip().strip(".:;–—- ") in NON_CONTENT_TITLE_EXACT:
-        return True
-    for skip in phrases:
-        if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
-            return True
-    return False
+# F1a: liste di apparato, Chapter/BookInfo e print_book_info in book_model.
 
 # Pattern di testo da rimuovere
 # ── Pattern che causano SKIP dell'intera riga (righe che sono solo rumore) ──
@@ -365,61 +244,7 @@ SECTION_PAUSE = "\n\n"         # Pausa media tra sezioni
 # DATA STRUCTURES
 # ═══════════════════════════════════════════════════════════════════
 
-@dataclass
-class Chapter:
-    """Un capitolo estratto dall'EPUB."""
-    index: int
-    title: str
-    text: str
-    word_count: int = 0
-    char_count: int = 0
-    source_file: str = ""
-    # True quando `title` non e' un titolo reale del libro ma un placeholder
-    # generato dal parser (spine item senza TOC/heading, tipico front-matter:
-    # disclaimer, epigrafi, dedica). Consumato da _plan_chunks per NON far
-    # leggere al TTS un'etichetta artificiale come se fosse un titolo.
-    synthetic_title: bool = False
-
-    def __post_init__(self):
-        self.word_count = len(self.text.split())
-        self.char_count = len(self.text)
-
-
-# Etichetta localizzata per i placeholder di sezione senza titolo. La lingua e'
-# quella del LIBRO (info.language), non della UI. Fallback "Section" (inglese)
-# per lingue non mappate: mai italiano hardcoded su libri di altra lingua.
-_SECTION_LABELS = {
-    "it": "Sezione", "en": "Section", "fr": "Section", "es": "Sección",
-    "de": "Abschnitt", "pt": "Seção", "nl": "Sectie", "ru": "Раздел",
-    "zh": "章节", "ja": "セクション", "hi": "अनुभाग", "ar": "قسم",
-}
-
-
-def _synthetic_section_title(n, language=""):
-    """Placeholder localizzato per una sezione senza titolo ("Section N").
-
-    Usato quando uno spine item non ha voce TOC ne' heading derivabile (tipico
-    front-matter). Il Chapter relativo va marcato synthetic_title=True.
-    """
-    code = (language or "").strip().lower().replace("_", "-").split("-")[0]
-    label = _SECTION_LABELS.get(code, "Section")
-    return f"{label} {n}"
-
-
-@dataclass
-class BookInfo:
-    """Metadati del libro."""
-    title: str = "Sconosciuto"
-    author: str = "Sconosciuto"
-    language: str = ""
-    publisher: str = ""
-    description: str = ""
-    date: str = ""  # Data di pubblicazione (YYYY, YYYY-MM, YYYY-MM-DD da dc:date)
-    chapters: list[Chapter] = field(default_factory=list)
-    total_words: int = 0
-    total_chars: int = 0
-    estimated_duration_minutes: float = 0.0
-
+# Chapter, BookInfo e _synthetic_section_title vivono in book_model (F1a).
 
 # ═══════════════════════════════════════════════════════════════════
 # HTML → TEXT EXTRACTION
@@ -1685,10 +1510,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             _ch.word_count = len(_txt.split())
             _ch.char_count = len(_txt)
 
-    # Totali
-    info.total_words = sum(c.word_count for c in info.chapters)
-    info.total_chars = sum(c.char_count for c in info.chapters)
-    info.estimated_duration_minutes = info.total_words / 150  # ~150 parole/min
+    info.recompute_totals()
 
     return info
 
@@ -2404,7 +2226,7 @@ def write_chapter_files(info: BookInfo, output_dir: str):
             "file": filename,
             "words": chapter.word_count,
             "chars": chapter.char_count,
-            "estimated_minutes": round(chapter.word_count / 150, 1),
+            "estimated_minutes": round(chapter.word_count / WORDS_PER_MINUTE, 1),
         })
 
     # Scrivi manifesto JSON
@@ -2478,31 +2300,6 @@ def write_batch_script(info: BookInfo, output_dir: str, manifest: dict):
 
         f.write('Write-Host ""\n')
         f.write('Write-Host "Audiolibro generato in $AudioDir"\n')
-
-
-def print_book_info(info: BookInfo):
-    """Stampa un riepilogo del libro estratto."""
-    print(f"\n{'═'*60}")
-    print(f"  {info.title}")
-    print(f"  di {info.author}")
-    print(f"{'═'*60}")
-
-    if info.language:
-        print(f"  Lingua:     {info.language}")
-    if info.publisher:
-        print(f"  Editore:    {info.publisher}")
-
-    print(f"  Capitoli:   {len(info.chapters)}")
-    print(f"  Parole:     {info.total_words:,}")
-    print(f"  Caratteri:  {info.total_chars:,}")
-    print(f"  Durata ~    {info.estimated_duration_minutes:.0f} minuti")
-    print(f"{'─'*60}")
-
-    for ch in info.chapters:
-        est = ch.word_count / 150
-        print(f"  {ch.index:3d}. {ch.title[:45]:<45s} {ch.word_count:>6,} parole  ~{est:.0f} min")
-
-    print(f"{'═'*60}\n")
 
 
 # ═══════════════════════════════════════════════════════════════════

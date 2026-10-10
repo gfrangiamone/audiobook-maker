@@ -60,10 +60,11 @@ from text_reflow import (
 # Strutture dati e funzioni di pulizia condivise con il parser EPUB
 # (stessa interfaccia BookInfo/Chapter). epub_to_tts e' una dipendenza
 # obbligatoria: nessun fallback locale (era una copia stantia).
+from book_model import (BookInfo, Chapter, NON_CONTENT_TITLE_PHRASES as NON_CONTENT_TITLES,
+                        title_is_non_content as _title_is_non_content, print_book_info)
 from epub_to_tts import (
-    BookInfo, Chapter, clean_text_for_tts, is_content_chapter,
-    _title_is_non_content,
-    is_chapter_marker_line as _is_chapter_marker_line,
+    clean_text_for_tts, is_content_chapter,
+    is_chapter_marker_line as _is_chapter_marker_line, write_chapter_files,
 )
 
 
@@ -105,46 +106,7 @@ CAPTION_PATTERNS = [
 _caption_re = re.compile("|".join(CAPTION_PATTERNS), re.IGNORECASE | re.MULTILINE)
 
 # Titoli di sezioni non-contenuto da escludere (stesso approccio di epub_to_tts)
-NON_CONTENT_TITLES = {
-    # Indice
-    "indice", "indice generale", "indice dei contenuti", "indice analitico",
-    "sommario", "table of contents", "contents", "toc",
-    "table des matières", "sommaire", "índice", "índice general",
-    "inhaltsverzeichnis", "inhalt", "目录",
-    # Copyright / Colophon
-    "copyright", "colophon", "note legali", "informazioni legali",
-    "legal notice", "mentions légales", "aviso legal", "impressum",
-    # Copertina
-    "frontespizio", "title page", "cover", "copertina",
-    "half title", "halftitle",
-    # Quarta di copertina / sinossi
-    "quarta di copertina", "risvolto di copertina", "risvolto",
-    "back cover", "quatrième de couverture", "quatrieme de couverture",
-    "klappentext", "contraportada", "plot summary",
-    # Bibliografia
-    "bibliografia", "bibliography", "bibliographie", "bibliografía",
-    "riferimenti bibliografici", "references", "riferimenti",
-    "works cited", "fonti", "sources", "letture consigliate",
-    "further reading", "suggested reading",
-    # Note
-    "note", "notes", "note al testo", "note a piè di pagina",
-    "note finali", "endnotes", "footnotes", "anmerkungen",
-    # Glossario
-    "glossario", "glossary", "glossaire", "glosario", "glossar",
-    # Indice analitico
-    "indice analitico", "indice dei nomi", "indice dei luoghi",
-    "index", "name index", "subject index",
-    # Informazioni autore
-    "about the author", "sull'autore", "l'autore", "l'autrice",
-    "biography", "biografia",
-    # Ringraziamenti (opzionale — li teniamo come non-contenuto)
-    "ringraziamenti", "acknowledgements", "acknowledgments",
-    "remerciements", "agradecimientos", "danksagung",
-    # Appendice
-    "appendice", "appendix", "annexe", "apéndice", "anhang",
-    # Errata / Crediti
-    "errata", "credits", "crediti",
-}
+# F1a: NON_CONTENT_TITLES e' la lista unica di book_model (unione con quella EPUB).
 
 # Pattern per numeri di pagina isolati (righe con solo un numero)
 PAGE_NUMBER_RE = re.compile(r"^\s*[-—–]?\s*\d{1,4}\s*[-—–]?\s*$")
@@ -587,7 +549,7 @@ def _is_non_content_section(title: str, text: str) -> bool:
     # Match per parola intera (vedi epub_to_tts._title_is_non_content): evita
     # falsi positivi su token corti ("note" in "notevole", "toc" in
     # "autocrazia"). NON_CONTENT_TITLES include "目录" (sommario cinese).
-    if _title_is_non_content(title, NON_CONTENT_TITLES):
+    if _title_is_non_content(title):
         return True
 
     # Euristica content-based
@@ -1170,10 +1132,7 @@ def parse_pdf(pdf_path: str) -> BookInfo:
                 source_file=os.path.basename(pdf_path),
             ))
 
-    # ── Totali ──
-    info.total_words = sum(c.word_count for c in info.chapters)
-    info.total_chars = sum(c.char_count for c in info.chapters)
-    info.estimated_duration_minutes = info.total_words / 150  # ~150 parole/min
+    info.recompute_totals()
 
     if not info.chapters:
         # Caso tipico: PDF fatto di sole immagini (scansione o foto convertite).
@@ -1216,38 +1175,15 @@ Esempi:
     print(f"Analisi PDF: {args.pdf}...")
     info = parse_pdf(args.pdf)
 
-    # Stampa info
-    print(f"\n{'═' * 60}")
-    print(f"  {info.title}")
-    if info.author:
-        print(f"  di {info.author}")
-    print(f"{'═' * 60}")
-    print(f"  Capitoli:   {len(info.chapters)}")
-    print(f"  Parole:     {info.total_words:,}")
-    print(f"  Caratteri:  {info.total_chars:,}")
-    print(f"  Durata ~    {info.estimated_duration_minutes:.0f} minuti")
-    print(f"{'─' * 60}")
-    for ch in info.chapters:
-        est = ch.word_count / 150
-        print(f"  {ch.index:3d}. {ch.title[:45]:<45s} {ch.word_count:>6,} parole  ~{est:.0f} min")
-    print(f"{'═' * 60}\n")
+    print_book_info(info)
 
     if args.info:
         return
 
-    # Output
+    # Output: stesso formato (file numerati + manifest) della CLI EPUB.
     if args.output:
-        out_dir = Path(args.output)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for ch in info.chapters:
-            safe_title = re.sub(r"[^\w\s-]", "", ch.title)
-            safe_title = re.sub(r"\s+", "_", safe_title.strip())[:50]
-            filename = f"{ch.index:03d}_{safe_title}.txt"
-            filepath = out_dir / filename
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"{ch.title}\n\n{ch.text}\n")
-            print(f"  ✓ {filename}")
-        print(f"\n✓ {len(info.chapters)} capitoli salvati in {out_dir}/")
+        write_chapter_files(info, args.output)
+        print(f"\n\u2713 {len(info.chapters)} capitoli salvati in {args.output}/")
     else:
         print("Usa -o CARTELLA per salvare i capitoli come file .txt")
 

@@ -159,6 +159,7 @@ import routes_community
 import routes_mobile
 import routes_account
 import routes_pages
+from book_model import Chapter, WORDS_PER_MINUTE
 import cleanup
 import tts_engines
 import jsonl_audit
@@ -238,7 +239,7 @@ def _estimate_chapter_seconds(ch, language):
     except Exception:
         pass
     # Fallback: 150 WPM (storica)
-    return (getattr(ch, "word_count", 0) or 0) * 60.0 / 150.0
+    return (getattr(ch, "word_count", 0) or 0) * 60.0 / float(WORDS_PER_MINUTE)
 
 
 # Payment / voucher state and operations live in payment.py.
@@ -5119,8 +5120,10 @@ def api_generate():
         # Create a lightweight copy of info with filtered chapters
         info = copy(info)
         info.chapters = filtered
+        # Solo parole e durata: total_chars resta quello del libro INTERO,
+        # lo legge _free_quota_book_chars per il cap gratuito.
         info.total_words = sum(ch.word_count for ch in filtered)
-        info.estimated_duration_minutes = info.total_words / 150
+        info.estimated_duration_minutes = info.total_words / WORDS_PER_MINUTE
 
     # Hard cap on TTS-bound text size for THIS run: applied solo alla selezione.
     # 1 char ~= 50-100 byte di MP3, quindi il limite mantiene l'output sotto
@@ -8158,7 +8161,6 @@ def api_translate_adopt(job_id):
     if job.get("status") != "translated" or not job.get("translated_chapters"):
         return jsonify({"error": "No completed translation to adopt"}), 400
     info = job.get("info")
-    from epub_to_tts import Chapter
     new_chapters = []
     for i, ch in enumerate(job["translated_chapters"], 1):
         text = ch.get("text", "")
