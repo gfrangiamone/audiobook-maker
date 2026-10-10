@@ -72,7 +72,6 @@
   "guide_content.py": 4
  },
  "retry_loop_by_hand": {
-  "audiobook_app.py": 1,
   "community_moderator.py": 1,
   "gemini_tts.py": 1,
   "generation_engine.py": 1,

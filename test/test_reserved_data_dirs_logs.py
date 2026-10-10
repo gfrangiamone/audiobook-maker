@@ -6,6 +6,7 @@ sweep delle cartelle orfane la scambierebbe per una job dir abbandonata e la
 cancellerebbe da disco e da cold, come successo alle voci il 12/09/2026.
 """
 import importlib
+import cleanup
 
 import pytest
 
@@ -25,20 +26,20 @@ def test_data_logs_non_e_una_job_dir(monkeypatch, tmp_path):
     app = _app(monkeypatch, tmp_path, tmp_path / "logs")
     (tmp_path / "logs").mkdir()
     (tmp_path / "jobABC").mkdir()
-    assert app._is_job_dir(tmp_path / "logs") is False
-    assert app._is_job_dir(tmp_path / "jobABC") is True
+    assert cleanup._is_job_dir(tmp_path / "logs") is False
+    assert cleanup._is_job_dir(tmp_path / "jobABC") is True
 
 
 def test_logs_resta_riservata_anche_senza_env(monkeypatch, tmp_path):
     app = _app(monkeypatch, tmp_path)
     (tmp_path / "logs").mkdir()
-    assert app._is_job_dir(tmp_path / "logs") is False
+    assert cleanup._is_job_dir(tmp_path / "logs") is False
 
 
 def test_log_dir_con_nome_qualsiasi_nel_data_dir_e_riservata(monkeypatch, tmp_path):
     app = _app(monkeypatch, tmp_path, tmp_path / "business_log")
     (tmp_path / "business_log").mkdir()
-    assert app._is_job_dir(tmp_path / "business_log") is False
+    assert cleanup._is_job_dir(tmp_path / "business_log") is False
 
 
 def test_il_cold_delete_rifiuta_il_prefisso_dei_log(monkeypatch, tmp_path):
@@ -47,8 +48,8 @@ def test_il_cold_delete_rifiuta_il_prefisso_dei_log(monkeypatch, tmp_path):
     cancellati = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
-    app._delete_cold_for_job("logs")
-    app._delete_cold_for_job("business_log")
+    cleanup._delete_cold_for_job("logs")
+    cleanup._delete_cold_for_job("business_log")
     assert cancellati == []
 
 
@@ -60,7 +61,7 @@ def test_sweep_orfane_non_tocca_i_log(monkeypatch, tmp_path):
     logs.mkdir()
     (logs / "activity_2026-09.log").write_text("x", encoding="utf-8")
     (logs / "activity.db").write_bytes(b"x")
-    job_dirs = [e.name for e in tmp_path.iterdir() if app._is_job_dir(e)]
+    job_dirs = [e.name for e in tmp_path.iterdir() if cleanup._is_job_dir(e)]
     assert "logs" not in job_dirs
 
 

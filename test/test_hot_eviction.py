@@ -1,6 +1,7 @@
 """La finestra calda evacua i file di output locali se: marker presente,
 età oltre la finestra, e oggetto confermato su cold storage."""
 import importlib
+import cleanup
 import pytest
 
 
@@ -29,7 +30,7 @@ def test_evicts_local_after_hot_window(aa, monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "object_size", lambda k: audio.stat().st_size)
     audiobook_app.jobs["job1"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert not audio.exists()
     assert (out / ".cloud_uploaded").exists()
 
@@ -47,7 +48,7 @@ def test_keeps_local_within_hot_window(aa, monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "object_size", lambda k: audio.stat().st_size)
     audiobook_app.jobs["job2"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert audio.exists()
 
 
@@ -67,7 +68,7 @@ def test_no_evict_if_object_not_confirmed(aa, monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: None)
     audiobook_app.jobs["job3"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert audio.exists()
 
 
@@ -90,7 +91,7 @@ def test_uploads_missing_cold_then_evicts(aa, monkeypatch, tmp_path):
                         lambda k: audio.stat().st_size if k in uploaded else None)
     audiobook_app.jobs["job5"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert uploaded, "doveva caricare la copia mancante prima dell'eviction"
     assert not audio.exists()  # rimosso solo dopo copia cold confermata
 
@@ -133,7 +134,7 @@ def test_no_overwrite_when_cold_larger_than_local(aa, monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "object_size", lambda k: 15394949)
     audiobook_app.jobs["jobB3"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert not uploaded, "il cold piu' grande NON va sovrascritto col locale"
     assert audio.exists(), "il locale NON va evictato su mismatch sospetto"
 
@@ -177,7 +178,7 @@ def test_promotes_regenerated_local_over_larger_cold(aa, monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "object_size", lambda k: cold["size"])
     audiobook_app.jobs["jobREGEN"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert uploaded, "il locale rigenerato doveva essere ri-caricato"
     assert not snap.exists(), "e poi evictato"
 
@@ -203,7 +204,7 @@ def test_no_promote_when_regenerated_local_is_corrupt(aa, monkeypatch, tmp_path)
     monkeypatch.setattr(storage_backend, "object_size", lambda k: 999999)
     audiobook_app.jobs["jobCORR"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert not uploaded
     assert snap.exists()
 
@@ -229,7 +230,7 @@ def test_no_promote_when_local_is_older_than_offload(aa, monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "object_size", lambda k: 999999)
     audiobook_app.jobs["jobOLD"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert not uploaded
     assert snap.exists()
 
@@ -250,9 +251,9 @@ def test_mismatch_logged_once_across_sweeps(aa, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(storage_backend, "object_size", lambda k: 15394949)
     audiobook_app.jobs["jobLOG"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
-    audiobook_app._evict_hot_local()
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
+    cleanup._evict_hot_local()
+    cleanup._evict_hot_local()
     lines = [l for l in capsys.readouterr().out.splitlines()
              if "MISMATCH SOSPETTO" in l]
     assert len(lines) == 1, lines
@@ -278,7 +279,7 @@ def test_no_evict_for_error_job(aa, monkeypatch, tmp_path):
     audiobook_app.jobs["jobERR"] = {"voice": "gemini:flash31:Puck",
                                     "status": "error"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert audio.exists()
     assert not uploaded
 
@@ -309,7 +310,7 @@ def test_no_evict_with_forensic_marker(aa, monkeypatch, tmp_path):
                         lambda k: audio.stat().st_size)
     # job non in memoria (post-restart): protegge solo il marker su disco
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert audio.exists()
     assert not uploaded
 
@@ -336,6 +337,6 @@ def test_reuploads_when_cold_size_mismatch(aa, monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "object_size", lambda k: cold["size"])
     audiobook_app.jobs["job7"] = {"voice": "it-IT-IsabellaNeural"}
 
-    audiobook_app._evict_hot_local()
+    cleanup._evict_hot_local()
     assert uploaded, "il cold troncato doveva essere ri-caricato dal locale"
     assert not audio.exists()  # cancellato solo dopo che le size combaciano

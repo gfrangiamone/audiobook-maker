@@ -9,6 +9,7 @@ distrutti, con i record ancora in stato `ready` e i file spariti (404 sui
 `/api/voice_clone/<id>/demo/...`).
 """
 import importlib
+import cleanup
 import inspect
 import re
 
@@ -27,7 +28,7 @@ def test_la_cartella_delle_voci_non_e_una_job_dir(monkeypatch, tmp_path):
     (tmp_path / voice_clone.VOICES_DIRNAME).mkdir(exist_ok=True)
     (tmp_path / "jobABC").mkdir()
     (tmp_path / "_interno").mkdir()
-    per_nome = {p.name: app._is_job_dir(p) for p in tmp_path.iterdir() if p.is_dir()}
+    per_nome = {p.name: cleanup._is_job_dir(p) for p in tmp_path.iterdir() if p.is_dir()}
     assert per_nome == {voice_clone.VOICES_DIRNAME: False,
                         "jobABC": True, "_interno": False}
 
@@ -38,9 +39,9 @@ def test_il_cold_delete_rifiuta_il_prefisso_delle_voci(monkeypatch, tmp_path):
     cancellati = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
-    app._delete_cold_for_job(voice_clone.VOICES_DIRNAME)
+    cleanup._delete_cold_for_job(voice_clone.VOICES_DIRNAME)
     assert cancellati == []
-    app._delete_cold_for_job("jobABC")
+    cleanup._delete_cold_for_job("jobABC")
     assert cancellati == ["jobABC/"]
 
 
@@ -65,7 +66,7 @@ def test_il_prefisso_r2_delle_voci_e_quello_della_cartella():
 
 def _RISERVATE():
     import audiobook_app
-    return audiobook_app._RESERVED_DATA_DIRS
+    return cleanup._RESERVED_DATA_DIRS
 
 
 def test_anche_il_nome_storico_della_cartella_resta_protetto(monkeypatch, tmp_path):
@@ -73,11 +74,11 @@ def test_anche_il_nome_storico_della_cartella_resta_protetto(monkeypatch, tmp_pa
     import storage_backend
     app = _app(monkeypatch, tmp_path)
     (tmp_path / "voices").mkdir(exist_ok=True)
-    assert app._is_job_dir(tmp_path / "voices") is False
+    assert cleanup._is_job_dir(tmp_path / "voices") is False
     cancellati = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
-    app._delete_cold_for_job("voices")
+    cleanup._delete_cold_for_job("voices")
     assert cancellati == []
 
 
@@ -97,9 +98,9 @@ def test_il_prefisso_cold_degli_account_e_riservato(monkeypatch, tmp_path):
     app = _app(monkeypatch, tmp_path)
     assert "accounts" in _RISERVATE()
     (tmp_path / "accounts").mkdir(exist_ok=True)
-    assert app._is_job_dir(tmp_path / "accounts") is False
+    assert cleanup._is_job_dir(tmp_path / "accounts") is False
     cancellati = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
-    app._delete_cold_for_job("accounts")
+    cleanup._delete_cold_for_job("accounts")
     assert cancellati == []

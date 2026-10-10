@@ -4,6 +4,7 @@ import time
 import pytest
 
 import audiobook_app
+import cleanup
 
 import token_store
 import storage_backend
@@ -450,7 +451,7 @@ def test_cleanup_expired_shares(monkeypatch):
         "FRESH": {"kind": "upload", "s3_key": "shares/b/y.m4b",
                   "created_at": now, "ttl_sec": 7200},
     })
-    n = audiobook_app._cleanup_expired_shares(now)
+    n = cleanup._cleanup_expired_shares(now)
     assert n == 2
     assert deleted == ["shares/a/x.m4b"]  # solo l'upload scaduto cancella su R2
     assert set(token_store.share_tokens.keys()) == {"FRESH"}

@@ -9,6 +9,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import cleanup
 import token_store
 import db
 import generation_engine as ge
@@ -102,8 +103,8 @@ def test_in_memory_job_status_is_mirrored(env, job, expected):
 def test_cleanup_of_non_terminal_job_settles_row(env, monkeypatch, tmp_path):
     acct, fake_jobs, _ = env
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path / "up")
-    monkeypatch.setattr(audiobook_app, "_reconcile_unused_capture_for_job", lambda *a: None)
-    monkeypatch.setattr(audiobook_app, "_delete_cold_for_job", lambda *a: None)
+    monkeypatch.setattr(cleanup, "_reconcile_unused_capture_for_job", lambda *a: None)
+    monkeypatch.setattr(cleanup, "_delete_cold_for_job", lambda *a: None)
     monkeypatch.setattr(token_store, "has_active_download_tokens", lambda *a: False)
     monkeypatch.setattr(pending_jobs, "mark_failed", lambda jid: None)
     for jid, job in (("c1", {"status": "analyzed", "cancelled": True}),
@@ -112,7 +113,7 @@ def test_cleanup_of_non_terminal_job_settles_row(env, monkeypatch, tmp_path):
         accounts.record_job(acct["id"], jid, kind="generate",
                             status="done" if jid == "c3" else "running")
         fake_jobs[jid] = job
-        audiobook_app._cleanup_job(jid, "test")
+        cleanup._cleanup_job(jid, "test")
     assert (_status("c1"), _status("c2"), _status("c3")) == ("cancelled", "error", "done")
 
 

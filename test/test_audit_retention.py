@@ -2,6 +2,7 @@
 LLM, code tagliate e metriche di carico; purge_all() giornaliera nel
 campionatore del carico."""
 import inspect
+import cleanup
 from datetime import datetime, timezone
 
 import pytest
@@ -83,6 +84,6 @@ def test_judge_retention_is_off_without_data_dir(monkeypatch, tmp_path):
 
 def test_sampler_runs_purge_all_daily():
     import audiobook_app as app
-    src = inspect.getsource(app._load_metrics_sampler)
+    src = inspect.getsource(cleanup._load_metrics_sampler)
     assert "load_metrics.purge()" in src and "jsonl_audit.purge_all()" in src
     assert src.index("load_metrics.purge()") < src.index("jsonl_audit.purge_all()")

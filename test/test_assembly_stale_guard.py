@@ -18,6 +18,7 @@ import pytest
 
 import assembly_queue
 import audiobook_app
+import cleanup
 import generation_engine
 
 
@@ -111,19 +112,19 @@ def test_acquire_normale_marca_la_fase_e_release_la_chiude(jobs, tmp_path):
 
 def test_purge_sospeso_durante_assembly():
     now = time.time()
-    assert audiobook_app._assembly_purge_hold({"assembly_started_at": now - 300}, now)
+    assert cleanup._assembly_purge_hold({"assembly_started_at": now - 300}, now)
 
 
 def test_purge_riprende_oltre_la_finestra_di_grazia():
     now = time.time()
-    old = now - audiobook_app.CLEANUP_ASSEMBLY_GRACE_SEC - 1
-    assert not audiobook_app._assembly_purge_hold({"assembly_started_at": old}, now)
+    old = now - cleanup.CLEANUP_ASSEMBLY_GRACE_SEC - 1
+    assert not cleanup._assembly_purge_hold({"assembly_started_at": old}, now)
 
 
 def test_purge_normale_senza_flag():
-    assert not audiobook_app._assembly_purge_hold({}, time.time())
+    assert not cleanup._assembly_purge_hold({}, time.time())
 
 
 def test_flag_corrotto_non_rende_il_job_immortale():
-    assert not audiobook_app._assembly_purge_hold(
+    assert not cleanup._assembly_purge_hold(
         {"assembly_started_at": "boh"}, time.time())

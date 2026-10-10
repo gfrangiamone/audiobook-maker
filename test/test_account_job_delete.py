@@ -8,6 +8,7 @@ import pytest
 import account_page
 import accounts
 import audiobook_app
+import cleanup
 import token_store
 import db
 
@@ -90,8 +91,8 @@ def test_endpoint_does_not_touch_files_or_tokens(env, monkeypatch):
     acct, _ = env
     monkeypatch.setattr(audiobook_app, "_current_account", lambda: acct)
     called = []
-    monkeypatch.setattr(audiobook_app, "_cleanup_job", lambda *a, **k: called.append(a))
-    monkeypatch.setattr(audiobook_app, "_delete_cold_for_job", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(cleanup, "_cleanup_job", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(cleanup, "_delete_cold_for_job", lambda *a, **k: called.append(a))
     tokens = {"tok": {"job_id": "d"}}
     monkeypatch.setattr(token_store, "download_tokens", tokens)
     accounts.record_job(acct["id"], "d", kind="generate", status="done")

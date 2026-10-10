@@ -1,5 +1,6 @@
 """La rimozione definitiva di una job dir cancella anche il prefisso su cold."""
 import importlib
+import cleanup
 
 
 def test_delete_cold_prefix_called(monkeypatch, tmp_path):
@@ -9,7 +10,7 @@ def test_delete_cold_prefix_called(monkeypatch, tmp_path):
     deleted = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: deleted.append(p))
-    audiobook_app._delete_cold_for_job("jobZ")
+    cleanup._delete_cold_for_job("jobZ")
     assert deleted == ["jobZ/"]
 
 
@@ -20,7 +21,7 @@ def test_delete_cold_noop_when_disabled(monkeypatch, tmp_path):
     called = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: called.append(p))
-    audiobook_app._delete_cold_for_job("jobZ")
+    cleanup._delete_cold_for_job("jobZ")
     assert called == []
 
 
@@ -36,6 +37,6 @@ def test_no_cold_delete_when_forensic_protected(monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: deleted.append(p))
     # forza la protezione forense
-    monkeypatch.setattr(audiobook_app, "_forensic_marker_protects", lambda *a, **k: True)
-    audiobook_app._cleanup_job("jobF", "test")
+    monkeypatch.setattr(cleanup, "_forensic_marker_protects", lambda *a, **k: True)
+    cleanup._cleanup_job("jobF", "test")
     assert deleted == []   # nessun delete cold sotto hold forense

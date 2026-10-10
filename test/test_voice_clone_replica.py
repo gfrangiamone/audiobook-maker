@@ -303,7 +303,7 @@ def test_sync_senza_r2_non_fa_nulla(tmp_path, monkeypatch):
 
 
 def test_il_supervisore_allinea_r2_all_avvio_e_dopo_ogni_sweep():
-    src = open(os.path.join(os.path.dirname(__file__), "..", "audiobook_app.py"), encoding="utf-8").read()
+    src = open(os.path.join(os.path.dirname(__file__), "..", "cleanup.py"), encoding="utf-8").read()   # E3: in cleanup
     inizio = src.index("def _voice_clone_sweep_supervisor():")
     corpo = src[inizio:src.index("\ndef ", inizio + 10)]
     assert corpo.count("voice_clone.sync_r2()") == 1

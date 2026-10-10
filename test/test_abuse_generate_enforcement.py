@@ -6,6 +6,7 @@ import pytest
 
 import abuse_watch as aw
 import audiobook_app
+import cleanup
 import free_tts_quota as ftq
 import generation_engine
 import payment
@@ -328,14 +329,14 @@ def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path,
     logica inline. Tutto cio' che e' fuori dal ramo abuso e' no-op: il target
     e' l'instradamento, non l'intero giro di cleanup."""
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path)
-    for fn in ("_cleanup_expired_shares", "_log_memory_stats",
-               "_try_send_admin_digest", "_malloc_trim", "_reconcile_cold_offload",
-               "_evict_hot_local"):
-        monkeypatch.setattr(audiobook_app, fn, lambda *a, **k: None)
+    for fn in ("_cleanup_expired_shares", "_log_memory_stats", "_malloc_trim",
+               "_reconcile_cold_offload", "_evict_hot_local"):
+        monkeypatch.setattr(cleanup, fn, lambda *a, **k: None)           # E3: vivono in cleanup
+    monkeypatch.setattr(audiobook_app, "_try_send_admin_digest", lambda *a, **k: None)
     import token_store
     monkeypatch.setattr(token_store, "merge_tokens_from_disk", lambda *a, **k: None)
     removed = []
-    monkeypatch.setattr(audiobook_app, "_cleanup_job",
+    monkeypatch.setattr(cleanup, "_cleanup_job",
                         lambda jid, reason="": removed.append((jid, reason)))
 
     calls = []
@@ -365,7 +366,7 @@ def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path,
     monkeypatch.setattr(audiobook_app.time, "sleep", _sleep)
 
     with pytest.raises(SystemExit):
-        audiobook_app._cleanup_loop()
+        cleanup._cleanup_loop()
 
     assert {t for t, _tok in calls} == {"held", "expired"}     # il ramo e' passato dalla decisione pura
     assert ("expired", False) in calls

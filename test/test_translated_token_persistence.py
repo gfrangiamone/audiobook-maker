@@ -17,6 +17,7 @@ import pathlib
 import time
 
 import audiobook_app
+import cleanup
 import routes_dl
 
 import token_store
@@ -92,7 +93,7 @@ def test_run_translation_marks_generation_complete_before_offload():
 
 def test_orphan_cleanup_treats_translated_path_as_referenced():
     """La output_<epoch> di una traduzione non deve risultare orfana."""
-    src = pathlib.Path("audiobook_app.py").read_text(encoding="utf-8")
+    src = pathlib.Path("cleanup.py").read_text(encoding="utf-8")
     i = src.index('for key in ("output_zip", "output_file", "output_m4b"')
     block = src[i:i + 400]
     for key in ("translated_path", "optimized_abm_path", "output_m4b_fallback_zip"):
@@ -102,7 +103,7 @@ def test_orphan_cleanup_treats_translated_path_as_referenced():
 def test_cleanup_loop_has_translated_retention_branch():
     """Un job in stato "translated" senza ramo dedicato non lascia mai la RAM:
     i capitoli tradotti restano in `jobs` a tempo indeterminato."""
-    src = pathlib.Path("audiobook_app.py").read_text(encoding="utf-8")
+    src = pathlib.Path("cleanup.py").read_text(encoding="utf-8")
     i = src.index("def _cleanup_loop(")
     body = src[i:i + 12000]
     assert 'if status == "translated":' in body, "ramo translated assente dal cleanup loop"

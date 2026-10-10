@@ -8,6 +8,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import cleanup
 import db
 import email_service
 
@@ -32,7 +33,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(audiobook_app, "BASE_URL", "https://abm.test")
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path)
     monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
-    monkeypatch.setattr(audiobook_app, "_write_email_pending_marker", lambda p: None)
+    monkeypatch.setattr(cleanup, "_write_email_pending_marker", lambda p: None)
     monkeypatch.setattr(audiobook_app.pending_jobs, "register", lambda *a, **k: None)
     monkeypatch.setattr(email_service, "send_account_code",
                         lambda email, lang, **kw: env.codes.append((email, kw)) or True)

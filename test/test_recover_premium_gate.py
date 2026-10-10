@@ -27,6 +27,7 @@ import free_quota
 import generation_engine
 import pending_jobs
 import audiobook_app
+import cleanup
 from epub_to_tts import BookInfo, Chapter
 
 PREMIUM = "gemini:flash31:Achernar"
@@ -222,13 +223,13 @@ def test_premium_paid_but_not_runnable_falls_back_to_refund_policy(tmp_path, mon
 
 def test_cleanup_stale_analyzed_closes_descriptor(tmp_path, monkeypatch):
     _fresh(tmp_path, monkeypatch)
-    monkeypatch.setattr(audiobook_app, "_reconcile_unused_capture_for_job",
+    monkeypatch.setattr(cleanup, "_reconcile_unused_capture_for_job",
                         lambda *a, **k: None)
-    monkeypatch.setattr(audiobook_app, "_delete_cold_for_job", lambda *a, **k: None)
+    monkeypatch.setattr(cleanup, "_delete_cold_for_job", lambda *a, **k: None)
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path / "data")
     pending_jobs.register("Jst", "generate", {"voice": PREMIUM, "notify_email": "a@x.it"})
     audiobook_app.jobs["Jst"] = {"status": "analyzed", "voice": PREMIUM}
-    audiobook_app._cleanup_job("Jst", "stale analyzed")
+    cleanup._cleanup_job("Jst", "stale analyzed")
     assert "Jst" not in audiobook_app.jobs
     assert pending_jobs.orphans() == []
 
@@ -239,7 +240,7 @@ def test_cleanup_stale_analyzed_closes_descriptor(tmp_path, monkeypatch):
 def email_client(tmp_path, monkeypatch):
     _fresh(tmp_path, monkeypatch)
     monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
-    monkeypatch.setattr(audiobook_app, "_write_email_pending_marker", lambda *a, **k: None)
+    monkeypatch.setattr(cleanup, "_write_email_pending_marker", lambda *a, **k: None)
     monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path / "data")
     yield audiobook_app.app.test_client()
     audiobook_app.jobs.pop("Jre", None)
