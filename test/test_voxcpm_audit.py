@@ -11,6 +11,7 @@ import pytest
 import generation_engine
 import gemini_cost_audit
 import audiobook_app
+import routes_admin_audit
 
 VOCE = "voxcpm:v2:it-IT/Stefano"
 
@@ -264,7 +265,7 @@ def test_riga_live_di_un_job_voxcpm_in_corso_usa_il_tariffario_voxcpm(monkeypatc
     }
     monkeypatch.setitem(audiobook_app.jobs, jid, job)
     try:
-        rows = audiobook_app._synth_running_gemini_audit_records()
+        rows = routes_admin_audit._synth_running_gemini_audit_records()
         row = next(r for r in rows if r.get("job_id") == jid)
         assert row["model_key"] == "v2"
         assert row["outcome"] == "running"

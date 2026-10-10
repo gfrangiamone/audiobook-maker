@@ -14,6 +14,7 @@ import json
 import pytest
 
 import audiobook_app as app_mod
+import routes_admin_audit
 
 
 ADMIN_TOKEN = "test-admin-token"
@@ -46,9 +47,9 @@ def _write_audit(tmp_path, module, prefix, n, day="2026-07"):
 
 
 def _no_live(monkeypatch):
-    monkeypatch.setattr(app_mod, "_synth_running_gemini_audit_records", lambda: [])
-    monkeypatch.setattr(app_mod, "_synth_running_translation_audit_records", lambda: [])
-    monkeypatch.setattr(app_mod, "_synth_running_optimization_audit_records", lambda: [])
+    monkeypatch.setattr(routes_admin_audit, "_synth_running_gemini_audit_records", lambda: [])
+    monkeypatch.setattr(routes_admin_audit, "_synth_running_translation_audit_records", lambda: [])
+    monkeypatch.setattr(routes_admin_audit, "_synth_running_optimization_audit_records", lambda: [])
 
 
 CASES = [
@@ -93,7 +94,7 @@ def test_live_records_stay_on_top(client, monkeypatch, tmp_path,
     for name in ("_synth_running_gemini_audit_records",
                  "_synth_running_translation_audit_records",
                  "_synth_running_optimization_audit_records"):
-        monkeypatch.setattr(app_mod, name, lambda _l=live: list(_l))
+        monkeypatch.setattr(routes_admin_audit, name, lambda _l=live: list(_l))
 
     r = client.get(f"{url}?limit=200", headers={"X-Admin-Token": ADMIN_TOKEN})
     assert r.status_code == 200

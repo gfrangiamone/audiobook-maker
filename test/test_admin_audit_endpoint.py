@@ -2,6 +2,7 @@
 import os
 import json
 import pytest
+import routes_admin_audit
 import gemini_cost_audit
 
 
@@ -137,7 +138,7 @@ def test_running_gemini_row_uses_pricing_cost_not_real_cost_for_drift(monkeypatc
         "payment": {"total_eur": 5.0},
     }
     try:
-        recs = audiobook_app._synth_running_gemini_audit_records()
+        recs = routes_admin_audit._synth_running_gemini_audit_records()
         rec = next(r for r in recs if r["job_id"] == "Jliveposit")
         # compute_user_price_eur deve ricevere il LISTINO (1.80), non il
         # costo reale (0.30) accumulato finora.
@@ -173,7 +174,7 @@ def test_running_gemini_row_language_is_tts_language_not_book_metadata(monkeypat
                           "audio_seconds": 1.0, "model_key": "flash31"},
     }
     try:
-        recs = audiobook_app._synth_running_gemini_audit_records()
+        recs = routes_admin_audit._synth_running_gemini_audit_records()
         rec = next(r for r in recs if r["job_id"] == "Jlivelang")
         assert rec["language"] == "de"
     finally:

@@ -6,6 +6,7 @@ import speechify_tts
 import gemini_cost_audit
 import generation_engine
 import audiobook_app
+import routes_admin_audit
 
 
 VOICE = "speechify:simba-3.2:harper_32"
@@ -135,7 +136,7 @@ def test_write_speechify_audit_refunded_outcome(tmp_path, monkeypatch):
         outcome="failed_all_chunks_refunded") if r.get("job_id") == "Jref")
     assert rec["outcome"] == "failed_all_chunks_refunded"
     # rimborso totale -> revenue effettivo 0 nell'aggregato
-    audiobook_app._apply_cancel_effective(rec)
+    routes_admin_audit._apply_cancel_effective(rec)
     assert float(rec.get("_eff_revenue_eur", 0)) == 0.0
 
 
@@ -143,8 +144,8 @@ def test_write_speechify_audit_refunded_outcome(tmp_path, monkeypatch):
 # _FULL_REFUND_OUTCOMES aggiornato
 # ---------------------------------------------------------------------------
 def test_full_refund_outcomes_include_speechify_terminals():
-    assert "failed_no_output_refunded" in audiobook_app._FULL_REFUND_OUTCOMES
-    assert "failed_all_chunks_refunded" in audiobook_app._FULL_REFUND_OUTCOMES
+    assert "failed_no_output_refunded" in routes_admin_audit._FULL_REFUND_OUTCOMES
+    assert "failed_all_chunks_refunded" in routes_admin_audit._FULL_REFUND_OUTCOMES
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +164,7 @@ def test_running_speechify_job_appears_in_live_records(monkeypatch):
     }
     monkeypatch.setitem(audiobook_app.jobs, jid, job)
     try:
-        rows = audiobook_app._synth_running_gemini_audit_records()
+        rows = routes_admin_audit._synth_running_gemini_audit_records()
         row = next(r for r in rows if r.get("job_id") == jid)
         assert row["model_key"] == "simba-3.2"
         assert row["outcome"] == "running"
@@ -190,7 +191,7 @@ def test_apply_cancel_effective_uses_pricing_cost_actual_as_drift_base_when_pres
         "pricing_cost_eur_actual": 1.80,
         "user_price_eur_should_have_been": 5.0,
     }
-    audiobook_app._apply_cancel_effective(rec)
+    routes_admin_audit._apply_cancel_effective(rec)
     assert rec["_eff_revenue_eur"] == 5.0
     # margine resta sul costo reale (contabilita', non deriva prezzo)
     assert rec["_eff_margin_eur"] == round(5.0 - 0.30, 4)
@@ -208,5 +209,5 @@ def test_apply_cancel_effective_falls_back_to_cost_when_pricing_cost_absent():
         "google_cost_eur_actual": 0.4,
         "user_price_eur_should_have_been": 1.2,
     }
-    audiobook_app._apply_cancel_effective(rec)
+    routes_admin_audit._apply_cancel_effective(rec)
     assert rec["_eff_delta_pct"] == round(((1.2 - 1.0) / 0.4) * 100, 2)

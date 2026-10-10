@@ -13,6 +13,7 @@ import json
 import pytest
 
 import audiobook_app as app_mod
+import routes_admin_audit
 import voice_clone_audit as vca
 
 
@@ -28,9 +29,9 @@ def client(monkeypatch):
 
 
 def _no_live(monkeypatch):
-    monkeypatch.setattr(app_mod, "_synth_running_gemini_audit_records", lambda: [])
-    monkeypatch.setattr(app_mod, "_synth_running_translation_audit_records", lambda: [])
-    monkeypatch.setattr(app_mod, "_synth_running_optimization_audit_records", lambda: [])
+    monkeypatch.setattr(routes_admin_audit, "_synth_running_gemini_audit_records", lambda: [])
+    monkeypatch.setattr(routes_admin_audit, "_synth_running_translation_audit_records", lambda: [])
+    monkeypatch.setattr(routes_admin_audit, "_synth_running_optimization_audit_records", lambda: [])
 
 
 def _write_audit(tmp_path, module, prefix, records):

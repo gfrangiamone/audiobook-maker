@@ -1,5 +1,6 @@
 import importlib
 import audiobook_app as app
+import routes_admin_audit
 
 
 def _client(tmp_path, monkeypatch):
@@ -15,7 +16,7 @@ def _client(tmp_path, monkeypatch):
                              "combined_total_eur": 2.50,
                              "payment_method": "paypal"},
                         ]))
-    monkeypatch.setattr(app, "_synth_running_optimization_audit_records",
+    monkeypatch.setattr(routes_admin_audit, "_synth_running_optimization_audit_records",
                         lambda: [])
     app.app.config["TESTING"] = True
     return app.app.test_client()

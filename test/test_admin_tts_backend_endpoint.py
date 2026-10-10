@@ -4,6 +4,7 @@ import threading
 import pytest
 
 import audiobook_app
+import routes_admin_audit
 import gemini_tts
 import tts_backend_state as st
 
@@ -18,8 +19,8 @@ def _reset_gemini_backend_cache():
     gemini_tts._BACKEND = {}
     # Stesso discorso per il registro delle sonde manuali in volo: una voce
     # rimasta li' bloccherebbe il pulsante (409) per tutti i test successivi.
-    with audiobook_app._MANUAL_PROBE_LOCK:
-        audiobook_app._manual_probe_running.clear()
+    with routes_admin_audit._MANUAL_PROBE_LOCK:
+        routes_admin_audit._manual_probe_running.clear()
 
 
 @pytest.fixture

@@ -1,4 +1,5 @@
 import importlib
+import routes_admin_audit
 
 
 def _app(tmp_path, monkeypatch):
@@ -24,7 +25,7 @@ def test_synth_running_translation(tmp_path, monkeypatch):
         "payment": {"total_eur": 3.0, "method": "voucher", "token": "V123456789"},
         "started_at": "2026-07-16T10:00:00+00:00",
     }
-    recs = app._synth_running_translation_audit_records()
+    recs = routes_admin_audit._synth_running_translation_audit_records()
     app.jobs.pop("LIVE1", None)
     assert len(recs) == 1
     r = recs[0]
@@ -37,7 +38,7 @@ def test_synth_running_translation(tmp_path, monkeypatch):
 def test_synth_ignores_non_translating(tmp_path, monkeypatch):
     app = _app(tmp_path, monkeypatch)
     app.jobs["G1"] = {"status": "generating", "voice": "edge:it-IT-X"}
-    recs = app._synth_running_translation_audit_records()
+    recs = routes_admin_audit._synth_running_translation_audit_records()
     app.jobs.pop("G1", None)
     assert all(r["job_id"] != "G1" for r in recs)
 

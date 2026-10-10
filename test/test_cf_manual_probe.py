@@ -17,6 +17,7 @@ import time
 import pytest
 
 import audiobook_app
+import routes_admin_audit
 import gemini_tts
 import tts_backend_state as st
 from gemini_transport import TransportError
@@ -35,8 +36,8 @@ def _env(tmp_path, monkeypatch):
     yield
     gemini_tts._BACKEND = {}
     gemini_tts.set_backend_return_notifier(None)
-    with audiobook_app._MANUAL_PROBE_LOCK:
-        audiobook_app._manual_probe_running.clear()
+    with routes_admin_audit._MANUAL_PROBE_LOCK:
+        routes_admin_audit._manual_probe_running.clear()
     st.reset("flash31")
 
 
@@ -239,12 +240,12 @@ def test_the_runner_reports_the_probe_as_running_while_it_lasts(monkeypatch):
         return "failed"
 
     monkeypatch.setattr(gemini_tts, "probe_cloudflare", _lenta)
-    assert audiobook_app._manual_probe_start("flash31") is True
+    assert routes_admin_audit._manual_probe_start("flash31") is True
     assert partita.wait(5)
-    assert audiobook_app._probe_payload("flash31")["probe_running"] is True
+    assert routes_admin_audit._probe_payload("flash31")["probe_running"] is True
     libera.set()
     assert _attendi(
-        lambda: audiobook_app._probe_payload("flash31")["probe_running"] is False)
+        lambda: routes_admin_audit._probe_payload("flash31")["probe_running"] is False)
 
 
 def test_a_second_click_does_not_start_a_second_probe(monkeypatch):
@@ -262,11 +263,11 @@ def test_a_second_click_does_not_start_a_second_probe(monkeypatch):
         return "failed"
 
     monkeypatch.setattr(gemini_tts, "probe_cloudflare", _lenta)
-    assert audiobook_app._manual_probe_start("flash31") is True
+    assert routes_admin_audit._manual_probe_start("flash31") is True
     assert partita.wait(5)
-    assert audiobook_app._manual_probe_start("flash31") is False
+    assert routes_admin_audit._manual_probe_start("flash31") is False
     libera.set()
-    assert _attendi(lambda: not audiobook_app._manual_probe_running)
+    assert _attendi(lambda: not routes_admin_audit._manual_probe_running)
     assert giri == ["flash31"]
 
 
@@ -280,10 +281,10 @@ def test_the_guard_is_per_model_not_global(monkeypatch):
         return "failed"
 
     monkeypatch.setattr(gemini_tts, "probe_cloudflare", _lenta)
-    assert audiobook_app._manual_probe_start("flash31") is True
-    assert audiobook_app._manual_probe_start("other") is True
+    assert routes_admin_audit._manual_probe_start("flash31") is True
+    assert routes_admin_audit._manual_probe_start("other") is True
     libera.set()
-    assert _attendi(lambda: not audiobook_app._manual_probe_running)
+    assert _attendi(lambda: not routes_admin_audit._manual_probe_running)
     assert sorted(visti) == ["flash31", "other"]
 
 
@@ -293,6 +294,6 @@ def test_an_exploding_probe_does_not_wedge_the_button_forever(monkeypatch):
     monkeypatch.setattr(
         gemini_tts, "probe_cloudflare",
         lambda mk, **kw: (_ for _ in ()).throw(RuntimeError("inattesa")))
-    assert audiobook_app._manual_probe_start("flash31") is True
-    assert _attendi(lambda: not audiobook_app._manual_probe_running)
-    assert audiobook_app._manual_probe_start("flash31") is True
+    assert routes_admin_audit._manual_probe_start("flash31") is True
+    assert _attendi(lambda: not routes_admin_audit._manual_probe_running)
+    assert routes_admin_audit._manual_probe_start("flash31") is True
