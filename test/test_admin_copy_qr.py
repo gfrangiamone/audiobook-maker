@@ -11,6 +11,7 @@ Invarianti verificate:
 import time
 
 import audiobook_app
+import routes_admin_jobs
 
 import token_store
 import generation_engine
@@ -354,12 +355,12 @@ def test_admin_user_dl_link_skips_admin_copy_and_expired(monkeypatch):
     }
     token_store.download_tokens.update(toks)
     try:
-        best = audiobook_app._admin_user_dl_link(jid, now=now)
+        best = routes_admin_jobs._admin_user_dl_link(jid, now=now)
         assert best is not None
         assert best["token"] == "T-B"      # scade piu' tardi
         assert best["downloaded_at"] == 0
         # Job senza alcun token utente valido
-        assert audiobook_app._admin_user_dl_link("job-inesistente", now=now) is None
+        assert routes_admin_jobs._admin_user_dl_link("job-inesistente", now=now) is None
     finally:
         for t in toks:
             token_store.download_tokens.pop(t, None)

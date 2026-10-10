@@ -66,7 +66,8 @@ def test_no_inline_guard_left():
     src = inspect.getsource(app)
     inline = [m.start() for m in re.finditer(r"^\s+if not _admin_auth_ok\(_admin_auth_from_request\(\)\):", src, flags=re.M)]
     assert len(inline) == 1                                       # solo dentro admin_required
-    import routes_admin_audit, routes_admin_logs, routes_admin_vouchers
-    both = src + "".join(inspect.getsource(m) for m in (routes_admin_audit, routes_admin_logs, routes_admin_vouchers))
-    assert len(re.findall(r"^@admin_required(\(as_json=False\))?$", both, flags=re.M)) == 32   # 15 app + 12 + 2 + 3
+    import routes_admin_audit, routes_admin_logs, routes_admin_vouchers, routes_admin_jobs
+    both = src + "".join(inspect.getsource(m) for m in (routes_admin_audit, routes_admin_logs, routes_admin_vouchers,
+                                                        routes_admin_jobs))
+    assert len(re.findall(r"^@admin_required(\(as_json=False\))?$", both, flags=re.M)) == 32   # 9 app + 12 + 2 + 3 + 6
     assert "@admin_required(4" not in src                          # nessuna forma storica residua

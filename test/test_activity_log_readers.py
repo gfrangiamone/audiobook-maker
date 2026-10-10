@@ -5,6 +5,7 @@ import pytest
 
 import activity_log
 import audiobook_app
+import routes_admin_jobs
 import routes_admin_logs
 
 
@@ -157,7 +158,7 @@ def test_endpoint_user_stats_invalida_la_cache_quando_il_log_cresce(logs, monkey
     # ADMIN_TOKEN vuoto fa uscire la route con 404 prima del controllo auth
     # patchato: stesso adattamento di plumbing di test_pagina_admin_regge_byte_non_utf8.
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
-    audiobook_app._USER_STATS_CACHE.clear()
+    routes_admin_jobs._USER_STATS_CACHE.clear()
     p = logs / "activity_2026-08.log"
     p.write_text(_line("J1", "2026-08-01 10:00:00", "COMPLETE", cid="a") + "\n", encoding="utf-8")
     with patch("audiobook_app._admin_auth_ok", return_value=True):
@@ -166,7 +167,7 @@ def test_endpoint_user_stats_invalida_la_cache_quando_il_log_cresce(logs, monkey
         with open(p, "a", encoding="utf-8") as f:
             f.write(_line("J2", "2026-08-01 11:00:00", "COMPLETE", cid="b") + "\n")
         d2 = c.get("/api/admin/user_stats?ym=2026-08").get_json()
-    audiobook_app._USER_STATS_CACHE.clear()
+    routes_admin_jobs._USER_STATS_CACHE.clear()
     assert d1["coorti"]["totale"]["generazioni"] == 1
     assert d2["coorti"]["totale"]["generazioni"] == 2
     assert d2["file"] == "activity_2026-08.log"

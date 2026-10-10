@@ -14,6 +14,7 @@ import pytest
 
 import activity_log
 import audiobook_app
+import routes_admin_jobs
 import payment
 import user_stats
 
@@ -257,10 +258,10 @@ def test_empty_result_ha_la_spesa_azzerata():
 @pytest.fixture
 def admin_client(tmp_path, monkeypatch):
     monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", tmp_path)
-    audiobook_app._USER_STATS_CACHE.clear()
+    routes_admin_jobs._USER_STATS_CACHE.clear()
     with patch("audiobook_app._admin_auth_ok", return_value=True):
         yield audiobook_app.app.test_client()
-    audiobook_app._USER_STATS_CACHE.clear()
+    routes_admin_jobs._USER_STATS_CACHE.clear()
 
 
 def test_endpoint_richiede_auth_admin(tmp_path, monkeypatch):
