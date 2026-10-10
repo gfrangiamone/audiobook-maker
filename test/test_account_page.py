@@ -9,6 +9,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import routes_account
 import routes_mobile
 import routes_voice_clone
 import token_store
@@ -184,7 +185,7 @@ def test_account_jobs_api_exposes_plan(logged):
 
 def test_account_page_voices_tab(logged, monkeypatch):
     c, acct = logged
-    monkeypatch.setattr(audiobook_app, "_account_voices_for",
+    monkeypatch.setattr(routes_account, "_account_voices_for",
                         lambda a: [{"name": "Nonna <b>", "url": "https://abm.test/vc/mt1/devices", "state": "ready"},
                                    {"name": "Zio", "url": "https://abm.test/vc/mt2/devices", "state": "paid"}])
     r = c.get("/account", headers={"Accept-Language": "it"})
@@ -322,7 +323,7 @@ def test_api_jobs_pagination_and_shape(logged, monkeypatch):
     c, acct = logged
     for i in range(3):
         accounts.record_job(acct["id"], f"j{i}", kind="generate", status="done", created_at=T0 + i)
-    monkeypatch.setattr(audiobook_app, "_ACCT_PER_PAGE", 2)
+    monkeypatch.setattr(routes_account, "_ACCT_PER_PAGE", 2)
     r = c.get("/api/account/jobs?p=2")
     assert r.status_code == 200
     d = r.get_json()
@@ -345,7 +346,7 @@ def test_downloads_for_handles_types_and_expiry(env, monkeypatch):
     _token("jb", "optimized_abm", created_at=now - 10)
     _token("jc", "translated", created_at=now - 10)
     _token("jd", "audio", created_at=now - 500)
-    f = audiobook_app._account_downloads_for
+    f = routes_account._account_downloads_for
     assert [d["kind"] for d in f({"job_id": "ja", "download_token": ""}, now)] == ["page"]
     assert [d["kind"] for d in f({"job_id": "jb", "download_token": "tok-jb"}, now)] == ["page", "abm"]
     kinds = [d["kind"] for d in f({"job_id": "jc", "download_token": ""}, now)]
@@ -363,7 +364,7 @@ def test_downloads_for_skips_missing_files(env, monkeypatch):
     _token("ja", "audio", created_at=now - 10, output_m4b="/x/a.m4b")
     _token("jb", "optimized_abm", created_at=now - 10, optimized_abm_path="/x/b.abm")
     _token("jc", "translated", created_at=now - 10, translated_path="/x/c.txt")
-    f = audiobook_app._account_downloads_for
+    f = routes_account._account_downloads_for
     assert [d["kind"] for d in f({"job_id": "ja", "download_token": ""}, now)] == ["page"]
     assert [d["kind"] for d in f({"job_id": "jb", "download_token": "tok-jb"}, now)] == ["page"]
     assert [d["kind"] for d in f({"job_id": "jc", "download_token": ""}, now)] == ["page"]
@@ -378,7 +379,7 @@ def test_downloads_for_job_id_fallback_picks_newest_token(env, monkeypatch):
         "job_id": "je", "created_at": now - 5000, "download_type": "audio", "output_m4b": ""}
     token_store.download_tokens["tok-new"] = {
         "job_id": "je", "created_at": now - 1, "download_type": "audio", "output_m4b": ""}
-    f = audiobook_app._account_downloads_for
+    f = routes_account._account_downloads_for
     out = f({"job_id": "je", "download_token": ""}, now)
     assert out and out[0]["url"] == "https://abm.test/dl/tok-new"
     assert abs(out[0]["expires_at"] - (now + 99)) < 2
@@ -441,11 +442,11 @@ def test_downloads_for_with_index_never_scans_tokens(env, monkeypatch):
     monkeypatch.setattr(token_store, "download_tokens", toks)
     monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 100.0)
     index = {"jz": [("tok-jz", toks["tok-jz"])]}
-    out = audiobook_app._account_downloads_for({"job_id": "jz", "download_token": ""}, now, index)
+    out = routes_account._account_downloads_for({"job_id": "jz", "download_token": ""}, now, index)
     assert [d["kind"] for d in out] == ["page"]
     assert out[0]["url"] == "https://abm.test/dl/tok-jz"
     # riga senza token noto: nessuna scansione, semplicemente nessun link
-    assert audiobook_app._account_downloads_for({"job_id": "nope", "download_token": ""},
+    assert routes_account._account_downloads_for({"job_id": "nope", "download_token": ""},
                                                 now, index) == []
 
 

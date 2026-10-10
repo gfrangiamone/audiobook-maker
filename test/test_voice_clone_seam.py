@@ -27,11 +27,13 @@ def test_routes_and_helpers_live_in_the_blueprint():
     assert not re.search(r"^\s*(import|from) (audiobook_app|generation_engine)\b", inspect.getsource(rv), flags=re.M)
     assert "os.environ.get(" not in inspect.getsource(rv)
     for n in rv.FUNCS:
-        assert callable(getattr(audiobook_app, n)), n
-    # La app usa ancora gate, url, log e notifica della voce campionata: via blueprint.
+        assert callable(rv._cfg[n]), n                  # configurata dalla app (anche se vive in un altro seam)
+    # App e seam account usano ancora gate, url, log e notifica della voce campionata: via blueprint.
+    import routes_account
+    both = src + inspect.getsource(routes_account)
     for n in ("routes_voice_clone._vc_gate(", "routes_voice_clone._vc_urls(", "routes_voice_clone._vc_log(",
               "routes_voice_clone._voice_clone_notify"):
-        assert n in src, n
+        assert n in both, n
 
 
 def test_helpers_and_values_resolve_on_the_app(monkeypatch, tmp_path):

@@ -6,6 +6,7 @@ import os
 import pytest
 
 import audiobook_app
+import routes_account
 import routes_voice_clone
 import community_store
 import email_service
@@ -961,14 +962,14 @@ def test_pagina_voce_torna_all_area_personale_solo_al_proprietario(client, tmp_p
     rec = _pronta(tmp_path)
     tok = rec["manage_token"]
     # account con l'email della voce: «X» in testata verso l'area personale
-    monkeypatch.setattr(audiobook_app, "_current_account", lambda: {"id": 1, "email": "U@example.com "})
+    monkeypatch.setattr(routes_account, "_current_account", lambda: {"id": 1, "email": "U@example.com "})
     corpo = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"}).data.decode("utf-8")
     # sulla riga del marchio, allineata al logo
     assert '<div class="brandbar"><a class="brand" href="/">' in corpo
     x = corpo.split('<div class="tools">')[1].split("</div>")[0]
     assert 'class="btn icon-x" href="/account?tab=voices"' in x and 'aria-label="Torna all&#x27;area personale"' in x
     # account di un altro: niente
-    monkeypatch.setattr(audiobook_app, "_current_account", lambda: {"id": 2, "email": "altro@example.com"})
+    monkeypatch.setattr(routes_account, "_current_account", lambda: {"id": 2, "email": "altro@example.com"})
     corpo = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"}).data.decode("utf-8")
     assert "/account?tab=voices" not in corpo
 

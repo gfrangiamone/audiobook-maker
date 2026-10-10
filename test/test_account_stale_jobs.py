@@ -9,6 +9,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import routes_account
 import cleanup
 import token_store
 import db
@@ -44,7 +45,7 @@ def _status(job_id):
 
 
 def _rows(acct):
-    return {r["job_id"]: r["status"] for r in audiobook_app._account_rows_for(acct, 1)[0]}
+    return {r["job_id"]: r["status"] for r in routes_account._account_rows_for(acct, 1)[0]}
 
 
 def test_settle_running_never_overwrites_an_outcome(env):
@@ -61,7 +62,7 @@ def test_vanished_job_is_settled_as_error_after_grace(env):
     acct, _, _ = env
     accounts.record_job(acct["id"], "gone", kind="generate", status="running")
     accounts.record_job(acct["id"], "fresh", kind="generate", status="running")
-    _age("gone", audiobook_app._ACCT_STALE_RUNNING_SEC + 60)
+    _age("gone", routes_account._ACCT_STALE_RUNNING_SEC + 60)
     assert _rows(acct) == {"gone": "error", "fresh": "running"}
     assert _status("gone") == "error"
 
@@ -69,7 +70,7 @@ def test_vanished_job_is_settled_as_error_after_grace(env):
 def test_recoverable_job_is_left_running(env):
     acct, _, active = env
     accounts.record_job(acct["id"], "rec", kind="generate", status="running")
-    _age("rec", audiobook_app._ACCT_STALE_RUNNING_SEC + 60)
+    _age("rec", routes_account._ACCT_STALE_RUNNING_SEC + 60)
     active.add("rec")
     assert _rows(acct) == {"rec": "running"}
 
@@ -77,7 +78,7 @@ def test_recoverable_job_is_left_running(env):
 def test_unreadable_pending_store_leaves_row_running(env, monkeypatch):
     acct, _, _ = env
     accounts.record_job(acct["id"], "x", kind="generate", status="running")
-    _age("x", audiobook_app._ACCT_STALE_RUNNING_SEC + 60)
+    _age("x", routes_account._ACCT_STALE_RUNNING_SEC + 60)
 
     def boom(jid):
         raise RuntimeError("store down")
@@ -125,8 +126,8 @@ def test_engine_cancel_path_notifies_account():
 
 def test_progress_reports_cancelled_for_cancelled_analyzed(env, monkeypatch):
     acct, fake_jobs, _ = env
-    monkeypatch.setattr(audiobook_app, "_acct_gate", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_current_account", lambda: acct)
+    monkeypatch.setattr(routes_account, "_acct_gate", lambda: None)
+    monkeypatch.setattr(routes_account, "_current_account", lambda: acct)
     accounts.record_job(acct["id"], "p", kind="generate", status="running")
     fake_jobs["p"] = {"status": "analyzed", "cancelled": True}
     with audiobook_app.app.test_request_context("/api/account/progress?ids=p"):

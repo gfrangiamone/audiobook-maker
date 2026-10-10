@@ -6,6 +6,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import routes_account
 import db
 import email_service
 
@@ -200,19 +201,19 @@ def test_magic_link_origin_allow_list_accepts_base_url(client, env, monkeypatch)
     con l'host della richiesta (server dietro proxy), e nient'altro."""
     with audiobook_app.app.test_request_context(
             "/auth/x", method="POST", headers={"Origin": "https://abm.test"}):
-        assert audiobook_app._acct_origin_ok() is True
+        assert routes_account._acct_origin_ok() is True
     with audiobook_app.app.test_request_context(
             "/auth/x", method="POST", headers={"Referer": "https://abm.test/auth/x"}):
-        assert audiobook_app._acct_origin_ok() is True
+        assert routes_account._acct_origin_ok() is True
     with audiobook_app.app.test_request_context(
             "/auth/x", method="POST", headers={"Origin": "http://abm.test"}):
-        assert audiobook_app._acct_origin_ok() is False
+        assert routes_account._acct_origin_ok() is False
     with audiobook_app.app.test_request_context(
             "/auth/x", method="POST", headers={"Origin": "null"}):
-        assert audiobook_app._acct_origin_ok() is False
+        assert routes_account._acct_origin_ok() is False
     # nessun header: navigazione diretta, consentita
     with audiobook_app.app.test_request_context("/auth/x", method="POST"):
-        assert audiobook_app._acct_origin_ok() is True
+        assert routes_account._acct_origin_ok() is True
 
 
 def test_magic_link_unknown_token_410_page(client, env):

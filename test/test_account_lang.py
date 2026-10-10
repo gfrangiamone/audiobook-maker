@@ -8,6 +8,7 @@ inglese trovava l'area personale in italiano. Ora la SPA posa il cookie
 `abm_lang` e le pagine lo onorano; `?lang=` esplicito vince su tutto.
 """
 import audiobook_app
+import routes_account
 import routes_voice_clone
 
 from test.test_account_page import env, logged  # noqa: F401  (fixture)
@@ -42,7 +43,7 @@ def test_lang_in_query_vince_sul_cookie_e_valore_ignoto_ignorato(logged):
 def test_paginazione_conserva_la_lingua_esplicita(logged, monkeypatch):
     import accounts
     c, acct = logged
-    monkeypatch.setattr(audiobook_app, "_ACCT_PER_PAGE", 1)
+    monkeypatch.setattr(routes_account, "_ACCT_PER_PAGE", 1)
     for i in range(2):
         accounts.record_job(acct["id"], f"j{i}", kind="generate", book_title=f"B{i}", status="done")
     html = c.get("/account?lang=fr", headers={"Accept-Language": "it"}).data.decode()

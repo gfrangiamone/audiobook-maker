@@ -8,6 +8,7 @@ import pytest
 import account_page
 import accounts
 import audiobook_app
+import routes_account
 import cleanup
 import token_store
 import db
@@ -75,7 +76,7 @@ def test_endpoint(env, monkeypatch):
     client = audiobook_app.app.test_client()
     url = "/api/account/jobs/delete"
     assert client.post(url, json={"job_id": "d"}).status_code == 401
-    monkeypatch.setattr(audiobook_app, "_current_account", lambda: acct)
+    monkeypatch.setattr(routes_account, "_current_account", lambda: acct)
     accounts.record_job(acct["id"], "d", kind="generate", status="done", paid_eur=1.0)
     accounts.record_job(acct["id"], "r", kind="generate", status="running")
     assert client.post(url, json={}).status_code == 400
@@ -89,7 +90,7 @@ def test_endpoint(env, monkeypatch):
 
 def test_endpoint_does_not_touch_files_or_tokens(env, monkeypatch):
     acct, _ = env
-    monkeypatch.setattr(audiobook_app, "_current_account", lambda: acct)
+    monkeypatch.setattr(routes_account, "_current_account", lambda: acct)
     called = []
     monkeypatch.setattr(cleanup, "_cleanup_job", lambda *a, **k: called.append(a))
     monkeypatch.setattr(cleanup, "_delete_cold_for_job", lambda *a, **k: called.append(a))
@@ -102,7 +103,7 @@ def test_endpoint_does_not_touch_files_or_tokens(env, monkeypatch):
 
 
 def _render(rows):
-    t = audiobook_app._acct_txt("it")
+    t = routes_account._acct_txt("it")
     return account_page.render_history(
         t, lang="it", account={"email": "a@b.it"}, rows=rows, page=1, per_page=50,
         total=len(rows), voices_count=0)
