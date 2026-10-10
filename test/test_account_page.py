@@ -9,6 +9,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import routes_voice_clone
 import token_store
 import db
 import email_service
@@ -213,7 +214,7 @@ def test_account_page_voices_avvio_campionamento(logged, monkeypatch):
     wizard, e la nota dice subito che la voce serve solo col modello PREMIUM
     (altrove non compare e la si crede sparita)."""
     c, acct = logged
-    monkeypatch.setattr(audiobook_app, "_vc_gate", lambda: None)
+    monkeypatch.setattr(routes_voice_clone, "_vc_gate", lambda: None)
     html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
     assert 'href="/?vc=new"' in html
     assert "Campiona la tua voce" in html
@@ -225,7 +226,7 @@ def test_account_page_voices_senza_feature_niente_bottone(logged, monkeypatch):
     wizard che non si apre. La nota sul modello resta, la voce campionata
     gia' presente si gestisce lo stesso."""
     c, acct = logged
-    monkeypatch.setattr(audiobook_app, "_vc_gate", lambda: ("off", 404))
+    monkeypatch.setattr(routes_voice_clone, "_vc_gate", lambda: ("off", 404))
     html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
     assert "?vc=new" not in html
     assert "Campiona la tua voce" not in html

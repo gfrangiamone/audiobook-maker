@@ -6,6 +6,7 @@ import os
 import pytest
 
 import audiobook_app
+import routes_voice_clone
 import community_store
 import email_service
 import payment
@@ -586,7 +587,7 @@ def test_le_traduzioni_delle_pagine_vc_coprono_tutte_le_lingue():
     assert set(dati) == {"it", "en", "fr", "es", "de", "zh", "hi"}
     atteso = set(dati["en"])
     # il ripiego cablato tiene in piedi le pagine se il file non si carica
-    assert atteso >= set(audiobook_app._VC_PAGES_FALLBACK)
+    assert atteso >= set(routes_voice_clone._VC_PAGES_FALLBACK)
     for lang, voci in dati.items():
         assert set(voci) == atteso, lang
         assert all(str(v).strip() for v in voci.values()), lang
@@ -595,7 +596,7 @@ def test_le_traduzioni_delle_pagine_vc_coprono_tutte_le_lingue():
 def test_resume_limita_i_dispositivi_diversi(client, tmp_path, monkeypatch):
     """I4: oltre RESUME_DEVICES_MAX dispositivi diversi autorizzati via
     resume, il link risponde 409 invece di continuare ad aggiungerne."""
-    monkeypatch.setattr(audiobook_app, "RESUME_DEVICES_MAX", 2)
+    monkeypatch.setattr(routes_voice_clone, "RESUME_DEVICES_MAX", 2)
     rec = _paid(tmp_path)
     token = rec["resume_token"]["value"]
     _cid(client, "cid-a")
@@ -980,7 +981,7 @@ def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
                                               for d in vc.get(rec["id"])["devices"]]})
     vc.store().update(rec["id"], {"devices": [dict(d, name="") if d["cid"] == "cid-uno" else d
                                               for d in vc.get(rec["id"])["devices"]]})
-    chiave = audiobook_app._vc_device_key("cid-uno")
+    chiave = routes_voice_clone._vc_device_key("cid-uno")
     r = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"})
     corpo = r.data.decode("utf-8")
     assert "Tablet &lt;cucina&gt;" in corpo and "<cucina>" not in corpo
@@ -993,7 +994,7 @@ def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
     assert "questo dispositivo" in corpo.lower()
     assert corpo.count("/devices/revoke") == 2          # anche il creatore
     r = client.post(f"/vc/{tok}/devices/rename",
-                    data={"key": audiobook_app._vc_device_key("cid-r"), "name": "Tablet salotto"})
+                    data={"key": routes_voice_clone._vc_device_key("cid-r"), "name": "Tablet salotto"})
     assert r.status_code == 302 and r.headers["Location"].endswith(f"/vc/{tok}/devices")
     assert vc.device_of(vc.get(rec["id"]), "cid-r")["name"] == "Tablet salotto"
 
@@ -1001,7 +1002,7 @@ def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
 def test_revoca_del_creatore_chiede_conferma(client, tmp_path):
     rec = _paid(tmp_path)
     tok = rec["manage_token"]
-    chiave = audiobook_app._vc_device_key("cid-uno")
+    chiave = routes_voice_clone._vc_device_key("cid-uno")
     r = client.post(f"/vc/{tok}/devices/revoke", data={"key": chiave},
                     headers={"Accept-Language": "it"})
     corpo = r.data.decode("utf-8")

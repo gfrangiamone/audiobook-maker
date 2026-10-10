@@ -10,6 +10,7 @@ invece del servizio. La guardia deve stare su creazione ordine, capture e
 import pytest
 
 import audiobook_app
+import routes_voice_clone
 import payment
 import translation_core
 
@@ -19,7 +20,7 @@ def client(monkeypatch):
     audiobook_app.app.config["TESTING"] = True
     monkeypatch.setattr(audiobook_app, "_suspend_new_jobs", True)
     monkeypatch.setattr(audiobook_app, "_paypal_available", lambda: True)
-    monkeypatch.setattr(audiobook_app, "_vc_gate", lambda: None)
+    monkeypatch.setattr(routes_voice_clone, "_vc_gate", lambda: None)
     monkeypatch.setattr(translation_core, "is_available", lambda: True)
     return audiobook_app.app.test_client()
 

@@ -905,7 +905,9 @@ def test_chiavi_task6_in_tutte_le_lingue():
 
 
 def test_app_non_legge_privati_di_voice_clone():
-    app_src = (ROOT / "audiobook_app.py").read_text(encoding="utf-8")
+    # E3: le API della voce campionata vivono in routes_voice_clone; la regola
+    # vale per entrambi i moduli.
+    app_src = "".join((ROOT / f).read_text(encoding="utf-8") for f in ("audiobook_app.py", "routes_voice_clone.py"))
     assert "voice_clone._ACCEPTED_EXT" not in app_src
     assert "voice_clone.accepted_ext()" in app_src
     import voice_clone

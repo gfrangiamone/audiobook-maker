@@ -8,6 +8,7 @@ inglese trovava l'area personale in italiano. Ora la SPA posa il cookie
 `abm_lang` e le pagine lo onorano; `?lang=` esplicito vince su tutto.
 """
 import audiobook_app
+import routes_voice_clone
 
 from test.test_account_page import env, logged  # noqa: F401  (fixture)
 
@@ -70,11 +71,11 @@ def test_conferma_magic_link_segue_il_cookie_poi_la_lingua_del_codice(env):
 def test_pagine_voce_campionata_onorano_il_cookie_app():
     """Raggiungibili dal tab «Voci» dell'area personale: stessa lingua."""
     with audiobook_app.app.test_request_context("/vc/x/delete", headers={"Accept-Language": "it"}):
-        assert audiobook_app._vc_page_lang() == "it"
+        assert routes_voice_clone._vc_page_lang() == "it"
     with audiobook_app.app.test_request_context(
             "/vc/x/delete", headers={"Accept-Language": "it", "Cookie": "abm_lang=de"}):
-        assert audiobook_app._vc_page_lang() == "de"
+        assert routes_voice_clone._vc_page_lang() == "de"
     # ?lang= resta ignorato sulle pagine dei link email
     with audiobook_app.app.test_request_context(
             "/vc/x/delete?lang=fr", headers={"Accept-Language": "it", "Cookie": "abm_lang=de"}):
-        assert audiobook_app._vc_page_lang() == "de"
+        assert routes_voice_clone._vc_page_lang() == "de"
