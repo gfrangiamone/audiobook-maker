@@ -103,7 +103,7 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
     (ChatGPT, Perplexity, Google AI Overview) e ranking E-E-A-T.
     """
     import os as _os
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timezone as _tz
 
     # Stesso URL del <link rel=canonical> della pagina: EN su /guide/<id>/,
     # le altre lingue su /guide/<id>/<lang>/ (prima era sempre l'URL EN).
@@ -112,9 +112,9 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
 
     try:
         _mtime = _os.path.getmtime(__file__)
-        date_modified = _dt.utcfromtimestamp(_mtime).strftime("%Y-%m-%d")
+        date_modified = _dt.fromtimestamp(_mtime, _tz.utc).strftime("%Y-%m-%d")
     except OSError:
-        date_modified = _dt.utcnow().strftime("%Y-%m-%d")
+        date_modified = _dt.now(_tz.utc).strftime("%Y-%m-%d")
     date_published = _GUIDE_PUBLISHED.get(guide_id, "2024-09-01")
 
     ld = {
@@ -182,12 +182,12 @@ def build_guide_html(
 
     # Date visibili (datePublished/dateModified) per UX + AI scraping.
     import os as _os
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timezone as _tz
     try:
         _mtime = _os.path.getmtime(__file__)
-        _date_modified = _dt.utcfromtimestamp(_mtime).strftime("%Y-%m-%d")
+        _date_modified = _dt.fromtimestamp(_mtime, _tz.utc).strftime("%Y-%m-%d")
     except OSError:
-        _date_modified = _dt.utcnow().strftime("%Y-%m-%d")
+        _date_modified = _dt.now(_tz.utc).strftime("%Y-%m-%d")
     _date_published = _GUIDE_PUBLISHED.get(guide_id, "2024-09-01")
     _updated_label = {
         "it": "Ultimo aggiornamento", "en": "Last updated", "fr": "Dernière mise à jour",

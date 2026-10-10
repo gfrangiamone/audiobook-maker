@@ -615,3 +615,24 @@ def spoken_title_prefix(ch, text):
     # titolo non ha gia` una punteggiatura sua («Perche'?» -> «Perche'?.»).
     sep = "" if _CHIUSA_RE.search(title) else "."
     return f"{title}{sep}\n\n"
+
+
+def trim_preview(text, min_chars=400, max_chars=600):
+    """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio.
+
+    Normalizza prima di troncare, non dopo: `prepare_tts_text` ragiona per
+    riga, e questo testo esce di qui su una riga sola. Appiattirlo prima
+    significherebbe spegnere la pausa dopo il titolo — e l'anteprima voce
+    e` proprio il posto dove l'utente quella pausa la deve sentire.
+    Le parentesi qui restano: i flag di lettura li sceglie l'utente dopo,
+    e li applica l'endpoint dell'anteprima.
+    """
+    text = prepare_tts_text(text, strip_round=False, strip_square=False)
+    if len(text) <= max_chars:
+        return text
+    window = text[min_chars:max_chars]
+    m = re.search(r'[.!?]["""»\)\s]', window)
+    cut = (min_chars + m.start() + 1) if m else text.rfind(' ', min_chars, max_chars)
+    if cut <= 0:
+        cut = max_chars
+    return text[:cut].rstrip()

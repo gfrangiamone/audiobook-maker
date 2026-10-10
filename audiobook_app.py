@@ -142,6 +142,7 @@ from tts_split import (
     _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
     prepare_tts_text,
 )
+from text_reflow import trim_preview as _trim_preview
 
 import assembly_queue
 import load_metrics
@@ -1199,7 +1200,7 @@ def _apply_app_attribution(resp):
     existing = request.cookies.get("abm_acq")
     value = existing if existing else plat  # first-touch: non sovrascrive
     resp.set_cookie("abm_acq", value, max_age=2592000, samesite="Lax",
-                    secure=bool((BASE_URL or "").startswith("https")), httponly=False)
+                    secure=cookie_secure(), httponly=False)
     return resp
 
 
@@ -1261,6 +1262,19 @@ def _mask_email(email):
     su input malformato ritorna l'input invariato.
     """
     return _mask_email_ci(email, invalid=None)
+
+
+def cookie_secure() -> bool:
+    """Flag `secure` dei cookie (admin, client, account): HTTPS dichiarato da
+    BASE_URL, dalla richiesta o da nginx (X-Forwarded-Proto). Prima tre
+    varianti inline, una per cookie (E2, 2026-10-10)."""
+    if (BASE_URL or "").startswith("https"):
+        return True
+    try:
+        return (request.scheme == "https"
+                or (request.headers.get("X-Forwarded-Proto") or "").lower() == "https")
+    except Exception:      # noqa: BLE001 - fuori da una richiesta
+        return False
 
 
 def client_ip() -> str:
@@ -1988,7 +2002,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
         if key and storage_backend.object_exists(key):
             is_probe_cold = False
             try:
-                is_probe_cold = request.method == "HEAD" or bool(request.headers.get("Range"))
+                is_probe_cold = _is_resume_or_probe_request()
             except Exception:
                 pass
             cold_status, cold_info = "ok", None
@@ -2016,7 +2030,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
     # consumare il quota di 5 download: serviamo il file senza toccare il counter.
     is_probe = False
     try:
-        is_probe = request.method == "HEAD" or bool(request.headers.get("Range"))
+        is_probe = _is_resume_or_probe_request()
     except Exception:
         pass
     # bypass_throttle: per le rotte UI autenticate (cookie owner via
@@ -3079,13 +3093,12 @@ def admin_login():
     Il client JS POSTa qui invece di mettere il token nell'URL."""
     if not ADMIN_TOKEN:
         return jsonify({"error": "Admin disabled"}), 404
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     tok = (data.get("token") or "").strip()
     remember = bool(data.get("remember", True))
     if not _admin_auth_ok(tok):
         return jsonify({"error": "Invalid token"}), 401
     resp = jsonify({"ok": True})
-    is_https = (request.scheme == "https") or (request.headers.get("X-Forwarded-Proto", "") == "https")
     # 30 giorni con "remember" (default), 8 ore altrimenti. Il cookie è HttpOnly+Strict
     # quindi non può essere esfiltrato lato client; estendere la durata evita un round-trip
     # extra (gate → /admin/login → reload) a ogni navigazione successiva alla scadenza.
@@ -3094,7 +3107,7 @@ def admin_login():
         _ADMIN_COOKIE_NAME, tok,
         max_age=max_age,
         httponly=True,
-        secure=is_https,
+        secure=cookie_secure(),
         samesite="Strict",
         path="/",
     )
@@ -3364,6 +3377,7 @@ routes_account.configure(
     jobs=lambda: jobs,
     base_url=lambda: BASE_URL,
     client_ip=lambda *a, **k: client_ip(*a, **k),
+    cookie_secure=lambda *a, **k: cookie_secure(*a, **k),
     _smtp_available=lambda *a, **k: _smtp_available(*a, **k),
     _hash_ip=lambda *a, **k: _hash_ip(*a, **k),
     _get_browser_lang=lambda *a, **k: _get_browser_lang(*a, **k),
@@ -3707,26 +3721,6 @@ def api_analyze():
         # Secondo capitolo valido (più probabile contenuto narrativo, non introduzione)
         target = valid[1] if len(valid) > 1 else valid[0]
         return (target.text or "").strip()
-
-    def _trim_preview(text, min_chars=400, max_chars=600):
-        """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio.
-
-        Normalizza prima di troncare, non dopo: `prepare_tts_text` ragiona per
-        riga, e questo testo esce di qui su una riga sola. Appiattirlo prima
-        significherebbe spegnere la pausa dopo il titolo — e l'anteprima voce
-        e` proprio il posto dove l'utente quella pausa la deve sentire.
-        Le parentesi qui restano: i flag di lettura li sceglie l'utente dopo,
-        e li applica l'endpoint dell'anteprima.
-        """
-        text = prepare_tts_text(text, strip_round=False, strip_square=False)
-        if len(text) <= max_chars:
-            return text
-        window = text[min_chars:max_chars]
-        m = re.search(r'[.!?]["""»\)\s]', window)
-        cut = (min_chars + m.start() + 1) if m else text.rfind(' ', min_chars, max_chars)
-        if cut <= 0:
-            cut = max_chars
-        return text[:cut].rstrip()
 
     # Solo TXT puro usa la logica "primo capitolo con >=150 char": PDF e ABM
     # hanno capitoli strutturati e beneficiano del filtro front-matter + scelta
@@ -4391,7 +4385,7 @@ def api_check_language():
     controllo.
     """
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         job, err, sc = _check_job_owner(data.get("job_id"))
         if err is not None:
             return jsonify({"mismatch": False})
@@ -5828,7 +5822,7 @@ def api_reset_to_chapters(job_id):
 def api_register_email():
     """Register email for job completion notification."""
     import re
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     job_id = data.get("job_id", "")
     email = (data.get("email") or "").strip().lower()
     download_type = data.get("download_type", "audio")  # audio | chapters | podcast | translated
@@ -6146,7 +6140,7 @@ def api_paypal_create_order():
     _maint = _maintenance_gate()
     if _maint is not None:
         return _maint
-    data = request.json or {}; job_id = data.get("job_id", "")
+    data = request.get_json(silent=True) or {}; job_id = data.get("job_id", "")
     # Sec: solo il proprietario del job (o l'admin) puo' aprire un ordine su
     # di esso, come per ogni altra route che legge jobs[job_id].
     job, _err, _sc = _check_job_owner(job_id)
@@ -6206,7 +6200,7 @@ def api_paypal_capture_order():
     """Capture an approved PayPal order. Returns payment_token on success."""
     if not _paypal_available():
         return jsonify({"error": "PayPal not configured"}), 503
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     order_id = (data.get("order_id") or "").strip()
     job_id = (data.get("job_id") or "").strip()
     if not order_id:
@@ -6324,7 +6318,7 @@ def api_voucher_validate():
     Protetto da rate limit per IP (5/min, 30/ora) e lockout per email dopo N fallimenti.
     Ogni tentativo viene loggato come VOUCHER_ATTEMPT.
     """
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     code = (data.get("code") or "").strip().upper()
     email = (data.get("email") or "").strip().lower()
     ip = client_ip()
@@ -6904,7 +6898,7 @@ def api_paypal_create_order_translate():
     _maint = _maintenance_gate()
     if _maint is not None:
         return _maint
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     job_id = data.get("job_id", "")
     # Sec: solo il proprietario del job (o l'admin) puo' aprire un ordine su
     # di esso, come per ogni altra route che legge jobs[job_id].
@@ -6942,7 +6936,7 @@ def api_paypal_create_order_translate():
 @app.route("/api/optimize", methods=["POST"])
 def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
-    data = request.json or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
+    data = request.get_json(silent=True) or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
     lang = data.get("lang")
     _voice_in = data.get("voice") or ""
     if _voice_in and not _VOICE_ID_RE.match(_voice_in):
@@ -8428,12 +8422,11 @@ def _set_client_cookie(response):
     """
     if _CLIENT_COOKIE_NAME not in request.cookies:
         cid = str(uuid.uuid4())[:12]
-        is_https = (request.scheme == "https") or (request.headers.get("X-Forwarded-Proto", "") == "https")
         response.set_cookie(
             _CLIENT_COOKIE_NAME, cid,
             max_age=_CLIENT_COOKIE_MAX_AGE,
             httponly=True,
-            secure=is_https,
+            secure=cookie_secure(),
             samesite="Lax",
         )
     return response

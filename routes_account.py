@@ -42,7 +42,7 @@ _ACCOUNT_SESSION_COOKIE = None
 _LANG_COOKIE = None
 _MOBILE_CID_HEADER = None
 
-FUNCS = ['client_ip', '_smtp_available', '_hash_ip', '_get_browser_lang', '_ip_rl_check', '_apply_no_cache', '_effective_retention_for_token_info', '_get_client_id', '_log_activity']
+FUNCS = ['client_ip', 'cookie_secure', '_smtp_available', '_hash_ip', '_get_browser_lang', '_ip_rl_check', '_apply_no_cache', '_effective_retention_for_token_info', '_get_client_id', '_log_activity']
 VALUES = ('jobs', 'base_url')
 
 
@@ -72,6 +72,9 @@ def _base_url():
 # nei test vale anche qui.
 def client_ip(*a, **k):
     return _cfg["client_ip"](*a, **k)
+
+def cookie_secure(*a, **k):
+    return _cfg["cookie_secure"](*a, **k)
 
 def _smtp_available(*a, **k):
     return _cfg["_smtp_available"](*a, **k)
@@ -131,9 +134,7 @@ def _current_account():
 
 
 def _acct_cookie_secure():
-    if (_base_url() or "").startswith("https"):
-        return True
-    return (request.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+    return cookie_secure()      # regola unica della app (E2)
 
 
 def _acct_set_cookie(resp, token):

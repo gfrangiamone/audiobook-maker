@@ -118,7 +118,7 @@ def admin_api_vouchers():
         return jsonify({"vouchers": items, "count": len(items)})
 
     # POST  →  create
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     try:
         amount = float(data.get("amount_eur") or 0)
@@ -203,7 +203,7 @@ def admin_api_vouchers():
 def admin_api_voucher_revoke(code):
     """Revoca (marca usato) un voucher."""
     code = (code or "").strip().upper()
-    reason = ((request.json or {}).get("reason") or "").strip()[:200]
+    reason = ((request.get_json(silent=True) or {}).get("reason") or "").strip()[:200]
     with payment._vouchers_lock:
         if code not in payment._vouchers:
             return jsonify({"error": "Not found"}), 404

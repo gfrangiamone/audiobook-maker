@@ -63,9 +63,6 @@
   "generation_engine.py": 1,
   "templates/seo_i18n.py": 1
  },
- "naive_utc": {
-  "guide_content.py": 4
- },
  "retry_loop_by_hand": {
   "community_moderator.py": 1,
   "gemini_tts.py": 1,

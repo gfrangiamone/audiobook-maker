@@ -20,6 +20,31 @@ def _fresh(tmp_path):
     yield
 
 
+class _Clock:
+    """`time` finto per tts_backend_state: `time()` avanza solo con `tick`,
+    tutto il resto passa al modulo vero. Senza, due `time.time()` consecutivi
+    possono coincidere (risoluzione ~15 ms su Windows) e `sleep(1.1)`
+    costava 2 s di suite per verificare un confronto."""
+    def __init__(self, start):
+        self.now = start
+
+    def time(self):
+        return self.now
+
+    def tick(self, sec):
+        self.now += sec
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    c = _Clock(time.time())
+    monkeypatch.setattr(st, "time", c)
+    return c
+
+
 def _trip():
     st.trip("flash31", reason="cf_consecutive_failures", detail="d", job_id="j")
 
@@ -45,19 +70,19 @@ def test_schedule_probe_sets_a_future_epoch_and_persists(tmp_path):
     assert voce["probe_delay_sec"] == 1800
 
 
-def test_probe_due_only_when_the_appointment_expired():
+def test_probe_due_only_when_the_appointment_expired(clock):
     _trip()
     st.schedule_probe("flash31", 3600)
     assert st.probe_due("flash31") is False
     st.schedule_probe("flash31", 1)
-    time.sleep(1.1)
+    clock.tick(1.1)
     assert st.probe_due("flash31") is True
 
 
-def test_probe_due_is_false_for_a_model_that_is_not_tripped():
+def test_probe_due_is_false_for_a_model_that_is_not_tripped(clock):
     # Niente da riguadagnare: una sonda su un modello sano sarebbe spesa pura.
     st.schedule_probe("flash31", 1)
-    time.sleep(1.1)
+    clock.tick(1.1)
     assert st.probe_due("flash31") is False
 
 
@@ -84,13 +109,14 @@ def test_failure_respects_the_cap():
     assert st.probe_info("flash31")["delay_sec"] == 21600
 
 
-def test_defer_moves_the_appointment_without_growing_the_delay():
+def test_defer_moves_the_appointment_without_growing_the_delay(clock):
     # Sonda NON eseguita (credito sotto soglia): contarla come fallita
     # spingerebbe il backoff verso il tetto durante un'attesa in cui non
     # abbiamo misurato nulla, cioe' proprio mentre l'admin sta ricaricando.
     _trip()
     st.schedule_probe("flash31", 1800)
     prima = st.probe_info("flash31")
+    clock.tick(5)
     st.defer_probe("flash31")
     dopo = st.probe_info("flash31")
     assert dopo["delay_sec"] == prima["delay_sec"] == 1800

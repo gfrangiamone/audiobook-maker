@@ -154,7 +154,7 @@ def admin_api_suspend():
         token = _admin_auth_from_request()
         if not _admin_auth_ok(token):
             return jsonify({"error": "Unauthorized"}), 401
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         with _suspend_lock:
             _suspend_new_jobs = bool(data.get("suspend", False))
         return jsonify({"suspended": _suspend_new_jobs})

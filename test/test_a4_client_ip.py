@@ -28,19 +28,30 @@ def test_proxyfix_trusts_exactly_one_hop():
 
 
 def test_proxyfix_resolves_last_hop_end_to_end():
-    """Attraverso il WSGI completo: con due hop nell'header, remote_addr e'
-    l'ULTIMO (quello aggiunto da nginx), non il primo (scritto dal client)."""
+    """Attraverso il ProxyFix configurato dalla app: con due hop nell'header,
+    remote_addr e' l'ULTIMO (quello aggiunto da nginx), non il primo (scritto
+    dal client). Nessuna route registrata: Flask lo vieta dopo la prima
+    richiesta, e questo test girava dopo altri che l'avevano gia' fatta."""
+    from werkzeug.test import EnvironBuilder
+
+    wsgi = audiobook_app.app.wsgi_app          # il ProxyFix vero, con la sua configurazione
     seen = {}
 
-    @audiobook_app.app.route("/__a4_ip_probe")
-    def _probe():  # pragma: no cover - route di solo test
-        seen["ip"] = audiobook_app.client_ip()
-        return "ok"
+    def inner(environ, start_response):
+        with audiobook_app.app.request_context(environ):
+            seen["ip"] = audiobook_app.client_ip()
+        start_response("200 OK", [("Content-Type", "text/plain")])
+        return [b"ok"]
 
-    c = audiobook_app.app.test_client()
-    r = c.get("/__a4_ip_probe", headers={"X-Forwarded-For": "6.6.6.6, 7.7.7.7"},
-              environ_base={"REMOTE_ADDR": "10.0.0.9"})
-    assert r.status_code == 200
+    env = EnvironBuilder(path="/", headers={"X-Forwarded-For": "6.6.6.6, 7.7.7.7"},
+                         environ_base={"REMOTE_ADDR": "10.0.0.9"}).get_environ()
+    orig = wsgi.app
+    wsgi.app = inner
+    try:
+        body = b"".join(wsgi(env, lambda *a: None))
+    finally:
+        wsgi.app = orig
+    assert body == b"ok"
     assert seen["ip"] == "7.7.7.7"
 
 

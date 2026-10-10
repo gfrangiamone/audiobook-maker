@@ -112,6 +112,14 @@ def admin_required(fn=None, *, as_json=True):
     return deco(fn) if fn is not None else deco
 
 
+def _pagination(default_limit, cap):
+    """`limit`/`offset` dalla query string con default e tetto (E2: prima
+    cinque copie). `int()` su un valore non numerico solleva come prima."""
+    limit = max(1, min(int(request.args.get("limit", default_limit)), cap))
+    offset = max(0, int(request.args.get("offset", 0)))
+    return limit, offset
+
+
 @bp.route("/admin/audit-premium", methods=["GET"])
 def admin_audit_premium_page():
     """Admin dashboard unificata dei servizi premium: 4 tab (Audit TTS,
@@ -564,8 +572,7 @@ def admin_api_gemini_cost_audit():
     date_from = request.args.get("date_from")
     date_to = request.args.get("date_to")
     try:
-        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
-        offset = max(0, int(request.args.get("offset", 0)))
+        limit, offset = _pagination(200, 1000)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid limit/offset"}), 400
 
@@ -1112,8 +1119,7 @@ def admin_api_translation_cost_audit():
     date_from = request.args.get("date_from")
     date_to = request.args.get("date_to")
     try:
-        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
-        offset = max(0, int(request.args.get("offset", 0)))
+        limit, offset = _pagination(200, 1000)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid limit/offset"}), 400
 
@@ -1222,8 +1228,7 @@ def admin_api_optimization_cost_audit():
     date_from = request.args.get("date_from")
     date_to = request.args.get("date_to")
     try:
-        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
-        offset = max(0, int(request.args.get("offset", 0)))
+        limit, offset = _pagination(200, 1000)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid limit/offset"}), 400
 
@@ -1312,8 +1317,7 @@ def admin_api_voice_clone_audit():
 
     import voice_clone_audit
     try:
-        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
-        offset = max(0, int(request.args.get("offset", 0)))
+        limit, offset = _pagination(200, 1000)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid limit/offset"}), 400
     language = request.args.get("language")
@@ -1358,8 +1362,7 @@ def admin_api_accounts_audit():
     if not accounts.enabled():
         return jsonify({"error": "accounts disabled"}), 503
     try:
-        limit = max(1, min(int(request.args.get("limit", 500)), 2000))
-        offset = max(0, int(request.args.get("offset", 0)))
+        limit, offset = _pagination(500, 2000)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid limit/offset"}), 400
 

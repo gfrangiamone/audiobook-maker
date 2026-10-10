@@ -449,7 +449,7 @@ def token_do_download_m4b(token):
     safe_name = _safe_filename(token_info.get("book_title", "audiolibro"))
 
     if m4b_path and os.path.exists(m4b_path):
-        if request.method != "HEAD" and not request.headers.get("Range"):
+        if not _is_resume_or_probe_request():
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
                           "", "", "", "")
         _mark_token_downloaded(token_info)
@@ -463,7 +463,7 @@ def token_do_download_m4b(token):
     if _cold_m4b_valid(_m4b_snap):
         _cold = _try_cold_serve(_m4b_snap, download_name=f"{safe_name}.m4b")
         if _cold is not None:
-            if request.method != "HEAD" and not request.headers.get("Range"):
+            if not _is_resume_or_probe_request():
                 _log_activity(job_id, token_info.get("original_filename", ""),
                               _cold_op("DOWNLOAD_M4B_TOKEN"), "", "", "", "")
             _mark_token_redirected(token_info)
@@ -478,7 +478,7 @@ def token_do_download_m4b(token):
         if _kits:
             kit_path = str(_kits[0])
     if kit_path and os.path.exists(kit_path):
-        if request.method != "HEAD" and not request.headers.get("Range"):
+        if not _is_resume_or_probe_request():
             _log_activity(job_id, token_info.get("original_filename", ""),
                           "DOWNLOAD_M4B_KIT_TOKEN", "", "", "", "")
         _mark_token_downloaded(token_info)
@@ -497,7 +497,7 @@ def token_do_download_m4b(token):
             mp3_path = str(mp3s[0])
 
     if mp3_path and os.path.exists(mp3_path):
-        if request.method != "HEAD" and not request.headers.get("Range"):
+        if not _is_resume_or_probe_request():
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN_FALLBACK_MP3",
                           "", "", "", "")
         _mark_token_downloaded(token_info)
@@ -509,7 +509,7 @@ def token_do_download_m4b(token):
     # M4B snapshotato, redirect 302 al presigned URL prima del 404.
     _cold = _try_cold_serve(token_info.get("output_m4b", ""), download_name=f"{safe_name}.m4b")
     if _cold is not None:
-        if request.method != "HEAD" and not request.headers.get("Range"):
+        if not _is_resume_or_probe_request():
             _log_activity(job_id, token_info.get("original_filename", ""),
                           _cold_op("DOWNLOAD_M4B_TOKEN"), "", "", "", "")
         _mark_token_redirected(token_info)
