@@ -1,13 +1,15 @@
 """Tests for PCM helpers in tts_split.py."""
 import os
+import time
 import sys
 from unittest.mock import patch
 import tts_split
+import premium_chunk
 
 
 def test_generate_silence_pcm_creates_file(tmp_path):
     out = tmp_path / "silence.pcm"
-    tts_split._generate_silence_pcm(str(out), duration_sec=1)
+    premium_chunk._generate_silence_pcm(str(out), duration_sec=1)
     assert out.exists()
     # 24000 Hz x 1 ch x 2 bytes = 48000 bytes per second
     assert out.stat().st_size == 48000
@@ -15,20 +17,20 @@ def test_generate_silence_pcm_creates_file(tmp_path):
 
 def test_generate_silence_pcm_two_seconds(tmp_path):
     out = tmp_path / "silence.pcm"
-    tts_split._generate_silence_pcm(str(out), duration_sec=2)
+    premium_chunk._generate_silence_pcm(str(out), duration_sec=2)
     assert out.stat().st_size == 96000
 
 
 def test_generate_silence_pcm_zero_duration(tmp_path):
     out = tmp_path / "silence.pcm"
-    tts_split._generate_silence_pcm(str(out), duration_sec=0)
+    premium_chunk._generate_silence_pcm(str(out), duration_sec=0)
     assert out.exists()
     assert out.stat().st_size == 0
 
 
 def test_generate_silence_pcm_content_is_zeros(tmp_path):
     out = tmp_path / "silence.pcm"
-    tts_split._generate_silence_pcm(str(out), duration_sec=1)
+    premium_chunk._generate_silence_pcm(str(out), duration_sec=1)
     data = out.read_bytes()
     assert all(b == 0 for b in data)
 
@@ -48,7 +50,7 @@ def test_generate_chunk_pcm_gemini_success(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr("gemini_tts.synthesize", fake_synth)
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Ciao mondo.", "gemini:flash31:Zephyr", str(out)
     )
     assert result is not False
@@ -74,7 +76,7 @@ def test_generate_chunk_pcm_gemini_retries_then_succeeds(tmp_path, monkeypatch):
     monkeypatch.setattr("gemini_tts.synthesize", flaky_synth)
     monkeypatch.setattr("time.sleep", lambda s: None)  # no real backoff in tests
     out = tmp_path / "chunk.pcm"
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "hello", "gemini:flash31:Zephyr", str(out), max_retries=3
     )
     assert result is not False
@@ -88,7 +90,7 @@ def test_generate_chunk_pcm_gemini_total_failure_writes_silence(tmp_path, monkey
     monkeypatch.setattr("gemini_tts.synthesize", always_fail)
     monkeypatch.setattr("time.sleep", lambda s: None)
     out = tmp_path / "chunk.pcm"
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "fail", "gemini:flash31:Zephyr", str(out), max_retries=2
     )
     assert result is False
@@ -99,7 +101,7 @@ def test_generate_chunk_pcm_gemini_total_failure_writes_silence(tmp_path, monkey
 def test_generate_chunk_pcm_gemini_empty_text(tmp_path):
     """Empty/blank text writes silence and returns False (no API call)."""
     out = tmp_path / "chunk.pcm"
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "   ", "gemini:flash31:Zephyr", str(out)
     )
     assert result is False

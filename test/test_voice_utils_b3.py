@@ -7,6 +7,7 @@ davvero: le copie divergevano solo su input degeneri (decimali, numeri
 senza '%'), dove ora vale la semantica unica di `parse_rate_pct`.
 """
 import pytest
+import edge_engine
 
 import voice_utils as vu
 
@@ -88,7 +89,7 @@ def test_engines_agree_with_the_golden_of_the_old_parsers():
         assert gemini_tts._rate_pct_to_step(rate) == step, rate
         assert speechify_tts.build_ssml("t", None, rate) == ssml, rate
         assert voxcpm_tts.speed_effettiva(0.88, rate) == vox, rate
-        assert tts_split._rate_speed_factor(rate) == pytest.approx(factor), rate
+        assert edge_engine._rate_speed_factor(rate) == pytest.approx(factor), rate
         assert ge._speed_label(rate) == label, rate
 
 

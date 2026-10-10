@@ -29,6 +29,7 @@ diventa rosso: e' il segnale per riaprire il tema.
 import pytest
 
 import tts_split
+import premium_chunk
 
 
 # --- 2. Lo splitter aggrega i frammenti, non li isola ----------------------
@@ -63,7 +64,7 @@ def test_a_fragment_is_isolated_only_when_the_neighbour_has_no_room():
 #
 # NOTA sul monkeypatch: `generate_chunk_pcm_gemini` fa un late import locale
 # `import gemini_tts as _gemini` (per tenere il modulo opzionale). Un
-# monkeypatch su `tts_split._gemini` non lo vedrebbe MAI: la variabile locale
+# monkeypatch su `premium_chunk._gemini` non lo vedrebbe MAI: la variabile locale
 # viene rilegata al modulo reale a ogni chiamata. Il punto di aggancio corretto
 # e' `gemini_tts.synthesize` (stesso pattern di test_tts_split_pcm.py).
 
@@ -92,7 +93,7 @@ def test_every_chunk_reaches_the_api(text, tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr("gemini_tts.synthesize", _ok_synth(called))
 
-    res = tts_split.generate_chunk_pcm_gemini(
+    res = premium_chunk.generate_chunk_pcm_gemini(
         text, "gemini:flash31:Kore", str(tmp_path / "chunk.pcm"))
 
     assert called == [text]
@@ -119,10 +120,10 @@ def test_a_rejected_fragment_is_narrated_by_the_edge_fallback(tmp_path, monkeypa
                 "fallback_engine": "edge"}
 
     monkeypatch.setattr("gemini_tts.synthesize", _rejected)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _fake_edge)
     info = {}
 
-    res = tts_split.generate_chunk_pcm_gemini(
+    res = premium_chunk.generate_chunk_pcm_gemini(
         "XIV.", "gemini:flash31:Kore", str(tmp_path / "chunk.pcm"),
         max_retries=1, failure_info=info, fallback_lang="it")
 

@@ -10,12 +10,14 @@ D2 passo 5 (2026-10-09): il retry sugli errori di rete vive dentro
 fa un solo giro (prima 3 x 3 = 9 chiamate HTTP per chunk).
 """
 import pathlib
+import time
 
 import pytest
 
 import generation_engine
 import speechify_tts
 import tts_split
+import premium_chunk
 
 
 # --- (b) retry sugli errori di rete -----------------------------------------
@@ -73,7 +75,7 @@ def test_generate_chunk_speechify_retries_on_network_error(monkeypatch, tmp_path
     _spy_synthesize(monkeypatch, sess, wrapper_calls)
     out = tmp_path / "c.pcm"
     fi = {}
-    res = tts_split.generate_chunk_pcm_speechify(
+    res = premium_chunk.generate_chunk_pcm_speechify(
         "Hello world", "speechify:simba-3.2:wyatt_32", str(out), failure_info=fi)
     assert len(sess.calls) == 3 and len(wrapper_calls) == 1
     assert res["success"] is True and res["billable_chars"] == 11
@@ -91,7 +93,7 @@ def test_generate_chunk_speechify_silence_after_all_retries(monkeypatch, tmp_pat
     _spy_synthesize(monkeypatch, sess, wrapper_calls)
     out = tmp_path / "c.pcm"
     fi = {}
-    res = tts_split.generate_chunk_pcm_speechify(
+    res = premium_chunk.generate_chunk_pcm_speechify(
         "Hello world", "speechify:simba-3.2:wyatt_32", str(out), failure_info=fi)
     assert res is False
     assert len(sess.calls) == 3 and len(wrapper_calls) == 1
@@ -109,10 +111,10 @@ def test_generate_chunk_speechify_no_retry_on_fatal(monkeypatch, tmp_path):
         raise speechify_tts.SpeechifyFatalError("Speechify HTTP 400 (fatal): invalid SSML")
 
     monkeypatch.setattr("speechify_tts.synthesize", _fatal)
-    monkeypatch.setattr(tts_split.time, "sleep", lambda s: None)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
     out = tmp_path / "c.pcm"
     fi = {}
-    res = tts_split.generate_chunk_pcm_speechify(
+    res = premium_chunk.generate_chunk_pcm_speechify(
         "Hello world", "speechify:simba-3.2:wyatt_32", str(out), failure_info=fi)
     assert res is False
     assert len(calls) == 1

@@ -5,6 +5,7 @@ rigenera un job gia' rimborsato (costo vivo, ricavo zero) o, oltre il cap
 tentativi, emette un secondo rimborso dal fallback.
 """
 import shutil
+import premium_chunk
 import pytest
 
 import generation_engine
@@ -150,7 +151,7 @@ def test_generate_chunk_pcm_reraises_unavailable(monkeypatch, tmp_path):
     monkeypatch.setattr("gemini_tts.synthesize", boom)
     out = tmp_path / "chunk.pcm"
     with pytest.raises(gemini_tts.GeminiUnavailable):
-        tts_split.generate_chunk_pcm_gemini(
+        premium_chunk.generate_chunk_pcm_gemini(
             "Frase di prova sufficientemente lunga per la sintesi.",
             "gemini:flash31:Zephyr", str(out))
 
@@ -176,7 +177,7 @@ def test_quality_failure_marks_pending_failed(setup_engine, mark_failed_calls,
     # path in cui ANCHE l'edge fallback fallisce -> il chunk resta silenziato ->
     # scatta il quality-gate/refund. Senza questo, i chunk verrebbero recuperati
     # e il job completerebbe (comportamento coperto da test_gemini_edge_fallback).
-    monkeypatch.setattr("tts_split._edge_fallback_to_pcm", lambda *a, **k: False)
+    monkeypatch.setattr("premium_chunk._edge_fallback_to_pcm", lambda *a, **k: False)
 
     generation_engine.run_generation(
         job_id, _Info(),
@@ -209,7 +210,7 @@ def test_flash38_chunk_esaurito_ferma_il_job_e_rimborsa(setup_engine, mark_faile
         raise RuntimeError("Gemini TTS failed after 3 attempts: 503 UNAVAILABLE")
 
     monkeypatch.setattr("gemini_tts.synthesize", boom)
-    monkeypatch.setattr("tts_split._edge_fallback_to_pcm",
+    monkeypatch.setattr("premium_chunk._edge_fallback_to_pcm",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("edge vietato")))
     refunds = []
     monkeypatch.setattr(generation_engine, "_refund_gemini_payment",

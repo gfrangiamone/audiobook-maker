@@ -7,6 +7,7 @@ import os
 import pytest
 import gemini_tts
 import tts_split
+import premium_chunk
 
 
 def _boom(*a, **k):
@@ -30,11 +31,11 @@ def test_fallback_used_when_gemini_fails_and_lang_known(tmp_path, monkeypatch):
                 "output_tokens": 0, "model_key": None, "voice_name": "es-ES-ElviraNeural",
                 "fallback_engine": "edge"}
 
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _fake_edge)
 
     out = str(tmp_path / "chunk.pcm")
     fi = {}
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Texto sensible que Gemini rechaza.", "gemini:flash31:Enceladus", out,
         failure_info=fi, fallback_lang="es", rate="-10%")
 
@@ -54,12 +55,12 @@ def test_fallback_used_when_gemini_fails_and_lang_known(tmp_path, monkeypatch):
 def test_silence_when_no_fallback_lang(tmp_path, monkeypatch):
     monkeypatch.setattr(gemini_tts, "synthesize", _boom)
     # _edge_fallback_to_pcm non deve nemmeno essere chiamato senza lingua
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm",
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("no lang -> no edge")))
 
     out = str(tmp_path / "chunk.pcm")
     fi = {}
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Texto.", "gemini:flash31:Enceladus", out, failure_info=fi, fallback_lang=None)
 
     assert result is False
@@ -72,11 +73,11 @@ def test_silence_when_no_fallback_lang(tmp_path, monkeypatch):
 
 def test_silence_when_edge_fallback_also_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(gemini_tts, "synthesize", _boom)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", lambda *a, **k: False)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", lambda *a, **k: False)
 
     out = str(tmp_path / "chunk.pcm")
     fi = {}
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Texto.", "gemini:flash31:Enceladus", out, failure_info=fi, fallback_lang="es")
 
     assert result is False
@@ -91,19 +92,19 @@ def test_quota_error_not_edge_fallbacked(tmp_path, monkeypatch):
         raise gemini_tts.GeminiQuotaExhausted("quota")
 
     monkeypatch.setattr(gemini_tts, "synthesize", _quota)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm",
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("quota must not edge-fallback")))
 
     out = str(tmp_path / "chunk.pcm")
     import pytest
     with pytest.raises(gemini_tts.GeminiQuotaExhausted):
-        tts_split.generate_chunk_pcm_gemini(
+        premium_chunk.generate_chunk_pcm_gemini(
             "Texto.", "gemini:flash31:Enceladus", out, fallback_lang="es")
 
 
 def test_edge_voice_map_defaults_to_english():
-    assert tts_split._EDGE_FALLBACK_VOICES["es"] == "es-ES-ElviraNeural"
-    assert tts_split._EDGE_FALLBACK_DEFAULT == "en-US-AriaNeural"
+    assert premium_chunk._EDGE_FALLBACK_VOICES["es"] == "es-ES-ElviraNeural"
+    assert premium_chunk._EDGE_FALLBACK_DEFAULT == "en-US-AriaNeural"
 
 
 # --- v3.xx: coerenza di genere + accento nell'edge-fallback -------------------
@@ -111,42 +112,42 @@ def test_edge_voice_map_defaults_to_english():
 def test_pick_edge_fallback_gender_and_accent_en_gb_male():
     # Incidente lSuRCN...: voce Gemini maschile en-GB (Algenib) rifiutata ->
     # il fallback DEVE essere una voce edge maschile con accento British.
-    v = tts_split._pick_edge_fallback_voice("en", gender="Male", accent_code="gb")
+    v = premium_chunk._pick_edge_fallback_voice("en", gender="Male", accent_code="gb")
     assert v == "en-GB-RyanNeural"
 
 
 def test_pick_edge_fallback_female_en_gb():
-    v = tts_split._pick_edge_fallback_voice("en", gender="Female", accent_code="gb")
+    v = premium_chunk._pick_edge_fallback_voice("en", gender="Female", accent_code="gb")
     assert v == "en-GB-SoniaNeural"
 
 
 def test_pick_edge_fallback_male_us_default_accent():
     # en senza accento -> default US, ma il genere maschile va rispettato
     # (prima del fix restituiva sempre Aria femminile).
-    v = tts_split._pick_edge_fallback_voice("en", gender="Male", accent_code="us")
+    v = premium_chunk._pick_edge_fallback_voice("en", gender="Male", accent_code="us")
     assert v == "en-US-GuyNeural"
 
 
 def test_pick_edge_fallback_unknown_gender_stays_female():
     # Genere ignoto -> comportamento storico (voce femminile), nessun crash.
-    v = tts_split._pick_edge_fallback_voice("en", gender=None, accent_code=None)
+    v = premium_chunk._pick_edge_fallback_voice("en", gender=None, accent_code=None)
     assert v == "en-US-AriaNeural"
 
 
 def test_pick_edge_fallback_accent_falls_back_to_lang_gender():
     # Accento non mappato per la lingua -> almeno il genere resta coerente.
-    v = tts_split._pick_edge_fallback_voice("de", gender="Male", accent_code="zz")
+    v = premium_chunk._pick_edge_fallback_voice("de", gender="Male", accent_code="zz")
     assert v == "de-DE-ConradNeural"
 
 
 def test_pick_edge_fallback_mono_variant_language_gender():
     # Lingua senza varianti d'accento (it): coerenza di solo genere.
-    assert tts_split._pick_edge_fallback_voice("it", gender="Male") == "it-IT-DiegoNeural"
-    assert tts_split._pick_edge_fallback_voice("it", gender="Female") == "it-IT-ElsaNeural"
+    assert premium_chunk._pick_edge_fallback_voice("it", gender="Male") == "it-IT-DiegoNeural"
+    assert premium_chunk._pick_edge_fallback_voice("it", gender="Female") == "it-IT-ElsaNeural"
 
 
 def test_pick_edge_fallback_latam_spanish_male():
-    v = tts_split._pick_edge_fallback_voice("es", gender="Male", accent_code="419")
+    v = premium_chunk._pick_edge_fallback_voice("es", gender="Male", accent_code="419")
     assert v == "es-MX-JorgeNeural"
 
 
@@ -165,9 +166,9 @@ def test_generate_chunk_passes_gender_from_voice_id(tmp_path, monkeypatch):
                 "input_tokens": 0, "output_tokens": 0, "model_key": None,
                 "voice_name": "en-GB-RyanNeural"}
 
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _fake_edge)
     out = str(tmp_path / "chunk.pcm")
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Sensitive text.", "gemini:flash31:Algenib", out,
         fallback_lang="en", accent_code="gb", rate="+10%")
 
@@ -212,9 +213,9 @@ def _fallback_ready(monkeypatch, ok=True):
 
 def test_flash38_retry_esauriti_ripiega_su_flash31_stessa_voce(tmp_path, monkeypatch):
     calls = _fallback_ready(monkeypatch)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _no_edge)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _no_edge)
     fi = {}
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
         failure_info=fi, fallback_lang="it",
         debug_prompt_path=str(tmp_path / "prompt5.txt"))
@@ -228,9 +229,9 @@ def test_flash38_retry_esauriti_ripiega_su_flash31_stessa_voce(tmp_path, monkeyp
 
 def test_flash38_ripiego_fallito_passa_a_edge(tmp_path, monkeypatch):
     calls = _fallback_ready(monkeypatch, ok=False)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge_ok)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _fake_edge_ok)
     fi = {}
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
         failure_info=fi, fallback_lang="it")
     assert [c[0] for c in calls] == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]
@@ -247,8 +248,8 @@ def test_flash38_ripiego_errore_quota_non_sospende_il_job(tmp_path, monkeypatch)
     monkeypatch.setattr(gemini_tts, "synthesize", _synth)
     monkeypatch.setattr(gemini_tts, "_resolve_backend", lambda mk=None: "vertex")
     monkeypatch.setattr(gemini_tts, "model_unavailable", lambda mk: False)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge_ok)
-    result = tts_split.generate_chunk_pcm_gemini(
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _fake_edge_ok)
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
         failure_info={}, fallback_lang="it")
     assert result["fallback_engine"] == "edge"
@@ -257,8 +258,8 @@ def test_flash38_ripiego_errore_quota_non_sospende_il_job(tmp_path, monkeypatch)
 def test_flash38_senza_ripiego_disponibile_va_diretto_a_edge(tmp_path, monkeypatch):
     calls = _fallback_ready(monkeypatch)
     monkeypatch.setattr(gemini_tts, "model_unavailable", lambda mk: mk == "flash31")
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge_ok)
-    result = tts_split.generate_chunk_pcm_gemini(
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _fake_edge_ok)
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
         failure_info={}, fallback_lang="it")
     assert [c[0] for c in calls] == ["gemini:flash38:Zephyr"]
@@ -267,9 +268,9 @@ def test_flash38_senza_ripiego_disponibile_va_diretto_a_edge(tmp_path, monkeypat
 
 def test_flash38_tutto_fallito_chunk_fallito_non_job_fatale(tmp_path, monkeypatch):
     _fallback_ready(monkeypatch, ok=False)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", lambda *a, **k: False)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", lambda *a, **k: False)
     fi = {}
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
         failure_info=fi, fallback_lang="it")
     assert result is False
@@ -281,9 +282,9 @@ def test_flash38_errore_fatale_resta_job_fatale(tmp_path, monkeypatch):
         raise gemini_tts.GeminiUnavailable("billing: credito esaurito")
 
     monkeypatch.setattr(gemini_tts, "synthesize", _fatal)
-    monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _no_edge)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _no_edge)
     with pytest.raises(gemini_tts.GeminiUnavailable):
-        tts_split.generate_chunk_pcm_gemini(
+        premium_chunk.generate_chunk_pcm_gemini(
             "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
             failure_info={}, fallback_lang="it")
 
@@ -291,16 +292,16 @@ def test_flash38_errore_fatale_resta_job_fatale(tmp_path, monkeypatch):
 def test_flash38_byte_split_rifatto_intero_su_flash31(tmp_path, monkeypatch):
     calls = _fallback_ready(monkeypatch)
     agg_calls = []
-    real = tts_split._synthesize_pcm_pieces_and_concat
+    real = premium_chunk._synthesize_pcm_pieces_and_concat
 
     def _spy(pieces, voice_id, *a, **k):
         agg_calls.append(voice_id)
         return real(pieces, voice_id, *a, **k)
 
-    monkeypatch.setattr(tts_split, "_synthesize_pcm_pieces_and_concat", _spy)
+    monkeypatch.setattr(premium_chunk, "_synthesize_pcm_pieces_and_concat", _spy)
     monkeypatch.setattr(tts_split, "_pick_chunk_max_bytes", lambda v: 40)
     fi = {}
-    result = tts_split.generate_chunk_pcm_gemini(
+    result = premium_chunk.generate_chunk_pcm_gemini(
         "Prima frase di prova. Seconda frase di prova. Terza frase.",
         "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"), failure_info=fi)
     assert agg_calls == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]
@@ -315,6 +316,6 @@ def test_flash31_byte_split_retry_esauriti_resta_chunk_fallito(tmp_path, monkeyp
         raise RuntimeError("Gemini TTS failed after 3 attempts: timeout")
 
     monkeypatch.setattr(gemini_tts, "synthesize", _exhausted)
-    assert tts_split._synthesize_pcm_pieces_and_concat(
+    assert premium_chunk._synthesize_pcm_pieces_and_concat(
         ["Prima parte.", "Seconda parte."], "gemini:flash31:Zephyr",
         str(tmp_path / "c.pcm"), None, 1) is False

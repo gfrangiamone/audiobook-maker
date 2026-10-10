@@ -41,7 +41,6 @@
   "storage_tiering.py": 2,
   "templates/index_page.py": 2,
   "tts_backend_state.py": 5,
-  "tts_split.py": 1,
   "voice_clone.py": 1,
   "voice_clone_audio.py": 4,
   "voice_denoise.py": 2,

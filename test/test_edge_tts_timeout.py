@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tts_split
+import edge_engine
 
 
 class _HangingCommunicate:
@@ -34,14 +35,14 @@ class _HangingCommunicate:
 def hanging_edge_tts(monkeypatch, tmp_path):
     _HangingCommunicate.calls = 0
     monkeypatch.setattr(
-        tts_split.edge_tts, "Communicate",
+        edge_engine.edge_tts, "Communicate",
         lambda text, voice, rate: _HangingCommunicate(text, voice, rate),
     )
     # Timeout corto per il test (la costante deve esistere ed essere usata)
-    monkeypatch.setattr(tts_split, "EDGE_TTS_CHUNK_TIMEOUT", 0.1, raising=False)
+    monkeypatch.setattr(edge_engine, "EDGE_TTS_CHUNK_TIMEOUT", 0.1, raising=False)
     silences = []
     monkeypatch.setattr(
-        tts_split, "_generate_silence_mp3",
+        edge_engine, "_generate_silence_mp3",
         lambda path, duration_sec=1: silences.append(path),
     )
     return silences
@@ -54,7 +55,7 @@ def test_hanging_save_falls_back_to_silence(hanging_edge_tts, tmp_path):
     async def _run():
         # Guardia esterna: col bug il test fallisce qui invece di appendersi
         return await asyncio.wait_for(
-            tts_split._edge_tts_call("testo", "en-GB-RyanNeural", "+0%", out,
+            edge_engine._edge_tts_call("testo", "en-GB-RyanNeural", "+0%", out,
                                      max_retries=1),
             timeout=5,
         )
@@ -70,7 +71,7 @@ def test_hanging_save_retries_before_fallback(hanging_edge_tts, tmp_path):
 
     async def _run():
         return await asyncio.wait_for(
-            tts_split._edge_tts_call("testo", "en-GB-RyanNeural", "+0%", out,
+            edge_engine._edge_tts_call("testo", "en-GB-RyanNeural", "+0%", out,
                                      max_retries=2),
             timeout=5,
         )
@@ -82,5 +83,5 @@ def test_hanging_save_retries_before_fallback(hanging_edge_tts, tmp_path):
 
 def test_timeout_env_default():
     """Default 120s, override via ABM_EDGE_TTS_TIMEOUT a import time."""
-    assert isinstance(tts_split.EDGE_TTS_CHUNK_TIMEOUT, int)
-    assert tts_split.EDGE_TTS_CHUNK_TIMEOUT > 0
+    assert isinstance(edge_engine.EDGE_TTS_CHUNK_TIMEOUT, int)
+    assert edge_engine.EDGE_TTS_CHUNK_TIMEOUT > 0

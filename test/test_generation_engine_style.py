@@ -1,10 +1,11 @@
 import inspect
 import generation_engine
 import tts_split
+import premium_chunk
 
 
 def test_tts_split_chunk_gemini_accepts_style_instruction():
-    sig = inspect.signature(tts_split.generate_chunk_pcm_gemini)
+    sig = inspect.signature(premium_chunk.generate_chunk_pcm_gemini)
     assert "style_instruction" in sig.parameters
     assert sig.parameters["style_instruction"].default is None
 
@@ -30,7 +31,7 @@ def test_chunk_gemini_passes_style_to_synthesize(monkeypatch, tmp_path):
     import gemini_tts
     monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize)
     out = tmp_path / "x.pcm"
-    res = tts_split.generate_chunk_pcm_gemini(
+    res = premium_chunk.generate_chunk_pcm_gemini(
         "Ciao mondo", "gemini:flash31:Zephyr", str(out),
         style_instruction="vivace e narrativo",
     )
@@ -49,7 +50,7 @@ def test_chunk_gemini_default_style_is_none(monkeypatch, tmp_path):
     import gemini_tts
     monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize)
     out = tmp_path / "x.pcm"
-    tts_split.generate_chunk_pcm_gemini("Test", "gemini:flash31:Zephyr", str(out))
+    premium_chunk.generate_chunk_pcm_gemini("Test", "gemini:flash31:Zephyr", str(out))
     assert captured["style_instruction"] is None
 
 

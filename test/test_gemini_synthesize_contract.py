@@ -12,6 +12,7 @@ rischio e' massimo:
   (spec §6).
 """
 import pytest
+import premium_chunk
 
 import gemini_tts
 import tts_backend_state as st
@@ -351,7 +352,7 @@ def test_the_split_aggregate_keeps_backend_and_token_provenance(tmp_path, monkey
                         lambda **kw: {"pcm": PCM_20_SECONDI,
                                       "input_tokens": None, "output_tokens": None})
 
-    agg = tts_split._synthesize_pcm_pieces_and_concat(
+    agg = premium_chunk._synthesize_pcm_pieces_and_concat(
         ["primo pezzo di testo", "secondo pezzo di testo"],
         "gemini:flash31:Kore", str(tmp_path / "unito.pcm"), None, 1)
 
@@ -370,7 +371,7 @@ def test_the_split_aggregate_reports_measured_tokens_on_vertex(tmp_path, monkeyp
                         lambda **kw: {"pcm": PCM_20_SECONDI,
                                       "input_tokens": 7, "output_tokens": 493})
 
-    agg = tts_split._synthesize_pcm_pieces_and_concat(
+    agg = premium_chunk._synthesize_pcm_pieces_and_concat(
         ["primo pezzo di testo", "secondo pezzo di testo"],
         "gemini:flash31:Kore", str(tmp_path / "unito.pcm"), None, 1)
 

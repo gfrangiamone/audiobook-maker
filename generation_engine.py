@@ -84,13 +84,13 @@ from audio_utils import (
     M4B_MSG_PREPARING,
 )
 from tts_split import (
-    _plan_chunks, generate_chunk_mp3,
+    _plan_chunks,
     _pick_chunk_max_chars, _pick_chunk_max_bytes, _pick_pre_split,
     _pick_sentence_slack,
-    generate_chunk_pcm_gemini, _generate_silence_pcm,
-    generate_chunk_pcm_speechify,
     prepare_tts_text, _normalize_shouting,
 )
+from edge_engine import generate_chunk_mp3
+from premium_chunk import generate_chunk_pcm_gemini, _generate_silence_pcm, generate_chunk_pcm_speechify
 
 # ---------------------------------------------------------------------------
 # LLM (text-optimization) config — engine-agnostic, env-driven

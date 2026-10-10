@@ -9,6 +9,7 @@ import os
 import pytest
 import generation_engine as ge
 import tts_split
+import premium_chunk
 
 
 # --------------------------- _early_abort_params ---------------------------
@@ -70,7 +71,7 @@ def test_failure_info_empty_after_sanitize(tmp_path):
     fi = {}
     out = str(tmp_path / "c.pcm")
     # testo che si sanitizza a vuoto -> False + reason, senza toccare Gemini
-    res = tts_split.generate_chunk_pcm_gemini("   ", "gemini:flash31:Charon", out,
+    res = premium_chunk.generate_chunk_pcm_gemini("   ", "gemini:flash31:Charon", out,
                                               failure_info=fi)
     assert res is False
     assert fi.get("reason") == "empty_after_sanitize"

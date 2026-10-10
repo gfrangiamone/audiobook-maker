@@ -157,6 +157,7 @@ def test_synthesize_unavailable_without_key(monkeypatch, tmp_path):
 
 
 import tts_split
+import premium_chunk
 
 
 def test_generate_chunk_speechify_success(monkeypatch, tmp_path):
@@ -172,7 +173,7 @@ def test_generate_chunk_speechify_success(monkeypatch, tmp_path):
 
     monkeypatch.setattr("speechify_tts.synthesize", _fake_synth)
     out = tmp_path / "c.pcm"
-    res = tts_split.generate_chunk_pcm_speechify(
+    res = premium_chunk.generate_chunk_pcm_speechify(
         "Hello world", "speechify:simba-3.2:harper_32", str(out), emotion="warm")
     assert res["success"] is True
     assert calls["emotion"] == "warm"
@@ -187,13 +188,13 @@ def test_generate_chunk_speechify_reraises_unavailable(monkeypatch, tmp_path):
 
     monkeypatch.setattr("speechify_tts.synthesize", _boom)
     with pytest.raises(speechify_tts.SpeechifyUnavailable):
-        tts_split.generate_chunk_pcm_speechify(
+        premium_chunk.generate_chunk_pcm_speechify(
             "Hi", "speechify:simba-3.2:harper_32", str(tmp_path / "c.pcm"))
 
 
 def test_generate_chunk_speechify_empty_text_silence(monkeypatch, tmp_path):
     out = tmp_path / "c.pcm"
-    res = tts_split.generate_chunk_pcm_speechify(
+    res = premium_chunk.generate_chunk_pcm_speechify(
         "   ", "speechify:simba-3.2:harper_32", str(out))
     assert res is False
     assert out.exists()  # silenzio PCM scritto

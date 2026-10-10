@@ -7,6 +7,7 @@ rete) dentro `synthesize`, 1 solo giro del wrapper di chunk (prima 3 x 3 =
 9 chiamate). VoxCPM 8 sottomissioni, push FCM 3, offload cloud 3.
 """
 import types
+import premium_chunk
 
 import pytest
 
@@ -107,13 +108,13 @@ def test_speechify_chunk_wrapper_single_pass_over_synthesize(monkeypatch, tmp_pa
         raise RuntimeError("Speechify synthesis failed after 3 attempts: ConnectionError: Read timed out")
 
     monkeypatch.setattr(spx, "synthesize", boom)
-    monkeypatch.setattr(tts_split._retry, "retry_call",
+    monkeypatch.setattr(premium_chunk._retry, "retry_call",
                         lambda fn, **kw: _retry_recording(fn, kw, []))
-    out = tts_split.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
+    out = premium_chunk.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
                                                  str(tmp_path / "c.pcm"))
     assert len(calls) == 1 and not (isinstance(out, dict) and out.get("success"))
     calls.clear()
-    out = tts_split.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
+    out = premium_chunk.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
                                                  str(tmp_path / "c.pcm"), max_retries=3)
     assert len(calls) == 3                                                           # esplicito: come prima
     calls.clear()
@@ -123,7 +124,7 @@ def test_speechify_chunk_wrapper_single_pass_over_synthesize(monkeypatch, tmp_pa
         raise spx.SpeechifyFatalError("ssml")
 
     monkeypatch.setattr(spx, "synthesize", fatal)
-    out = tts_split.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
+    out = premium_chunk.generate_chunk_pcm_speechify("Testo abbastanza lungo.", "speechify:simba-3.2:harper_32",
                                                  str(tmp_path / "c.pcm"))
     assert len(calls) == 1 and not (isinstance(out, dict) and out.get("success"))   # fatale: niente retry
 

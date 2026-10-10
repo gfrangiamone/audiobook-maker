@@ -9,10 +9,11 @@ NON viene ridiscussa qui. Questo file copre solo cio' che mancava davvero:
   implementato e testato in test_cf_credit_ledger.py, ma senza nessun
   chiamante in produzione prima di questo task);
 - la provenienza onesta del backend quando un chunk lungo viene spezzato in
-  piu' pezzi (`tts_split._synthesize_pcm_pieces_and_concat`), nel caso in cui
+  piu' pezzi (`premium_chunk._synthesize_pcm_pieces_and_concat`), nel caso in cui
   il circuit breaker scatti a meta' chunk.
 """
 import pytest
+import premium_chunk
 
 import gemini_tts
 import tts_backend_state as st
@@ -115,7 +116,7 @@ def test_the_ledger_is_precise_per_piece_across_a_split_chunk(tmp_path, monkeypa
                                       "input_tokens": None, "output_tokens": None})
     before = st.credit_left_usd()
 
-    agg = tts_split._synthesize_pcm_pieces_and_concat(
+    agg = premium_chunk._synthesize_pcm_pieces_and_concat(
         ["primo pezzo di testo", "secondo pezzo di testo"],
         "gemini:flash31:Kore", str(tmp_path / "unito.pcm"), None, 1)
 
@@ -139,7 +140,7 @@ def test_split_aggregate_flags_cf_used_when_every_piece_is_cloudflare(tmp_path, 
                         lambda **kw: {"pcm": PCM_20_SECONDI,
                                       "input_tokens": None, "output_tokens": None})
 
-    agg = tts_split._synthesize_pcm_pieces_and_concat(
+    agg = premium_chunk._synthesize_pcm_pieces_and_concat(
         ["primo pezzo", "secondo pezzo"],
         "gemini:flash31:Kore", str(tmp_path / "unito.pcm"), None, 1)
 
@@ -155,7 +156,7 @@ def test_split_aggregate_flags_cf_used_false_when_every_piece_is_vertex(tmp_path
                         lambda **kw: {"pcm": PCM_20_SECONDI,
                                       "input_tokens": 7, "output_tokens": 493})
 
-    agg = tts_split._synthesize_pcm_pieces_and_concat(
+    agg = premium_chunk._synthesize_pcm_pieces_and_concat(
         ["primo pezzo", "secondo pezzo"],
         "gemini:flash31:Kore", str(tmp_path / "unito.pcm"), None, 1)
 
@@ -193,7 +194,7 @@ def test_split_aggregate_flags_cf_used_true_even_after_a_mid_chunk_trip(tmp_path
                         lambda **kw: {"pcm": PCM_20_SECONDI,
                                       "input_tokens": 7, "output_tokens": 493})
 
-    agg = tts_split._synthesize_pcm_pieces_and_concat(
+    agg = premium_chunk._synthesize_pcm_pieces_and_concat(
         ["primo pezzo, prima del trip", "secondo pezzo, dopo il trip",
          "terzo pezzo, ancora dopo il trip"],
         "gemini:flash31:Kore", str(tmp_path / "unito.pcm"), None, 1)

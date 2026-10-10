@@ -10,6 +10,7 @@ from pathlib import Path
 
 import generation_engine
 import tts_split
+import edge_engine
 import gemini_tts
 
 
@@ -187,8 +188,8 @@ def test_pipeline_engine_dispatch_edge_unchanged(setup_engine, monkeypatch):
         return None
 
     for fn_name in ("generate_chunk_mp3", "synth_edge_chunk", "synthesize_edge"):
-        if hasattr(tts_split, fn_name):
-            monkeypatch.setattr(f"tts_split.{fn_name}", fake_edge)
+        if hasattr(edge_engine, fn_name):
+            monkeypatch.setattr(f"edge_engine.{fn_name}", fake_edge)
 
     info = _Info()
     try:

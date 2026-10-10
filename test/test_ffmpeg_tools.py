@@ -1,6 +1,7 @@
 """F2a: ffmpeg_tools e' l'unico punto che lancia ffmpeg/ffprobe; i moduli
 audio passano dalla foglia (flag, testo leniente, timeout, probe, transcodifica)."""
 import inspect
+import premium_chunk
 import os
 import re
 import shutil
@@ -31,7 +32,7 @@ def test_leaf_and_single_owner_of_ffmpeg_literals():
     assert audio_utils._SUBPROCESS_FLAGS is ft.SUBPROCESS_FLAGS and voice_clone_audio._SUBPROCESS_FLAGS is ft.SUBPROCESS_FLAGS
     assert audio_utils._TEXT_UTF8_LENIENT is ft.TEXT_LENIENT and voice_clone_audio._TEXT is ft.TEXT_LENIENT
     assert voice_clone_audio._tool is ft.tool
-    assert tts_split._PCM_SAMPLE_RATE == ft.PCM_SAMPLE_RATE == 24000
+    assert premium_chunk._PCM_SAMPLE_RATE == ft.PCM_SAMPLE_RATE == 24000
 
 
 def test_run_passes_flags_lenient_text_and_timeout(monkeypatch):
