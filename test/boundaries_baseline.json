@@ -53,10 +53,7 @@
  "ffmpeg_outside_audio_utils": {
   "audiobook_app.py": 2,
   "load_metrics.py": 2,
-  "tts_split.py": 1,
-  "voice_clone_audio.py": 4,
-  "voice_clone_demo.py": 1,
-  "voxcpm_tts.py": 1
+  "voice_clone_audio.py": 4
  },
  "llm_call_by_hand": {
   "generation_engine.py": 1,

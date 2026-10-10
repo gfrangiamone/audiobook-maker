@@ -245,7 +245,7 @@ def test_apply_rate_ffmpeg_fallito_non_perde_l_audio(tmp_path, monkeypatch):
     p = tmp_path / "x.pcm"
     p.write_bytes(originale)
 
-    def fallisce(cmd, check=True):
+    def fallisce(cmd, **kw):          # F2: ffmpeg_tools passa timeout e flag
         raise subprocess.CalledProcessError(1, cmd)
 
     monkeypatch.setattr(subprocess, "run", fallisce)
@@ -258,7 +258,7 @@ def test_apply_rate_ffmpeg_fallito_pulisce_il_file_temporaneo(tmp_path, monkeypa
     p = tmp_path / "x.pcm"
     p.write_bytes(b"\x01\x02" * 48000)
 
-    def fallisce(cmd, check=True):
+    def fallisce(cmd, **kw):          # F2: ffmpeg_tools passa timeout e flag
         raise FileNotFoundError("ffmpeg non trovato")
 
     monkeypatch.setattr(subprocess, "run", fallisce)
@@ -273,7 +273,7 @@ def test_apply_rate_ffmpeg_fallito_non_logga_il_path(tmp_path, monkeypatch, capl
     p = tmp_path / "x.pcm"
     p.write_bytes(b"\x01\x02" * 48000)
 
-    def fallisce(cmd, check=True):
+    def fallisce(cmd, **kw):          # F2: ffmpeg_tools passa timeout e flag
         raise subprocess.CalledProcessError(1, cmd)
 
     monkeypatch.setattr(subprocess, "run", fallisce)

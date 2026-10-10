@@ -24,6 +24,7 @@ import time
 import unicodedata
 
 import edge_tts
+import ffmpeg_tools
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
@@ -911,9 +912,9 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
 # Gemini TTS generation (PCM native)
 # ---------------------------------------------------------------------------
 
-_PCM_SAMPLE_RATE = 24000
-_PCM_CHANNELS = 1
-_PCM_SAMPLE_WIDTH = 2  # bytes per sample (16-bit)
+_PCM_SAMPLE_RATE = ffmpeg_tools.PCM_SAMPLE_RATE      # 24000, i chunk Gemini
+_PCM_CHANNELS = ffmpeg_tools.PCM_CHANNELS
+_PCM_SAMPLE_WIDTH = ffmpeg_tools.PCM_SAMPLE_WIDTH    # 2 byte per campione (16-bit)
 
 
 def _generate_silence_pcm(output_path, duration_sec=1, sample_rate=None):
@@ -922,11 +923,8 @@ def _generate_silence_pcm(output_path, duration_sec=1, sample_rate=None):
     sample_rate=None usa il default Gemini (24kHz). I chiamanti PCM a rate
     diverso (es. Speechify Simba-3.2, 48kHz nativo) passano il rate reale.
     """
-    sr = sample_rate or _PCM_SAMPLE_RATE
-    n_bytes = int(duration_sec * sr * _PCM_CHANNELS * _PCM_SAMPLE_WIDTH)
-    with open(output_path, "wb") as f:
-        if n_bytes > 0:
-            f.write(b"\x00" * n_bytes)
+    ffmpeg_tools.write_pcm_silence(output_path, duration_sec, sample_rate or _PCM_SAMPLE_RATE,
+                                   _PCM_CHANNELS, _PCM_SAMPLE_WIDTH)
 
 
 # Voci edge-tts di fallback per lingua: usate quando Gemini rifiuta un chunk in
@@ -1034,21 +1032,10 @@ def _pick_edge_fallback_voice(lang2, gender=None, accent_code=None):
 def _mp3_to_pcm_24k(mp3_path, pcm_path):
     """Converte un MP3 in PCM raw 24kHz mono 16-bit (stesso formato dei chunk
     Gemini, cosi' il PCM edge si concatena senza discontinuita' di sample rate).
-    Ritorna True se il PCM prodotto e' non vuoto. Best-effort: log su errore."""
-    import subprocess
-    try:
-        cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", mp3_path,
-            "-ar", str(_PCM_SAMPLE_RATE), "-ac", str(_PCM_CHANNELS),
-            "-f", "s16le", pcm_path,
-        ]
-        subprocess.run(cmd, check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        return os.path.exists(pcm_path) and os.path.getsize(pcm_path) > 0
-    except Exception as e:
-        print(f"[gemini-tts] edge-fallback mp3->pcm failed: {e}")
-        return False
+    Ritorna True se il PCM prodotto e' non vuoto. Best-effort: log su errore
+    (timeout 300 s: il ripiego Edge lavora su un chunk, non su un libro)."""
+    return ffmpeg_tools.pcm_transcode(mp3_path, pcm_path, out_rate=_PCM_SAMPLE_RATE,
+                                      channels=_PCM_CHANNELS, timeout=300, tag="gemini-tts edge-fallback")
 
 
 def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path,

@@ -23,6 +23,7 @@ import contextlib
 import io
 import math
 import os
+import ffmpeg_tools
 from env_utils import env_float, env_int
 import subprocess
 import sys
@@ -89,16 +90,14 @@ def clean(src_wav, dst_wav):
     """
     import voice_clone_audio as vca     # import qui: il figlio non lo carica
     t0 = time.time()
-    fd, tmp = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    try:
+    with ffmpeg_tools.temp_wav() as tmp:
         with _lock:
             try:
                 r = subprocess.run(
                     [sys.executable, os.path.abspath(__file__), src_wav, tmp],
                     capture_output=True, timeout=_timeout(), env=_child_env(),
                     preexec_fn=_nice if os.name == "posix" else None,
-                    encoding="utf-8", errors="replace", **vca._SUBPROCESS_FLAGS)
+                    encoding="utf-8", errors="replace", **ffmpeg_tools.SUBPROCESS_FLAGS)
             except subprocess.TimeoutExpired as e:
                 raise DenoiseFailed(f"oltre {_timeout():.0f}s") from e
             except OSError as e:
@@ -116,11 +115,6 @@ def clean(src_wav, dst_wav):
         if picco > tetto:
             x = x * (tetto / picco)
         vca.write_wav(dst_wav, x, sr)
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
     return time.time() - t0
 
 

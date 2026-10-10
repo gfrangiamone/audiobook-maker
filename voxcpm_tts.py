@@ -20,6 +20,7 @@ import logging
 import retry_util as _retry
 import pricing_common
 import os
+import ffmpeg_tools
 from i18n import norm_lang as _norm_lang
 from voice_utils import clone_token as _clone_token, parse_rate_pct as _parse_rate_pct
 from env_utils import env_float as _f, env_int as _i
@@ -1892,24 +1893,22 @@ def apply_rate(pcm_path, rate, sample_rate):
         return False
     tempo = max(0.5, min(2.0, tempo))
 
-    import subprocess
     sr = int(sample_rate or 48000)
     tmp = pcm_path + ".rate"
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-           "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", pcm_path,
-           "-filter:a", f"atempo={tempo:.4f}",
-           "-f", "s16le", "-ar", str(sr), "-ac", "1", tmp]
-    try:
-        subprocess.run(cmd, check=True)
-        os.replace(tmp, pcm_path)
-        return True
-    except Exception:
-        # ffmpeg mancante o fallito non deve buttare via l'audio gia' pagato
-        # al worker: il PCM originale resta com'era, si consegna a velocita'
-        # normale invece di perdere il capitolo. Niente path ne' credenziali
-        # nel log, solo il fatto.
+    # ffmpeg mancante, fallito o scaduto (10 min) non deve buttare via l'audio
+    # gia' pagato al worker: il PCM originale resta com'era, si consegna a
+    # velocita' normale invece di perdere il capitolo. Niente path ne'
+    # credenziali nel log, solo il fatto.
+    if not ffmpeg_tools.pcm_transcode(pcm_path, tmp, in_rate=sr, out_rate=sr,
+                                      filters=f"atempo={tempo:.4f}", timeout=600, tag="voxcpm apply_rate"):
         _LOG.warning("apply_rate: ffmpeg non disponibile o fallito, "
                      "velocita' non applicata")
+        return False
+    try:
+        os.replace(tmp, pcm_path)
+        return True
+    except OSError:
+        _LOG.warning("apply_rate: sostituzione del PCM fallita, velocita' non applicata")
         return False
     finally:
         try:

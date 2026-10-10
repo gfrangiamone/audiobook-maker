@@ -10,6 +10,7 @@ catalogo.
 from __future__ import annotations
 
 import math
+import ffmpeg_tools
 import os
 from env_utils import env_float as _env_float
 import wave
@@ -425,8 +426,8 @@ import subprocess
 import sys
 import tempfile
 
-_SUBPROCESS_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
-_TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+_SUBPROCESS_FLAGS = ffmpeg_tools.SUBPROCESS_FLAGS     # F2: definiti una volta sola
+_TEXT = ffmpeg_tools.TEXT_LENIENT
 ACCEPTED_EXT = ("wav", "mp3", "webm", "opus", "ogg", "m4a", "mp4")
 MIN_PROBE_SEC = 3.0
 MAX_PROBE_SEC = 60.0
@@ -443,11 +444,7 @@ class SampleRejected(Exception):
         self.metrics = metrics
 
 
-def _tool(name):
-    path = shutil.which(name)
-    if not path:
-        raise RuntimeError(f"{name} non trovato nel PATH")
-    return path
+_tool = ffmpeg_tools.tool
 
 
 def probe(path):
@@ -455,7 +452,7 @@ def probe(path):
     cmd = [_tool("ffprobe"), "-v", "error", "-print_format", "json",
            "-show_streams", "-show_format", path]
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=30, **_TEXT, **_SUBPROCESS_FLAGS)
+        r = ffmpeg_tools.run(cmd, timeout=30)
         data = json.loads(r.stdout or "{}")
     except (subprocess.SubprocessError, ValueError) as e:
         raise SampleRejected("vc_gate_format", f"ffprobe: {e}")
@@ -484,7 +481,7 @@ def _decoded_seconds(path):
     cmd = [_tool("ffmpeg"), "-v", "error", "-i", path, "-f", "null", "-",
            "-stats", "-loglevel", "info"]
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+        r = ffmpeg_tools.run(cmd, timeout=_FFMPEG_TIMEOUT)
     except subprocess.SubprocessError:
         return 0.0     # probe() rifiuta dur <= 0 con vc_gate_short: coerente con il suo modo di riportare
     m = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr or "")
@@ -500,7 +497,7 @@ def convert(src, dst_wav):
            "-ar", str(SAMPLE_RATE), "-af", "highpass=f=60", "-c:a", "pcm_s16le",
            "-f", "wav", dst_wav]
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+        r = ffmpeg_tools.run(cmd, timeout=_FFMPEG_TIMEOUT)
     except subprocess.SubprocessError as e:
         _rimuovi_parziale(dst_wav)
         raise SampleRejected("vc_gate_format", f"ffmpeg: {e}")
@@ -524,7 +521,7 @@ def loudness_lufs(wav_path):
     cmd = [_tool("ffmpeg"), "-v", "info", "-nostats", "-i", wav_path,
            "-af", "ebur128=framelog=quiet", "-f", "null", "-"]
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+        r = ffmpeg_tools.run(cmd, timeout=_FFMPEG_TIMEOUT)
     except subprocess.SubprocessError as e:
         raise SampleRejected("vc_gate_format", f"ffmpeg: {e}")
     found = _EBU_I.findall(r.stderr or "")
@@ -541,16 +538,9 @@ def normalize(x, sr):
     y = np.asarray(x, dtype=np.float32)
     y = y - float(np.mean(y))
     y = trim_edges(y, sr, pad_ms=300.0)
-    fd, tmp = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    try:
+    with ffmpeg_tools.temp_wav() as tmp:
         write_wav(tmp, y, sr)
         lu = loudness_lufs(tmp)
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
     gain_db = 0.0 if not math.isfinite(lu) else TARGET_LUFS - lu
     y = y * (10.0 ** (gain_db / 20.0))
     peak = float(np.max(np.abs(y))) if y.size else 0.0
@@ -563,16 +553,9 @@ def normalize(x, sr):
 def prepare_sample(src_path, dst_wav, *, gate=None):
     """Pipeline intera (§5.1-5.3). Scrive `dst_wav` solo se il gate passa."""
     probe(src_path)
-    fd, tmp = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    try:
+    with ffmpeg_tools.temp_wav() as tmp:
         convert(src_path, tmp)
         x, sr = read_wav(tmp)
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
     y, _lu_in = normalize(x, sr)
     mt = apply_gate(measure(y, sr), sr, gate)
     if mt.reasons:

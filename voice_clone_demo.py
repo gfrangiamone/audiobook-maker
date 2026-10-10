@@ -12,6 +12,7 @@ presenti. Motivo: `voxcpm_tts` non espone la ripresa di un job in volo e
 ripetere un chunk da dieci secondi costa meno di aggiungerla.
 """
 import os
+import ffmpeg_tools
 import shutil
 import subprocess
 import threading
@@ -48,9 +49,8 @@ def _notify(event, rec, **extra):
 # ---------------------------------------------------------------------------
 def pcm_to_wav48(pcm_path, wav_path):
     """PCM s16le mono 48 kHz del worker -> wav (§5.5). Cancella il PCM."""
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "s16le", "-ar", "48000",
-           "-ac", "1", "-i", pcm_path, wav_path]
-    subprocess.run(cmd, check=True, timeout=120, capture_output=True)
+    ffmpeg_tools.run_ffmpeg(["-f", "s16le", "-ar", "48000", "-ac", "1", "-i", pcm_path, wav_path],
+                            timeout=120, check=True)
     try:
         os.remove(pcm_path)
     except OSError:

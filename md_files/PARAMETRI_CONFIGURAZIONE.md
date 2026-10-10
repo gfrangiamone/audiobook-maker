@@ -429,6 +429,7 @@ Incidente 2026-08-16 (job `9dmJT_I3lHSeD2Vwz0Bu1A`, audiolibro ~7 h consegnato t
 | Timeout conversione M4B (da MP3) | `3600` secondi | `audio_utils.py` | `_convert_mp3_to_m4b`; su timeout il parziale viene rimosso |
 | Stallo massimo encode PCM | `300` secondi senza crescita dell'output | `audio_utils.py` | `_run_ffmpeg_encode(stall_timeout=300)`: finché ffmpeg scrive non viene interrotto |
 | Tetto assoluto encode PCM | `max(7200 s, 4 × durata audio attesa)` | `audio_utils.py` | `_run_ffmpeg_encode(hard_timeout)`: rete di sicurezza, non un limite di durata |
+| Timeout ffmpeg di servizio (F2a, 2026-10-10) | `ffmpeg_tools.DEFAULT_TIMEOUT` = `600` s per concat MP3 e `atempo` VoxCPM; `300` s per il ripiego Edge mp3->PCM; `120` s per PCM->wav e analisi dei campioni voce; `60` s per il silenzio MP3; `10` s per ogni `ffprobe` | `ffmpeg_tools.py`, chiamanti | Prima mancavano su concat, mp3->PCM, `atempo` e silenzio: un ffmpeg bloccato teneva appeso il thread del job. Alla scadenza il chiamante degrada (silenzio, velocita' normale, concat binaria) e il log riporta `timeout dopo N s`. |
 | Tolleranza durata output | `2%` in difetto rispetto al PCM sorgente | `audio_utils.py` | `_encoded_duration_ok(tolerance=0.02)` |
 | Tag metadati globali | `title`, `album`, `artist`, `album_artist`, `date`, `genre`, `comment`, `description` | `audio_utils.py` | Scritti sempre quando disponibili |
 | Tag stream audio | `language=ita/eng/fra...` (ISO 639-2/B) | `audio_utils.py` | `-metadata:s:a:0 language=...` (MP4 usa language per-stream) |

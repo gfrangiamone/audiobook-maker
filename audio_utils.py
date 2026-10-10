@@ -27,9 +27,10 @@ import subprocess
 import sys
 import time
 import uuid
+import ffmpeg_tools
 
 # Windows: evita che ffmpeg/ffprobe apra finestre console nascoste
-_SUBPROCESS_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+_SUBPROCESS_FLAGS = ffmpeg_tools.SUBPROCESS_FLAGS      # F2: una definizione sola
 
 # Decodifica dell'output dei processi esterni (ffmpeg/ffprobe). ffmpeg tronca a
 # lunghezza fissa i nomi file e i tag che stampa nei log: su un titolo CJK il
@@ -39,7 +40,7 @@ _SUBPROCESS_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" els
 # "'utf-8' codec can't decode byte 0xe4 ... invalid continuation byte").
 # L'output di un processo esterno e' materiale di log: non deve mai poter far
 # fallire la conversione.
-_TEXT_UTF8_LENIENT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+_TEXT_UTF8_LENIENT = ffmpeg_tools.TEXT_LENIENT
 
 
 def _check_audio_dependencies():
@@ -420,17 +421,14 @@ def _include_cover_in_dir(job, target_dir):
 def _generate_silence_mp3(output_path, duration_sec=3):
     """Genera un file MP3 di silenzio della durata specificata."""
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-y", "-f", "lavfi", "-i",
-             f"anullsrc=r=24000:cl=mono",
+        result = ffmpeg_tools.run_ffmpeg(
+            ["-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
              "-t", str(duration_sec), "-c:a", "libmp3lame",
-             "-b:a", "48k", "-q:a", "9", output_path],
-            capture_output=True, **_TEXT_UTF8_LENIENT, **_SUBPROCESS_FLAGS
-        )
+             "-b:a", "48k", "-q:a", "9", output_path], timeout=60)
         if result.returncode == 0 and os.path.exists(output_path):
             return True
-    except (FileNotFoundError, OSError):
-        pass
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"[silence-mp3] ffmpeg non disponibile o scaduto ({e}): ripiego sul frame fisso")
     # Fallback: silenzio MP3 minimo (frame MPEG1 Layer3 32kbps mono @ 24000Hz)
     # 1 frame = 1152 samples → ~48ms → ~21 frame/s → n_frames per duration_sec
     frame_header = b'\xff\xf3\x90\x04'
@@ -456,15 +454,13 @@ def _concatenate_mp3(parts, output, extra_tags=None):
         with open(list_file, "w") as f:
             for p in parts:
                 f.write(f"file '{p}'\n")
-        result = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", list_file, "-c", "copy"] + _extra_tag_args(extra_tags) + [output],
-            capture_output=True, **_TEXT_UTF8_LENIENT, **_SUBPROCESS_FLAGS
-        )
+        result = ffmpeg_tools.run_ffmpeg(
+            ["-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy"]
+            + _extra_tag_args(extra_tags) + [output])
         os.remove(list_file)
         if result.returncode == 0:
             return
-    except (FileNotFoundError, OSError, ValueError):
+    except (FileNotFoundError, OSError, ValueError, subprocess.TimeoutExpired):
         # ValueError: open() lo alza su un path con byte NUL e non discende da
         # OSError. Senza questo ramo il thread del job muore in silenzio invece
         # di degradare sulla concat binaria qui sotto.
@@ -476,18 +472,8 @@ def _concatenate_mp3(parts, output, extra_tags=None):
 
 
 def _get_audio_duration_ms(file_path):
-    """Restituisce la durata del file audio in millisecondi usando ffprobe."""
-    try:
-        cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", file_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=10, **_SUBPROCESS_FLAGS)
-        if result.returncode == 0 and result.stdout.strip():
-            return float(result.stdout.strip()) * 1000
-    except Exception as e:
-        print(f"[_get_audio_duration_ms] Error reading {file_path}: {e}")
-    return 0
+    """Restituisce la durata del file audio in millisecondi usando ffprobe (0 se non misurabile)."""
+    return ffmpeg_tools.probe_duration(file_path) * 1000
 
 
 def _get_audio_bitrate(file_path):
@@ -498,20 +484,10 @@ def _get_audio_bitrate(file_path):
     edge-tts genera MP3 a 48kbps (audio-24khz-48kbitrate-mono-mp3) per default.
     Fallback: 48 kbps.
     """
-    try:
-        cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=bit_rate",
-            "-of", "default=noprint_wrappers=1:nokey=1", file_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=10, **_SUBPROCESS_FLAGS)
-        if result.returncode == 0 and result.stdout.strip():
-            bps = int(float(result.stdout.strip()))
-            # Converti bps → kbps, clampa a range ragionevole [32, 320]
-            kbps = max(32, min(320, round(bps / 1000)))
-            print(f"[_get_audio_bitrate] {os.path.basename(file_path)}: {bps} bps → {kbps} kbps")
-            return kbps
-    except Exception as e:
-        print(f"[_get_audio_bitrate] Error reading {file_path}: {e}")
+    kbps = ffmpeg_tools.probe_bitrate_kbps(file_path)      # gia' clampato a [32, 320]
+    if kbps:
+        print(f"[_get_audio_bitrate] {os.path.basename(file_path)}: {kbps} kbps")
+        return kbps
     # Fallback: default edge-tts (audio-24khz-48kbitrate-mono-mp3)
     return 48
 
@@ -1380,16 +1356,9 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
     import xml.etree.ElementTree as ET
 
     def _mp3_duration_seconds(path):
-        try:
-            r = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", path],
-                capture_output=True, **_TEXT_UTF8_LENIENT, **_SUBPROCESS_FLAGS
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                return int(float(r.stdout.strip()))
-        except (FileNotFoundError, OSError, ValueError):
-            pass
+        secs = ffmpeg_tools.probe_duration(path)
+        if secs > 0:
+            return int(secs)
         try:
             return max(1, os.path.getsize(path) * 8 // 48000)
         except OSError:

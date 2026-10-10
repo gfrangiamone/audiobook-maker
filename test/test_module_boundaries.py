@@ -30,7 +30,7 @@ LEAVES = {
     "activity_log", "activity_db", "user_stats", "env_utils", "fileio",
     "client_identity", "ratelimit", "content_store", "i18n", "page_brand", "seo_ld", "email_layout",
     "jsonl_audit", "llm_client", "gcp_auth", "retry_util", "monthly_ledger", "pricing_common",
-    "token_store", "routes_tokens",
+    "token_store", "routes_tokens", "ffmpeg_tools",
 }
 
 # Moduli di servizio che non devono importare generation_engine (§2.1).
@@ -51,7 +51,7 @@ PATTERNS = [
     ("llm_call_by_hand", r"chat\.completions\.create\(", {"llm_client"}),
     ("import_generation_engine", r"^\s*(import generation_engine|from generation_engine import)", set()),
     ("voice_prefix_literal", r'"(voxcpm:mine:|gemini:|speechify:)"', {"voice_utils"}),
-    ("ffmpeg_outside_audio_utils", r'["\']ff(mpeg|probe)["\']', {"audio_utils"}),
+    ("ffmpeg_outside_audio_utils", r'["\']ff(mpeg|probe)["\']', {"audio_utils", "ffmpeg_tools"}),
     ("forwarded_for_by_hand", r'headers\.get\(\s*["\']X-Forwarded-For', set()),
     ("lang_split_by_hand", r'\.split\("-"\)\[0\]\.lower\(\)', {"i18n"}),
     ("html_doctype_in_py", r"<!DOCTYPE html", {"email_layout"}),   # le email sono documenti interi
