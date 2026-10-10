@@ -2,6 +2,7 @@
 import pytest
 
 import audiobook_app
+import routes_dl
 
 
 @pytest.fixture
@@ -76,7 +77,7 @@ def test_install_buttons_render_svg_badges(monkeypatch):
 
 
 def test_dl_page_caption_links_only_app_name():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
     )
@@ -101,7 +102,7 @@ def test_ua_is_mobile_desktop_false():
 
 
 def test_dl_page_mobile_renders_deeplink_button_not_qr():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
         transfer_url="https://example.com/t/abc123",
@@ -114,7 +115,7 @@ def test_dl_page_mobile_renders_deeplink_button_not_qr():
 
 
 def test_dl_page_desktop_still_renders_qr():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
         transfer_url="https://example.com/t/abc123",
@@ -160,7 +161,7 @@ def test_ua_is_ios_true_false():
 
 
 def test_dl_page_mobile_ios_single_scheme_button():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
         transfer_url="https://example.com/t/abc123",
@@ -176,7 +177,7 @@ def test_dl_page_mobile_ios_single_scheme_button():
 
 
 def test_dl_page_mobile_android_uses_intent_url():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
         transfer_url="https://example.com/t/abc123",
@@ -189,7 +190,7 @@ def test_dl_page_mobile_android_uses_intent_url():
 
 
 def test_dl_page_mobile_ios_uses_https_not_intent():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
         transfer_url="https://example.com/t/abc123",

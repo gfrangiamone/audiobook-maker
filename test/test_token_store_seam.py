@@ -16,7 +16,9 @@ def test_app_has_no_copy_of_the_store():
                  "def _has_active_download_tokens(", "def _ensure_transfer_token(", "def _render_transfer_landing(",
                  '@app.route("/t/<token>")', '@app.route("/s/<token>")'):
         assert name not in src, name
-    assert src.count("_tkstore.") >= 80
+    import routes_dl, routes_admin_jobs
+    total = sum(inspect.getsource(m).count("_tkstore.") for m in (audiobook_app, routes_dl, routes_admin_jobs))
+    assert total >= 80                                   # app + blueprint che servono i file (E3)
     assert "app.register_blueprint(routes_tokens.bp)" in src
     # nessuno dei due moduli nuovi importa l'entry point
     for mod in (token_store, routes_tokens):

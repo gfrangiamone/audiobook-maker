@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import audiobook_app as app
+import routes_dl
 
 PAGES = Path(app.__file__).parent / "templates" / "pages"
 EXPECTED = {
@@ -43,9 +44,9 @@ def test_no_placeholder_survives_in_served_pages():
     """Ogni `__Pn__` del file deve avere un valore nel chiamante."""
     for name in ("dl_expired", "dl_deleted"):
         for lang in ("it", "en", "zz"):
-            html = app._render_dl_expired_page(lang, 3) if name == "dl_expired" else app._render_dl_deleted_page(lang)
+            html = routes_dl._render_dl_expired_page(lang, 3) if name == "dl_expired" else routes_dl._render_dl_deleted_page(lang)
             assert not re.search(r"__P\d+__", html), (name, lang)
-    html = app._render_dl_cooldown_page("fr", 10, "http://x/back")
+    html = routes_dl._render_dl_cooldown_page("fr", 10, "http://x/back")
     assert "__P" not in html and "http://x/back" in html
     html = app._render_install_page("it", "T", "<p>b</p>")
     assert "__P" not in html and "<p>b</p>" in html

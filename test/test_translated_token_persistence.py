@@ -17,6 +17,7 @@ import pathlib
 import time
 
 import audiobook_app
+import routes_dl
 
 import token_store
 
@@ -61,7 +62,7 @@ def test_translated_fields_survive_save_load_roundtrip(monkeypatch, tmp_path):
 
 
 def test_dl_page_translated_unavailable_is_not_a_dead_end():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Titolo", "10h", "translated", lang="en",
         translated_available=False)
     assert "/dl/TOK/translated" not in html, "bottone mostrato senza file disponibile"
@@ -70,7 +71,7 @@ def test_dl_page_translated_unavailable_is_not_a_dead_end():
 
 
 def test_dl_page_translated_available_shows_button():
-    html = audiobook_app._render_dl_page(
+    html = routes_dl._render_dl_page(
         "TOK", "Titolo", "10h", "translated", lang="en",
         translated_available=True)
     assert "/dl/TOK/translated" in html
