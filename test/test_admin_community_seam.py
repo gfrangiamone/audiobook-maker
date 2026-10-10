@@ -6,6 +6,7 @@ import re
 import pytest
 
 import audiobook_app
+import routes_community
 import community_store
 import routes_admin_community as rc
 
@@ -40,9 +41,9 @@ def test_guard_text_form_and_shared_constants(monkeypatch):
     monkeypatch.setattr(audiobook_app, "_render_admin_gate", lambda title, url: f"GATE:{title}")
     r = c.get("/admin/community")
     assert r.status_code == 200 and r.get_data(as_text=True) == "GATE:Community Admin"
-    assert rc._NEWS_LANGS is audiobook_app._NEWS_LANGS and rc._NEWS_TAGS is audiobook_app._NEWS_TAGS
+    assert rc._NEWS_LANGS is routes_community._NEWS_LANGS and rc._NEWS_TAGS is routes_community._NEWS_TAGS
     assert rc._ABUSE_GROUP_RE is audiobook_app._ABUSE_GROUP_RE
-    monkeypatch.setattr(audiobook_app, "_sanitize_text", lambda t, *a, **k: f"S:{t}")
+    monkeypatch.setattr(routes_community, "_sanitize_text", lambda t, *a, **k: f"S:{t}")
     assert rc._sanitize_text("x") == "S:x"
     monkeypatch.setattr(audiobook_app, "_admin_auth_ok", lambda provided: True)
     r = c.post("/admin/api/abuse/clear/not-a-group", headers={"X-Admin-Token": "tok-seam"})

@@ -75,10 +75,11 @@ def test_estimate_dispatch_passes_each_engine_its_signature(monkeypatch):
 
 def test_no_direct_estimate_dispatch_left_in_app_and_engine():
     import audiobook_app as app
-    for mod in (app, ge):
+    import recovery                                   # E3: il gate di recupero vive li'
+    for mod in (app, ge, recovery):
         src = inspect.getsource(mod)
         assert not re.search(r"\b(gemini_tts|_gemini_tts_mod|speechify_tts|voxcpm_tts)\.estimate_book_cost\(", src), mod.__name__
-    assert inspect.getsource(app).count('tts_engines.estimate("') >= 14
+    assert sum(inspect.getsource(m).count('tts_engines.estimate("') for m in (app, recovery)) >= 14
     assert inspect.getsource(ge).count('_tts_engines.estimate("') == 3        # auto-gen: stima mancante
 
 

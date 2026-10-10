@@ -10,6 +10,7 @@ sicurezza qui sotto sono la difesa contro l'XSS (tag iniettati, URL
 `javascript:`, rottura dell'attributo href con virgolette).
 """
 import json
+import routes_community
 import shutil
 import subprocess
 from pathlib import Path
@@ -143,13 +144,13 @@ def test_protocol_relative_url_is_dropped():
 def test_sanitize_text_preserves_newlines_when_requested():
     import audiobook_app as app
     src = "riga uno\n\n- punto\n- altro punto"
-    out = app._sanitize_text(src, 2000, keep_newlines=True)
+    out = routes_community._sanitize_text(src, 2000, keep_newlines=True)
     assert out == src
 
 
 def test_sanitize_text_still_strips_html_tags():
     import audiobook_app as app
-    out = app._sanitize_text("a <script>bad()</script> b", 2000,
+    out = routes_community._sanitize_text("a <script>bad()</script> b", 2000,
                              keep_newlines=True)
     assert "<script>" not in out
     assert "bad()" in out
@@ -157,19 +158,19 @@ def test_sanitize_text_still_strips_html_tags():
 
 def test_sanitize_text_collapses_excess_blank_lines():
     import audiobook_app as app
-    out = app._sanitize_text("a\n\n\n\n\nb", 2000, keep_newlines=True)
+    out = routes_community._sanitize_text("a\n\n\n\n\nb", 2000, keep_newlines=True)
     assert out == "a\n\nb"
 
 
 def test_sanitize_text_default_still_single_line():
     """Il titolo (e ogni altro uso) non deve cambiare comportamento."""
     import audiobook_app as app
-    assert app._sanitize_text("a\n\nb", 200) == "a b"
+    assert routes_community._sanitize_text("a\n\nb", 200) == "a b"
 
 
 def test_sanitize_text_truncates():
     import audiobook_app as app
-    assert len(app._sanitize_text("x" * 5000, 2000, keep_newlines=True)) == 2000
+    assert len(routes_community._sanitize_text("x" * 5000, 2000, keep_newlines=True)) == 2000
 
 
 def test_news_create_keeps_markdown_body():

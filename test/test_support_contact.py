@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import audiobook_app
+import routes_community
 import email_service
 
 
@@ -88,7 +89,7 @@ def test_honeypot_is_silently_accepted(client, sent):
 
 
 def test_rate_limit_after_burst(client, sent):
-    limit = audiobook_app._SUPPORT_RL_PER_MIN
+    limit = routes_community._SUPPORT_RL_PER_MIN
     for _ in range(limit):
         assert client.post("/api/support/contact", json=VALID).status_code == 200
     r = client.post("/api/support/contact", json=VALID)
