@@ -150,3 +150,55 @@ def write_json_verified(path, data, *, attempts=3, backoff=0.2, fsync=True,
         if i < attempts - 1:
             time.sleep(backoff * (i + 1))
     return False, last_err
+
+
+# ---------------------------------------------------------------------------
+# Filename sanitization
+# ---------------------------------------------------------------------------
+
+# Limite di lunghezza dei nomi file generati, in BYTE UTF-8. I filesystem
+# (ext4: 255 byte per componente del path) contano byte, non caratteri: un
+# titolo CJK (3 byte/carattere) o con emoji (4 byte) supera i 255 byte molto
+# prima dei 255 caratteri e fa fallire l'apertura del file con
+# OSError [Errno 36] File name too long, uccidendo il thread del job. Il
+# margine rispetto ai 255 byte copre estensione e suffissi aggiunti dai
+# chiamanti (numerazione capitoli, _podcast.xml, ...).
+MAX_FILENAME_BYTES = 150
+
+
+def truncate_filename(name, max_bytes=MAX_FILENAME_BYTES):
+    """Tronca un nome file a max_bytes in UTF-8 senza spezzare i caratteri."""
+    if not name:
+        return name
+    raw = name.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return name
+    # errors='ignore' scarta l'eventuale carattere multibyte tagliato a meta'.
+    return raw[:max_bytes].decode("utf-8", "ignore")
+
+
+def safe_filename(name, *, replacement="", keep_dots=False, collapse_spaces=True,
+                  guard_dash=True, max_chars=100, max_bytes=MAX_FILENAME_BYTES):
+    """Nome file sicuro (F2b: unica regola, prima due copie in `audio_utils` e
+    `translation_core`). Default = regola storica degli output audio: via i
+    caratteri di controllo, i caratteri vietati dai filesystem e i punti
+    (rompono il riconoscimento dell'estensione nei download), spazi -> `_`,
+    niente `-` iniziale (iniezione di argomenti CLI), 100 caratteri e
+    `MAX_FILENAME_BYTES` byte UTF-8. `translation_core` usa i parametri per
+    la sua forma (sostituzione con `_`, punti conservati, nessun limite).
+
+    I caratteri di controllo (NUL in testa) vanno via per primi: open() rifiuta
+    un path con un byte NUL alzando ValueError, che non e' un OSError e quindi
+    sfugge ai try/except dei chiamanti, uccidendo il thread del job a sintesi
+    gia' completata. I PDF de-DRM-ati portano spesso un NUL nel titolo dei
+    metadati (04/09/2026: sei generazioni identiche fallite in assembly)."""
+    import re
+    name = re.sub(r'[\x00-\x1f\x7f]', replacement, name or "")
+    name = re.sub(r'[<>:"/\\|?*' + ("" if keep_dots else ".") + "]", replacement, name)
+    if collapse_spaces:
+        name = re.sub(r'\s+', '_', name.strip())
+    if guard_dash and name.startswith('-'):
+        name = '_' + name
+    if max_chars is not None:
+        name = name[:max_chars]
+    return truncate_filename(name, max_bytes) if max_bytes else name

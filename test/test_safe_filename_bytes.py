@@ -8,7 +8,7 @@ ammessi da ext4. Il thread moriva in silenzio lasciando il job in `running`.
 """
 import pytest
 
-from audio_utils import MAX_FILENAME_BYTES, _safe_filename, truncate_filename
+from fileio import MAX_FILENAME_BYTES, safe_filename as _safe_filename, truncate_filename
 
 # Limite reale del filesystem di produzione (ext4), per componente del path.
 EXT4_NAME_MAX = 255

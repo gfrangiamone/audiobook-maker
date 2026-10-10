@@ -94,4 +94,4 @@ def test_fileio_is_a_leaf():
     src = pathlib.Path(fileio.__file__).read_text(encoding="utf-8")
     mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
-    assert mods <= {"json", "os", "threading", "time", "pathlib", "env_utils"}
+    assert mods <= {"json", "os", "re", "threading", "time", "pathlib", "env_utils"}   # re: safe_filename (F2b)

@@ -15,6 +15,7 @@ from gcp_auth import ServiceAccount
 import os
 from env_utils import env_float, env_int, env_str
 import re
+import fileio
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -610,7 +611,11 @@ def translate_titles(client_provider, titles, source, target, *, model,
 # ---------------------------------------------------------------------------
 
 def _safe_filename(name):
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
+    """Forma «traduzione» della regola unica di `fileio.safe_filename`:
+    caratteri vietati sostituiti da `_`, punti conservati (c'e' l'estensione),
+    nessun limite qui (lo mette il chiamante), `untitled` se resta vuoto."""
+    cleaned = fileio.safe_filename(name, replacement="_", keep_dots=True, collapse_spaces=False,
+                                   guard_dash=False, max_chars=None, max_bytes=None).strip(" .")
     return cleaned or "untitled"
 
 
