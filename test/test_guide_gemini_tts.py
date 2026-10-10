@@ -1,12 +1,13 @@
 """Guida Gemini TTS: registrazione route + build HTML per lingua."""
 import guide_content
+import routes_pages
 
 LANGS = ["it", "en", "fr", "es", "de", "zh", "hi"]
 
 
 def test_guide_id_registered():
     import audiobook_app
-    assert "gemini-tts" in audiobook_app._VALID_GUIDES
+    assert "gemini-tts" in routes_pages._VALID_GUIDES
 
 
 def test_build_html_all_langs_no_fallback_text():

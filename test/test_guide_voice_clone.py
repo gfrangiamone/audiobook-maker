@@ -1,5 +1,6 @@
 """Guida «Audiolibri con la tua voce»: contenuti, JSON-LD, route e link in home."""
 import json
+import routes_pages
 import re
 
 import guide_content
@@ -16,7 +17,7 @@ def _html(lang):
 
 def test_guide_id_registered():
     import audiobook_app
-    assert GID in audiobook_app._VALID_GUIDES
+    assert GID in routes_pages._VALID_GUIDES
     assert guide_content._GUIDE_PUBLISHED.get(GID) == "2026-09-17"
 
 

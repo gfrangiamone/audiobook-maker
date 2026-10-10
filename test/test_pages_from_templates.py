@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import audiobook_app as app
+import routes_pages
 import routes_dl
 
 PAGES = Path(app.__file__).parent / "templates" / "pages"
@@ -48,7 +49,7 @@ def test_no_placeholder_survives_in_served_pages():
             assert not re.search(r"__P\d+__", html), (name, lang)
     html = routes_dl._render_dl_cooldown_page("fr", 10, "http://x/back")
     assert "__P" not in html and "http://x/back" in html
-    html = app._render_install_page("it", "T", "<p>b</p>")
+    html = routes_pages._render_install_page("it", "T", "<p>b</p>")
     assert "__P" not in html and "<p>b</p>" in html
     assert "__P" not in app._render_admin_gate("G", "/admin/x")
 

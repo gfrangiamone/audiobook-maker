@@ -22,7 +22,7 @@
   "accounts.py": 3,
   "activity_log.py": 1,
   "assembly_queue.py": 3,
-  "audiobook_app.py": 12,
+  "audiobook_app.py": 10,
   "cost_carry.py": 1,
   "email_service.py": 10,
   "free_quota.py": 1,
@@ -68,7 +68,6 @@
   "templates/seo_i18n.py": 1
  },
  "naive_utc": {
-  "audiobook_app.py": 2,
   "guide_content.py": 4
  },
  "retry_loop_by_hand": {

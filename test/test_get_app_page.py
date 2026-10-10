@@ -2,6 +2,7 @@
 import pytest
 
 import audiobook_app
+import routes_pages
 import routes_dl
 
 
@@ -12,18 +13,18 @@ def client():
 
 
 def test_install_buttons_active_when_env_set(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/x")
-    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "https://apple/x")
-    html = audiobook_app._install_buttons_html("it")
+    monkeypatch.setattr(routes_pages, "_PLAY_STORE_URL", "https://play/x")
+    monkeypatch.setattr(routes_pages, "_APP_STORE_URL", "https://apple/x")
+    html = routes_pages._install_buttons_html("it")
     assert 'href="https://play/x"' in html
     assert 'href="https://apple/x"' in html
     assert "btn-disabled" not in html
 
 
 def test_install_buttons_disabled_when_env_missing(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "")
-    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "")
-    html = audiobook_app._install_buttons_html("it")
+    monkeypatch.setattr(routes_pages, "_PLAY_STORE_URL", "")
+    monkeypatch.setattr(routes_pages, "_APP_STORE_URL", "")
+    html = routes_pages._install_buttons_html("it")
     assert html.count("btn-disabled") == 2
     assert "href=" not in html
     # entrambe le etichette comunque presenti
@@ -31,9 +32,9 @@ def test_install_buttons_disabled_when_env_missing(monkeypatch):
 
 
 def test_install_buttons_mixed(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/x")
-    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "")
-    html = audiobook_app._install_buttons_html("en")
+    monkeypatch.setattr(routes_pages, "_PLAY_STORE_URL", "https://play/x")
+    monkeypatch.setattr(routes_pages, "_APP_STORE_URL", "")
+    html = routes_pages._install_buttons_html("en")
     assert 'href="https://play/x"' in html
     assert "btn-disabled" in html  # apple disabilitato
     assert "Download on the App Store" in html
@@ -47,31 +48,31 @@ def test_get_app_page_both_labels(client):
 
 
 def test_get_app_page_active_when_env(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/abm")
+    monkeypatch.setattr(routes_pages, "_PLAY_STORE_URL", "https://play/abm")
     body = client.get("/get-app").get_data(as_text=True)
     assert 'href="https://play/abm"' in body
 
 
 def test_get_app_page_disabled_when_no_env(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "")
-    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "")
+    monkeypatch.setattr(routes_pages, "_PLAY_STORE_URL", "")
+    monkeypatch.setattr(routes_pages, "_APP_STORE_URL", "")
     body = client.get("/get-app").get_data(as_text=True)
     # CSS definition counts as 1 extra; check both buttons are disabled (>= 2 usages)
     assert body.count("btn-disabled") >= 2
 
 
 def test_transfer_landing_renders_store_buttons(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/abm")
-    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "")
+    monkeypatch.setattr(routes_pages, "_PLAY_STORE_URL", "https://play/abm")
+    monkeypatch.setattr(routes_pages, "_APP_STORE_URL", "")
     body = client.get("/t/sometoken").get_data(as_text=True)
     assert 'href="https://play/abm"' in body   # play attivo
     assert "btn-disabled" in body               # apple disabilitato
 
 
 def test_install_buttons_render_svg_badges(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/x")
-    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "https://apple/x")
-    html = audiobook_app._install_buttons_html("en")
+    monkeypatch.setattr(routes_pages, "_PLAY_STORE_URL", "https://play/x")
+    monkeypatch.setattr(routes_pages, "_APP_STORE_URL", "https://apple/x")
+    html = routes_pages._install_buttons_html("en")
     assert html.count("<svg") == 2
     assert "store-badge" in html
 
@@ -140,7 +141,7 @@ def test_android_intent_url_format():
     assert intent.startswith("intent://audiobook-maker.com/t/abc123#Intent;")
     assert f"scheme={audiobook_app._APP_SCHEME};" in intent
     assert "scheme=abm;" in intent
-    assert f"package={audiobook_app._APP_PACKAGE};" in intent
+    assert f"package={routes_pages._APP_PACKAGE};" in intent
     # il fallback è l'https url-encoded, e termina con ;end
     assert "S.browser_fallback_url=https%3A%2F%2Faudiobook-maker.com%2Ft%2Fabc123" in intent
     assert intent.endswith(";end")
@@ -185,7 +186,7 @@ def test_dl_page_mobile_android_uses_intent_url():
     )
     # Android: href è l'intent:// (escapato), non l'https diretto né il QR
     assert "href=\"intent://example.com/t/abc123#Intent;" in html
-    assert f"package={audiobook_app._APP_PACKAGE}" in html
+    assert f"package={routes_pages._APP_PACKAGE}" in html
     assert "data:image/png;base64,AAAA" not in html
 
 

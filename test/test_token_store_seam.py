@@ -6,6 +6,7 @@ import re
 import pytest
 
 import audiobook_app
+import routes_pages
 import routes_tokens
 import token_store
 
@@ -27,8 +28,8 @@ def test_app_has_no_copy_of_the_store():
 
 def test_blueprint_serves_the_landings(monkeypatch):
     audiobook_app.app.config["TESTING"] = True
-    monkeypatch.setattr(audiobook_app, "_render_install_page", lambda lang, title, body: f"<p>{lang}|{title}</p>")
-    routes_tokens.configure(audiobook_app._render_install_page)
+    monkeypatch.setattr(routes_pages, "_render_install_page", lambda lang, title, body: f"<p>{lang}|{title}</p>")
+    routes_tokens.configure(routes_pages._render_install_page)
     c = audiobook_app.app.test_client()
     r = c.get("/t/abc", headers={"Accept-Language": "it-IT"})
     assert r.status_code == 200 and r.get_data(as_text=True).startswith("<p>it|Apri in Audiobook Maker")
