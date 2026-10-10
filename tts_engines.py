@@ -19,6 +19,10 @@ from dataclasses import dataclass
 
 from voice_utils import engine_for_voice, is_gemini_voice, is_speechify_voice, is_voxcpm_voice
 
+# Cap generico dei caratteri per chunk: default di `tts_split.split_text_into_chunks`
+# e tetto che nessun motore supera (F1c, 2026-10-10; prima in tts_split).
+CHUNK_MAX_CHARS = 2000
+
 
 @dataclass(frozen=True)
 class Engine:

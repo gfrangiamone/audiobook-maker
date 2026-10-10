@@ -478,7 +478,7 @@ def estimate_book_cost(chapters, language="en"):
         chapters: lista di oggetti con attributo `.text` (e `.title`).
         language: ISO 639-1 (solo 'en' supportato; parametro per simmetria).
     """
-    from tts_split import spoken_title_prefix
+    from text_reflow import spoken_title_prefix
 
     chars_per_chapter, chars_total, _ = _pricing.billable_chars(chapters, spoken_title_prefix)
     price = compute_user_price_eur(chars_total)

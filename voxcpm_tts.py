@@ -31,6 +31,8 @@ import time
 import requests
 
 import voxcpm_catalog
+import tts_engines
+from text_reflow import spoken_title_prefix
 
 _LOG = logging.getLogger(__name__)
 
@@ -271,12 +273,11 @@ CHUNK_MIN_CHARS = 40
 def chunk_max_chars():
     """Cap caratteri/chunk sul testo (override via ABM_VOXCPM_CHUNK_CHARS).
 
-    Clampato a [CHUNK_MIN_CHARS, tts_split.CHUNK_MAX_CHARS]. Valori non
+    Clampato a [CHUNK_MIN_CHARS, tts_engines.CHUNK_MAX_CHARS]. Valori non
     validi ricadono sul default CHUNK_MAX_CHARS.
     """
-    import tts_split
     val = _i("ABM_VOXCPM_CHUNK_CHARS", CHUNK_MAX_CHARS)
-    return max(CHUNK_MIN_CHARS, min(tts_split.CHUNK_MAX_CHARS, val))
+    return max(CHUNK_MIN_CHARS, min(tts_engines.CHUNK_MAX_CHARS, val))
 
 
 def is_available():
@@ -343,8 +344,6 @@ def estimate_book_cost(chapters, language="it"):
         language: ISO 639-1 della voce scelta (pesa i caratteri, vedi
             `lang_price_factor`).
     """
-    from tts_split import spoken_title_prefix
-
     chars_per_chapter, chars_total, _ = pricing_common.billable_chars(chapters, spoken_title_prefix)
     price = compute_user_price_eur(chars_total, language)
     return {

@@ -1669,7 +1669,7 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
     # capitolo (whitespace/newline non gonfiano il conteggio). Dal 2026-10-09
     # i titoli entrano anche qui, come su VoxCPM: contano nei token stimati
     # e quindi nel prezzo (pricing_common.billable_text).
-    from tts_split import spoken_title_prefix
+    from text_reflow import spoken_title_prefix
     chars_per_chapter, chars_total, normalized_parts = _pricing.billable_chars(
         chapters, spoken_title_prefix, normalize=_normalize_text)
 
