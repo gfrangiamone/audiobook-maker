@@ -9,6 +9,7 @@ import pytest
 
 import accounts
 import audiobook_app
+import routes_mobile
 import routes_voice_clone
 import token_store
 import db
@@ -31,7 +32,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
     monkeypatch.setattr(token_store, "download_tokens", {})
     monkeypatch.setattr(token_store, "save_tokens", lambda: None)
-    monkeypatch.setattr(audiobook_app, "_file_available", lambda p: True)
+    monkeypatch.setattr(routes_mobile, "_file_available", lambda p: True)
     audiobook_app._ip_rl_buckets.pop("auth_request", None)
     box = {"codes": [], "deleted": []}
     monkeypatch.setattr(email_service, "send_account_code",
@@ -357,7 +358,7 @@ def test_downloads_for_handles_types_and_expiry(env, monkeypatch):
 
 def test_downloads_for_skips_missing_files(env, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 100.0)
-    monkeypatch.setattr(audiobook_app, "_file_available", lambda p: False)
+    monkeypatch.setattr(routes_mobile, "_file_available", lambda p: False)
     now = time.time()
     _token("ja", "audio", created_at=now - 10, output_m4b="/x/a.m4b")
     _token("jb", "optimized_abm", created_at=now - 10, optimized_abm_path="/x/b.abm")
