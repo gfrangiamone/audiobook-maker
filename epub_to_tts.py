@@ -23,6 +23,7 @@ import unicodedata
 from pathlib import Path
 from typing import Optional
 
+import text_reflow
 from text_reflow import dehyphenate_breaks, reflow_book, strip_soft_hyphens
 from book_model import (BookInfo, Chapter, WORDS_PER_MINUTE, NON_CONTENT_FILENAMES_EXACT,
                         NON_CONTENT_FILENAMES_SUBSTR, NON_CONTENT_TITLE_PHRASES, NON_CONTENT_TITLE_EXACT,
@@ -179,61 +180,8 @@ NOISE_PATTERNS = [
     (r"\\(?!\w)", ""),
 ]
 
-# Espansione abbreviazioni comuni per TTS più naturale
-ABBREVIATIONS = {
-    "ecc.": "eccetera",
-    "etc.": "eccetera",
-    "pag.": "pagina",
-    "pagg.": "pagine",
-    "cap.": "capitolo",
-    "capp.": "capitoli",
-    "vol.": "volume",
-    "voll.": "volumi",
-    "fig.": "figura",
-    "figg.": "figure",
-    "tab.": "tabella",
-    "tabb.": "tabelle",
-    "cfr.": "confronta",
-    "cit.": "citato",
-    "op. cit.": "opera citata",
-    "ibid.": "ibidem",
-    "n.d.r.": "nota del redattore",
-    "n.d.t.": "nota del traduttore",
-    "n.d.a.": "nota dell'autore",
-    "es.": "esempio",
-    "ad es.": "ad esempio",
-    "p.es.": "per esempio",
-    "sig.": "signor",
-    "sig.ra": "signora",
-    "dott.": "dottor",
-    "dott.ssa": "dottoressa",
-    "prof.": "professor",
-    "prof.ssa": "professoressa",
-    "avv.": "avvocato",
-    "ing.": "ingegner",
-    "arch.": "architetto",
-    "geom.": "geometra",
-    "sez.": "sezione",
-    "par.": "paragrafo",
-    "art.": "articolo",
-    "artt.": "articoli",
-    "lett.": "lettera",
-    "c.d.": "cosiddetto",
-    "ca.": "circa",
-    "sec.": "secolo",
-    "a.C.": "avanti Cristo",
-    "d.C.": "dopo Cristo",
-    # Inglesi comuni
-    "e.g.": "for example",
-    "i.e.": "that is",
-    "vs.": "versus",
-    "Dr.": "Doctor",
-    "Mr.": "Mister",
-    "Mrs.": "Missis",
-    "St.": "Saint",
-    "Jr.": "Junior",
-    "Sr.": "Senior",
-}
+# ABBREVIATIONS ed expand_abbreviations vivono in text_reflow (F1b).
+ABBREVIATIONS = text_reflow.ABBREVIATIONS
 
 # Marker di pausa TTS (inseriti nel testo, interpretati dal motore TTS o dallo script)
 CHAPTER_PAUSE = "\n\n...\n\n"  # Pausa lunga tra capitoli
@@ -514,19 +462,9 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
         cleaned_lines.append(line)
     text = "\n".join(cleaned_lines)
 
-    # 4. Espandi abbreviazioni
+    # 4. Espandi abbreviazioni (regola unica in text_reflow, condivisa con TXT/ABM)
     if expand_abbr:
-        # Ordina per lunghezza decrescente (così "op. cit." viene prima di "cit.")
-        sorted_abbr = sorted(ABBREVIATIONS.items(), key=lambda x: -len(x[0]))
-        for abbr, expansion in sorted_abbr:
-            # Usa word boundary per evitare sostituzioni parziali
-            escaped = re.escape(abbr)
-            text = re.sub(
-                rf"(?<!\w){escaped}(?!\w)",
-                expansion,
-                text,
-                flags=re.IGNORECASE
-            )
+        text = text_reflow.expand_abbreviations(text)
 
     # 5. Gestione numeri romani per capitoli: normalizza la spaziatura fra
     # il marcatore e il numerale, lasciandoli nell'ordine di lettura.

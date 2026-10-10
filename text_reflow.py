@@ -158,3 +158,81 @@ def reflow_book(texts: list):
     if not book_needs_reflow(texts):
         return None
     return [reflow_paragraphs(t) for t in texts]
+
+
+# ---------------------------------------------------------------------------
+# Abbreviazioni (F1b, 2026-10-10; prima solo in epub_to_tts.clean_text_for_tts)
+# ---------------------------------------------------------------------------
+
+# Espansione abbreviazioni comuni per TTS più naturale
+ABBREVIATIONS = {
+    "ecc.": "eccetera",
+    "etc.": "eccetera",
+    "pag.": "pagina",
+    "pagg.": "pagine",
+    "cap.": "capitolo",
+    "capp.": "capitoli",
+    "vol.": "volume",
+    "voll.": "volumi",
+    "fig.": "figura",
+    "figg.": "figure",
+    "tab.": "tabella",
+    "tabb.": "tabelle",
+    "cfr.": "confronta",
+    "cit.": "citato",
+    "op. cit.": "opera citata",
+    "ibid.": "ibidem",
+    "n.d.r.": "nota del redattore",
+    "n.d.t.": "nota del traduttore",
+    "n.d.a.": "nota dell'autore",
+    "es.": "esempio",
+    "ad es.": "ad esempio",
+    "p.es.": "per esempio",
+    "sig.": "signor",
+    "sig.ra": "signora",
+    "dott.": "dottor",
+    "dott.ssa": "dottoressa",
+    "prof.": "professor",
+    "prof.ssa": "professoressa",
+    "avv.": "avvocato",
+    "ing.": "ingegner",
+    "arch.": "architetto",
+    "geom.": "geometra",
+    "sez.": "sezione",
+    "par.": "paragrafo",
+    "art.": "articolo",
+    "artt.": "articoli",
+    "lett.": "lettera",
+    "c.d.": "cosiddetto",
+    "ca.": "circa",
+    "sec.": "secolo",
+    "a.C.": "avanti Cristo",
+    "d.C.": "dopo Cristo",
+    # Inglesi comuni
+    "e.g.": "for example",
+    "i.e.": "that is",
+    "vs.": "versus",
+    "Dr.": "Doctor",
+    "Mr.": "Mister",
+    "Mrs.": "Missis",
+    "St.": "Saint",
+    "Jr.": "Junior",
+    "Sr.": "Senior",
+}
+
+# Regole compilate una volta, dalla piu' lunga alla piu' corta (cosi' "op. cit."
+# viene prima di "cit."), con confini di parola e senza distinzione di
+# maiuscole: stesso risultato del ciclo storico di clean_text_for_tts.
+_ABBR_RULES = [
+    (re.compile(r"(?<!\w)" + re.escape(abbr) + r"(?!\w)", re.IGNORECASE), expansion)
+    for abbr, expansion in sorted(ABBREVIATIONS.items(), key=lambda x: -len(x[0]))
+]
+
+
+def expand_abbreviations(text):
+    """Espande le abbreviazioni di ABBREVIATIONS perche' il TTS le legga per
+    esteso ("ecc." -> "eccetera"). Usata da EPUB/PDF (clean_text_for_tts) e,
+    da F1b, anche da TXT e ABM (plain_parsers)."""
+    for rule, expansion in _ABBR_RULES:
+        text = rule.sub(expansion, text)
+    return text

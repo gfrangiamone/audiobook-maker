@@ -2510,14 +2510,11 @@ def _invalidate_voices_cache():
         _voices_cache = None
 
 # ----------------------------------------------------------------------
-# HELPER CLASSES & PARSERS (Moved to generation_engine.py)
+# PARSERS TXT/ABM: plain_parsers (F1b); i nomi restano attributi del modulo
+# perche' i test li sostituiscono con monkeypatch.
 # ----------------------------------------------------------------------
 
-def parse_txt(file_path):
-    return generation_engine.parse_txt(file_path)
-
-def parse_abm(path):
-    return generation_engine.parse_abm(path)
+from plain_parsers import parse_abm, parse_txt  # noqa: E402
 
 # ----------------------------------------------------------------------
 # GENERATION & OPTIMIZATION THREADS (Moved to generation_engine.py)
