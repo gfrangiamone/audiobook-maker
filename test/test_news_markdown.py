@@ -174,7 +174,7 @@ def test_sanitize_text_truncates():
 
 def test_news_create_keeps_markdown_body():
     """L'endpoint admin deve salvare il Markdown, non appiattirlo."""
-    src = Path("audiobook_app.py").read_text(encoding="utf-8")
+    src = Path("routes_admin_community.py").read_text(encoding="utf-8")   # E3: news admin nel blueprint
     i = src.index("def admin_api_news_create")
     body = src[i:i + 2000]
     assert "keep_newlines=True" in body
