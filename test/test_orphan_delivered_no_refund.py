@@ -11,6 +11,7 @@ import pytest
 import activity_log
 import payment
 import audiobook_app
+import recovery
 
 
 def _write_activity(script_dir, lines):
@@ -39,7 +40,7 @@ def recovery_env(monkeypatch, tmp_path):
                         lambda jid: calls["finalize"].append(jid))
     monkeypatch.setattr(audiobook_app.pending_jobs, "mark_failed",
                         lambda jid: calls["mark_failed"].append(jid))
-    monkeypatch.setattr(audiobook_app, "_send_interrupted_email",
+    monkeypatch.setattr(recovery, "_send_interrupted_email",
                         lambda rec, refund_code=None: None)
     yield tmp_path, calls
     activity_log.reset()
@@ -58,7 +59,7 @@ def test_delivered_job_is_closed_without_refund(recovery_env):
     tmp_path, calls = recovery_env
     _write_activity(tmp_path, [_activity_line("jobDELIVERED", "COMPLETE")])
     rec = _paid_rec("jobDELIVERED")
-    audiobook_app._orphan_fallback("jobDELIVERED", rec)
+    recovery._orphan_fallback("jobDELIVERED", rec)
     assert payment._vouchers == {}          # nessun rimborso
     assert calls["finalize"] == ["jobDELIVERED"]
     assert calls["mark_failed"] == []
@@ -68,7 +69,7 @@ def test_job_without_complete_is_refunded(recovery_env):
     tmp_path, calls = recovery_env
     _write_activity(tmp_path, [_activity_line("jobOTHER", "COMPLETE")])
     rec = _paid_rec("jobLOST")
-    audiobook_app._orphan_fallback("jobLOST", rec)
+    recovery._orphan_fallback("jobLOST", rec)
     assert len(payment._vouchers) == 1      # rimborso emesso
     assert calls["mark_failed"] == ["jobLOST"]
     assert calls["finalize"] == []
@@ -78,7 +79,7 @@ def test_optimize_phase_accepts_opt_complete(recovery_env):
     tmp_path, calls = recovery_env
     _write_activity(tmp_path, [_activity_line("jobOPT", "OPT_COMPLETE")])
     rec = _paid_rec("jobOPT", phase="optimize")
-    audiobook_app._orphan_fallback("jobOPT", rec)
+    recovery._orphan_fallback("jobOPT", rec)
     assert payment._vouchers == {}
     assert calls["finalize"] == ["jobOPT"]
 
@@ -88,7 +89,7 @@ def test_generate_phase_ignores_opt_complete(recovery_env):
     tmp_path, calls = recovery_env
     _write_activity(tmp_path, [_activity_line("jobGEN", "OPT_COMPLETE")])
     rec = _paid_rec("jobGEN", phase="generate")
-    audiobook_app._orphan_fallback("jobGEN", rec)
+    recovery._orphan_fallback("jobGEN", rec)
     assert len(payment._vouchers) == 1
     assert calls["mark_failed"] == ["jobGEN"]
 
@@ -96,7 +97,7 @@ def test_generate_phase_ignores_opt_complete(recovery_env):
 def test_missing_activity_log_does_not_block_refund(recovery_env):
     _tmp, calls = recovery_env  # nessun file di log scritto
     rec = _paid_rec("jobNOLOG")
-    audiobook_app._orphan_fallback("jobNOLOG", rec)
+    recovery._orphan_fallback("jobNOLOG", rec)
     assert len(payment._vouchers) == 1
     assert calls["mark_failed"] == ["jobNOLOG"]
 

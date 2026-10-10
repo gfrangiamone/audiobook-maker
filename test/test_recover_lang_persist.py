@@ -4,6 +4,7 @@ _reenqueue_orphan non li ripristinava: run_optimization cadeva sul default
 hardcoded "it" (prompt LLM italiano su libro di altra lingua). Incidente
 kd8XQj6WWdrZJt1_z0VMPQ: prompt it su libro es dopo restart alle 12:15."""
 import audiobook_app
+import recovery
 
 
 def test_build_descriptor_includes_lang_fields():
@@ -51,7 +52,7 @@ def test_reenqueue_restores_lang(tmp_path, monkeypatch):
         "opt_auto_generate": True,
     }
     try:
-        audiobook_app._reenqueue_orphan("Jlang", rec)
+        recovery._reenqueue_orphan("Jlang", rec)
         job = audiobook_app.jobs["Jlang"]
         assert job["opt_lang"] == "es"
         assert job["lang"] == "es"
@@ -86,7 +87,7 @@ def test_descriptor_roundtrip_preserves_lang(tmp_path, monkeypatch):
 
     monkeypatch.setattr(audiobook_app.threading, "Thread", _FakeThread)
     try:
-        audiobook_app._reenqueue_orphan("Jrt", rec)
+        recovery._reenqueue_orphan("Jrt", rec)
         assert audiobook_app.jobs["Jrt"]["opt_lang"] == "fr"
     finally:
         audiobook_app.jobs.pop("Jrt", None)

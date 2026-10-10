@@ -4,6 +4,7 @@ import os
 import pytest
 
 import audiobook_app
+import recovery
 import community_store
 import generation_engine as ge
 import storage_backend
@@ -176,8 +177,8 @@ def test_recovery_gate_rifiuta_voce_non_usabile(tmp_path, monkeypatch):
     class Info:
         title, language = "Libro", "it"
         chapters = [Ch()]
-    with pytest.raises(audiobook_app._RecoveryRejected):
-        audiobook_app._recovery_generate_gate("J1", {"voice": vc.voice_id_of(rec), "client_id": "cid-uno",
+    with pytest.raises(recovery._RecoveryRejected):
+        recovery._recovery_generate_gate("J1", {"voice": vc.voice_id_of(rec), "client_id": "cid-uno",
                                                      "lang": "it"}, Info())
 
 
@@ -194,7 +195,7 @@ def test_recovery_gate_stima_voxcpm(tmp_path, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_premium_quota_decision",
                         lambda cid, voice, price, jid, book_chars=None, language=None: {"is_free": True, "charge_eur": 0.0})
     monkeypatch.setattr(audiobook_app, "_free_quota_log", lambda *a: None, raising=False)
-    out = audiobook_app._recovery_generate_gate("J1", {"voice": vc.voice_id_of(rec), "client_id": "cid-uno",
+    out = recovery._recovery_generate_gate("J1", {"voice": vc.voice_id_of(rec), "client_id": "cid-uno",
                                                        "lang": "it"}, Info())
     assert out["estimate_key"] == "voxcpm_estimate" and "list_price_eur" in out["estimate"]
 

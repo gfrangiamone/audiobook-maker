@@ -27,6 +27,7 @@ import free_quota
 import generation_engine
 import pending_jobs
 import audiobook_app
+import recovery
 import cleanup
 from epub_to_tts import BookInfo, Chapter
 
@@ -104,13 +105,13 @@ def _run(tmp_path, monkeypatch, rec):
     monkeypatch.setattr(audiobook_app, "_parse_book", lambda src: _info())
     pending_jobs.register(rec["id"], rec["phase"], rec)
     try:
-        return audiobook_app._reenqueue_orphan(rec["id"], rec)
+        return recovery._reenqueue_orphan(rec["id"], rec)
     finally:
         audiobook_app.jobs.pop(rec["id"], None)
 
 
 def _no_fallback(monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_orphan_fallback",
+    monkeypatch.setattr(recovery, "_orphan_fallback",
                         lambda *a, **k: (_ for _ in ()).throw(
                             AssertionError("nessun refund/email 'interrotto' per un job mai partito")))
 
@@ -164,7 +165,7 @@ def test_premium_unpaid_within_quota_starts_consumes_and_persists_estimate(tmp_p
     monkeypatch.setattr(audiobook_app, "_parse_book", lambda src: _info())
     pending_jobs.register(rec["id"], rec["phase"], rec)
     try:
-        assert audiobook_app._reenqueue_orphan(rec["id"], rec) is True
+        assert recovery._reenqueue_orphan(rec["id"], rec) is True
         job = audiobook_app.jobs["Jrec"]
         assert job["gemini_estimate"]["list_price_eur"] == 0.15
         assert job["gemini_estimate"]["chars_total"] == 1000  # solo il capitolo 0
@@ -185,7 +186,7 @@ def test_premium_paid_starts_and_persists_estimate_without_quota_gate(tmp_path, 
     _fresh(tmp_path, monkeypatch)
     monkeypatch.setattr(audiobook_app, "_parse_book", lambda src: _info())
     try:
-        assert audiobook_app._reenqueue_orphan(rec["id"], rec) is True
+        assert recovery._reenqueue_orphan(rec["id"], rec) is True
         assert audiobook_app.jobs["Jrec"]["gemini_estimate"]["list_price_eur"] == 8.99
     finally:
         audiobook_app.jobs.pop("Jrec", None)
@@ -210,7 +211,7 @@ def test_premium_paid_but_not_runnable_falls_back_to_refund_policy(tmp_path, mon
     monkeypatch.setattr(audiobook_app, "_effective_max_text_chars",
                         lambda voice, job=None: 500)
     fb = []
-    monkeypatch.setattr(audiobook_app, "_orphan_fallback",
+    monkeypatch.setattr(recovery, "_orphan_fallback",
                         lambda job_id, rec: fb.append(job_id))
     rec = _rec(tmp_path, PREMIUM, selected_chapters=None,
                payment={"token": "ORD", "total_eur": 8.99, "method": "paypal"})

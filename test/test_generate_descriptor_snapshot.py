@@ -9,6 +9,7 @@ deve precedere ogni pending_jobs.register() dentro api_generate."""
 import inspect
 
 import audiobook_app
+import recovery
 
 
 def _src():
@@ -64,7 +65,7 @@ def test_reenqueue_reports_whether_it_actually_started(tmp_path, monkeypatch):
     epub = tmp_path / "book.epub"
     epub.write_bytes(b"fake-epub")
     monkeypatch.setattr(audiobook_app, "_parse_book", lambda src: object())
-    monkeypatch.setattr(audiobook_app, "_orphan_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(recovery, "_orphan_fallback", lambda *a, **k: None)
 
     class _FakeThread:
         def __init__(self, *a, **k):
@@ -77,12 +78,12 @@ def test_reenqueue_reports_whether_it_actually_started(tmp_path, monkeypatch):
 
     mute = {"id": "Jmute", "phase": "generate", "voice": "",
             "input_path": str(epub)}
-    assert audiobook_app._reenqueue_orphan("Jmute", mute) is False
+    assert recovery._reenqueue_orphan("Jmute", mute) is False
 
     ok = {"id": "Jok", "phase": "generate", "voice": "gemini:flash31:Enceladus",
           "input_path": str(epub)}
     try:
-        assert audiobook_app._reenqueue_orphan("Jok", ok) is True
+        assert recovery._reenqueue_orphan("Jok", ok) is True
     finally:
         audiobook_app.jobs.pop("Jok", None)
         audiobook_app.jobs.pop("Jmute", None)

@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 import audiobook_app
+import recovery
 import community_store
 import pending_jobs
 
@@ -108,7 +109,7 @@ def test_recovery_regenerates_from_translated_text(env, started):
     rec.update({"id": "JTR", "phase": "generate"})
     audiobook_app.jobs.clear()
     pending_jobs.register("JTR", "generate", rec)
-    assert audiobook_app._reenqueue_orphan("JTR", rec) is True
+    assert recovery._reenqueue_orphan("JTR", rec) is True
     info = started[0]["args"][1]
     assert [c.text for c in info.chapters] == ["Ελληνικό ένα.", "Ελληνικό δύο."]
     rebuilt = audiobook_app.jobs["JTR"]
@@ -125,7 +126,7 @@ def test_recovery_without_snapshot_does_not_fall_back_to_original(env, monkeypat
                         lambda src: (_ for _ in ()).throw(
                             AssertionError("non deve ri-parsare l'originale")))
     with pytest.raises(FileNotFoundError):
-        audiobook_app._reenqueue_orphan("JTR", rec)
+        recovery._reenqueue_orphan("JTR", rec)
 
 
 def test_reset_keeps_adopted_snapshot():
