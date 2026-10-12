@@ -18,6 +18,7 @@ Dipende solo dalla stdlib, da os.environ e dal modulo foglia community_store
 
 import json
 import os
+from env_utils import env_str, env_int, env_float
 import pricing_common
 from i18n import norm_lang as _norm_lang
 from ratelimit import lockout_record as _lockout_record, lockout_remaining as _lockout_remaining, sliding_check as _sliding_check, window_record as _window_record
@@ -35,12 +36,12 @@ from fileio import atomic_write_json as _atomic_write_json, data_dir, load_json
 # PayPal + payment config
 # ---------------------------------------------------------------------------
 
-PAYPAL_CLIENT_ID = os.environ.get("ABM_PAYPAL_CLIENT_ID", "").strip()
-PAYPAL_SECRET = os.environ.get("ABM_PAYPAL_SECRET", "").strip()
+PAYPAL_CLIENT_ID = env_str("ABM_PAYPAL_CLIENT_ID")
+PAYPAL_SECRET = env_str("ABM_PAYPAL_SECRET")
 # Fail-fast: quando PayPal e' configurato, ABM_PAYPAL_MODE deve essere esplicito
 # (sandbox|live). Un default "sandbox" silenzioso in produzione dirotterebbe
 # pagamenti reali su test endpoint con conseguente perdita di revenue.
-_PAYPAL_MODE_RAW = os.environ.get("ABM_PAYPAL_MODE", "").strip().lower()
+_PAYPAL_MODE_RAW = env_str("ABM_PAYPAL_MODE").lower()
 if PAYPAL_CLIENT_ID and not _PAYPAL_MODE_RAW:
     raise RuntimeError(
         "ABM_PAYPAL_MODE non impostato. Quando ABM_PAYPAL_CLIENT_ID e' "
@@ -56,16 +57,16 @@ PAYPAL_MODE = _PAYPAL_MODE_RAW or "sandbox"
 PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
 if PAYPAL_CLIENT_ID:
     print(f"[payment] PayPal configured: mode={PAYPAL_MODE} base={PAYPAL_API_BASE}")
-LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10").replace(",", "."))
-LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50").replace(",", "."))
+LLM_RATE_EUR_PER_MCHAR = env_float("ABM_LLM_RATE_EUR_PER_MCHAR", 1.10)
+LLM_FREE_THRESHOLD_EUR = env_float("ABM_LLM_FREE_THRESHOLD_EUR", 0.50)
 # Costo minimo (floor) fatturato per l'OTTIMIZZAZIONE testo AI standalone: quando
 # la stima grezza supera LLM_FREE_THRESHOLD_EUR (quindi si paga), l'importo dovuto
 # viene alzato ad almeno questo valore. Sotto la soglia gratuita il job resta free
 # e il floor non si applica. Vale solo per l'ottimizzazione standalone (non per la
 # quota LLM dei pagamenti combinati con voci PREMIUM). Accetta virgola decimale.
-LLM_MIN_COST_EUR = float(os.environ.get("ABM_LLM_MIN_COST_EUR", "1.0").replace(",", "."))
+LLM_MIN_COST_EUR = env_float("ABM_LLM_MIN_COST_EUR", 1.0)
 # Voce campione (spec §7.1): prezzo fisso, indipendente dal libro. <= 0 = gratis.
-EUR_CLONED_VOICE = float(os.environ.get("ABM_EUR_CLONED_VOICE", "5.00").replace(",", "."))
+EUR_CLONED_VOICE = env_float("ABM_EUR_CLONED_VOICE", 5.00)
 # Costo provider LLM per l'OTTIMIZZAZIONE AI del testo (base costo audit
 # /admin/audit-premium tab "AI Optimization"). Parametro UNICO blended in USD
 # per 1M token TOTALI (prompt + completion): assorbe il mix input/output e i
@@ -75,40 +76,34 @@ EUR_CLONED_VOICE = float(os.environ.get("ABM_EUR_CLONED_VOICE", "5.00").replace(
 # di conversione condiviso ABM_GEMINI_USD_EUR_RATE, gia' usato da Gemini/Speechify).
 # BASE DA VERIFICARE/AGGIORNARE se il modello o il listino cambiano.
 # Accettano virgola decimale.
-LLM_COST_USD_PER_MTOK = float(
-    os.environ.get("ABM_LLM_COST_USD_PER_MTOK", "0.18").replace(",", "."))
+LLM_COST_USD_PER_MTOK = env_float("ABM_LLM_COST_USD_PER_MTOK", 0.18)
 USD_EUR_RATE = pricing_common.usd_eur_rate()
 # Traduzione libro: €/M caratteri input e costo minimo (floor sul totale,
 # applicato solo quando si paga). Accettano virgola decimale.
-TRANSLATE_RATE_EUR_PER_MCHAR = float(
-    os.environ.get("ABM_TRANSLATE_COST", "3.0").replace(",", "."))
-TRANSLATE_MIN_COST_EUR = float(
-    os.environ.get("ABM_TRANSLATE_MIN_COST", "1.5").replace(",", "."))
+TRANSLATE_RATE_EUR_PER_MCHAR = env_float("ABM_TRANSLATE_COST", 3.0)
+TRANSLATE_MIN_COST_EUR = env_float("ABM_TRANSLATE_MIN_COST", 1.5)
 # Costo provider LLM per la traduzione (base costo audit /admin/audit-translations).
 # Coppia unica input/output EUR per 1M token, valida a prescindere dal backend
 # (Vertex/DeepSeek). Default = listino Gemini 2.5 Flash (backend Vertex di
 # prod): BASE DA VERIFICARE/AGGIORNARE se il modello o il listino cambiano.
 # Accettano virgola decimale.
-TRANSLATE_COST_IN_EUR_PER_MTOK = float(
-    os.environ.get("ABM_TRANSLATE_COST_IN_EUR_PER_MTOK", "0.28").replace(",", "."))
-TRANSLATE_COST_OUT_EUR_PER_MTOK = float(
-    os.environ.get("ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK", "2.30").replace(",", "."))
-VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
-VOUCHER_BONUS_PERCENT = int(os.environ.get("ABM_VOUCHER_BONUS_PERCENT", "10"))
-PAYMENT_RETENTION_DAYS = int(os.environ.get("ABM_PAYMENT_RETENTION_DAYS", "730"))  # 24 mesi GDPR
+TRANSLATE_COST_IN_EUR_PER_MTOK = env_float("ABM_TRANSLATE_COST_IN_EUR_PER_MTOK", 0.28)
+TRANSLATE_COST_OUT_EUR_PER_MTOK = env_float("ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK", 2.30)
+VOUCHER_EXPIRY_DAYS = env_int("ABM_VOUCHER_EXPIRY_DAYS", 180)
+VOUCHER_BONUS_PERCENT = env_int("ABM_VOUCHER_BONUS_PERCENT", 10)
+PAYMENT_RETENTION_DAYS = env_int("ABM_PAYMENT_RETENTION_DAYS", 730)  # 24 mesi GDPR
 # Auto-refund di capture PayPal incassati ma MAI consumati (used=False): quando il
 # job pagato viene smaltito senza che la traduzione/ottimizzazione sia mai partita
 # (es. capture-senza-avvio per redirect mobile interrotto), emette un voucher di
 # rimborso all'email del pagante. Se False, marca solo `needs_manual_refund` e
 # lascia all'admin il rimborso PayPal manuale.
 AUTO_REFUND_UNUSED_CAPTURES = (
-    os.environ.get("ABM_AUTO_REFUND_UNUSED_CAPTURES", "true").strip().lower()
+    env_str("ABM_AUTO_REFUND_UNUSED_CAPTURES", "true").lower()
     in ("1", "true", "yes", "on"))
 # Età minima di un capture non consumato prima di considerarlo "abbandonato"
 # (per detection/alert/auto-refund). Un capture appena fatto può essere ancora
 # in attesa che parta /api/translate: non va toccato subito.
-UNUSED_CAPTURE_MIN_AGE_SEC = int(
-    os.environ.get("ABM_UNUSED_CAPTURE_MIN_AGE_SEC", "1800"))  # 30 min
+UNUSED_CAPTURE_MIN_AGE_SEC = env_int("ABM_UNUSED_CAPTURE_MIN_AGE_SEC", 1800)  # 30 min
 
 _paypal_token_cache = {"access_token": None, "expires_at": 0}
 
@@ -309,9 +304,7 @@ _DEFAULT_UNFUNDED_PENDING_REASONS = (
 )
 UNFUNDED_PENDING_REASONS = {
     r.strip().upper()
-    for r in os.environ.get(
-        "ABM_PAYPAL_UNFUNDED_PENDING_REASONS",
-        ",".join(_DEFAULT_UNFUNDED_PENDING_REASONS)).split(",")
+    for r in env_str("ABM_PAYPAL_UNFUNDED_PENDING_REASONS", ",".join(_DEFAULT_UNFUNDED_PENDING_REASONS)).split(",")
     if r.strip()
 }
 
@@ -320,7 +313,7 @@ UNFUNDED_PENDING_REASONS = {
 # che l'ordine sia approvato). Disattivabile via env se PayPal dovesse
 # rifiutare la preferenza per un account/paese specifico.
 PAYPAL_IMMEDIATE_PAYMENT = (
-    os.environ.get("ABM_PAYPAL_IMMEDIATE_PAYMENT", "1").strip().lower()
+    env_str("ABM_PAYPAL_IMMEDIATE_PAYMENT", "1").lower()
     not in ("0", "false", "no", "off")
 )
 
@@ -338,8 +331,8 @@ VOUCHER_EMAIL_FAIL_LIMIT = 10    # fallimenti consecutivi prima del lockout
 VOUCHER_EMAIL_LOCKOUT_SEC = 900  # 15 minuti
 # Global burst cap: ~100/min totali su tutto il processo bloccano un attacker
 # con rotating IP e generated emails. Soglie override-abili via env.
-VOUCHER_GLOBAL_PER_MIN = int(os.environ.get("ABM_VOUCHER_GLOBAL_PER_MIN", "100"))
-VOUCHER_GLOBAL_PER_HOUR = int(os.environ.get("ABM_VOUCHER_GLOBAL_PER_HOUR", "1000"))
+VOUCHER_GLOBAL_PER_MIN = env_int("ABM_VOUCHER_GLOBAL_PER_MIN", 100)
+VOUCHER_GLOBAL_PER_HOUR = env_int("ABM_VOUCHER_GLOBAL_PER_HOUR", 1000)
 
 # Tracking job pagati completati con successo (persistenza su disco)
 _paid_opt_done: set = set()

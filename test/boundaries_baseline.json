@@ -19,14 +19,10 @@
  },
  "env_inline": {
   "activity_log.py": 1,
-  "audiobook_app.py": 10,
   "cost_carry.py": 1,
   "free_quota.py": 1,
   "gemini_availability.py": 1,
-  "gemini_tts.py": 31,
-  "generation_engine.py": 9,
   "output_reuse.py": 1,
-  "payment.py": 21,
   "templates/index_page.py": 2
  },
  "ffmpeg_outside_audio_utils": {

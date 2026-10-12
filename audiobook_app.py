@@ -21,7 +21,7 @@ import seo_ld
 from ratelimit import cooldown_counter as _cooldown_counter, sliding_check as _sliding_check
 from client_identity import EMAIL_RE as _ACCT_EMAIL_RE, ip_salt as _ip_salt, mask_email as _mask_email_ci, salted_hash as _salted_hash
 from fileio import atomic_write_json, data_dir, load_json
-from env_utils import env_bool, env_float, env_int
+from env_utils import env_bool, env_float, env_int, env_str
 import shutil
 import sys
 
@@ -196,7 +196,7 @@ import activity_log
 # callable e' risolta a ogni scrittura/lettura: patchare SCRIPT_DIR nei test
 # basta a spostarlo. activity.db (ABM_ACTIVITY_DB=dual|db) sta accanto ai file.
 def _activity_log_dir():
-    return Path(os.environ.get("ABM_ACTIVITY_LOG_DIR") or SCRIPT_DIR)
+    return Path(env_str("ABM_ACTIVITY_LOG_DIR") or SCRIPT_DIR)
 
 
 activity_log.configure(log_dir=_activity_log_dir)
@@ -212,7 +212,7 @@ _ACCT_PAGES_I18N = _i18n.load("account_pages")
 
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
 # (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
-LLM_MODEL = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
+LLM_MODEL = env_str("ABM_LLM_MODEL", "deepseek-chat")
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
@@ -804,7 +804,7 @@ def _mark_token_redirected(token_info):
 #   export ABM_ADMIN_EMAIL=gfrangiamone@gmail.com
 # Rate limited: max 1 digest email per hour, batches all pending events.
 # Token admin per UI web /admin/vouchers. Se vuoto, l'endpoint è disabilitato.
-ADMIN_TOKEN = os.environ.get("ABM_ADMIN_TOKEN", "").strip()
+ADMIN_TOKEN = env_str("ABM_ADMIN_TOKEN")
 
 
 ADMIN_DISABLED_MSG = "Admin UI disabled"
@@ -1798,7 +1798,7 @@ def _qr_data_uri(text):
 
 def _transfer_payload_for(job_id):
     """Stringa codificata nel QR: URL claim assoluto. L'app ne estrae base+token."""
-    base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
+    base = env_str("ABM_BASE_URL").rstrip("/")
     if not base:
         try:
             base = request.url_root.rstrip("/")
@@ -1884,7 +1884,7 @@ def _safe_share_filename(name):
 
 def _share_link_for(token):
     """URL pubblico della share: {base}/s/{token} (App Link verso l'app)."""
-    base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
+    base = env_str("ABM_BASE_URL").rstrip("/")
     if not base:
         try:
             base = request.url_root.rstrip("/")
@@ -4709,7 +4709,7 @@ def api_generate():
                     f"reserve={_pf_sync.get('reserve')}\n"
                     f"Nessun payment consumato (blocco prima del consume).\n"
                 )
-                _admin_email = os.environ.get("ABM_ADMIN_EMAIL", "")
+                _admin_email = env_str("ABM_ADMIN_EMAIL", "")
                 if _admin_email:
                     email_service.send_email(_admin_email,
                                              "[ABM-ADMIN] Preflight RPD block (sync)",
@@ -8741,17 +8741,17 @@ if __name__ == "__main__":
     print(f"  Script folder: {SCRIPT_DIR}")
     print(f"  Data folder:   {UPLOAD_DIR}")
     print(f"  Activity log:  {_activity_log_dir() / 'activity_YYYY-MM.log'}")
-    _max_text_chars_startup = os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")
+    _max_text_chars_startup = env_str("ABM_MAX_TEXT_CHARS", "1500000")
     print(f"  ABM_MAX_TEXT_CHARS: {_max_text_chars_startup} "
           f"({'env' if 'ABM_MAX_TEXT_CHARS' in os.environ else 'default'})")
-    _max_gemini_text_chars_startup = os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000")
+    _max_gemini_text_chars_startup = env_str("ABM_MAX_GEMINI_TEXT_CHARS", "800000")
     print(f"  ABM_MAX_GEMINI_TEXT_CHARS: {_max_gemini_text_chars_startup} "
           f"({'env' if 'ABM_MAX_GEMINI_TEXT_CHARS' in os.environ else 'default'})")
-    _job_retention_startup = os.environ.get("ABM_JOB_RETENTION_SEC", "64800")
+    _job_retention_startup = env_str("ABM_JOB_RETENTION_SEC", "64800")
     print(f"  ABM_JOB_RETENTION_SEC: {_job_retention_startup}s "
           f"(~{int(_job_retention_startup)//3600}h) "
           f"({'env' if 'ABM_JOB_RETENTION_SEC' in os.environ else 'default'})")
-    _gemini_retention_startup = os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800")
+    _gemini_retention_startup = env_str("ABM_GEMINI_JOB_RETENTION_SEC", "172800")
     print(f"  ABM_GEMINI_JOB_RETENTION_SEC: {_gemini_retention_startup}s "
           f"(~{int(_gemini_retention_startup)//3600}h) "
           f"({'env' if 'ABM_GEMINI_JOB_RETENTION_SEC' in os.environ else 'default'})")

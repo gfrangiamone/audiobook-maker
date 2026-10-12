@@ -15,7 +15,7 @@ import pricing_common as _pricing
 import retry_util as _retry
 from i18n import norm_lang as _norm_lang
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
-from env_utils import env_bool as _b, env_float as _f, env_int as _i
+from env_utils import env_bool as _b, env_float as _f, env_int as _i, env_str
 import re
 import json
 import math
@@ -96,18 +96,12 @@ def _audio_tokens_per_second(model_key=None):
     """
     if model_key and model_key in GEMINI_MODELS:
         suffix = model_key.upper().replace("-", "")
-        per_model = os.environ.get(f"ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_{suffix}")
+        per_model = _f(f"ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_{suffix}", 0.0)
         if per_model:
-            try:
-                return float(per_model.replace(",", "."))
-            except (ValueError, TypeError):
-                pass
-    global_val = os.environ.get("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND")
+            return per_model
+    global_val = _f("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND", 0.0)
     if global_val:
-        try:
-            return float(global_val.replace(",", "."))
-        except (ValueError, TypeError):
-            pass
+        return global_val
     # Misurati sull'audit reale (giu-ago 2026, 256 job): output_tokens_actual /
     # audio_seconds_actual vale esattamente 25.0 per flash31 (122 job su 168
     # esattamente a 25.0, gli altri sopra solo per token bruciati dai chunk
@@ -129,19 +123,19 @@ CHARS_PER_TOKEN_BY_LANG = _pricing.CHARS_PER_TOKEN_BY_LANG
 # in numero di richieste e` accettabile in cambio di un audio piu` naturale.
 # Override globale: ABM_GEMINI_CHUNK_CHARS. Override per-lingua:
 # ABM_GEMINI_MAX_CHUNK_CHARS_<LANG_UPPER> (vince sempre).
-DEFAULT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_CHUNK_CHARS", "700"))
+DEFAULT_CHUNK_CHARS = _i("ABM_GEMINI_CHUNK_CHARS", 700)
 
 # Target QUALITA` (soft) sui byte UTF-8 del TESTO PURO da sintetizzare
 # (esclusi i prefissi style/rate, che sono direttive di prompt e non audio).
 # Sopra questa soglia Gemini TTS tende a degradare acusticamente, ma la
 # chiamata API non fallisce -- synthesize() logga solo un warning.
-MAX_BYTES_PER_CALL = int(os.environ.get("ABM_GEMINI_MAX_BYTES_PER_CALL", "8000"))
+MAX_BYTES_PER_CALL = _i("ABM_GEMINI_MAX_BYTES_PER_CALL", 8000)
 
 # Hard cap API sul PAYLOAD TOTALE (testo + prefissi style + prefix rate).
 # E` il limite tecnico oltre il quale Gemini TTS rifiuta la chiamata. Distinto
 # da MAX_BYTES_PER_CALL: quest'ultimo e` un target qualita` sul solo testo,
 # mentre API_HARD_BYTES_CAP protegge dall'overshoot complessivo della call.
-API_HARD_BYTES_CAP = int(os.environ.get("ABM_GEMINI_API_HARD_BYTES_CAP", "8000"))
+API_HARD_BYTES_CAP = _i("ABM_GEMINI_API_HARD_BYTES_CAP", 8000)
 
 
 
@@ -271,8 +265,8 @@ def _vertex_ready():
     forzava Vertex senza controllo e finiva in `KeyError` dentro `_get_client`
     dove la spec §4.4 p.4 chiede `GeminiUnavailable`.
     """
-    project = os.environ.get("ABM_GCP_PROJECT_ID", "").strip()
-    creds = os.environ.get("ABM_GOOGLE_CREDENTIALS_FILE", "").strip()
+    project = env_str("ABM_GCP_PROJECT_ID")
+    creds = env_str("ABM_GOOGLE_CREDENTIALS_FILE")
     return bool(project) and bool(creds) and os.path.isfile(creds)
 
 
@@ -337,12 +331,11 @@ def _resolve_backend(model_key=None):
         # vive sull'API key.
         per_model = ""
         if model_key is not None:
-            per_model = (os.environ.get(
-                f"ABM_GEMINI_BACKEND_{_model_env_suffix(model_key)}", "") or "").strip().lower()
-        choice = per_model or (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
-        api_key = os.environ.get("ABM_GEMINI_API_KEY", "").strip()
-        cf_account = os.environ.get("ABM_CF_ACCOUNT_ID", "").strip()
-        cf_token = os.environ.get("ABM_CF_API_TOKEN", "").strip()
+            per_model = env_str(f"ABM_GEMINI_BACKEND_{_model_env_suffix(model_key)}").lower()
+        choice = per_model or env_str("ABM_GEMINI_BACKEND", "auto").lower()
+        api_key = env_str("ABM_GEMINI_API_KEY")
+        cf_account = env_str("ABM_CF_ACCOUNT_ID")
+        cf_token = env_str("ABM_CF_API_TOKEN")
 
         vertex_ready = _vertex_ready()
         apikey_ready = bool(api_key)
@@ -415,7 +408,7 @@ def _resolve_backend(model_key=None):
 
 
 def _vertex_project():
-    return os.environ.get("ABM_GCP_PROJECT_ID", "").strip()
+    return env_str("ABM_GCP_PROJECT_ID")
 
 
 def _resolve_model_id(model_key):
@@ -450,7 +443,7 @@ def _resolve_location(model_key):
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown Gemini model: {model_key!r}")
     env_key = f"ABM_VERTEX_LOCATION_{model_key.upper()}"
-    override = os.environ.get(env_key, "").strip()
+    override = env_str(env_key)
     if override:
         return override
     return GEMINI_MODELS[model_key]["location_vertex"]
@@ -550,7 +543,7 @@ def _maybe_alert_credit(model_key):
 
 def _cf_trip_failures():
     try:
-        return max(1, int(os.environ.get("ABM_CF_TRIP_FAILURES", "3") or 3))
+        return max(1, _i("ABM_CF_TRIP_FAILURES", 3))
     except (TypeError, ValueError):
         return 3
 
@@ -579,7 +572,7 @@ _CF_PROBE_VOICE = "Zephyr"
 
 
 def _cf_probe_enabled():
-    val = (os.environ.get("ABM_CF_PROBE_ENABLE", "1") or "1").strip().lower()
+    val = env_str("ABM_CF_PROBE_ENABLE", "1").lower()
     return val not in ("0", "false", "no", "off")
 
 
@@ -596,7 +589,7 @@ def _cf_probe_first_sec():
     guadagnata.
     """
     try:
-        return max(60, int(os.environ.get("ABM_CF_PROBE_FIRST_SEC", "900") or 900))
+        return max(60, _i("ABM_CF_PROBE_FIRST_SEC", 900))
     except (TypeError, ValueError):
         return 900
 
@@ -611,7 +604,7 @@ def _cf_probe_max_sec():
     il backend economico fino al mattino dopo pur essendo rientrato da ore.
     Il tetto nuovo costa al massimo otto sonde al giorno."""
     try:
-        return max(60, int(os.environ.get("ABM_CF_PROBE_MAX_SEC", "10800") or 10800))
+        return max(60, _i("ABM_CF_PROBE_MAX_SEC", 10800))
     except (TypeError, ValueError):
         return 10800
 
@@ -631,7 +624,7 @@ def _cf_probe_timeout_ms():
     vero, altrimenti il suo verdetto non e' trasferibile.
     """
     try:
-        wanted = max(1000, int(os.environ.get("ABM_CF_PROBE_TIMEOUT_MS", "15000") or 15000))
+        wanted = max(1000, _i("ABM_CF_PROBE_TIMEOUT_MS", 15000))
     except (TypeError, ValueError):
         wanted = 15000
     return max(wanted, _cf_timeout_ms())
@@ -660,11 +653,11 @@ def _cf_probe_eligible(model_key, *, manual=False):
     """
     if not manual and not _cf_probe_enabled():
         return False, "rientro automatico disattivato (ABM_CF_PROBE_ENABLE=0)"
-    choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+    choice = env_str("ABM_GEMINI_BACKEND", "auto").lower()
     if choice != "cloudflare":
         return False, f"ABM_GEMINI_BACKEND={choice!r}: la sintesi non userebbe Cloudflare"
-    if not (os.environ.get("ABM_CF_ACCOUNT_ID", "").strip()
-            and os.environ.get("ABM_CF_API_TOKEN", "").strip()):
+    if not (env_str("ABM_CF_ACCOUNT_ID")
+            and env_str("ABM_CF_API_TOKEN")):
         return False, "credenziali Cloudflare assenti"
     if not (GEMINI_MODELS.get(model_key) or {}).get("id_cloudflare"):
         return False, f"{model_key} non e' ospitato su Cloudflare"
@@ -951,8 +944,7 @@ def _min_interval_ms(model_key):
     rpm = _i(f"ABM_GEMINI_RPM_{sfx}", 0)
     if rpm > 0:
         return int(math.ceil(60000.0 / rpm))
-    legacy = os.environ.get(f"ABM_GEMINI_MIN_INTERVAL_{sfx}_MS")
-    if legacy is not None and legacy.strip():
+    if env_str(f"ABM_GEMINI_MIN_INTERVAL_{sfx}_MS"):
         return _i(f"ABM_GEMINI_MIN_INTERVAL_{sfx}_MS", 0)
     default_rpm = int((GEMINI_MODELS.get(model_key) or {}).get("default_rpm", 0) or 0)
     return int(math.ceil(60000.0 / default_rpm)) if default_rpm > 0 else 0
@@ -995,13 +987,7 @@ def _abort_on_daily_quota():
 def _temperature():
     """Temperature passata al GenerateContentConfig. Default 0.75.
     Override: ABM_GEMINI_TEMPERATURE (float, accetta virgola decimale)."""
-    val = os.environ.get("ABM_GEMINI_TEMPERATURE")
-    if val is not None and val.strip() != "":
-        try:
-            return float(val.replace(",", "."))
-        except ValueError:
-            pass
-    return 0.75
+    return _f("ABM_GEMINI_TEMPERATURE", 0.75)
 
 
 def inter_chunk_gap_ms():
@@ -1013,37 +999,19 @@ def inter_chunk_gap_ms():
     concat, quindi un gap basso (100 ms) e' sufficiente come respiro acustico.
     Storicamente era 250 ms: causava pause percepibili di "qualche secondo"
     quando si sommava al trailing residuo non trimmato."""
-    val = os.environ.get("ABM_GEMINI_INTER_CHUNK_GAP_MS")
-    if val is not None and val.strip() != "":
-        try:
-            return max(0, int(val))
-        except ValueError:
-            pass
-    return 100
+    return max(0, _i("ABM_GEMINI_INTER_CHUNK_GAP_MS", 100))
 
 
 def trim_tail_ms():
     """Cap massimo (ms) di silenzio finale da rimuovere a ogni PCM chunk Gemini.
     Default 800. Override: ABM_GEMINI_TRIM_TAIL_MS (intero >= 0). 0 = disabilita."""
-    val = os.environ.get("ABM_GEMINI_TRIM_TAIL_MS")
-    if val is not None and val.strip() != "":
-        try:
-            return max(0, int(val))
-        except ValueError:
-            pass
-    return 800
+    return max(0, _i("ABM_GEMINI_TRIM_TAIL_MS", 800))
 
 
 def trim_tail_threshold():
     """Soglia ampiezza (0-32767) sotto cui un sample int16 e' considerato silenzio.
     Default 200 (≈ -44 dB). Override: ABM_GEMINI_TRIM_TAIL_THRESHOLD."""
-    val = os.environ.get("ABM_GEMINI_TRIM_TAIL_THRESHOLD")
-    if val is not None and val.strip() != "":
-        try:
-            return max(0, min(32767, int(val)))
-        except ValueError:
-            pass
-    return 200
+    return max(0, min(32767, _i("ABM_GEMINI_TRIM_TAIL_THRESHOLD", 200)))
 
 
 class GeminiQuotaExhausted(RuntimeError):
@@ -1202,7 +1170,7 @@ def _model_may_use_cloudflare(model_key):
     serve a sapere quali backend possono addebitare un job (riserva di budget
     nel caso peggiore), non chi sta eseguendo adesso.
     """
-    choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+    choice = env_str("ABM_GEMINI_BACKEND", "auto").lower()
     if choice != "cloudflare":
         return False
     m = GEMINI_MODELS.get(model_key) or {}
@@ -1843,12 +1811,9 @@ def get_max_chunk_chars(language):
     sull'override globale ABM_GEMINI_CHUNK_CHARS.
     """
     if language:
-        env_specific = os.environ.get(f"ABM_GEMINI_MAX_CHUNK_CHARS_{language.upper()}")
+        env_specific = _i(f"ABM_GEMINI_MAX_CHUNK_CHARS_{language.upper()}", 0)
         if env_specific:
-            try:
-                return int(env_specific)
-            except ValueError:
-                pass
+            return env_specific
     return DEFAULT_CHUNK_CHARS
 
 
@@ -2634,7 +2599,7 @@ def _cf_timeout_ms():
     prodotto gli episodi del 19 e del 21/09/2026, non la loro cura.
     """
     try:
-        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "65000") or 65000))
+        return max(1000, _i("ABM_CF_TIMEOUT_MS", 65000))
     except (TypeError, ValueError):
         return 65000
 
@@ -2974,7 +2939,7 @@ def build_final_text(text, style_instruction=None, rate=None,
     # Kill-switch del rate prompt-directive. Default "prompt" = directive attiva.
     # Qualsiasi altro valore (incluso il legacy "token"/"estimate") disattiva
     # l'iniezione. Nessun altro effetto: non e` usato per cost calc o altro.
-    rate_mode = os.environ.get("ABM_GEMINI_RATE_MODE", "prompt")
+    rate_mode = env_str("ABM_GEMINI_RATE_MODE", "prompt")
     # Costruiamo un singolo blocco "[style: ... ]" che combina lo stile utente
     # con la direttiva di velocita`. Il rate non e` esposto dall'API Gemini come
     # parametro audio, quindi va comunicato in linguaggio naturale. Inserirlo

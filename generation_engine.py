@@ -106,7 +106,7 @@ LLM_MODEL    = _env_str("ABM_LLM_MODEL", llm_client.DEFAULT_MODEL)
 
 # Generation behavior
 LLM_THINKING         = _env_bool("ABM_LLM_THINKING", False)
-LLM_REASONING_EFFORT = os.environ.get("ABM_LLM_REASONING_EFFORT", "none").strip().lower()
+LLM_REASONING_EFFORT = _env_str("ABM_LLM_REASONING_EFFORT", "none").lower()
 LLM_TEMPERATURE      = _env_float("ABM_LLM_TEMPERATURE", 0.3)
 LLM_MAX_TOKENS       = _env_int("ABM_LLM_MAX_TOKENS", 65536)
 
@@ -171,7 +171,7 @@ _llm_client = None
 llm_client.configure(client_fn=lambda: _llm_client, model_fn=lambda: LLM_MODEL,
                      available_fn=lambda: _llm_available())
 
-BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
+BASE_URL = _env_str("ABM_BASE_URL", "").rstrip("/")
 
 # ---------------------------------------------------------------------------
 # Module-level configured state (set via configure())
@@ -2524,7 +2524,7 @@ def _write_forensic_marker(job_id, kind, outcome, reason_detail=""):
     """
     import json as _json
     try:
-        days = int(os.environ.get("ABM_GEMINI_FORENSIC_RETENTION_DAYS", "7"))
+        days = _env_int("ABM_GEMINI_FORENSIC_RETENTION_DAYS", 7)
     except (TypeError, ValueError):
         days = 7
     days = max(0, days)
@@ -3936,7 +3936,7 @@ def _voxcpm_lotto_chars():
     prima.
     """
     try:
-        return max(0, int(os.environ.get("ABM_VOXCPM_BATCH_CHARS", "12000")))
+        return max(0, _env_int("ABM_VOXCPM_BATCH_CHARS", 12000))
     except (TypeError, ValueError):
         return 12000
 
@@ -5621,7 +5621,7 @@ def _write_optimization_audit(job_id, job, *, language, chars_total, outcome):
 
 # F1: finestra di "quiete" sotto cui un output senza marker .generation_complete
 # è considerato ancora in scrittura (conversione in corso) e NON viene offloadato.
-_OFFLOAD_QUIET_SEC = int(os.environ.get("ABM_OFFLOAD_QUIET_SEC", "180"))
+_OFFLOAD_QUIET_SEC = _env_int("ABM_OFFLOAD_QUIET_SEC", 180)
 
 
 def _offload_to_cloud(job_id, output_dir, when):
@@ -5759,11 +5759,11 @@ class _StaleAssemblyError(Exception):
 def _early_abort_params():
     """(ratio, min_chunks) per l'early-abort Gemini. ratio>1 disabilita."""
     try:
-        ratio = float(os.environ.get("ABM_GEMINI_EARLY_ABORT_RATIO", "0.30").replace(",", "."))
+        ratio = _env_float("ABM_GEMINI_EARLY_ABORT_RATIO", 0.30)
     except (TypeError, ValueError):
         ratio = 0.30
     try:
-        min_chunks = int(os.environ.get("ABM_GEMINI_EARLY_ABORT_MIN_CHUNKS", "15"))
+        min_chunks = _env_int("ABM_GEMINI_EARLY_ABORT_MIN_CHUNKS", 15)
     except (TypeError, ValueError):
         min_chunks = 15
     return ratio, max(1, min_chunks)
@@ -7493,7 +7493,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Calcolo ratio chunk falliti per decidere se il job e' "done" oppure "partial".
         # Soglia configurabile via ABM_GEMINI_MAX_FAILED_RATIO (default 5%).
         try:
-            _max_failed_ratio = float(os.environ.get("ABM_GEMINI_MAX_FAILED_RATIO", "0.05"))
+            _max_failed_ratio = _env_float("ABM_GEMINI_MAX_FAILED_RATIO", 0.05)
         except (TypeError, ValueError):
             _max_failed_ratio = 0.05
         # Soglia per refund automatico su engine Gemini: se la frazione di
@@ -7502,7 +7502,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # qualsiasi chunk silenziato innesca il refund. Disabilita con un valore
         # > 1 (es. 2.0).
         try:
-            _refund_failed_ratio = float(os.environ.get("ABM_GEMINI_REFUND_FAILED_RATIO", "0.0"))
+            _refund_failed_ratio = _env_float("ABM_GEMINI_REFUND_FAILED_RATIO", 0.0)
         except (TypeError, ValueError):
             _refund_failed_ratio = 0.0
         _tot_chunks_safe = max(1, int(total_chunks))
