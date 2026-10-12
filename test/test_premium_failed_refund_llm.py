@@ -10,6 +10,13 @@ import pytest
 import generation_engine as ge
 
 
+@pytest.fixture(autouse=True)
+def _audit_in_tmp(monkeypatch, tmp_path):
+    """Il rimborso scrive il marker `llm_refunded` nell'audit ottimizzazione:
+    senza redirect finiva in optimization_cost_audit_YYYY-MM.jsonl nella cwd."""
+    monkeypatch.setattr(ge.optimization_cost_audit, "_DATA_DIR", tmp_path)
+
+
 @pytest.fixture
 def combined_voucher_job():
     return {
