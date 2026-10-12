@@ -23,7 +23,7 @@ Gemini si distingue per:
 - **Voci multilingue native**: 30 voci × 2 modelli (`flash31`, `flash38`; `flash38` disabilitato di default finché l'utente non ha collaudato, vedi §16), ciascuna disponibile sotto ogni lingua UI supportata (vedi `SUPPORTED_UI_LANGUAGES` in `gemini_tts.py:415`: 23 codici ISO 639-1 ufficiali Google + `zh` legacy = 24 lingue; `en-US` ed `en-IN` collassano sotto `en`). Non c'è un catalogo per lingua: la stessa voce parla qualsiasi delle lingue supportate.
 - **Stile controllabile via prompt**: `style_instruction` (max 200 char user-side; cap calibrato per lasciare spazio alla rate directive ~95 char nello stesso blocco `[style: ...]`) viene prefissata a ogni chunk per orientare tono/emozione.
 - **Direttive di velocità in linguaggio naturale**: 7 step (`-30%`..`+30%`) mappati su istruzioni testuali ("Read this text slowly...", "Read this text very quickly...") perché Gemini non espone una `speaking_rate` API.
-- **Costing per token**: input + output token tariffati separatamente in USD per MTok, con conversione EUR + margine + fee PayPal.
+- **Prezzo per ora di audio stimata** (tariffa fissa €/ora per modello, tabella car/s per lingua, velocità); **costo** provider per token (input + output in USD/MTok, IVA per backend) tenuto a parte per la contabilità.
 
 ---
 
@@ -56,7 +56,7 @@ generation_engine.py
 gemini_tts.py
    ├── Voci e modelli: GEMINI_MODELS, GEMINI_VOICE_NAMES, parse_voice_id()
    ├── Cost: estimate_input_tokens / estimate_output_tokens /
-   │         google_cost_breakdown / compute_user_price_eur / estimate_book_cost
+   │         list_audio_seconds / compute_user_price_eur / estimate_book_cost
    ├── Budget: preflight_budget_check / get_daily_spent_eur / budget_status
    ├── Throttle: _check_rpd_cap / _throttle_rpm / preflight_can_run / rpd_status
    ├── Retry: _parse_retry_after / _is_429 / _is_daily_quota_error
@@ -96,7 +96,7 @@ Esempi: `gemini:flash31:Kore`, `gemini:flash38:Zephyr`.
 
 ### 3.2 Modelli supportati
 
-Definiti in `GEMINI_MODELS` (`gemini_tts.py:164`). Ogni entry contiene id API (API key + Vertex + Cloudflare), label umana, tariffe USD/MTok, margine default, `backends_allowed` (canali su cui il modello può essere servito) e `mark_unavailable_on_fatal` (se un errore fatale lo mette in cooldown, vedi §16). **Nota**: l'ID effettivo passato a `client.models.generate_content` dipende dal backend attivo (vedi §16 "Autenticazione e Backend") ed è risolto da `_resolve_model_id(model_key)`.
+Definiti in `GEMINI_MODELS` (`gemini_tts.py:164`). Ogni entry contiene id API (API key + Vertex + Cloudflare), label umana, tariffe di costo USD/MTok, tariffa di listino €/ora (`eur_per_audio_hour_default`), `backends_allowed` (canali su cui il modello può essere servito) e `mark_unavailable_on_fatal` (se un errore fatale lo mette in cooldown, vedi §16). **Nota**: l'ID effettivo passato a `client.models.generate_content` dipende dal backend attivo (vedi §16 "Autenticazione e Backend") ed è risolto da `_resolve_model_id(model_key)`.
 
 | `model_key` | API key ID | Vertex ID (GA) | Cloudflare | `backends_allowed` | Label | Input USD/MTok | Output USD/MTok |
 |-------------|------------|----------------|------------|---------------------|-------|----------------|-----------------|
@@ -105,7 +105,7 @@ Definiti in `GEMINI_MODELS` (`gemini_tts.py:164`). Ogni entry contiene id API (A
 
 `flash38` verificato il 27/09/2026 via API key (AI Studio, Tier 3): Vertex risponde 404 sul progetto ABM, Cloudflare non lo ospita. `backends_allowed=("apikey",)` blinda questo fatto a livello di codice: `_apply_backends_allowed()` impedisce che *qualunque* percorso di risoluzione (incluso l'`auto`, incluso un circuit breaker Cloudflare in fail-safe) lo instradi su Vertex. Risposta anche in formato diverso: WAV (RIFF) invece di PCM grezzo — vedi §4 e §16.
 
-**Aggiungere un nuovo modello**: estendere `GEMINI_MODELS` con un nuovo `<model_key>` + ID per i backend supportati + relative env per pricing/margine + `backends_allowed` (`None` se disponibile ovunque, tupla se ristretto) + (se necessario) tuning RPM/RPD dedicato + region default (`_resolve_location`).
+**Aggiungere un nuovo modello**: estendere `GEMINI_MODELS` con un nuovo `<model_key>` + ID per i backend supportati + env di costo e tariffa €/ora + `backends_allowed` (`None` se disponibile ovunque, tupla se ristretto) + (se necessario) tuning RPM/RPD dedicato + region default (`_resolve_location`).
 
 ### 3.3 Catalogo voci
 
@@ -410,17 +410,24 @@ Le **stime ex-ante** (`estimate_book_cost`) e il **costo reale ex-post** (`recor
 
 ### 10.1 Stima ex-ante (`estimate_book_cost`)
 
+Due stime distinte, per due usi distinti:
+
 ```
 chars_total = sum(len(_normalize_text(ch.text)) for ch in chapters)
-input_tokens = chars_total / CHARS_PER_TOKEN_BY_LANG[lang]
-audio_seconds = chars_total / empirical_rate(lang, voice, rate_step)  # fallback baseline_rate(lang)
-audio_seconds /= max(0.5, 1 + rate_pct/100)                 # scaling velocità
-output_tokens = audio_seconds * _audio_tokens_per_second(model_key)  # 25.0 flash31 (misurato su 168 job), 31.9 flash38 (test singolo, da confermare)
-google_cost_eur = (input_tokens × input_usd/MTok + output_tokens × output_usd/MTok) × USD_EUR_RATE
-user_price = compute_user_price_eur(google_cost_eur, model_key)
+speed_factor = max(0.5, 1 + rate_pct/100)
+
+# PREZZO (deterministico): tabella fissa car/s per lingua
+audio_seconds_est = chars_total / list_chars_per_second(lang) / speed_factor
+user_price = compute_user_price_eur(audio_seconds_est, model_key)   # €/ora × ore, vedi §11
+
+# COSTO provider (budget, allarmi; mai mostrato): rate empirico del log
+audio_seconds_cost_est = chars_total / empirical_rate(lang, voice) / speed_factor   # fallback baseline_rate(lang)
+input_tokens  = chars_total / CHARS_PER_TOKEN_BY_LANG[lang]
+output_tokens = audio_seconds_cost_est * _audio_tokens_per_second(model_key)  # 25.0 flash31, 31.9 flash38
+google_cost_eur = worst_case_cost_breakdown(input_tokens, output_tokens, model_key)["total_eur"]  # backend più caro fra quelli abilitati, IVA inclusa
 ```
 
-`empirical_rate` viene letto dal `rate_log` (vedi §13) con fallback a `baseline_rate(lang)` — tabella `LANG_BASELINE_RATE` misurata sull'audit reale, non più la costante unica `CHARS_PER_AUDIO_SECOND = 15`:
+`list_chars_per_second(lang)` legge `ABM_GEMINI_CHARS_PER_SEC_<LANG>` con fallback alla tabella `LANG_BASELINE_RATE` misurata sull'audit reale (la stessa che fa da baseline al rate empirico del `rate_log`, §13):
 
 | Lingua | char/s | n job |
 |--------|--------|-------|
@@ -438,7 +445,7 @@ user_price = compute_user_price_eur(google_cost_eur, model_key)
 `lang` governa due variabili sensibili:
 
 1. **`CHARS_PER_TOKEN_BY_LANG[lang]`** — ratio chars/token (4.0 latine, 1.5 zh/ja, 2.0 hi/ar, 3.0 ru). Influenza `input_tokens` (≈1% del costo totale).
-2. **Cluster `rate_log`** — `get_empirical_rate(lang, model_key, 0)` pesca i campioni char/sec dal cluster della lingua: influenza `audio_seconds` e quindi `output_tokens` (≈99% del costo totale).
+2. **Tabella car/s di listino** (`list_chars_per_second(lang)`) — determina i secondi stimati e quindi il **prezzo**; e il cluster `rate_log` (`get_empirical_rate(lang, model_key, 0)`) che determina la stima di **costo** (≈99% del costo totale).
 
 Per questo la lingua **non è quella del libro per metadata, ma quella TTS scelta dall'utente in "Impostazioni audio"** (selettore `#vl` Standard / `#vlPremium` Premium). Priorità di risoluzione negli endpoint `/api/gemini_estimate`, `/api/combined_estimate`, `/api/paypal_create_order_gemini`:
 
@@ -459,71 +466,54 @@ PayPal: lo stesso `lang` è ripassato a `/api/paypal_create_order_gemini` perche
 
 ---
 
-## 11. Pricing, markup, conversione valuta
+## 11. Pricing: listino €/ora e costo provider
 
-Catena di calcolo da costo Google netto a prezzo utente finale:
+Dal 12/10/2026 il prezzo all'utente è una **tariffa fissa per ora di audio stimata**, decisa commercialmente (come VoxCPM), e non deriva dal costo del fornitore:
 
 ```
-google_cost_eur = google_cost_usd × USD_EUR_RATE   # google_cost_usd gia' IVA-inclusa dove dovuta, vedi §11.1.2
-base_eur        = google_cost_eur × (1 + margin_pct/100)
-gross_eur       = (base_eur + PAYPAL_FIXED_FEE_EUR) / (1 - PAYPAL_PERCENT_FEE/100)
-user_price_eur  = round(gross_eur, 2)
-is_free         = user_price_eur < FREE_THRESHOLD_EUR
+audio_seconds_est = chars / list_chars_per_second(lang) / speed_factor      # §10.1
+list_price_eur    = round(audio_seconds_est / 3600 × eur_per_audio_hour(model_key), 2)
+user_price_eur    = 0 se list_price_eur < FREE_THRESHOLD_EUR, altrimenti list_price_eur
 ```
+
+Commissioni PayPal e margine sono dentro la tariffa. Il costo provider (`actual_cost_breakdown`, per token e per backend, IVA dove dovuta) è contabilità: margine reale, budget giornaliero, riserva preflight nel caso peggiore, allarmi.
 
 ### 11.1 Parametri
 
-Le env `ABM_GEMINI_<KEY>_INPUT/OUTPUT_USD_PER_MTOK` sono **listino netto IVA** (dal 27/09/2026, vedi §11.1.2): il costo IVA-inclusa usato per il prezzo utente e per la contabilità è calcolato a runtime, non impostato in queste env.
-
 | Env | Default | Significato |
 |-----|---------|-------------|
-| `ABM_GEMINI_USD_EUR_RATE` | `0.86` | Cambio statico USD→EUR (aggiornato manualmente) |
-| `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` | Fee fissa PayPal per transazione |
-| `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` | Fee percentuale PayPal (gross-up) |
+| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `1.90` | Tariffa PREMIUM (flash31), €/ora di audio stimata |
+| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `2.85` | Tariffa PREMIUM+ (flash38) |
+| `ABM_GEMINI_CHARS_PER_SEC_<LANG>` | tabella `LANG_BASELINE_RATE` | Car/s di listino per lingua (§10.1) |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` | Sotto questa soglia il job è gratis (no addebito) |
-| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing input flash31 (netto IVA) |
-| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Pricing output flash31 (netto IVA) |
-| `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25.0` | Margine flash31 |
-| `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing input flash38 (netto IVA — listino 2027, non il promozionale 2026) |
-| `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` | Pricing output flash38 (netto IVA) |
-| `ABM_GEMINI_38FLASH_MARGIN_PERCENT` | `25.0` | Margine flash38 |
-| `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA applicata solo su backend `vertex`/`apikey` (vedi §11.1.2) |
+| `ABM_GEMINI_USD_EUR_RATE` | `0.86` | Cambio statico USD→EUR per il **costo** |
+| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Costo Google input flash31 (netto IVA) |
+| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Costo Google output flash31 (netto IVA) |
+| `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` | Costo Google input flash38 (netto IVA — listino 2027, non il promozionale 2026) |
+| `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` | Costo Google output flash38 (netto IVA) |
+| `ABM_GEMINI_31FLASH_CF_{INPUT,OUTPUT}_USD_PER_MTOK` | `0.75` / `12.00` | Costo Cloudflare flash31 (+ `ABM_CF_CREDIT_TOPUP_FEE`) |
+| `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA sul costo, solo backend `vertex`/`apikey` (vedi §11.1.2) |
+| `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` / `_PERCENT_FEE` | `0.34` / `3.4` | Solo audit admin (fee e margine netto) e Speechify: non entrano nel prezzo Gemini |
 
-`ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026). I default sono allineati al pricing pubblico Google al momento dello sviluppo. **Aggiornare i valori di pricing**: bumpare le env in `.env` di produzione; il modulo li legge a runtime (no caching), quindi un restart applica i nuovi valori.
+Rimosse il 12/10/2026: `ABM_GEMINI_*_MARGIN_PERCENT`, `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT`. `ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026). Il modulo legge le env a runtime (no caching): un restart applica i nuovi valori.
+
+Ordine di grandezza con i default (flash31, italiano a 14,6 car/s): un libro da 1 M di caratteri ≈ 19 ore ≈ 36 €; l'UI mostra `~€/min` = tariffa/60. Il margine reale a 1,90 €/h è ~80% su Cloudflare (costo ≈ 1,0 €/h) e ~0% su Vertex con IVA (≈ 1,9 €/h): per questo il failover va notificato.
 
 ### 11.1.2 IVA per backend
 
-Fino al 27/09/2026 le env di costo Vertex erano gonfiate a mano per includere l'IVA (es. `1.22`/`24.40` invece di `1.00`/`20.00`). Da questo rilascio le env sono **al netto IVA** (listino Google puro, uguale su tutti i backend) e l'IVA si somma a runtime:
+Le env di costo sono **al netto IVA** (listino Google puro, uguale su tutti i backend) e l'IVA si somma a runtime:
 
 - `gemini_tts.vat_percent()` → `ABM_GEMINI_VAT_PERCENT`, default `22.0`.
 - `gemini_tts._vat_factor(backend)` → `1 + vat_percent/100` se `backend ∈ ("vertex", "apikey")` (Google Ireland Ltd fattura con IVA italiana su questi canali), altrimenti `1.0`. Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata).
-- **Mai applicata a `cloudflare`**: fatturazione extra-UE senza IVA italiana in questo schema.
+- **Mai applicata a `cloudflare`**: fatturazione extra-UE senza IVA italiana (confermato in fattura, ottobre 2026).
 - `actual_rates(model_key, backend)` = tariffe nette × fattore IVA del backend **realmente usato** → è il numero con cui si riconcilia la spesa vera e si misura il margine reale.
-- `pricing_rates(model_key)` (il **listino esposto all'utente**) usa sempre `actual_rates(model_key, "vertex")` come base, indipendentemente dal backend che servirà davvero la richiesta — il prezzo mostrato all'utente non deve oscillare in base a quale backend risulta attivo in quel momento (stessa logica di stabilità di `_pricing_uses_cloudflare()`, §7.10 di `PARAMETRI_CONFIGURAZIONE.md`). Il risparmio Cloudflare, quando applicabile, si somma sopra come sconto esplicito (`cf_saving_share`), non cambiando l'assunzione IVA.
+- Il prezzo all'utente non tocca mai l'IVA: è una tariffa fissa (§11).
 
-**Un ambiente di prod che continuasse a usare le env di costo gonfiate manualmente conterebbe l'IVA due volte** (una nell'env, una nel fattore runtime): va corretto contestualmente a questo rilascio (checklist di prod, punto 1).
+**Un ambiente di prod che continuasse a usare le env di costo gonfiate manualmente (pre 27/09/2026) conterebbe l'IVA due volte.**
 
-### 11.1.1 Semantica di `MARGIN_PERCENT` (IMPORTANTE)
+### 11.1.1 Deriva prezzo e calibrazione
 
-`MARGIN_PERCENT` è il **margine netto operatore**, NON il ricarico apparente all'utente. La formula è costruita in modo che, dopo che PayPal preleva la sua quota, l'operatore intaschi esattamente `google_cost × (1 + margin/100)`. Le fee PayPal vengono scaricate sopra (gross-up) e gonfiano il prezzo finale visibile all'utente.
-
-Esempio numerico con `flash31` (output $20/MTok), `MARGIN_PERCENT=30`, `USD_EUR_RATE=0.86`, `PAYPAL_PERCENT_FEE=3.4`, `PAYPAL_FIXED_FEE_EUR=0.34`, libro di 290 minuti audio:
-
-| Componente | EUR | % vs Google |
-|------------|-----|-------------|
-| Google cost (1500 tok/min × 290 min × $20/MTok × 0.86) | 7.49 | base |
-| + Margine operatore 30% | +2.25 | +30.0% |
-| + PayPal 3.4% sul totale (gross-up) | +0.34 | +4.6% |
-| + PayPal €0.34 fissa | +0.34 | +4.5% |
-| **= Prezzo utente** | **10.42** | **+39.1%** |
-
-Rate per minuto mostrato in UI: ~€0.0359/min. Il "ricarico apparente" 39–40% è atteso e non un bug: 30% finiscono all'operatore netti, ~9% sono fee PayPal che il cliente paga oltre il margine.
-
-Asintoto su libri grandi (fee fissa diluita): `user_per_min → google_per_min × (1 + margin/100) / (1 − paypal_pct/100)` ≈ Google × 1.346 con i parametri di default.
-
-Per ottenere un ricarico utente apparente del 30%: impostare `MARGIN_PERCENT ≈ 21` (così `1.21 / 0.966 ≈ 1.253`, più la fee fissa diluita ≈ 30% complessivo a libro lungo). Trade-off: il margine netto operatore scende dal 30% al 21%.
-
-> Esempio scritto prima della separazione IVA (§11.1.2): il "Google cost" qui sopra è il listino netto. Dal 27/09/2026 va moltiplicato per `_vat_factor(backend)` (×1.22 di default su Vertex/API key) **prima** di applicare il margine — l'ordine di grandezza del ricarico apparente resta simile, ma la cifra "7.49" andrebbe ricalcolata con l'IVA inclusa per un preventivo esatto.
+A fine job l'audit confronta l'incasso (quotato sui secondi **stimati**) col listino sui secondi **reali** (`user_price_eur_should_have_been`): `delta_pct = (should − charged) / should × 100`. Un delta sistematico per lingua è un errore della tabella car/s, e `/admin/audit-tts` → "Calcola parametri suggeriti" indica la direzione (ridurre `ABM_GEMINI_CHARS_PER_SEC_<LANG>` se l'audio reale è più lungo del quotato, alzarla se più corto) accanto ai car/s reali misurati. La tariffa €/ora non si "calibra": si decide.
 
 ### 11.2 Free threshold
 
@@ -782,16 +772,15 @@ Per i job con voce PREMIUM (`gemini:*`) il cancel volontario è soggetto a una p
 
 Il client (`static/js/app.js`, costante hardcoded `_GEMINI_CANCEL_LOCK_PCT_CLIENT=70`) disabilita preventivamente il pulsante "Cancel" sopra la stessa soglia via `_updateGeminiCancelLockUI(pct)` con tooltip i18n `cancel_locked_body`. Se per qualunque motivo (race, override DOM) la richiesta arriva al server sopra soglia, il modal info `cancel_locked_title` viene mostrato leggendo `lock_pct` dal body 409. **Allineare** il valore client se si cambia l'env var server.
 
-**2. Computo trattenuto** (`cancel_policy.compute_cancel_retention(provider_cost_eur, payment_method, paid_eur)`, file `cancel_policy.py`):
+**2. Computo trattenuto** (`cancel_policy.compute_cancel_retention(list_price_consumed_eur, paid_eur)`, file `cancel_policy.py`):
 
 ```
-floor    = provider_cost_eur + paypal_fees  (paypal_fees applicate solo se method == "paypal")
-paypal_fees = ABM_GEMINI_PAYPAL_FIXED_FEE_EUR + paid * ABM_GEMINI_PAYPAL_PERCENT_FEE / 100
-retained = min(paid, max(0, floor))
-refund   = paid - retained
+list_consumed = compute_user_price_eur(gemini_actual["audio_seconds"], model_key)["list_price_eur"]  # €/ora × ore prodotte
+retained      = min(paid, max(0, list_consumed))
+refund        = paid - retained
 ```
 
-Il provider cost reale viene letto da `job["gemini_actual"]["google_cost_eur"]` (accumulato chunk-per-chunk in `generation_engine.py`). Pagamento gratuito (sotto `ABM_GEMINI_FREE_THRESHOLD_EUR`) → `paid=0` → `refund=0`, `retained=0`.
+Il trattenuto è il listino dell'audio già consegnato, mai il costo del backend che lo ha prodotto (un failover a metà job non cambia la cifra); le fee PayPal sono dentro la tariffa, non si sommano. Pagamento gratuito (sotto `ABM_GEMINI_FREE_THRESHOLD_EUR`) → `paid=0` → `refund=0`, `retained=0`.
 
 **3. Branch `_CancelledError`** (`generation_engine.py:2708+`):
 
@@ -941,20 +930,21 @@ Un modello entra in cooldown quando la sua entry di catalogo ha `mark_unavailabl
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_USD_EUR_RATE` | `0.86` | Cambio statico |
-| `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` | Fee fissa PayPal |
-| `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` | Fee % PayPal |
+| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `1.90` | Listino PREMIUM, €/ora di audio stimata (§11) |
+| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `2.85` | Listino PREMIUM+ |
+| `ABM_GEMINI_CHARS_PER_SEC_<LANG>` | tabella | Car/s di listino per lingua (§10.1) |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` | Soglia gratuità |
-| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing flash31 input (netto IVA, vedi §11.1.2) |
-| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Pricing flash31 output (netto IVA) |
-| `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25.0` | Margine flash31 |
-| `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` | Pricing flash38 input (netto IVA — listino 2027) |
-| `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` | Pricing flash38 output (netto IVA) |
-| `ABM_GEMINI_38FLASH_MARGIN_PERCENT` | `25.0` | Margine flash38 |
-| `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA applicata solo su backend `vertex`/`apikey`, mai su `cloudflare` (§11.1.2) |
+| `ABM_GEMINI_USD_EUR_RATE` | `0.86` | Cambio statico (costo) |
+| `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` | Fee fissa PayPal (solo audit/Speechify) |
+| `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` | Fee % PayPal (solo audit/Speechify) |
+| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` | Costo flash31 input (netto IVA, vedi §11.1.2) |
+| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Costo flash31 output (netto IVA) |
+| `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` | Costo flash38 input (netto IVA — listino 2027) |
+| `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` | Costo flash38 output (netto IVA) |
+| `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA sul costo, solo backend `vertex`/`apikey`, mai su `cloudflare` (§11.1.2) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` | Modalità billing: `prompt`/`token`/`estimate` |
 | `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` | Token audio output per secondo (fallback globale). Default conservativo; preferire le varianti per-modello. |
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `25.0` | Token audio/sec per flash31. Calibrato empiricamente su 168 job (era `29.0`, sovrastimava il costo del 16-20%). Se il margine a consuntivo diverge dal `MARGIN_PERCENT`, ricalibrare. |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `25.0` | Token audio/sec per flash31 (stima di costo). Calibrato empiricamente su 168 job (era `29.0`, sovrastimava il costo del 16-20%). |
 | `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH38` | `31.9` | Token audio/sec per flash38. Misurato su un solo test (Beren, 27/09/2026) — **da riverificare in fattura** su un campione più ampio, a differenza di flash31. |
 
 `ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026).

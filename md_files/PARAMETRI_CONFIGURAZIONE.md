@@ -660,22 +660,31 @@ Sovrascrivibili in caso di adeguamento listino Google. **`flash25` ritirato il 2
 |-----------|---------|------|
 | `ABM_GEMINI_VAT_PERCENT` | `22.0` | Percentuale IVA applicata al costo Google **solo** sui backend `vertex` e `apikey` (Google Ireland Ltd fattura con IVA italiana su questi canali). **Mai** applicata al backend `cloudflare` (fatturazione extra-UE senza IVA italiana in questo schema). Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata). Non mostrata mai all'utente: entra nel prezzo come un costo qualsiasi. File: `gemini_tts.py:vat_percent` (1182), `_vat_factor` (1186), `_VAT_BACKENDS = ("vertex", "apikey")` (1179). |
 
-### 7.3 Margini di vendita (% sul costo Google)
+### 7.3 Listino all'utente: EUR per ora di audio stimata (dal 12/10/2026)
 
-| Variabile | Default |
-|-----------|---------|
-| `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25` |
-| `ABM_GEMINI_38FLASH_MARGIN_PERCENT` | `25` |
+Il prezzo delle voci PREMIUM è una **tariffa fissa per ora di audio**, decisa commercialmente e indipendente dal costo del fornitore (stessa impostazione di VoxCPM): le env di costo di §7.2 servono solo alla contabilità (margine reale, budget, allarmi), mai al prezzo.
 
-`ABM_GEMINI_25FLASH_MARGIN_PERCENT` rimossa con `flash25`.
+```
+secondi_stimati = caratteri / car_s(lingua) / speed_factor(velocità)   # speed_factor = 1 + rate/100
+prezzo_eur      = round(secondi_stimati / 3600 × EUR_PER_AUDIO_HOUR(modello), 2)
+is_free         = prezzo_eur < ABM_GEMINI_FREE_THRESHOLD_EUR
+```
 
-### 7.4 PayPal fee compensation e soglia gratuità
+| Variabile | Default | Note |
+|-----------|---------|------|
+| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `1.90` | Tariffa PREMIUM (flash31). Commissioni PayPal e margine già dentro. Valori ≤ 0 → default. File: `gemini_tts.py:eur_per_audio_hour`. |
+| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `2.85` | Tariffa PREMIUM+ (flash38). |
+| `ABM_GEMINI_CHARS_PER_SEC_<LANG>` | tabella `LANG_BASELINE_RATE` | Caratteri al secondo con cui il listino converte il testo in ore di audio, per lingua (`<LANG>` = ISO 639-1 maiuscolo: `_IT`, `_EN`, `_ZH`…). Default misurati sui job reali: it 14.6, de 14.4, es 14.3, fr 13.9, en 13.4, tr 13.0, zh 4.0, ja 5.4, ko 6.0, altre 13.9. **Tabella fissa, deterministica**: stesso libro, stesso prezzo. Il rate empirico del log non entra nel prezzo (serve alla stima di costo). Si aggiorna a mano leggendo i car/s reali in `/admin/audit-tts` → "Calcola parametri suggeriti". File: `gemini_tts.py:list_chars_per_second`. |
 
-| Variabile | Default |
-|-----------|---------|
-| `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` |
-| `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` |
-| `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` |
+La velocità di lettura scala le ore stimate e quindi il prezzo (−20% di velocità → +25%). Rimosse con questo rilascio: `ABM_GEMINI_*_MARGIN_PERCENT` e `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT` (ignorate se ancora presenti in `.env`).
+
+### 7.4 Fee PayPal (solo audit) e soglia gratuità
+
+| Variabile | Default | Note |
+|-----------|---------|------|
+| `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` | Non entra più nel prezzo Gemini: usata per la colonna "fee PayPal"/margine netto dell'audit admin e dal listino Speechify. |
+| `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` | Idem. |
+| `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` | Sotto questa soglia il job è gratis. |
 
 ### 7.4.2 Allarmi di margine a consuntivo (post-mortem, non bloccanti)
 
@@ -693,9 +702,9 @@ Due condizioni indipendenti:
 | `ABM_MARGIN_ALERT_MIN_EUR` | `0.50` | Anti-rumore: scostamento assoluto minimo (€) sotto cui `margin_drop` non parte. Su cifre da centesimi il rapporto percentuale e' matematicamente vero e operativamente inutile. Non si applica a `free_over_threshold`. |
 | `ABM_FREE_JOB_COST_ALERT_FACTOR` | `1.0` | Moltiplicatore sulla soglia gratuita per `free_over_threshold`. `1.0` = allarme appena la soglia viene superata; alzarlo se il canale risultasse rumoroso. |
 
-### 7.4.1 Stima token audio (calibrazione margine)
+### 7.4.1 Stima token audio (stima di costo, budget)
 
-Token audio output per secondo, per-modello con fallback globale. Usato da `estimate_output_tokens()` → `estimate_book_cost()`. Una sottostima di questo valore causa margine % a consuntivo inferiore al `MARGIN_PERCENT` configurato; una **sovrastima** gonfia il prezzo all'utente. Ricalibrazione: `= output_tokens_actual / audio_seconds_actual` dei record `completed` per quel modello in `/admin/audit-tts`.
+Token audio output per secondo, per-modello con fallback globale. Usato da `estimate_output_tokens()` → `estimate_book_cost()["google_cost_eur"]` (stima del costo provider per riserva di budget e allarmi di margine). Non tocca il prezzo all'utente (§7.3). Ricalibrazione: `= output_tokens_actual / audio_seconds_actual` dei record `completed` per quel modello in `/admin/audit-tts`.
 
 | Variabile | Default |
 |-----------|---------|
@@ -802,25 +811,28 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 | `chunks_total` | Numero chunk inviati |
 | `audio_seconds_estimated` | Stima ex-ante (rate model+lang) |
 | `audio_seconds_actual` | Misurato (bytes PCM / (24000·2)) |
-| `google_cost_eur_estimated` | Costo Google stimato ex-ante |
-| `google_cost_eur_actual` | Costo Google effettivo (token in/out × tariffa) |
-| `user_price_eur_charged` | Prezzo addebitato all'utente |
-| `margin_percent` | Margine applicato (`ABM_GEMINI_<model>_MARGIN_PERCENT`) |
-| `delta_eur` | `user_price - google_cost_actual` |
-| `delta_pct` | `delta_eur / google_cost_actual × 100` |
+| `google_cost_eur_est` | Costo provider stimato ex-ante (caso peggiore fra i backend abilitati) |
+| `google_cost_eur_actual` | Costo provider effettivo (token in/out × tariffa del backend che ha eseguito, IVA dove dovuta) |
+| `user_price_eur_charged` | Prezzo addebitato all'utente (quotato sui secondi stimati) |
+| `user_price_eur_should_have_been` | Listino sui secondi di audio **reali** (`compute_user_price_eur(audio_seconds_actual)`) |
+| `delta_eur` | `should_have_been - charged`: errore di stima della durata in euro |
+| `delta_pct` | `delta_eur / should_have_been × 100` (positivo = audio più lungo del quotato) |
+| `margin_eur_actual` | `charged - google_cost_eur_actual` |
 | `outcome` | `completed` \| `failed_refunded` \| `cancelled_refunded` \| `cancelled_partial` \| `recovered_refunded` |
 | `cancel_paid_eur` | (solo `cancelled_*`) Importo pagato dall'utente, copiato da `job["cancel_meta"]["paid_eur"]` |
-| `cancel_retained_eur` | (solo `cancelled_*`) Trattenuto effettivo = costo provider + fee PayPal stimate (vedi `cancel_policy.compute_cancel_retention`) |
+| `cancel_retained_eur` | (solo `cancelled_*`) Trattenuto = listino dell'audio già prodotto (tariffa €/ora × secondi reali), tetto al pagato (vedi `cancel_policy.compute_cancel_retention`) |
 | `cancel_refund_eur` | (solo `cancelled_*`) Refund = `paid - retained` |
 | `cancel_progress_pct` | (solo `cancelled_*`) % progresso al momento del cancel |
 | `cancel_partial_audio_delivered` | (solo `cancelled_*`) Bool: MP3 parziale consegnato all'utente via token download |
 
 **Retention:** `ABM_COST_AUDIT_KEEP_MONTHS` (default 48 mesi, uso fiscale) per i tre audit di costo, `ABM_AUDIT_KEEP_MONTHS` (default 6) per audit dei judge, leak LLM e code tagliate: `jsonl_audit.purge_all()` (riga 50) gira una volta al giorno nel campionatore del carico (`_load_metrics_sampler`, insieme a `load_metrics.purge()`) e cancella i file mensili oltre la finestra (il mese corrente conta 1). Fino al 2026-10-09 la retention era manuale.
 
-**Parametri di tuning:** se `delta_pct_avg` si discosta sistematicamente (vedi `/admin/logs` → "Audit Gemini" → "Calcola parametri suggeriti"), valutare:
-- aumento margin_percent del modello se delta negativo (`ABM_GEMINI_<model>_MARGIN_PERCENT`)
-- riduzione tariffa utente se delta positivo eccessivo
-- adeguamento del rate char/secondo per lingua (`LANG_BASELINE_RATE` in `gemini_tts.py`, fallback `CHARS_PER_AUDIO_SECOND` = 13.9) se la stima ex-ante diverge dalla realtà. Il rate empirico del log è clampato a [0.75, 1.35] × baseline della lingua (`RATE_CLAMP_LOW/HIGH`): una lingua senza baseline propria eredita la banda latina e non può scendere sotto 10.4 char/s. Valori CJK: `zh` 4.0, `ja` 5.4 (job E0d9F_TgsgtdRSwhm1HIMg, ott 2026: 5.46 reale contro 14.09 stimato, delta −80%), `ko` 6.0 provvisorio senza job reali. Valgono per tutti i modelli Gemini (il rate non dipende dal modello).
+**Parametri di tuning:** `delta_pct_avg` misura l'errore della tabella car/s della lingua (il prezzo è tariffa fissa × secondi stimati, §7.3). "Calcola parametri suggeriti" in `/admin/audit-tts` raggruppa per (modello, lingua, velocità), riporta i **car/s reali** del gruppo accanto al valore di tabella e suggerisce:
+- delta > +5% (audio reale più lungo del quotato, prezzo incassato sotto il dovuto): **ridurre** `ABM_GEMINI_CHARS_PER_SEC_<LANG>`;
+- delta < −5%: **alzare** `ABM_GEMINI_CHARS_PER_SEC_<LANG>`;
+- la tariffa €/ora si ritocca solo per scelta commerciale, non per calibrazione.
+
+Il rate empirico del log (`gemini_tts_rate_log.json`, clampato a [0.75, 1.35] × baseline della lingua) alimenta solo la stima di costo provider. Valori CJK di tabella: `zh` 4.0, `ja` 5.4 (job E0d9F_TgsgtdRSwhm1HIMg, ott 2026: 5.46 reale contro 14.09 stimato), `ko` 6.0 provvisorio senza job reali. Valgono per tutti i modelli Gemini (il rate non dipende dal modello).
 
 **Persistenza job pagati unificata:** dalla v3.13.x, sia i pagamenti per Ottimizzazione testo AI sia quelli per voci Premium sono tracciati in `<ABM_DATA_DIR>/_paid_jobs_done.json` (campo `purpose`: `"llm"` o `"gemini"`). La migrazione del vecchio `_paid_opt_done.json` è automatica all'avvio (backup `.pre_unify_bak`).
 
@@ -909,16 +921,17 @@ Il pannello **Backend TTS** della console admin mostra il prossimo appuntamento,
 
 **Sicurezza:** il campo `detail` passato a `trip()` viene persistito su disco e stampato su stdout **senza redazione** — non deve mai contenere header o token.
 
-### 7.10 Backend Cloudflare — economia e pricing lato cliente (`gemini_tts.py`)
+### 7.10 Backend Cloudflare — costo reale (`gemini_tts.py`)
 
-Il prezzo esposto all'utente per `flash31` può incorporare parte del risparmio che Cloudflare Workers AI offre rispetto al listino Google diretto. Questi parametri governano **quanto** risparmio, non **se** Cloudflare è il backend attivo in un dato momento: `_pricing_uses_cloudflare()` guarda `ABM_GEMINI_BACKEND` (la configurazione dichiarata), non lo stato del circuit breaker — decisione D1: il prezzo non deve oscillare sotto gli occhi dell'utente per un evento infrastrutturale (trip → failover su Vertex a metà job).
+Il prezzo all'utente è una tariffa fissa €/ora (§7.3) e non dipende dal backend: questi parametri servono alla **contabilità** (costo reale per backend in `actual_cost_breakdown`, ledger del credito, riserva di budget nel caso peggiore fra i backend abilitati).
 
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
-| `ABM_GEMINI_31FLASH_CF_INPUT_USD_PER_MTOK` | `0.75` | Tariffa Cloudflare di listino (USD/1M token input) per `flash31`. Applicabile solo ai modelli con `id_cloudflare` popolato in `GEMINI_MODELS` — oggi solo `flash31`: `flash38` ha `id_cloudflare=None` e `backends_allowed=("apikey",)`, quindi non è mai instradabile su Cloudflare né entra in questa economia (`flash25`, ritirato, non lo era già). File: `gemini_tts.py:172` (`GEMINI_MODELS["flash31"]["cf_input_usd_per_mtok"]`). |
-| `ABM_GEMINI_31FLASH_CF_OUTPUT_USD_PER_MTOK` | `12.00` | Tariffa Cloudflare di listino (USD/1M token output) per `flash31`. File: `gemini_tts.py:173`. |
-| `ABM_CF_CREDIT_TOPUP_FEE` | `0.05` | Commissione di ricarica del credito AI Gateway, come frazione (`0.05` = 5%) — **non** è il credito: si ricava dalla ricevuta come `(importo pagato − credito accreditato) / credito accreditato`. Il credito si paga comprandolo, non spendendolo: il costo reale per ABM è la tariffa nuda maggiorata di questa commissione (`_cf_effective(rate) = rate * (1 + fee)`), applicata solo al calcolo interno del margine — non è un costo separato in fattura. File: `gemini_tts.py:_cf_topup_fee` (666). |
-| `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT` | `50.0` | Quota percentuale del risparmio Cloudflare (rispetto al costo Google puro) ceduta al cliente nel prezzo finale, clampata a `[0, 100]`. Formula in `pricing_rates()`: `tariffa_utente = google - (google - cf_effettivo) * share`. `0` → listino esposto identico a oggi (Google puro, il risparmio resta interno); `100` → tutto il risparmio va al cliente. File: `gemini_tts.py:cf_saving_share` (671). |
+| `ABM_GEMINI_31FLASH_CF_INPUT_USD_PER_MTOK` | `0.75` | Tariffa Cloudflare di listino (USD/1M token input) per `flash31`. Applicabile solo ai modelli con `id_cloudflare` popolato in `GEMINI_MODELS` — oggi solo `flash31`: `flash38` ha `id_cloudflare=None` perché Cloudflare non accetta lo stile (`speechMetadata`) per il 3.8 (verifica 08/10/2026). File: `gemini_tts.py` (`GEMINI_MODELS["flash31"]["cf_input_usd_per_mtok"]`). |
+| `ABM_GEMINI_31FLASH_CF_OUTPUT_USD_PER_MTOK` | `12.00` | Tariffa Cloudflare di listino (USD/1M token output) per `flash31`. |
+| `ABM_CF_CREDIT_TOPUP_FEE` | `0.05` | Commissione di ricarica del credito AI Gateway, come frazione (`0.05` = 5%) — **non** è il credito: si ricava dalla ricevuta come `(importo pagato − credito accreditato) / credito accreditato`. Il credito si paga comprandolo, non spendendolo: il costo reale per ABM è la tariffa nuda maggiorata di questa commissione (`_cf_effective(rate) = rate * (1 + fee)`). Nessuna IVA su Cloudflare (§7.2.1). File: `gemini_tts.py:_cf_topup_fee`. |
+
+`ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT` rimossa il 12/10/2026: il risparmio Cloudflare resta interamente nel margine, il listino non ne dipende.
 
 ### 7.11 Interruttori per modello PREMIUM (`voice_utils.py`)
 

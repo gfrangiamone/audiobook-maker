@@ -2,17 +2,21 @@
 
 Procedura operativa per l'esercente che gestisce il server di produzione
 (systemd, Bash). Riguarda esclusivamente il modello `flash31` (Gemini 3.1
-Flash TTS): `flash25` (Gemini 2.5 Flash TTS, il modello economico del
-listino) **non è ospitato su Cloudflare** — nessun candidato TTS 2.5
-risponde diversamente da `404 Model not found` — e resta su Vertex in modo
-permanente, con le sue tariffe Google e il suo margine, qualunque cosa
-succeda in questo runbook.
+Flash TTS). `flash38` (Gemini 3.8, PREMIUM+) resta su Google (chiave API,
+Vertex `global` come backup): Cloudflare lo ospita ma non accetta lo stile
+(`speechMetadata`), e con lo stile scritto nel testo il 3.8 lo legge ad alta
+voce (4 chunk su 20 nella prova dell'08/10/2026). Vedi §8.
 
-Il codice del backend Cloudflare è già in produzione ma **dormiente**:
-nessun ambiente imposta `ABM_GEMINI_BACKEND=cloudflare` e il valore di
-default `auto` non seleziona mai Cloudflare (serve un opt-in esplicito).
-Finché questo runbook non viene eseguito, il comportamento del servizio è
-identico a oggi.
+Il backend Cloudflare è **attivo in produzione** per `flash31` dal
+settembre 2026 (`ABM_GEMINI_BACKEND=cloudflare`); il valore di default
+`auto` non seleziona mai Cloudflare (serve un opt-in esplicito). Questo
+runbook resta la procedura di accensione per un ambiente nuovo e di
+rollback.
+
+Dal 12/10/2026 il prezzo all'utente è una tariffa fissa €/ora di audio
+(`ABM_GEMINI_<PREFIX>_EUR_PER_AUDIO_HOUR`), uguale su qualunque backend: lo
+switch Cloudflare/Vertex cambia solo il costo e quindi il margine (≈80% su
+Cloudflare, ≈0% su Vertex con IVA per `flash31`), mai il listino.
 
 ---
 
@@ -389,16 +393,22 @@ procedura:
 
 ---
 
-## 8. flash25 resta su Vertex, in modo permanente
+## 8. flash38 resta su Google
 
-Verificato il 26/08/2026 (spec, §10.3): Cloudflare non ospita alcuna
-variante TTS di Gemini 2.5 — ogni id candidato (`gemini-2.5-flash-tts`,
-`gemini-2.5-flash-preview-tts`, `gemini-2.5-flash-tts-preview`,
-`gemini-2.5-pro-tts`) risponde `404 Model not found`. Solo
-`gemini-3.1-flash-tts` (`flash31`) esiste su Cloudflare.
+`flash25` è stato ritirato il 27/09/2026. `flash38` (Gemini 3.8 Flash TTS,
+PREMIUM+) è ospitato da Cloudflare (`google/gemini-3.8-flash-tts`) ma
+l'endpoint `/ai/run` accetta solo `text`, `voice`, `temperature`, `topP`,
+`topK`, `maxOutputTokens`, `stopSequences`: nessun campo per lo stile
+(`speechMetadata.style`), e il passthrough nativo via AI Gateway risponde
+403 per tutti i modelli TTS (verifica dell'08/10/2026). Senza il campo
+dedicato l'app dovrebbe scrivere lo stile nel testo, e il 3.8 lo legge ad
+alta voce in 4 chunk su 20 (4 su 10 in italiano); senza stile l'inglese
+esce americano 9 volte su 10 anche quando l'utente ha scelto UK.
 
 Conseguenza operativa: **accendere il backend Cloudflare con questo
-runbook non sposta `flash25`.** Il modello economico del listino continua
-a passare da Vertex, con le tariffe Google e il margine di sempre, sia
-prima che dopo l'accensione — la risoluzione del backend è per modello, non
-globale, e la tariffa mista non lo riguarda in alcun modo.
+runbook non sposta `flash38`** (`id_cloudflare=None`,
+`backends_allowed=("apikey",)` nel catalogo). Il modello resta sulla chiave
+API Google, con Vertex `global` (dove il 3.8 è disponibile in Preview dal
+28/09/2026, da provare) come backup. Riconsiderare quando Cloudflare
+esporrà un campo stile: lo script `scripts/tts_cloudflare_gemini_test.py`
+e la memoria di progetto documentano la prova da rifare.
