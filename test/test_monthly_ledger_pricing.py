@@ -124,8 +124,10 @@ def test_pricing_common(monkeypatch):
     import gemini_tts, speechify_tts, payment, tts_backend_state
     assert speechify_tts.usd_eur_rate is pc.usd_eur_rate and tts_backend_state.usd_eur_rate() == pc.usd_eur_rate()
     assert isinstance(gemini_tts.USD_EUR_RATE, float) and isinstance(payment.USD_EUR_RATE, float)
-    r = gemini_tts.compute_user_price_eur(10.0, next(iter(gemini_tts.GEMINI_MODELS)))
-    assert set(r) >= {"user_price_eur", "list_price_eur", "is_free", "free_threshold_eur", "paypal_fixed_fee_eur"}
+    # Gemini: tariffa fissa EUR/ora (niente fee PayPal nel prezzo), stesse
+    # quattro chiavi comuni di `free_result` piu' le sue.
+    r = gemini_tts.compute_user_price_eur(3600.0, next(iter(gemini_tts.GEMINI_MODELS)))
+    assert set(r) >= {"user_price_eur", "list_price_eur", "is_free", "free_threshold_eur", "eur_per_audio_hour"}
     assert set(speechify_tts.compute_user_price_eur(500_000)) >= {"chars", "cost_usd", "user_price_eur", "is_free"}
 
 
