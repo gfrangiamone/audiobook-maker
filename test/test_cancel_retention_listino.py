@@ -14,7 +14,7 @@ import gemini_cost_audit
 import gemini_tts
 import generation_engine
 
-# 1800 s di audio PCM 24 kHz s16le mono: mezz'ora -> 0,95 EUR a 1,90 EUR/h.
+# 1800 s di audio PCM 24 kHz s16le mono: mezz'ora -> 1,11 EUR a 2,22 EUR/h.
 _BYTES_HALF_HOUR = 24000 * 2 * 1800
 
 
@@ -110,11 +110,11 @@ def test_cancel_retention_identical_across_backends_same_listino(monkeypatch, tm
     assert cm_cf["refund_eur"] == cm_vx["refund_eur"]
 
     # Prova positiva: il trattenuto e' il LISTINO della mezz'ora consegnata
-    # (0,95 EUR a 1,90 EUR/h), col tetto del pagato.
+    # (1,11 EUR a 2,22 EUR/h), col tetto del pagato.
     listino = gemini_tts.compute_user_price_eur(1800.0, "flash31")["list_price_eur"]
     expected = cancel_policy.compute_cancel_retention(listino, 5.0)
-    assert cm_cf["retained_eur"] == expected["retained_eur"] == 0.95
-    assert cm_cf["refund_eur"] == expected["refund_eur"] == 4.05
+    assert cm_cf["retained_eur"] == expected["retained_eur"] == 1.11
+    assert cm_cf["refund_eur"] == expected["refund_eur"] == 3.89
 
     # Prova negativa: non e' ne' il costo reale ne' un suo multiplo.
     assert cm_cf["retained_eur"] not in (0.10, 0.50)

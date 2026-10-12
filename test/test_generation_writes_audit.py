@@ -101,14 +101,14 @@ def test_write_gemini_audit_drift_uses_real_audio_seconds_not_cost(monkeypatch):
 
     def _fake_price(audio_seconds, model_key):
         price_calls.append(audio_seconds)
-        return {"user_price_eur": round(audio_seconds / 3600 * 1.90, 2),
-                "list_price_eur": round(audio_seconds / 3600 * 1.90, 2)}
+        return {"user_price_eur": round(audio_seconds / 3600 * 2.22, 2),
+                "list_price_eur": round(audio_seconds / 3600 * 2.22, 2)}
 
     monkeypatch.setattr(generation_engine.gemini_tts, "compute_user_price_eur", _fake_price)
     job = {
         "gemini_actual": {
             "input_tokens": 100, "output_tokens": 500, "chars": 50,
-            "audio_seconds": 7200.0,       # 2 h -> listino 3,80
+            "audio_seconds": 7200.0,       # 2 h -> listino 4,44
             "google_cost_eur": 0.30,       # costo reale (Cloudflare)
             "model_key": "flash31",
         },
@@ -123,10 +123,10 @@ def test_write_gemini_audit_drift_uses_real_audio_seconds_not_cost(monkeypatch):
     assert rec["google_cost_eur_actual"] == 0.30
     assert "pricing_cost_eur_actual" not in rec
     assert rec["margin_eur_actual"] == round(3.0 - 0.30, 4)
-    assert rec["user_price_eur_should_have_been"] == 3.80
-    assert rec["delta_eur"] == round(3.80 - 3.0, 4)
-    # delta_pct in punti percentuali del listino dovuto: 0.80/3.80.
-    assert rec["delta_pct"] == round((3.80 - 3.0) / 3.80 * 100, 2)
+    assert rec["user_price_eur_should_have_been"] == 4.44
+    assert rec["delta_eur"] == round(4.44 - 3.0, 4)
+    # delta_pct in punti percentuali del listino dovuto: 1.44/4.44.
+    assert rec["delta_pct"] == round((4.44 - 3.0) / 4.44 * 100, 2)
 
 
 def test_write_gemini_audit_reconciles_listino_not_real_cost(monkeypatch):

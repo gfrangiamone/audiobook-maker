@@ -15,8 +15,8 @@ rollback.
 
 Dal 12/10/2026 il prezzo all'utente è una tariffa fissa €/ora di audio
 (`ABM_GEMINI_<PREFIX>_EUR_PER_AUDIO_HOUR`), uguale su qualunque backend: lo
-switch Cloudflare/Vertex cambia solo il costo e quindi il margine (≈80% su
-Cloudflare, ≈0% su Vertex con IVA per `flash31`), mai il listino.
+switch Cloudflare/Vertex cambia solo il costo e quindi il margine (≈55% su
+Cloudflare, ≈15% su Vertex con IVA per `flash31`), mai il listino.
 
 ---
 

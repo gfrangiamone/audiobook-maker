@@ -27,7 +27,7 @@ def test_flash31_valori_storici(monkeypatch):
                 "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31",
                 "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND"):
         monkeypatch.delenv(env, raising=False)
-    assert gemini_tts.eur_per_audio_hour("flash31") == 1.90
+    assert gemini_tts.eur_per_audio_hour("flash31") == 2.22
     assert gemini_tts._min_interval_ms("flash31") == 0
     assert gemini_tts._rpd_cap("flash31") == 0
     assert gemini_tts._http_timeout_ms("flash31") == 60000

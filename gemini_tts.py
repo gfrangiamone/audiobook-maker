@@ -190,8 +190,9 @@ GEMINI_MODELS = {
         "output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK", 20.00),
         # Listino all'utente, EUR per ora di audio stimata (vedi
         # compute_user_price_eur). Fissato il 12/10/2026 al prezzo che la vecchia
-        # catena costo+margine+PayPal produceva su un libro medio.
-        "eur_per_audio_hour_default": 1.90,
+        # catena costo+margine+PayPal produceva in produzione (env: share
+        # Cloudflare 25%, margine 25%, PayPal 5,5% + 0,05): 11,12 EUR per 5 h.
+        "eur_per_audio_hour_default": 2.22,
         "audio_tokens_per_second": 25.0,
         "default_rpm": 0,
         "default_rpd": 0,
@@ -218,7 +219,8 @@ GEMINI_MODELS = {
         # contabilita' del costo: il prezzo utente e' fisso e non ne dipende.
         "input_usd_per_mtok": _f("ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK", 1.00),
         "output_usd_per_mtok": _f("ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK", 18.00),
-        "eur_per_audio_hour_default": 2.85,
+        # Idem, dall'env di produzione (margine 40%, 32 tok/s): 16,27 EUR per 5 h.
+        "eur_per_audio_hour_default": 3.25,
         # Misurato sul test Beren (27/09/2026); da riverificare in fattura.
         "audio_tokens_per_second": 31.9,
         "default_rpm": 800,

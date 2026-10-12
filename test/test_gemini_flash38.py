@@ -32,7 +32,7 @@ def test_limiti_tier3():
     assert gemini_tts._http_timeout_ms("flash38") == 40000
     assert gemini_tts.preview_timeout_sec("flash38") == 45
     assert gemini_tts._audio_tokens_per_second("flash38") == pytest.approx(31.9)
-    assert gemini_tts.eur_per_audio_hour("flash38") == 2.85
+    assert gemini_tts.eur_per_audio_hour("flash38") == 3.25
 
 
 def test_backend_per_modello_prevale(monkeypatch):
@@ -71,7 +71,7 @@ def test_costo_flash38_su_google_con_iva(monkeypatch):
 def test_listino_flash38_e_premium_plus(monkeypatch):
     monkeypatch.delenv("ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR", raising=False)
     p = gemini_tts.compute_user_price_eur(3600.0, "flash38")
-    assert p["list_price_eur"] == pytest.approx(2.85)
+    assert p["list_price_eur"] == pytest.approx(3.25)
     assert p["list_price_eur"] > gemini_tts.compute_user_price_eur(3600.0, "flash31")["list_price_eur"]
 
 

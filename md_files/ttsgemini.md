@@ -482,8 +482,8 @@ Commissioni PayPal e margine sono dentro la tariffa. Il costo provider (`actual_
 
 | Env | Default | Significato |
 |-----|---------|-------------|
-| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `1.90` | Tariffa PREMIUM (flash31), €/ora di audio stimata |
-| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `2.85` | Tariffa PREMIUM+ (flash38) |
+| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `2.22` | Tariffa PREMIUM (flash31), €/ora di audio stimata (prezzo prod pre-12/10/2026) |
+| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `3.25` | Tariffa PREMIUM+ (flash38) (prezzo prod pre-12/10/2026) |
 | `ABM_GEMINI_CHARS_PER_SEC_<LANG>` | tabella `LANG_BASELINE_RATE` | Car/s di listino per lingua (§10.1) |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` | Sotto questa soglia il job è gratis (no addebito) |
 | `ABM_GEMINI_USD_EUR_RATE` | `0.86` | Cambio statico USD→EUR per il **costo** |
@@ -497,7 +497,7 @@ Commissioni PayPal e margine sono dentro la tariffa. Il costo provider (`actual_
 
 Rimosse il 12/10/2026: `ABM_GEMINI_*_MARGIN_PERCENT`, `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT`. `ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026). Il modulo legge le env a runtime (no caching): un restart applica i nuovi valori.
 
-Ordine di grandezza con i default (flash31, italiano a 14,6 car/s): un libro da 1 M di caratteri ≈ 19 ore ≈ 36 €; l'UI mostra `~€/min` = tariffa/60. Il margine reale a 1,90 €/h è ~80% su Cloudflare (costo ≈ 1,0 €/h) e ~0% su Vertex con IVA (≈ 1,9 €/h): per questo il failover va notificato.
+Ordine di grandezza con i default (flash31, italiano a 14,6 car/s): un libro da 1 M di caratteri ≈ 19 ore ≈ 42 €; l'UI mostra `~€/min` = tariffa/60. Il margine reale a 2,22 €/h è ~55% su Cloudflare (costo ≈ 1,0 €/h) e ~15% su Vertex con IVA (≈ 1,9 €/h): per questo il failover va notificato.
 
 ### 11.1.2 IVA per backend
 
@@ -930,8 +930,8 @@ Un modello entra in cooldown quando la sua entry di catalogo ha `mark_unavailabl
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `1.90` | Listino PREMIUM, €/ora di audio stimata (§11) |
-| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `2.85` | Listino PREMIUM+ |
+| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `2.22` | Listino PREMIUM, €/ora di audio stimata (§11) |
+| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `3.25` | Listino PREMIUM+ |
 | `ABM_GEMINI_CHARS_PER_SEC_<LANG>` | tabella | Car/s di listino per lingua (§10.1) |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` | Soglia gratuità |
 | `ABM_GEMINI_USD_EUR_RATE` | `0.86` | Cambio statico (costo) |

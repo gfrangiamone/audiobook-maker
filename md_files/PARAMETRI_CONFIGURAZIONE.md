@@ -672,8 +672,8 @@ is_free         = prezzo_eur < ABM_GEMINI_FREE_THRESHOLD_EUR
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `1.90` | Tariffa PREMIUM (flash31). Commissioni PayPal e margine già dentro. Valori ≤ 0 → default. File: `gemini_tts.py:eur_per_audio_hour`. |
-| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `2.85` | Tariffa PREMIUM+ (flash38). |
+| `ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR` | `2.22` | Tariffa PREMIUM (flash31), pari al prezzo che la vecchia catena produceva in prod (share Cloudflare 25%, margine 25%, PayPal 5,5% + 0,05 €). Commissioni PayPal e margine già dentro. Valori ≤ 0 → default. File: `gemini_tts.py:eur_per_audio_hour`. |
+| `ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR` | `3.25` | Tariffa PREMIUM+ (flash38), pari al prezzo prod precedente (margine 40%, 32 tok/s). |
 | `ABM_GEMINI_CHARS_PER_SEC_<LANG>` | tabella `LANG_BASELINE_RATE` | Caratteri al secondo con cui il listino converte il testo in ore di audio, per lingua (`<LANG>` = ISO 639-1 maiuscolo: `_IT`, `_EN`, `_ZH`…). Default misurati sui job reali: it 14.6, de 14.4, es 14.3, fr 13.9, en 13.4, tr 13.0, zh 4.0, ja 5.4, ko 6.0, altre 13.9. **Tabella fissa, deterministica**: stesso libro, stesso prezzo. Il rate empirico del log non entra nel prezzo (serve alla stima di costo). Si aggiorna a mano leggendo i car/s reali in `/admin/audit-tts` → "Calcola parametri suggeriti". File: `gemini_tts.py:list_chars_per_second`. |
 
 La velocità di lettura scala le ore stimate e quindi il prezzo (−20% di velocità → +25%). Rimosse con questo rilascio: `ABM_GEMINI_*_MARGIN_PERCENT` e `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT` (ignorate se ancora presenti in `.env`).

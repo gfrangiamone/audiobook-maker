@@ -117,7 +117,7 @@ def test_running_gemini_row_uses_real_audio_seconds_not_cost_for_drift(monkeypat
 
     def _fake_price(audio_seconds, model_key):
         captured.append(audio_seconds)
-        return {"user_price_eur": round(audio_seconds / 3600 * 1.90, 2)}
+        return {"user_price_eur": round(audio_seconds / 3600 * 2.22, 2)}
 
     monkeypatch.setattr(audiobook_app.gemini_tts, "compute_user_price_eur", _fake_price)
     audiobook_app.jobs["Jliveposit"] = {
@@ -135,8 +135,8 @@ def test_running_gemini_row_uses_real_audio_seconds_not_cost_for_drift(monkeypat
         assert rec["google_cost_eur_actual"] == 0.30
         assert "pricing_cost_eur_actual" not in rec
         assert rec["margin_eur_actual"] == round(3.0 - 0.30, 4)
-        assert rec["user_price_eur_should_have_been"] == 3.80
-        assert rec["delta_eur"] == round(3.80 - 3.0, 4)
+        assert rec["user_price_eur_should_have_been"] == 4.44
+        assert rec["delta_eur"] == round(4.44 - 3.0, 4)
     finally:
         audiobook_app.jobs.pop("Jliveposit", None)
 

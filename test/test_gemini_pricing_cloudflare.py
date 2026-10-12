@@ -48,15 +48,15 @@ def test_actual_rates_follow_the_executing_backend(monkeypatch):
 # --- listino €/ora -----------------------------------------------------------
 
 def test_tariffe_di_listino_per_modello():
-    assert gemini_tts.eur_per_audio_hour("flash31") == pytest.approx(1.90)
-    assert gemini_tts.eur_per_audio_hour("flash38") == pytest.approx(2.85)
+    assert gemini_tts.eur_per_audio_hour("flash31") == pytest.approx(2.22)
+    assert gemini_tts.eur_per_audio_hour("flash38") == pytest.approx(3.25)
 
 
 def test_tariffa_da_env(monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR", "2.40")
     assert gemini_tts.eur_per_audio_hour("flash31") == pytest.approx(2.40)
     monkeypatch.setenv("ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR", "0")
-    assert gemini_tts.eur_per_audio_hour("flash31") == pytest.approx(1.90)
+    assert gemini_tts.eur_per_audio_hour("flash31") == pytest.approx(2.22)
 
 
 def test_tariffa_modello_ignoto():
@@ -66,19 +66,19 @@ def test_tariffa_modello_ignoto():
 
 def test_prezzo_e_ore_per_tariffa():
     p = gemini_tts.compute_user_price_eur(3600.0, "flash31")
-    assert p["list_price_eur"] == pytest.approx(1.90)
-    assert p["user_price_eur"] == pytest.approx(1.90)
+    assert p["list_price_eur"] == pytest.approx(2.22)
+    assert p["user_price_eur"] == pytest.approx(2.22)
     assert p["audio_hours"] == pytest.approx(1.0)
     assert p["is_free"] is False
     p38 = gemini_tts.compute_user_price_eur(1800.0, "flash38")
-    assert p38["list_price_eur"] == pytest.approx(1.43)
+    assert p38["list_price_eur"] == pytest.approx(round(3.25 / 2, 2))
 
 
 def test_sotto_soglia_e_gratis_ma_il_listino_resta():
-    p = gemini_tts.compute_user_price_eur(600.0, "flash31")  # 0.32 EUR
+    p = gemini_tts.compute_user_price_eur(600.0, "flash31")  # 0.37 EUR
     assert p["is_free"] is True
     assert p["user_price_eur"] == 0.0
-    assert p["list_price_eur"] == pytest.approx(0.32)
+    assert p["list_price_eur"] == pytest.approx(0.37)
 
 
 def test_prezzo_non_dipende_dal_backend_ne_dall_iva(monkeypatch):
@@ -141,7 +141,7 @@ def test_estimate_book_cost_quota_sul_listino():
     chs = [_Ch("a" * 14600)]  # 1000 s in italiano
     est = gemini_tts.estimate_book_cost(chs, "gemini:flash31:Kore", language="it")
     assert est["audio_seconds_est"] == pytest.approx(1000.0)
-    assert est["eur_per_audio_hour"] == pytest.approx(1.90)
-    assert est["list_price_eur"] == pytest.approx(round(1000 / 3600 * 1.90, 2))
+    assert est["eur_per_audio_hour"] == pytest.approx(2.22)
+    assert est["list_price_eur"] == pytest.approx(round(1000 / 3600 * 2.22, 2))
     assert est["user_price_eur"] == est["list_price_eur"]
     assert "margin_percent" not in est
