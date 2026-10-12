@@ -3949,6 +3949,12 @@ async function startCombinedGeneration(combinedPaymentToken){
         }else{showPErr(d.error)}
         unlockUI();return;
       }
+      // Da loggati /api/optimize vincola gia' la consegna all'account
+      // (_apply_account_to_job): allinea il flag e ricalcola lo stato forzato,
+      // altrimenti _showWizProgress() lascia visibile il box email manuale.
+      if(d.email_registered)emailRegistered=true;
+      _updateGenNoticeWarning();
+      if(typeof _acctApplyForcedEmail==='function')_acctApplyForcedEmail();
       _listenOptProgressWiz();
       // QR di trasferimento gia' in fase di ottimizzazione: il wizard imposta
       // sempre auto_generate=true, quindi il job produrra' l'audio in autonomia
@@ -4042,6 +4048,9 @@ async function startCombinedGeneration(combinedPaymentToken){
         }
         showPErr(gd.error);unlockUI();return;
       }
+      // Consegna gia' armata lato server (account della sessione o email
+      // registrata prima): niente box manuale ne' banner ATTENZIONE.
+      if(gd.email_registered){emailRegistered=true;_updateGenNoticeWarning();}
       if(gd.auto_batch_email){emailRegistered=true;_showAutoBatchNotice(gd.auto_batch_email);_updateGenNoticeWarning();}
       // Ricalcola lo stato forzato ora che generating/emailRegistered sono
       // definitivi per questo job: al boot canForceGen era vero per default
@@ -4561,6 +4570,7 @@ async function startGen(){
       }
       showPErr(d.error);unlockUI();return
     }
+    if(d.email_registered){emailRegistered=true;_updateGenNoticeWarning();}
     if(d.auto_batch_email){
       // Batch implicito server-side: l'email del pagamento e' gia' registrata
       // (email_registered=True sul job). Allinea il flag client cosi'

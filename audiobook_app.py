@@ -5359,7 +5359,10 @@ def api_generate():
                   platform=job.get("platform", ""))
     _abuse_note(job_id, job, "generate", chars=selected_chars, voice=_voice_for_log(voice))
     _admin_notify_generation(job_id, info, _voice_for_log(voice), job.get("original_filename", ""))
-    _resp = {"status": "started"}
+    # email_registered: consegna gia' armata (account della sessione, email
+    # registrata prima, auto-batch). Il frontend lo usa per nascondere il box
+    # email manuale e il banner ATTENZIONE.
+    _resp = {"status": "started", "email_registered": bool(job.get("email_registered"))}
     # Job pagato portato in modalita' batch sull'email del pagamento: comunica
     # al frontend l'email (mascherata) cosi' l'utente sa dove ricevera' il file
     # anche se chiude la pagina. Solo per l'auto-batch implicito (non quando
@@ -7762,7 +7765,8 @@ def api_optimize():
                   job.get("opt_voice", "") if auto_generate else "",
                   browser_lang=job.get("browser_lang", ""))
 
-    return jsonify({"status": "started", "batch": batch, "auto_generate": auto_generate})
+    return jsonify({"status": "started", "batch": batch, "auto_generate": auto_generate,
+                    "email_registered": bool(job.get("email_registered"))})
 
 
 @app.route("/api/optimize_progress/<job_id>")

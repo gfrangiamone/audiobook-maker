@@ -222,6 +222,23 @@ def test_generate_success_paths_reapply_forced_email():
         assert apply_idx > auto_idx
 
 
+def test_optimize_path_reapplies_forced_email():
+    """Da loggati /api/optimize arma gia' la consegna sull'account: il ramo
+    ottimizzazione deve allineare emailRegistered e ricalcolare lo stato
+    forzato, altrimenti il box email manuale resta visibile."""
+    fn = _extract_fn("startCombinedGeneration")
+    opt = fn[fn.index("/api/optimize"):fn.index("_listenOptProgressWiz()")]
+    assert "d.email_registered" in opt
+    assert opt.index("emailRegistered=true") < opt.index("_acctApplyForcedEmail()")
+
+
+def test_generate_paths_read_email_registered():
+    for fn_name in ("startCombinedGeneration", "startGen"):
+        fn = _extract_fn(fn_name)
+        reg_idx = fn.index("email_registered){emailRegistered=true")
+        assert reg_idx < fn.index("_acctApplyForcedEmail()", reg_idx)
+
+
 def test_restore_path_reapplies_forced_email():
     """N-3: _restoreActiveJob() e _acctBoot() partono in parallelo — il
     ricalcolo va fatto dopo che lo stato del job ripristinato e' definitivo,
