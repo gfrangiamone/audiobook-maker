@@ -44,15 +44,22 @@ _YM_RE = None
 
 
 def configure(*, admin_required, admin_token, admin_auth_ok, admin_auth_from_request, render_admin_gate,
-              log_activity, client_ip, qr_data_uri, upload_dir, jobs, jobs_lock, suspend_lock, client_emails,
+              log_activity, client_ip, qr_data_uri, upload_dir, jobs, jobs_lock, suspend_lock,
+              get_suspended, set_suspended, client_emails,
               max_concurrent_global, job_progress, effective_retention_for_token_info,
               reconstruct_admin_download_record, paypal_api_base, paypal_available, paypal_get_access_token,
               ym_re):
-    """Funzioni (risolte a ogni chiamata) e oggetti condivisi dalla app."""
+    """Funzioni (risolte a ogni chiamata) e oggetti condivisi dalla app.
+
+    `get_suspended`/`set_suspended` leggono e scrivono il flag
+    `_suspend_new_jobs` della app, cosi' la rotta e i check di
+    upload/generate/optimize condividono lo stesso stato.
+    """
     _cfg.update(admin_required=admin_required, admin_token=admin_token, admin_auth_ok=admin_auth_ok,
                 admin_auth_from_request=admin_auth_from_request, render_admin_gate=render_admin_gate,
                 log_activity=log_activity, client_ip=client_ip, qr_data_uri=qr_data_uri, upload_dir=upload_dir,
-                jobs=jobs, client_emails=client_emails, max_concurrent_global=max_concurrent_global,
+                jobs=jobs, get_suspended=get_suspended, set_suspended=set_suspended,
+                client_emails=client_emails, max_concurrent_global=max_concurrent_global,
                 job_progress=job_progress,
                 effective_retention_for_token_info=effective_retention_for_token_info,
                 reconstruct_admin_download_record=reconstruct_admin_download_record,
@@ -149,17 +156,20 @@ def admin_required(fn=None, *, as_json=True):
 @bp.route("/api/admin/suspend", methods=["GET", "POST"])
 def admin_api_suspend():
     """GET: restituisce stato sospensione (pubblico). POST: imposta sospensione (richiede admin token)."""
-    global _suspend_new_jobs
+    # Lo stato vive in audiobook_app (lo leggono i check di upload/generate/
+    # optimize): qui si passa da getter/setter configurati, mai da un global
+    # locale al blueprint (NameError in produzione, 2026-10-12).
     if request.method == "POST":
         token = _admin_auth_from_request()
         if not _admin_auth_ok(token):
             return jsonify({"error": "Unauthorized"}), 401
         data = request.get_json(silent=True) or {}
         with _suspend_lock:
-            _suspend_new_jobs = bool(data.get("suspend", False))
-        return jsonify({"suspended": _suspend_new_jobs})
+            _cfg["set_suspended"](bool(data.get("suspend", False)))
+            suspended = _cfg["get_suspended"]()
+        return jsonify({"suspended": suspended})
     with _suspend_lock:
-        suspended = _suspend_new_jobs
+        suspended = _cfg["get_suspended"]()
     return jsonify({"suspended": suspended})
 
 

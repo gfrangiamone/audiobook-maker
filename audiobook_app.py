@@ -2344,6 +2344,12 @@ _suspend_new_jobs = False
 _suspend_lock = threading.Lock()
 
 
+def _set_suspend_new_jobs(value):
+    """Scrive il flag di sospensione (usato dalla rotta /api/admin/suspend nel blueprint)."""
+    global _suspend_new_jobs
+    _suspend_new_jobs = bool(value)
+
+
 def _maintenance_gate():
     """Risposta 503 se l'admin ha sospeso i nuovi processi, altrimenti None.
 
@@ -6003,6 +6009,7 @@ routes_admin_jobs.configure(
     log_activity=lambda *a, **k: _log_activity(*a, **k),
     client_ip=lambda: client_ip(), qr_data_uri=lambda text: _qr_data_uri(text),
     upload_dir=lambda: UPLOAD_DIR, jobs=lambda: jobs, jobs_lock=_jobs_lock, suspend_lock=_suspend_lock,
+    get_suspended=lambda: _suspend_new_jobs, set_suspended=_set_suspend_new_jobs,
     client_emails=lambda: _client_emails, max_concurrent_global=lambda: MAX_CONCURRENT_GLOBAL,
     job_progress=lambda *a, **k: _job_progress(*a, **k),
     effective_retention_for_token_info=lambda info: _effective_retention_for_token_info(info),
