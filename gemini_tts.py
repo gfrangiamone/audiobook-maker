@@ -224,8 +224,11 @@ GEMINI_MODELS = {
         "output_usd_per_mtok": _f("ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK", 18.00),
         # Idem, dall'env di produzione (margine 40%, 32 tok/s): 16,27 EUR per 5 h.
         "eur_per_audio_hour_default": 3.25,
-        # Misurato sul test Beren (27/09/2026); da riverificare in fattura.
-        "audio_tokens_per_second": 31.9,
+        # 25,0 tok/s misurati su OpenRouter su un libro intero in prod il
+        # 12/10/2026 (job s97lO, 1.924 s di audio, 48.073 token fatturati) e
+        # su ogni chunk corto (identico a flash31). Il 31,9 precedente (test
+        # Beren, 27/09/2026, API Gemini) sovrastimava il costo del 28%.
+        "audio_tokens_per_second": 25.0,
         "default_rpm": 800,
         "default_rpd": 0,
         "http_timeout_ms": 40000,

@@ -423,7 +423,7 @@ user_price = compute_user_price_eur(audio_seconds_est, model_key)   # €/ora ×
 # COSTO provider (budget, allarmi; mai mostrato): rate empirico del log
 audio_seconds_cost_est = chars_total / empirical_rate(lang, voice) / speed_factor   # fallback baseline_rate(lang)
 input_tokens  = chars_total / CHARS_PER_TOKEN_BY_LANG[lang]
-output_tokens = audio_seconds_cost_est * _audio_tokens_per_second(model_key)  # 25.0 flash31, 31.9 flash38
+output_tokens = audio_seconds_cost_est * _audio_tokens_per_second(model_key)  # 25.0 per entrambi (misurato 12/10/2026)
 google_cost_eur = worst_case_cost_breakdown(input_tokens, output_tokens, model_key)["total_eur"]  # backend più caro fra quelli abilitati, IVA inclusa
 ```
 
@@ -956,7 +956,7 @@ Un modello entra in cooldown quando la sua entry di catalogo ha `mark_unavailabl
 | `ABM_GEMINI_RATE_MODE` | `prompt` | Modalità billing: `prompt`/`token`/`estimate` |
 | `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` | Token audio output per secondo (fallback globale). Default conservativo; preferire le varianti per-modello. |
 | `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `25.0` | Token audio/sec per flash31 (stima di costo). Calibrato empiricamente su 168 job (era `29.0`, sovrastimava il costo del 16-20%). |
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH38` | `31.9` | Token audio/sec per flash38. Misurato su un solo test (Beren, 27/09/2026) — **da riverificare in fattura** su un campione più ampio, a differenza di flash31. |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH38` | `25.0` | Token audio/sec per flash38. Misurato il 12/10/2026 su un libro intero in prod via OpenRouter (24,98 tok/s, 48.073 token su 1.924 s); il `31.9` del test Beren (27/09/2026) sovrastimava il costo del 28%. In prod togliere l’override `=32`. |
 
 `ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026).
 

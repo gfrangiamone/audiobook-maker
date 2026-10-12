@@ -34,7 +34,7 @@ def test_limiti_tier3():
     assert gemini_tts._rpd_cap("flash38") == 0
     assert gemini_tts._http_timeout_ms("flash38") == 40000
     assert gemini_tts.preview_timeout_sec("flash38") == 45
-    assert gemini_tts._audio_tokens_per_second("flash38") == pytest.approx(31.9)
+    assert gemini_tts._audio_tokens_per_second("flash38") == pytest.approx(25.0)
     assert gemini_tts.eur_per_audio_hour("flash38") == 3.25
 
 
