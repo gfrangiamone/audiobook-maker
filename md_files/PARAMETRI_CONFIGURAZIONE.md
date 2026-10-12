@@ -812,6 +812,7 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 | `email` | Email associata al pagamento (vuota per free) |
 | `language` | Lingua sintesi |
 | `model_key` | `flash31` o `flash38` |
+| `backend` / `backends` | Backend che ha eseguito piu' chunk (`cloudflare` / `openrouter` / `vertex` / `apikey`) e dettaglio `{backend: chunk}`: con un failover a meta' libro i due dicono cose diverse. Vuoto/`{}` nei record precedenti al 12/10/2026. Anche nella riga live di `/admin/audit-tts`. |
 | `voice` | Nome voce |
 | `chars_total` | Caratteri sintetizzati |
 | `chunks_total` | Numero chunk inviati |

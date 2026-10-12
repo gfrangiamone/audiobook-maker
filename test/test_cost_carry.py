@@ -150,3 +150,13 @@ def test_a_non_premium_voice_leaves_the_carry_alone(tmp_path):
         generation_engine._write_gemini_audit(
             "job2", job, "it-IT-ElsaNeural", "it", "completed")
     assert (tmp_path / "job2" / cost_carry.CARRY_NAME).exists()
+
+
+def test_merge_fonde_i_dizionari_chiave_per_chiave():
+    # `backends` e' un contatore di chunk per backend: il riporto del
+    # tentativo precedente si somma, non viene sostituito.
+    import cost_carry
+    actual = {"backends": {"openrouter": 5}, "chars": 10}
+    cost_carry.merge(actual, {"backends": {"openrouter": 20, "apikey": 3}, "chars": 100})
+    assert actual["backends"] == {"openrouter": 25, "apikey": 3}
+    assert actual["chars"] == 110

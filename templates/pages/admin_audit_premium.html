@@ -663,7 +663,7 @@
       return `<tr class="${rowCls}">
         <td>${ts}</td>
         <td><code>${esc(r.job_id)}</code></td>
-        <td>${esc(modelLabel(r.model_key))}</td>
+        <td>${esc(modelLabel(r.model_key))}${r.backend ? `<br><small title="${esc(Object.entries(r.backends || {}).map(([k, v]) => k + ": " + v + " chunk").join(", "))}">${esc(r.backend)}</small>` : ""}</td>
         <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>

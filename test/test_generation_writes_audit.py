@@ -162,3 +162,30 @@ def test_write_gemini_audit_reconciles_listino_not_real_cost(monkeypatch):
     assert call["estimated_eur"] == 4.75
     assert call["actual_eur"] == 5.0
     assert call["user_price_eur"] == 4.75
+
+
+def test_write_gemini_audit_records_the_executing_backend(monkeypatch):
+    # Il record deve dire chi ha fatturato il job: backend prevalente e
+    # dettaglio per backend (failover a meta' libro: OpenRouter -> API key).
+    captured = []
+    monkeypatch.setattr(gemini_cost_audit, "append_record", lambda r: captured.append(r))
+    job = {
+        "gemini_actual": {
+            "input_tokens": 1, "output_tokens": 2, "chars": 3, "audio_seconds": 1.0,
+            "google_cost_eur": 0.001, "model_key": "flash38",
+            "backends": {"openrouter": 70, "apikey": 10},
+        },
+        "payment": {"total_eur": 1.0},
+    }
+    generation_engine._write_gemini_audit("job-bk", job, "gemini:flash38:Kore", "it", "completed")
+    rec = captured[0]
+    assert rec["backend"] == "openrouter"
+    assert rec["backends"] == {"openrouter": 70, "apikey": 10}
+
+
+def test_write_gemini_audit_without_backends_is_blank_not_missing(monkeypatch):
+    captured = []
+    monkeypatch.setattr(gemini_cost_audit, "append_record", lambda r: captured.append(r))
+    job = {"gemini_actual": {"google_cost_eur": 0.001, "model_key": "flash31"}}
+    generation_engine._write_gemini_audit("job-nb", job, "gemini:flash31:Kore", "it", "completed")
+    assert captured[0]["backend"] == "" and captured[0]["backends"] == {}

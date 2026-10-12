@@ -129,6 +129,8 @@ def _combine(vecchio, nuovo):
         stesso giro).
     Liste di altro: concatenazione col riporto davanti, in ordine di tempo
         (`runpod`, `code_tagliate_dettaglio` sono elenchi di eventi).
+    Dizionari: fusione chiave per chiave con le stesse regole (`backends` e'
+        un contatore di chunk per backend).
     """
     if nuovo is None:
         return vecchio
@@ -138,6 +140,11 @@ def _combine(vecchio, nuovo):
         return vecchio + nuovo
     if isinstance(vecchio, str) and isinstance(nuovo, str):
         return nuovo or vecchio
+    if isinstance(vecchio, dict) and isinstance(nuovo, dict):
+        out = dict(vecchio)
+        for k, v in nuovo.items():
+            out[k] = _combine(vecchio[k], v) if k in vecchio else v
+        return out
     if isinstance(vecchio, list) and isinstance(nuovo, list):
         if all(isinstance(x, (int, float)) and not isinstance(x, bool)
                for x in vecchio + nuovo):

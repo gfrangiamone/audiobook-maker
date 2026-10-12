@@ -4897,6 +4897,20 @@ def _finish_audit(job_id, job, rec, engine, est, free_thr, *, should_have_been, 
               f"job['payment']. Vedi md_files/ttsgemini.md sezione audit.")
 
 
+def _gemini_backends_summary(actual):
+    """{"main": backend con piu' chunk (o ""), "by_backend": {backend: chunk}}."""
+    by = {}
+    try:
+        for k, v in (actual.get("backends") or {}).items():
+            n = int(v or 0)
+            if n > 0:
+                by[str(k)] = n
+    except Exception:
+        by = {}
+    main = max(by, key=by.get) if by else ""
+    return {"main": main, "by_backend": by}
+
+
 def _write_gemini_audit(job_id, job, voice_id, language, outcome):
     """Append audit record at end of Gemini job. Best-effort, non-fatal."""
     try:
@@ -4929,10 +4943,15 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         # incassato basso), negativo = piu' corto.
         delta_pct = round((delta_eur / should_have_been * 100), 2) if should_have_been > 0 else 0.0
         est = job.get("gemini_estimate") or {}
+        backends = _gemini_backends_summary(actual)
         rec = {
             "job_id": job_id,
             "model_key": model_key,
             "language": language or "",
+            # Backend che ha eseguito piu' chunk, e il dettaglio per backend:
+            # con un failover a meta' libro i due dicono cose diverse.
+            "backend": backends["main"],
+            "backends": backends["by_backend"],
             **_rate_audit_fields(job),
             "chars_total": int(actual.get("chars", 0) or 0),
             "input_tokens_est": int(est.get("input_tokens_est", 0) or 0),
@@ -6508,6 +6527,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # solo audit admin, mai esposta all'utente.
             "vat_eur": 0.0,
             "model_key": None,
+            # Chunk per backend che li ha eseguiti (vertex/apikey/cloudflare/
+            # openrouter): l'audit deve dire chi ha fatturato il job, anche
+            # dopo un failover a meta' libro.
+            "backends": {},
         }
         # Riporto dal tentativo precedente: se il processo e' stato riavviato a
         # meta' libro, i chunk gia' sintetizzati vengono riusati (sopra) ma il
@@ -6831,6 +6854,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 ga["input_tokens"] += result.get("input_tokens", 0)
                 ga["output_tokens"] += result.get("output_tokens", 0)
                 ga["chars"] += len(block["text"])
+                _bk = str(result.get("backend") or "?")
+                ga.setdefault("backends", {})[_bk] = ga["backends"].get(_bk, 0) + 1
                 bw = result.get("bytes_written", 0)
                 ga["audio_seconds"] += bw / (24000.0 * 2)
                 model_key_local = result.get("model_key", "flash31")

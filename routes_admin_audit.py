@@ -197,6 +197,7 @@ def _synth_running_gemini_audit_records():
                     job.get("payment_amount_eur", 0), payment.get("llm_eur"))
             rate_raw = job.get("rate", "+0%")
             rate_pct = int(_parse_rate_pct(rate_raw))
+            backend_main = ""
             if is_gem:
                 if gemini_tts is None:
                     continue
@@ -215,6 +216,9 @@ def _synth_running_gemini_audit_records():
                 except Exception:
                     should_have_been = 0.0
                 vat_actual = float(ga.get("vat_eur", 0) or 0)
+                _by = {str(k): int(v or 0) for k, v in (ga.get("backends") or {}).items()
+                       if int(v or 0) > 0}
+                backend_main = max(_by, key=_by.get) if _by else ""
             elif is_vox:
                 # Mirror di _write_voxcpm_audit: costo = tempo di GPU stimato
                 # dai caratteri col tariffario VoxCPM, mai quello di Speechify
@@ -259,6 +263,7 @@ def _synth_running_gemini_audit_records():
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
                 "model_key": model_key,
+                "backend": backend_main,
                 "language": language,
                 "rate_pct": rate_pct,
                 "chars_total": chars_total,
