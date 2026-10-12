@@ -6215,6 +6215,13 @@ def api_paypal_capture_order():
     job_id = (data.get("job_id") or "").strip()
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
+    # Forma dei due id PRIMA di ogni uso: order_id finisce nel path della
+    # chiamata PayPal firmata col token del commerciante, job_id nel log
+    # delle attivita' e nelle card admin (S1/S3, 2026-10-12).
+    if not payment.is_order_id(order_id):
+        return jsonify({"error": "invalid_order_id"}), 400
+    if job_id and not activity_log.is_job_id(job_id):
+        return jsonify({"error": "invalid_job_id"}), 400
     # Manutenzione attivata tra creazione ordine e approvazione: l'ordine
     # approvato non viene catturato (PayPal lo lascia scadere, nessun addebito).
     _maint = _maintenance_gate()

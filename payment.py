@@ -18,6 +18,7 @@ Dipende solo dalla stdlib, da os.environ e dal modulo foglia community_store
 
 import json
 import os
+import re
 from env_utils import env_str, env_int, env_float
 import pricing_common
 from i18n import norm_lang as _norm_lang
@@ -1080,6 +1081,25 @@ class PayPalCaptureRefusedError(ValueError):
         self.body = body or ""
 
 
+# Forma di un order id PayPal (in produzione 17 caratteri maiuscoli/cifre;
+# ammessi anche `-`/`_` e minuscole, usati dai fixture). Il valore arriva dal
+# client e finisce nel PATH di una richiesta firmata con il token del
+# commerciante: senza questo controllo un id come
+# `../../payments/captures/<id>/refund?` potrebbe trasformare la capture in
+# un rimborso (S1, 2026-10-12). Esclusi `/`, `.`, `?`, `#`, spazi, `<`.
+_ORDER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}\Z")
+
+
+def is_order_id(order_id) -> bool:
+    """True se `order_id` ha la forma di un id ordine PayPal."""
+    return bool(isinstance(order_id, str) and _ORDER_ID_RE.match(order_id))
+
+
+def _check_order_id(order_id):
+    if not is_order_id(order_id):
+        raise ValueError("invalid order_id")
+
+
 def _paypal_capture_order(order_id):
     """Capture a previously-approved order. Returns captured order dict.
 
@@ -1087,6 +1107,7 @@ def _paypal_capture_order(order_id):
     ``PayPalCaptureRefusedError`` con l'issue diagnostico.
     """
     import requests
+    _check_order_id(order_id)
     token = _paypal_get_access_token()
     if not token:
         raise RuntimeError("PayPal not configured")
@@ -1162,6 +1183,7 @@ def capture_and_store_order(order_id: str, job_id: str = "",
     """
     if not order_id:
         raise ValueError("missing order_id")
+    _check_order_id(order_id)
 
     with _capture_lock:
         # Idempotency: se gia' capturato, ritorna lo stato salvato

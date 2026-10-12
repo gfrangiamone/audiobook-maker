@@ -448,6 +448,8 @@ def api_paypal_debug_order(order_id):
     import requests
     if not _paypal_available():
         return jsonify({"error": "PayPal not configured"}), 503
+    if not payment.is_order_id(order_id):      # finisce nel path firmato (S1)
+        return jsonify({"error": "invalid_order_id"}), 400
     try:
         token = _paypal_get_access_token()
         r = requests.get(

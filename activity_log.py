@@ -28,6 +28,17 @@ import activity_db
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 _YM_RE = re.compile(r"^\d{4}-\d{2}\Z")
+
+# Forma di un job id (token_urlsafe: lettere, cifre, `-`, `_`; `vc:<id>` per
+# i pagamenti delle voci campionate). Un valore che arriva dal client e finisce
+# in un log, in una pagina admin o in un path deve passare di qui (S1/S3,
+# 2026-10-12): niente `<`, spazi, a capo o separatori di riga del log.
+JOB_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}\Z")
+
+
+def is_job_id(value) -> bool:
+    """True se `value` ha la forma di un job id."""
+    return bool(isinstance(value, str) and JOB_ID_RE.match(value))
 _YM_IN_NAME = re.compile(r"^activity_(\d{4}-\d{2})\.log\Z")
 # Il recovery interroga molti descrittori in sequenza: 5 minuti bastano.
 _DELIVERED_TTL = 300.0
