@@ -1,4 +1,4 @@
-"""Modello flash38 (Gemini 3.8 PREMIUM+) via API key."""
+"""Modello flash38 (Gemini 3.8 PREMIUM+): OpenRouter primario, API key di ripiego."""
 import pytest
 
 import gemini_tts
@@ -22,7 +22,10 @@ def test_voce_catalogo():
     assert m["id_cloudflare"] is None
     assert m["label"] == "Gemini 3.8 (PREMIUM+)"
     assert (m["input_usd_per_mtok"], m["output_usd_per_mtok"]) == (1.00, 18.00)
-    assert m["backends_allowed"] == ("apikey",)
+    assert m["backends_allowed"] == ("openrouter", "apikey")
+    assert m["fallback_backends"] == ("apikey",)
+    assert m["id_openrouter"] == "google/gemini-3.8-flash-tts"
+    assert (m["or_input_usd_per_mtok"], m["or_output_usd_per_mtok"]) == (0.50, 9.00)
     assert m["mark_unavailable_on_fatal"] is True
 
 

@@ -393,7 +393,7 @@ procedura:
 
 ---
 
-## 8. flash38 resta su Google
+## 8. flash38 non va su Cloudflare: va su OpenRouter
 
 `flash25` è stato ritirato il 27/09/2026. `flash38` (Gemini 3.8 Flash TTS,
 PREMIUM+) è ospitato da Cloudflare (`google/gemini-3.8-flash-tts`) ma
@@ -406,9 +406,21 @@ alta voce in 4 chunk su 20 (4 su 10 in italiano); senza stile l'inglese
 esce americano 9 volte su 10 anche quando l'utente ha scelto UK.
 
 Conseguenza operativa: **accendere il backend Cloudflare con questo
-runbook non sposta `flash38`** (`id_cloudflare=None`,
-`backends_allowed=("apikey",)` nel catalogo). Il modello resta sulla chiave
-API Google, con Vertex `global` (dove il 3.8 è disponibile in Preview dal
-28/09/2026, da provare) come backup. Riconsiderare quando Cloudflare
-esporrà un campo stile: lo script `scripts/tts_cloudflare_gemini_test.py`
-e la memoria di progetto documentano la prova da rifare.
+runbook non sposta `flash38`** (`id_cloudflare=None` nel catalogo). Dal
+12/10/2026 il primario di `flash38` è **OpenRouter** (`POST
+/api/v1/audio/speech`, campo `instructions` per lo stile: 0 leak su 30
+chunk; AI Studio + Vertex global dietro lo stesso endpoint; listino Google
+senza IVA, +5,5% sul credito; stesso PCM 24 kHz), con la chiave API Google
+come ripiego del breaker (`fallback_backends=("apikey",)`). Env di prod:
+
+    ABM_OPENROUTER_API_KEY=<chiave, mai nei docs>
+    ABM_GEMINI_BACKEND_FLASH38=openrouter
+    ABM_GEMINI_API_KEY=<chiave Google, resta come ripiego>
+
+Per `flash31` OpenRouter è solo il ripiego del breaker al posto di Vertex
+(`fallback_backends=("openrouter", "vertex")`): basta la chiave, nessun
+altro cambio. Il pannello admin «Backend TTS» e la sonda di rientro
+valutano il backend configurato **per modello**; un 402 di OpenRouter
+scatta `or_backend_down`. Il saldo OpenRouter non passa dal ledger locale
+(§6bis, che resta Cloudflare): va controllato in console o con `GET
+/api/v1/credits`.

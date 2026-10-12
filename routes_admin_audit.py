@@ -912,8 +912,9 @@ def admin_api_tts_backend():
     model_key = str(request.args.get("model_key")
                     or (request.get_json(silent=True) or {}).get("model_key")
                     or "flash31")
-    configured_backend = (env_str("ABM_GEMINI_BACKEND", "auto")
-                          or "auto").strip().lower()
+    # Configurazione per MODELLO (ABM_GEMINI_BACKEND_<KEY> prevale sul
+    # globale): flash38 su OpenRouter e flash31 su Cloudflare convivono.
+    configured_backend = gemini_tts.configured_primary_backend(model_key)
 
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
@@ -952,22 +953,22 @@ def admin_api_tts_backend():
                 "error": f"model_key sconosciuto: {model_key!r}. {why}",
                 "known_model_keys": sorted(gemini_tts.GEMINI_MODELS),
             }), 400
-        if configured_backend != "cloudflare":
+        if configured_backend not in gemini_tts._BREAKER_BACKENDS:
             what = {"reset": "Rientro",
                     "probe": "Sonda di rientro"}.get(
                         action, "Azzeramento del contatore di spesa")
             why = {"reset": "riarmare il breaker",
-                   "probe": "misurare Cloudflare"}.get(
+                   "probe": "misurare il backend"}.get(
                        action, "azzerare il ledger della spesa Cloudflare")
             return jsonify({
-                "error": (f"{what} non applicabile: ABM_GEMINI_BACKEND vale "
-                          f"{configured_backend!r}, non 'cloudflare'. Con "
-                          f"questa configurazione la sintesi non usa "
-                          f"Cloudflare in nessun caso, quindi {why} "
-                          f"non cambierebbe nulla. Per riaccendere "
-                          f"Cloudflare: impostare ABM_GEMINI_BACKEND="
-                          f"cloudflare nell'unit systemd e riavviare il "
-                          f"servizio."),
+                "error": (f"{what} non applicabile: il backend configurato "
+                          f"per {model_key} vale {configured_backend!r}, non "
+                          f"'cloudflare' ne' 'openrouter'. Con questa "
+                          f"configurazione la sintesi non usa un backend "
+                          f"sorvegliato dal breaker, quindi {why} non "
+                          f"cambierebbe nulla. Per riaccenderlo: impostare "
+                          f"ABM_GEMINI_BACKEND (o ABM_GEMINI_BACKEND_<KEY>) "
+                          f"nell'unit systemd e riavviare il servizio."),
                 "configured_backend": configured_backend,
             }), 409
 

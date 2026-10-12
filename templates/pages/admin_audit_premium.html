@@ -828,7 +828,8 @@
     const probeBtn = $("tbProbeBtn");
     const status = $("tbStatus");
     const detail = $("tbDetail");
-    const cfConfigured = (s.configured_backend === "cloudflare");
+    const cfConfigured = (s.configured_backend === "cloudflare" || s.configured_backend === "openrouter");
+    const primaryLabel = esc(String(s.configured_backend || "").toUpperCase());
     // Il topup dipende SOLO dalla configurazione, mai da `tripped_at`: e'
     // l'unica via che riarma il pre-allarme sul credito, e il ciclo normale
     // del credito (residuo sotto soglia -> ricarica -> topup) avviene con
@@ -849,7 +850,7 @@
       // selettore, non un backend. Dopo un rollback documentato lo stato su
       // disco puo' contenere `active: "cloudflare"` (lo scrive reset()), che
       // stampato qui contraddirebbe la riga stessa.
-      status.innerHTML = '<span style="color:var(--muted)">Cloudflare non configurato · <code>ABM_GEMINI_BACKEND</code> = ' + esc(s.configured_backend) + '</span>';
+      status.innerHTML = '<span style="color:var(--muted)">Nessun backend sorvegliato (Cloudflare/OpenRouter) per questo modello · <code>ABM_GEMINI_BACKEND</code> (o per modello) = ' + esc(s.configured_backend) + '</span>';
       btn.disabled = true;
       btn.textContent = "Non applicabile";
       detail.style.display = "none";
@@ -859,7 +860,7 @@
       // trip_reason/trip_detail/trip_job_id sono persistiti SENZA redazione
       // (vedi tts_backend_state) e non sono testo fidato: passano sempre da
       // esc() prima di finire in innerHTML, mai concatenati crudi.
-      status.innerHTML = '<span style="color:var(--err);font-weight:600">SU VERTEX</span> · margine quasi azzerato';
+      status.innerHTML = '<span style="color:var(--err);font-weight:600">SU ' + esc(String(s.active || "vertex").toUpperCase()) + '</span> · ripiego, margine ridotto';
       detail.innerHTML = "Causa: " + esc(s.trip_reason || "?") + " · " + esc(s.trip_detail || "") +
                          "<br>Dal " + esc(fmtIso(s.tripped_at)) +
                          " · job " + esc(s.trip_job_id || "?") +
@@ -867,10 +868,10 @@
                          tbProbeLine(s);
       detail.style.display = "block";
       btn.disabled = false;
-      btn.textContent = "Riporta su Cloudflare";
+      btn.textContent = "Riporta su " + primaryLabel;
       btn.style.background = "var(--ok)";
     } else {
-      status.innerHTML = '<span style="color:var(--ok);font-weight:600">SU CLOUDFLARE</span> · ' + tbCreditLine(s);
+      status.innerHTML = '<span style="color:var(--ok);font-weight:600">SU ' + primaryLabel + '</span> · ' + tbCreditLine(s);
       detail.style.display = "none";
       btn.disabled = true;
       btn.textContent = "Nessun failover attivo";

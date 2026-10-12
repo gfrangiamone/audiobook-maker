@@ -492,12 +492,15 @@ Commissioni PayPal e margine sono dentro la tariffa. Il costo provider (`actual_
 | `ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK` | `1.00` | Costo Google input flash38 (netto IVA — listino 2027, non il promozionale 2026) |
 | `ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK` | `18.00` | Costo Google output flash38 (netto IVA) |
 | `ABM_GEMINI_31FLASH_CF_{INPUT,OUTPUT}_USD_PER_MTOK` | `0.75` / `12.00` | Costo Cloudflare flash31 (+ `ABM_CF_CREDIT_TOPUP_FEE`) |
+| `ABM_GEMINI_31FLASH_OR_{INPUT,OUTPUT}_USD_PER_MTOK` | `1.00` / `20.00` | Costo OpenRouter flash31 (listino Google, Vertex us-central1; + `ABM_OR_CREDIT_TOPUP_FEE`, niente IVA) |
+| `ABM_GEMINI_38FLASH_OR_{INPUT,OUTPUT}_USD_PER_MTOK` | `0.50` / `9.00` | Costo OpenRouter flash38 (= promo Google 2026 passata a listino; + `ABM_OR_CREDIT_TOPUP_FEE`, niente IVA) |
+| `ABM_OR_CREDIT_TOPUP_FEE` | `0.055` | Commissione sull'acquisto del credito OpenRouter (5,5% via Stripe, min 0,80 $), frazione |
 | `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA sul costo, solo backend `vertex`/`apikey` (vedi §11.1.2) |
 | `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` / `_PERCENT_FEE` | `0.34` / `3.4` | Solo audit admin (fee e margine netto) e Speechify: non entrano nel prezzo Gemini |
 
 Rimosse il 12/10/2026: `ABM_GEMINI_*_MARGIN_PERCENT`, `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT`. `ABM_GEMINI_25FLASH_*` rimosse con `flash25` (27/09/2026). Il modulo legge le env a runtime (no caching): un restart applica i nuovi valori.
 
-Ordine di grandezza con i default (flash31, italiano a 14,6 car/s): un libro da 1 M di caratteri ≈ 19 ore ≈ 42 €; l'UI mostra `~€/min` = tariffa/60. Il margine reale a 2,22 €/h è ~55% su Cloudflare (costo ≈ 1,0 €/h) e ~15% su Vertex con IVA (≈ 1,9 €/h): per questo il failover va notificato.
+Ordine di grandezza con i default (flash31, italiano a 14,6 car/s): un libro da 1 M di caratteri ≈ 19 ore ≈ 42 €; l'UI mostra `~€/min` = tariffa/60. Il margine reale a 2,22 €/h è ~55% su Cloudflare (costo ≈ 1,0 €/h), ~27% su OpenRouter (≈ 1,6 €/h) e ~15% su Vertex con IVA (≈ 1,9 €/h): per questo il failover va notificato. Per `flash38` a 3,25 €/h (32 tok/s): OpenRouter ≈ 0,94 €/h contro ≈ 1,09 €/h sull'API key con IVA (promo 2026) o ≈ 2,18 €/h a listino 2027.
 
 ### 11.1.2 IVA per backend
 
@@ -505,7 +508,7 @@ Le env di costo sono **al netto IVA** (listino Google puro, uguale su tutti i ba
 
 - `gemini_tts.vat_percent()` → `ABM_GEMINI_VAT_PERCENT`, default `22.0`.
 - `gemini_tts._vat_factor(backend)` → `1 + vat_percent/100` se `backend ∈ ("vertex", "apikey")` (Google Ireland Ltd fattura con IVA italiana su questi canali), altrimenti `1.0`. Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata).
-- **Mai applicata a `cloudflare`**: fatturazione extra-UE senza IVA italiana (confermato in fattura, ottobre 2026).
+- **Mai applicata a `cloudflare` né a `openrouter`**: fatturazione senza IVA italiana (Cloudflare confermato in fattura, ottobre 2026; OpenRouter con Tax ID, verificato dall'utente il 12/10/2026).
 - `actual_rates(model_key, backend)` = tariffe nette × fattore IVA del backend **realmente usato** → è il numero con cui si riconcilia la spesa vera e si misura il margine reale.
 - Il prezzo all'utente non tocca mai l'IVA: è una tariffa fissa (§11).
 
@@ -825,25 +828,30 @@ Il client renderizza un blocco riepilogo via `_renderGeminiCancelSummary(d)` con
 
 ### Autenticazione e Backend
 
-Gemini TTS supporta tre backend, selezionabili via `ABM_GEMINI_BACKEND` (globale) o `ABM_GEMINI_BACKEND_<KEY>` (per modello, ha precedenza):
+Gemini TTS supporta quattro backend, selezionabili via `ABM_GEMINI_BACKEND` (globale) o `ABM_GEMINI_BACKEND_<KEY>` (per modello, ha precedenza):
 
 | `ABM_GEMINI_BACKEND` | Env richieste | Note |
 |---|---|---|
-| `vertex` (consigliato prod per `flash31`) | `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE` (path al SA JSON, lo stesso usato da Cloud TTS) | Quote a livello progetto GCP, no Tier API. Service account JSON deve avere ruolo `roles/aiplatform.user`. |
-| `apikey` (dev / fallback, **unico canale per `flash38`**) | `ABM_GEMINI_API_KEY` (chiave Gemini AI Studio) | Quote tiered Google AI Studio (Tier 1/2/3). |
-| `cloudflare` (opt-in esplicito, solo modelli con `id_cloudflare`) | `ABM_CF_ACCOUNT_ID` + `ABM_CF_API_TOKEN` | Oggi solo `flash31`. |
-| `auto` (default) o non settato | una delle prime due | Preferisce Vertex se presente; cade su API key. **Non seleziona mai Cloudflare.** |
+| `vertex` (ripiego storico di `flash31`) | `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE` (path al SA JSON, lo stesso usato da Cloud TTS) | Quote a livello progetto GCP, no Tier API. Service account JSON deve avere ruolo `roles/aiplatform.user`. IVA 22%. |
+| `apikey` (dev / **ripiego di `flash38`**) | `ABM_GEMINI_API_KEY` (chiave Gemini AI Studio) | Quote tiered Google AI Studio (Tier 1/2/3). IVA 22%. |
+| `cloudflare` (opt-in esplicito, solo modelli con `id_cloudflare`) | `ABM_CF_ACCOUNT_ID` + `ABM_CF_API_TOKEN` | Oggi solo `flash31` (primario in prod). Niente IVA. |
+| `openrouter` (opt-in esplicito, solo modelli con `id_openrouter`) | `ABM_OPENROUTER_API_KEY` | **Primario di `flash38`** dal 12/10/2026 (AI Studio + Vertex global dietro un solo endpoint, listino Google senza IVA, +5,5% di commissione sul credito). Per `flash31` è solo il ripiego del breaker (su OpenRouter costa il 67% più di Cloudflare). |
+| `auto` (default) o non settato | una delle prime due | Preferisce Vertex se presente; cade su API key. **Non seleziona mai Cloudflare né OpenRouter.** |
 
-`ABM_GEMINI_BACKEND_<KEY>` (`<KEY>` = model_key maiuscolo, es. `ABM_GEMINI_BACKEND_FLASH38=apikey`) prevale sul selettore globale, ma è comunque filtrata dai `backends_allowed` del catalogo (`_apply_backends_allowed`): un valore incompatibile con il modello non porta mai al backend richiesto, al più lo disabilita.
+`ABM_GEMINI_BACKEND_<KEY>` (`<KEY>` = model_key maiuscolo, es. `ABM_GEMINI_BACKEND_FLASH38=openrouter`) prevale sul selettore globale, ma è comunque filtrata dai `backends_allowed` del catalogo (`_apply_backends_allowed`): un valore incompatibile con il modello non porta mai al backend richiesto, al più lo disabilita.
+
+**Ripiego del breaker per modello** (`fallback_backends` nel catalogo, primo pronto vince — `_fallback_target`): `flash31` → `openrouter`, poi `vertex`; `flash38` → `apikey`. Il breaker (`_BREAKER_BACKENDS = ("cloudflare", "openrouter")`) sorveglia solo i backend esterni prepagati; Vertex e API key sono i ripieghi, mai sorvegliati. Cause di trip: `cf_backend_down` / `cf_consecutive_failures` (Cloudflare) e `or_backend_down` / `or_consecutive_failures` (OpenRouter). La sonda di rientro (`probe_cloudflare`, nome storico) misura il backend **primario configurato per quel modello** (`configured_primary_backend`).
 
 #### Mapping modello → backend
 
 I modelli hanno ID differenti tra Vertex (GA) e API key (legacy "-preview" per `flash31`, GA per `flash38`):
 
-| Modello key | API key ID | Vertex ID | Cloudflare | `backends_allowed` | Vertex region default |
-|---|---|---|---|---|---|
-| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | `google/gemini-3.1-flash-tts` | tutti | `us-central1` |
-| `flash38` | `gemini-3.8-flash-tts` | `gemini-3.8-flash-tts` (GA) | *(non ospitato)* | solo `apikey` | `us-central1` (mai usata: `backends_allowed` blocca Vertex) |
+| Modello key | API key ID | Vertex ID | Cloudflare | OpenRouter | `backends_allowed` | Vertex region default |
+|---|---|---|---|---|---|---|
+| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | `google/gemini-3.1-flash-tts` | `google/gemini-3.1-flash-tts-preview` (solo Vertex us-central1) | tutti | `us-central1` |
+| `flash38` | `gemini-3.8-flash-tts` | `gemini-3.8-flash-tts` (GA) | *(non ospitato)* | `google/gemini-3.8-flash-tts` (AI Studio + Vertex global) | `openrouter`, `apikey` | `us-central1` (mai usata: `backends_allowed` blocca Vertex) |
+
+Stile su OpenRouter: per `flash38` (`style_as_speech_metadata`) il blocco `[style: …]` esce dal testo e va nel campo `instructions` della richiesta (`_openrouter_transport_call`; 0 leak su 30 chunk, probe 08/10/2026); `flash31` ignora `instructions` e legge lo stile inline come su Cloudflare (UK 6/6, probe 12/10/2026). `provider.order/only` sono ignorati da `/audio/speech`: non si sceglie fra AI Studio e Vertex. La risposta non porta usage: i token si derivano dai secondi di audio come su Cloudflare (`tokens_measured=False`); `X-Generation-Id` è conservato nel risultato del trasporto (`GET /generation?id=` lo risolve dopo ~20 s con token nativi e costo esatto, non sul percorso caldo).
 
 `flash25`, ritirato il 27/09/2026, non è più nel catalogo `GEMINI_MODELS`.
 
@@ -852,7 +860,8 @@ Override region per modello: `ABM_VERTEX_LOCATION_FLASH31`. `ABM_VERTEX_LOCATION
 Vertex client cache: un client `genai.Client(vertexai=True, project, location)` per ogni `(backend, location)` distinta. Oggi in pratica solo `flash31` vive su Vertex: `flash38` non ci arriva mai per via di `backends_allowed`.
 
 Resolver implementato in `gemini_tts.py`:
-- `_resolve_backend()` — sceglie vertex/apikey/cloudflare, applica override per-modello e precedenza del circuit breaker
+- `_resolve_backend()` — sceglie vertex/apikey/cloudflare/openrouter, applica override per-modello e precedenza del circuit breaker (ripiego da `_fallback_target`)
+- `configured_primary_backend(model_key)` — backend scelto dalla configurazione per il modello (env per modello, poi globale), senza cache né breaker
 - `_apply_backends_allowed(key, resolved, apikey_ready)` — filtra l'esito sui `backends_allowed` del catalogo, su OGNI percorso di ritorno (incluso il fail-safe del breaker)
 - `_resolve_model_id(model_key)` — ID corretto per backend
 - `_resolve_location(model_key)` — region Vertex
@@ -862,19 +871,21 @@ Resolver implementato in `gemini_tts.py`:
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_BACKEND` | `auto` | `vertex` / `apikey` / `cloudflare` / `auto` — selettore backend globale. |
-| `ABM_GEMINI_BACKEND_<KEY>` | *(vuoto)* | Override per singolo modello (es. `ABM_GEMINI_BACKEND_FLASH38=apikey`). Prevale sul globale, filtrato da `backends_allowed`. |
+| `ABM_GEMINI_BACKEND` | `auto` | `vertex` / `apikey` / `cloudflare` / `openrouter` / `auto` — selettore backend globale. |
+| `ABM_GEMINI_BACKEND_<KEY>` | *(vuoto)* | Override per singolo modello (es. `ABM_GEMINI_BACKEND_FLASH38=openrouter`). Prevale sul globale, filtrato da `backends_allowed`. |
+| `ABM_OPENROUTER_API_KEY` | *(empty)* | Chiave OpenRouter (backend=openrouter, e ripiego del breaker per `flash31`). **Solo env**: mai in UI, log o docs. |
+| `ABM_OR_TIMEOUT_MS` | `60000` | Timeout HTTP verso OpenRouter; pavimento = `http_timeout_ms` del modello (`_or_timeout_ms`). |
 | `ABM_GCP_PROJECT_ID` | — | ID progetto GCP per Vertex. Obbligatorio se backend=vertex. |
 | `ABM_GOOGLE_CREDENTIALS_FILE` | *(empty)* | Path JSON service account (re-uso da Cloud TTS). Obbligatorio se backend=vertex. |
 | `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per flash31 (override). |
-| `ABM_GEMINI_API_KEY` | *(empty)* | API key Google AI Studio (backend=apikey). **Unico canale per `flash38`**: senza questa env il modello resta nascosto dal catalogo. |
+| `ABM_GEMINI_API_KEY` | *(empty)* | API key Google AI Studio (backend=apikey). Ripiego del breaker per `flash38`: senza questa env un trip di OpenRouter lascia il modello disabilitato. |
 | `ABM_CF_ACCOUNT_ID` / `ABM_CF_API_TOKEN` | *(empty)* | Credenziali Cloudflare Workers AI (backend=cloudflare, solo `flash31`). |
 | `ABM_GEMINI_USE_VERTEX` | `false` | **DEPRECATED** — usa `ABM_GEMINI_BACKEND=vertex`. Conservato per backward-compat. |
 | `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(empty)* | **DEPRECATED** — usa `ABM_GOOGLE_CREDENTIALS_FILE` (condiviso con Cloud TTS). |
 
 #### Modello "non disponibile" e cooldown (`gemini_availability.py`)
 
-Modulo foglia distinto dal circuit breaker Cloudflare→Vertex (`tts_backend_state.py`, gestisce il *failover fra backend* dello stesso modello). `gemini_availability.py` gestisce lo stato "il modello stesso non è al momento utilizzabile" — rilevante soprattutto per `flash38`, che non ha un backend alternativo su cui deviare essendo `apikey`-only.
+Modulo foglia distinto dal circuit breaker (`tts_backend_state.py`, gestisce il *failover fra backend* dello stesso modello). `gemini_availability.py` gestisce lo stato "il modello stesso non è al momento utilizzabile": scatta solo su un errore fatale **dell'API key** (`mark_unavailable_on_fatal`, solo `flash38`), cioè quando anche il ripiego di OpenRouter è fuori uso.
 
 | Variabile | Default | Note |
 |-----------|---------|------|

@@ -1,4 +1,4 @@
-"""Contratto di trasporto per la sintesi Gemini TTS e adapter Cloudflare.
+"""Contratto di trasporto per la sintesi Gemini TTS e adapter Cloudflare / OpenRouter.
 
 Modulo foglia: importa solo stdlib e `requests`. Non importa mai `gemini_tts`
 (convenzione di progetto n. 1 sugli import circolari).
@@ -305,5 +305,174 @@ def cloudflare_call(*, final_text, voice_name, model_key, model_id,
         # mai `str(e)`: la stessa disciplina di redazione del ramo di rete.
         raise TransportError(
             f"risposta Cloudflare non interpretabile: {type(e).__name__}",
+            kind="retryable",
+            http_status=getattr(resp, "status_code", None)) from e
+
+
+# === Adapter OpenRouter ======================================================
+# OpenRouter rivende i modelli Gemini TTS (AI Studio + Vertex global dietro un
+# solo endpoint, fallback automatico fra i due) a listino Google senza IVA,
+# con una commissione sull'acquisto del credito. Probe 08-12/10/2026: PCM
+# s16le 24 kHz mono grezzo (stesso formato interno di Vertex e Cloudflare, da
+# cui il failover a meta' job), nessun usage nella risposta (i token li
+# stima il chiamante), `instructions` = stile per il 3.8 (il 3.1 lo ignora e
+# legge lo stile dal blocco inline del testo). `provider.order/only` sono
+# ignorati su questo endpoint: non si puo' scegliere fra AI Studio e Vertex.
+OR_API_URL = "https://openrouter.ai/api/v1/audio/speech"
+# Il generation id viaggia nell'header: `GET /generation?id=` lo risolve dopo
+# ~20 s con i token nativi e il costo esatto. Non e' sul percorso caldo.
+OR_GENERATION_HEADER = "X-Generation-Id"
+# Esito standard per una 200 senza audio: riprovabile; l'addebito non e'
+# certo (OpenRouter fattura a token di output) e non lo dichiariamo.
+_OR_200_ERROR_KWARGS = {"kind": "retryable", "billed": False, "http_status": 200}
+# Marcatori di errore deterministico nel messaggio 400 di OpenRouter.
+_OR_FATAL_MARKS = ("does not exist", "not a valid model", "is not a text-to-speech",
+                   "invalid_value", "ZodError", "Unrecognized key")
+# Un 400 opaco del provider ("Provider returned 400"): voce fuori enum, testo
+# vuoto, ma anche un rifiuto transitorio a monte. Non e' distinguibile dal
+# messaggio: riprovabile (3 tentativi, poi il fallback di chunk), mai fatale
+# e mai un trip. La voce e' comunque validata a monte (parse_voice_id).
+_OR_PROVIDER_400_MARK = "Provider returned"
+
+
+def _or_error_message(body, text):
+    """Messaggio d'errore OpenRouter in qualunque forma, mai un'eccezione."""
+    try:
+        if isinstance(body, dict):
+            err = body.get("error")
+            if isinstance(err, dict):
+                return str(err.get("message") or err.get("name") or "")
+            if err:
+                return str(err)
+            if "message" in body:
+                return str(body.get("message") or "")
+        return (text or "")[:200]
+    except Exception:
+        return ""
+
+
+def _or_retry_after(resp):
+    try:
+        val = resp.headers.get("Retry-After")
+        return float(val) if val not in (None, "") else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _interpret_openrouter_response(resp):
+    """Traduce una risposta OpenRouter nel contratto di trasporto.
+
+    Separata da `openrouter_call` per lo stesso motivo dell'omologa
+    Cloudflare: la tabella di mappatura si testa senza HTTP.
+    """
+    status = resp.status_code
+    try:
+        ctype = str(resp.headers.get("Content-Type") or "").lower()
+    except Exception:
+        ctype = ""
+
+    if status == 200:
+        pcm = getattr(resp, "content", b"") or b""
+        if not isinstance(pcm, (bytes, bytearray)) or not pcm:
+            raise TransportError("OpenRouter ha risposto 200 senza audio",
+                                 **_OR_200_ERROR_KWARGS)
+        if "audio" not in ctype:
+            # Un JSON con status 200 e' un errore mascherato (es. moderazione
+            # a monte), non audio: non va scritto in un file PCM.
+            raise TransportError(
+                f"OpenRouter ha risposto 200 con contenuto {ctype or 'ignoto'}",
+                **_OR_200_ERROR_KWARGS)
+        if pcm[:4] == b"RIFF":
+            # Difesa: oggi arriva PCM grezzo; se il formato cambiasse in WAV
+            # si scarta l'header (44 byte canonici) invece di consegnarlo
+            # come audio.
+            pcm = bytes(pcm[44:])
+            if not pcm:
+                raise TransportError("audio OpenRouter vuoto dopo l'header WAV",
+                                     **_OR_200_ERROR_KWARGS)
+        try:
+            gen_id = resp.headers.get(OR_GENERATION_HEADER)
+        except Exception:
+            gen_id = None
+        # Nessun usage nella risposta: la stima dei token spetta al chiamante.
+        return {"pcm": bytes(pcm), "input_tokens": None, "output_tokens": None,
+                "generation_id": gen_id}
+
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    message = _or_error_message(body, getattr(resp, "text", ""))
+
+    if status == 402:
+        raise TransportError(
+            f"credito OpenRouter esaurito: {message}",
+            kind="backend_down", http_status=status)
+    if status == 429:
+        raise TransportError(
+            f"OpenRouter rate limit: {message}",
+            kind="rate_limited", http_status=status,
+            retry_after_sec=_or_retry_after(resp))
+    if status in (401, 403):
+        raise TransportError(
+            f"OpenRouter rifiuta la chiave (HTTP {status}): {message}",
+            kind="fatal", http_status=status)
+    if status == 404:
+        raise TransportError(
+            f"endpoint o modello OpenRouter inesistente: {message}",
+            kind="fatal", http_status=status)
+    if status == 400:
+        if _OR_PROVIDER_400_MARK in message:
+            raise TransportError(
+                f"il provider dietro OpenRouter ha rifiutato la richiesta: {message}",
+                kind="retryable", http_status=status)
+        if any(m in message for m in _OR_FATAL_MARKS):
+            raise TransportError(
+                f"richiesta OpenRouter non valida: {message}",
+                kind="fatal", http_status=status)
+        raise TransportError(
+            f"OpenRouter HTTP 400: {message}", kind="retryable", http_status=status)
+    detail = message or (getattr(resp, "text", "") or "")[:200]
+    raise TransportError(
+        f"OpenRouter HTTP {status}: {detail}", kind="retryable", http_status=status)
+
+
+def openrouter_call(*, final_text, voice_name, model_key, model_id,
+                    timeout_ms, temperature, instructions=None):
+    """Adapter di trasporto OpenRouter (/audio/speech).
+
+    Una chiamata, nessun retry. `instructions` e' lo stile fuori dal testo
+    (il chiamante lo estrae dal blocco "[style: ...]" per i modelli che lo
+    vogliono cosi'; per gli altri resta inline in `final_text`).
+    `temperature` non e' esposta dall'endpoint e viene ignorata. La chiave
+    viene letta dall'ambiente e non compare mai in un messaggio di errore.
+    """
+    key = env_str("ABM_OPENROUTER_API_KEY")
+    if not key:
+        raise TransportError(
+            "backend OpenRouter non configurato (ABM_OPENROUTER_API_KEY assente)",
+            kind="fatal")
+    payload = {"model": model_id, "input": final_text, "voice": voice_name,
+               "response_format": "pcm"}
+    if instructions:
+        payload["instructions"] = str(instructions)
+    headers = {"Authorization": f"Bearer {key}",
+               "HTTP-Referer": "https://audiobook-maker.com",
+               "X-Title": "AudioBook Maker"}
+    try:
+        resp = requests.post(OR_API_URL, headers=headers, json=payload,
+                             timeout=timeout_ms / 1000.0)
+    except requests.Timeout as e:
+        raise TransportError("timeout verso OpenRouter", kind="retryable") from e
+    except requests.RequestException as e:
+        raise TransportError(f"errore di rete verso OpenRouter: "
+                             f"{type(e).__name__}", kind="retryable") from e
+    try:
+        return _interpret_openrouter_response(resp)
+    except TransportError:
+        raise
+    except Exception as e:
+        raise TransportError(
+            f"risposta OpenRouter non interpretabile: {type(e).__name__}",
             kind="retryable",
             http_status=getattr(resp, "status_code", None)) from e

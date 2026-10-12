@@ -1207,6 +1207,8 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
     reason_label = {
         "cf_backend_down": "backend Cloudflare fuori uso",
         "cf_consecutive_failures": "fallimenti consecutivi oltre soglia",
+        "or_backend_down": "backend OpenRouter fuori uso",
+        "or_consecutive_failures": "fallimenti consecutivi OpenRouter oltre soglia",
     }.get(reason, reason)
 
     model_safe = _esc_html(_sanitize_header(model_key or "", max_len=80))

@@ -491,8 +491,11 @@ def _safe_int(value, default=0):
         return default
 
 
-def trip(model_key, *, reason, detail, job_id):
+def trip(model_key, *, reason, detail, job_id, active="vertex"):
     """Fa scattare il breaker. True solo al PRIMO chiamante.
+
+    `active` e' il backend di ripiego su cui il modello sta cadendo (Vertex
+    di default; OpenRouter o API key per i modelli che lo prevedono).
 
     Con piu' job in corso, N thread scoprono l'avaria nello stesso istante:
     il ritorno booleano sotto lock e' cio' che permette di mandare una sola
@@ -510,7 +513,7 @@ def trip(model_key, *, reason, detail, job_id):
         if existed and entry.get("tripped_at"):
             return False
         entry.update({
-            "active": "vertex",
+            "active": active or "vertex",
             "tripped_at": _now(),
             "trip_reason": reason,
             "trip_detail": str(detail)[:300],

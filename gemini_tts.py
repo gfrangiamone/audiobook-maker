@@ -168,6 +168,12 @@ GEMINI_MODELS = {
         # applicata a parte da `_cf_effective`: qui stanno i numeri di listino.
         "cf_input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_CF_INPUT_USD_PER_MTOK", 0.75),
         "cf_output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_CF_OUTPUT_USD_PER_MTOK", 12.00),
+        # OpenRouter (probe 12/10/2026): solo Vertex us-central1 a listino
+        # Google, piu' caro di Cloudflare del 67%: qui e' solo il ripiego del
+        # breaker al posto di Vertex (niente IVA, niente service account).
+        "id_openrouter": "google/gemini-3.1-flash-tts-preview",
+        "or_input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OR_INPUT_USD_PER_MTOK", 1.00),
+        "or_output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OR_OUTPUT_USD_PER_MTOK", 20.00),
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.1 Flash TTS",
         "env_prefix": "31FLASH",
@@ -184,11 +190,17 @@ GEMINI_MODELS = {
         "http_timeout_ms": 60000,
         "preview_timeout_sec": 65,
         "backends_allowed": None,
+        # Destinazione del breaker quando il backend primario cade: la prima
+        # pronta vince (vedi _fallback_target).
+        "fallback_backends": ("openrouter", "vertex"),
         "mark_unavailable_on_fatal": False,
     },
     # Verificato il 27/09/2026 via API key (AI Studio, Tier 3): Vertex
-    # risponde 404 al progetto, Cloudflare non lo ospita. Unico canale: API
-    # key. Output WAV (RIFF) invece di PCM grezzo: vedi _extract_audio_pcm.
+    # risponde 404 al progetto, Cloudflare non lo ospita. Dal 12/10/2026 il
+    # canale primario e' OpenRouter (AI Studio + Vertex global dietro un solo
+    # endpoint, listino Google senza IVA), con l'API key come ripiego del
+    # breaker. Output WAV (RIFF) su API key invece di PCM grezzo: vedi
+    # _extract_audio_pcm.
     # Limiti Tier 3: 1K RPM, 1M TPM, RPD illimitato; a ~1.200 token per chunk
     # da 450 caratteri il TPM morde a ~830 RPM, da cui 800.
     "flash38": {
@@ -197,6 +209,12 @@ GEMINI_MODELS = {
         "id_cloudflare": None,
         "cf_input_usd_per_mtok": None,
         "cf_output_usd_per_mtok": None,
+        # Listino OpenRouter = promo Google 2026 ($0.50/$9.00), senza IVA,
+        # piu' la commissione di ricarica (_or_effective). Probe 12/10/2026:
+        # costo per chiamata = token x listino, nessun ricarico.
+        "id_openrouter": "google/gemini-3.8-flash-tts",
+        "or_input_usd_per_mtok": _f("ABM_GEMINI_38FLASH_OR_INPUT_USD_PER_MTOK", 0.50),
+        "or_output_usd_per_mtok": _f("ABM_GEMINI_38FLASH_OR_OUTPUT_USD_PER_MTOK", 9.00),
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.8 (PREMIUM+)",
         "env_prefix": "38FLASH",
@@ -212,13 +230,17 @@ GEMINI_MODELS = {
         "default_rpd": 0,
         "http_timeout_ms": 40000,
         "preview_timeout_sec": 45,
-        "backends_allowed": ("apikey",),
+        # Mai Vertex (404 sul progetto) ne' Cloudflare (non lo ospita).
+        "backends_allowed": ("openrouter", "apikey"),
+        "fallback_backends": ("apikey",),
         "mark_unavailable_on_fatal": True,
         # Il 3.8 tratta ogni parte di testo come trascrizione letterale: il
         # blocco "[style: ...]" nel testo veniva letto (job UGk7l5kB, 5 chunk
         # su 24), in una parte separata faceva rileggere il chunk due volte
         # (job iuyIVrUf, 02/10/2026: 4 su 8 al test). Lo stile va nel campo
         # speech_metadata.style della parte (0 su 8). Vedi _transport_contents.
+        # Su OpenRouter lo stesso blocco va nel campo `instructions` (0 su 30,
+        # probe 08/10/2026): vedi _openrouter_transport_call.
         "style_as_speech_metadata": True,
         # Chunk con i retry esauriti (risposta vuota, 5xx, timeout): stessa
         # voce su questo modello, poi edge-tts (tts_split). Gli errori fatali
@@ -232,14 +254,18 @@ GEMINI_MODELS = {
 # congelato, per evitare flip-flop se un task cambia env fra due chiamate.
 # Muta solo per via esplicita, tramite `_set_backend` (failover del breaker).
 # Reset esplicito (per test): `gemini_tts._BACKEND = {}`.
-# Valori: "vertex" | "apikey" | "cloudflare" | False (DISABLED).
+# Valori: "vertex" | "apikey" | "cloudflare" | "openrouter" | False (DISABLED).
 # Chiave usata quando il chiamante non specifica il modello: quel percorso
 # non puo' selezionare Cloudflare, che e' sempre una scelta per modello.
 _BACKEND_DEFAULT_KEY = "_default"
 _BACKEND = {}
 _BACKEND_LOCK = threading.Lock()
 
-_VALID_BACKENDS = ("vertex", "apikey", "cloudflare")
+_VALID_BACKENDS = ("vertex", "apikey", "cloudflare", "openrouter")
+# Backend "esterni" prepagati sorvegliati dal circuit breaker: un guasto li
+# fa cadere sul ripiego del modello (`fallback_backends`), e il rientro passa
+# dalla sonda. Vertex e API key sono i ripieghi, mai sorvegliati.
+_BREAKER_BACKENDS = ("cloudflare", "openrouter")
 
 
 def _set_backend(model_key, backend):
@@ -270,6 +296,53 @@ def _vertex_ready():
     return bool(project) and bool(creds) and os.path.isfile(creds)
 
 
+def _openrouter_ready(model_key=None):
+    """True se OpenRouter e' configurato (chiave) e ospita il modello."""
+    if not env_str("ABM_OPENROUTER_API_KEY"):
+        return False
+    if model_key is None:
+        return False
+    return bool((GEMINI_MODELS.get(model_key) or {}).get("id_openrouter"))
+
+
+def _backend_ready(backend, model_key):
+    """Prontezza di un backend per un modello, decisa in un solo posto."""
+    if backend == "vertex":
+        return _vertex_ready()
+    if backend == "apikey":
+        return bool(env_str("ABM_GEMINI_API_KEY"))
+    if backend == "openrouter":
+        return _openrouter_ready(model_key)
+    if backend == "cloudflare":
+        return (bool(env_str("ABM_CF_ACCOUNT_ID"))
+                and bool(env_str("ABM_CF_API_TOKEN"))
+                and bool((GEMINI_MODELS.get(model_key) or {}).get("id_cloudflare")))
+    return False
+
+
+def _fallback_target(model_key):
+    """Backend su cui cade il modello quando il breaker scatta.
+
+    Primo di `fallback_backends` (catalogo; default Vertex) che sia pronto,
+    altrimenti False: il modello resta disabilitato invece di finire su un
+    backend senza credenziali.
+    """
+    m = GEMINI_MODELS.get(model_key) or {}
+    for b in m.get("fallback_backends") or ("vertex",):
+        if _backend_ready(b, model_key):
+            return b
+    return False
+
+
+def configured_primary_backend(model_key):
+    """Backend scelto dalla CONFIGURAZIONE per il modello (env per modello,
+    poi selettore globale), senza guardare prontezza, cache o breaker."""
+    per_model = ""
+    if model_key is not None:
+        per_model = env_str(f"ABM_GEMINI_BACKEND_{_model_env_suffix(model_key)}").lower()
+    return per_model or env_str("ABM_GEMINI_BACKEND", "auto").lower()
+
+
 def _apply_backends_allowed(key, resolved, apikey_ready):
     """Filtra `resolved` sui `backends_allowed` del catalogo.
 
@@ -284,8 +357,11 @@ def _apply_backends_allowed(key, resolved, apikey_ready):
     """
     allowed = (GEMINI_MODELS.get(key) or {}).get("backends_allowed")
     if resolved and allowed and resolved not in allowed:
-        if "apikey" in allowed and apikey_ready:
-            return "apikey"
+        # Il primo canale ammesso e pronto, nell'ordine del catalogo.
+        for b in allowed:
+            ready = apikey_ready if b == "apikey" else _backend_ready(b, key)
+            if ready:
+                return b
         return False
     return resolved
 
@@ -294,7 +370,8 @@ def _resolve_backend(model_key=None):
     """Risolve quale backend Gemini usare per un modello.
 
     Returns:
-        "vertex" | "apikey" | "cloudflare" | None (None = TTS disabilitato).
+        "vertex" | "apikey" | "cloudflare" | "openrouter" | None (None = TTS
+        disabilitato).
 
     Logica:
     - ABM_GEMINI_BACKEND=vertex: richiede ABM_GCP_PROJECT_ID +
@@ -303,14 +380,18 @@ def _resolve_backend(model_key=None):
     - ABM_GEMINI_BACKEND=cloudflare: richiede ABM_CF_ACCOUNT_ID +
       ABM_CF_API_TOKEN, E che il modello abbia un `id_cloudflare`. Un modello
       non ospitato su Cloudflare ricade su Vertex, non va in errore.
+    - ABM_GEMINI_BACKEND=openrouter: richiede ABM_OPENROUTER_API_KEY e che
+      il modello abbia un `id_openrouter`; altrimenti ricade su Vertex come
+      per Cloudflare.
     - ABM_GEMINI_BACKEND unset o "auto": Vertex se la config e' completa,
       altrimenti API key se presente, altrimenti DISABLED. **auto non seleziona
-      mai Cloudflare**: quel backend e' solo opt-in esplicito.
+      mai Cloudflare ne' OpenRouter**: quei backend sono solo opt-in espliciti.
 
     Precedenza sul breaker: se `tts_backend_state.is_tripped(model_key)` e'
-    True, tutto quanto sopra viene bypassato e si forza "vertex" (None se
-    Vertex non e' pronto) — anche subito dopo un riavvio del processo, quando
-    `_BACKEND` e' vuoto ma lo stato del breaker e' sopravvissuto su disco.
+    True, tutto quanto sopra viene bypassato e si forza il ripiego del modello
+    (`_fallback_target`: Vertex di default, None se non e' pronto) — anche
+    subito dopo un riavvio del processo, quando `_BACKEND` e' vuoto ma lo
+    stato del breaker e' sopravvissuto su disco.
     Anche in fail-safe (`tts_backend_state._FAIL_SAFE`, stato su disco
     illeggibile al boot) OGNI model_key non ancora in cache risulta scattato:
     `_apply_backends_allowed` filtra anche questo esito, altrimenti un
@@ -356,26 +437,33 @@ def _resolve_backend(model_key=None):
         # vale per QUALSIASI configurazione finche' non arriva un reset
         # esplicito (rientro manuale, mai automatico).
         if model_key is not None and _backend_state.is_tripped(model_key):
-            resolved = "vertex" if vertex_ready else False
+            resolved = _fallback_target(key)
             # Il filtro va applicato anche qui: senza, un modello apikey-only
             # come flash38 potrebbe finire su Vertex quando is_tripped()
             # risulta True in fail-safe (stato su disco illeggibile al boot),
             # bypassando "no Vertex fallback" (review task-6 Important #1).
             resolved = _apply_backends_allowed(key, resolved, apikey_ready)
             _BACKEND[key] = resolved
-            if resolved == "vertex":
-                print(f"[gemini-tts] Backend di {key} forzato su vertex "
-                      f"(breaker gia' scattato, stato persistito)")
-            elif resolved:
+            if resolved:
                 print(f"[gemini-tts] Backend di {key} forzato su {resolved} "
-                      f"(breaker gia' scattato, stato persistito, vertex non "
-                      f"ammesso dal catalogo)")
+                      f"(breaker gia' scattato, stato persistito)")
             return resolved if resolved else None
 
         if choice == "vertex":
             resolved = "vertex" if vertex_ready else False
         elif choice == "apikey":
             resolved = "apikey" if apikey_ready else False
+        elif choice == "openrouter":
+            if _openrouter_ready(key):
+                resolved = "openrouter"
+            elif (GEMINI_MODELS.get(key) or {}).get("id_openrouter"):
+                # Chiave assente: errore di configurazione, non un motivo
+                # per usare Vertex di nascosto (come per Cloudflare).
+                resolved = False
+            elif vertex_ready:
+                resolved = "vertex"
+            else:
+                resolved = False
         elif choice == "cloudflare":
             if cf_ready:
                 resolved = "cloudflare"
@@ -561,7 +649,8 @@ def _cf_trip_failures():
 # fail-safe, cioe' uno stato che non sappiamo leggere, e riarmarli da soli
 # sarebbe precisamente il ripristino silenzioso che il fail-safe esiste per
 # impedire. Solo un guasto MISURATO di Cloudflare si puo' misurare di nuovo.
-_CF_PROBE_REASONS = ("cf_backend_down", "cf_consecutive_failures")
+_CF_PROBE_REASONS = ("cf_backend_down", "cf_consecutive_failures",
+                     "or_backend_down", "or_consecutive_failures")
 
 # Testo della sonda: corto e neutro. Corto perche' la spesa e' reale e va
 # tenuta a un'inezia; neutro perche' un testo che il filtro contenuti potesse
@@ -653,14 +742,20 @@ def _cf_probe_eligible(model_key, *, manual=False):
     """
     if not manual and not _cf_probe_enabled():
         return False, "rientro automatico disattivato (ABM_CF_PROBE_ENABLE=0)"
-    choice = env_str("ABM_GEMINI_BACKEND", "auto").lower()
-    if choice != "cloudflare":
-        return False, f"ABM_GEMINI_BACKEND={choice!r}: la sintesi non userebbe Cloudflare"
-    if not (env_str("ABM_CF_ACCOUNT_ID")
+    primary = configured_primary_backend(model_key)
+    if primary not in _BREAKER_BACKENDS:
+        return False, (f"ABM_GEMINI_BACKEND={primary!r}: la sintesi non userebbe "
+                       f"un backend sorvegliato dal breaker")
+    if primary == "cloudflare" and not (
+            env_str("ABM_CF_ACCOUNT_ID")
             and env_str("ABM_CF_API_TOKEN")):
         return False, "credenziali Cloudflare assenti"
-    if not (GEMINI_MODELS.get(model_key) or {}).get("id_cloudflare"):
+    if primary == "openrouter" and not env_str("ABM_OPENROUTER_API_KEY"):
+        return False, "chiave OpenRouter assente"
+    if primary == "cloudflare" and not (GEMINI_MODELS.get(model_key) or {}).get("id_cloudflare"):
         return False, f"{model_key} non e' ospitato su Cloudflare"
+    if primary == "openrouter" and not (GEMINI_MODELS.get(model_key) or {}).get("id_openrouter"):
+        return False, f"{model_key} non e' ospitato su OpenRouter"
     st = _backend_state.state(model_key)
     if not st.get("tripped_at"):
         return False, "nessun trip da riguadagnare"
@@ -749,12 +844,13 @@ def probe_cloudflare(model_key, *, manual=False):
               f"(non-fatale): {e}")
 
     started = time.time()
+    primary = configured_primary_backend(model_key)
     try:
-        out = _transport.cloudflare_call(
+        out = _transport_for(primary)(
             final_text=_CF_PROBE_TEXT,
             voice_name=_CF_PROBE_VOICE,
             model_key=model_key,
-            model_id=GEMINI_MODELS[model_key]["id_cloudflare"],
+            model_id=_external_model_id(model_key, primary),
             timeout_ms=_cf_probe_timeout_ms(),
             temperature=None,
         )
@@ -788,11 +884,14 @@ def probe_cloudflare(model_key, *, manual=False):
     try:
         secs = len(pcm) / float(AUDIO_SAMPLE_RATE * AUDIO_SAMPLE_WIDTH_BYTES
                                 * AUDIO_CHANNELS)
-        spesa = actual_cost_breakdown(
-            estimate_input_tokens(_CF_PROBE_TEXT),
-            int(round(secs * _audio_tokens_per_second(model_key))),
-            model_key, "cloudflare")
-        _backend_state.add_spend(model_key, spesa["total_usd"])
+        if primary == "cloudflare":
+            # Il ledger locale e' quello del credito Cloudflare: OpenRouter
+            # espone il saldo via API e non passa di qui.
+            spesa = actual_cost_breakdown(
+                estimate_input_tokens(_CF_PROBE_TEXT),
+                int(round(secs * _audio_tokens_per_second(model_key))),
+                model_key, "cloudflare")
+            _backend_state.add_spend(model_key, spesa["total_usd"])
     except Exception as e:
         print(f"[gemini-tts] sonda {model_key}: addebito a ledger fallito "
               f"(non-fatale): {e}")
@@ -831,7 +930,8 @@ def _finish_cf_return(model_key, started_at):
         for noto in GEMINI_MODELS:
             _BACKEND.pop(noto, None)
         _BACKEND.pop(_BACKEND_DEFAULT_KEY, None)
-    print(f"[gemini-tts] RIENTRO {model_key} su Cloudflare: sonda riuscita in "
+    print(f"[gemini-tts] RIENTRO {model_key} su "
+          f"{configured_primary_backend(model_key)}: sonda riuscita in "
           f"{time.time() - started_at:.1f}s dopo {info['attempts']} tentativi "
           f"falliti")
 
@@ -850,35 +950,80 @@ def _transport_for(backend):
     """Adapter di trasporto corrispondente al backend risolto."""
     if backend == "cloudflare":
         return _transport.cloudflare_call
+    if backend == "openrouter":
+        return _openrouter_transport_call
     return _vertex_transport_call
 
 
-def _trip_to_vertex(model_key, *, reason, detail, job_id):
-    """Fa scattare il breaker e sposta il modello su Vertex.
+def _external_model_id(model_key, backend):
+    """Id del modello presso un backend esterno (Cloudflare/OpenRouter)."""
+    m = GEMINI_MODELS[model_key]
+    if backend == "cloudflare":
+        return m.get("id_cloudflare")
+    if backend == "openrouter":
+        return m.get("id_openrouter")
+    return _resolve_model_id(model_key)
+
+
+def _or_timeout_ms(model_key):
+    """Timeout HTTP verso OpenRouter: mai sotto quello del modello.
+
+    Probe 12/10/2026: 8-20 s per chunk da 300-450 caratteri, 63 s per 4000.
+    """
+    return max(_i("ABM_OR_TIMEOUT_MS", 60000), _http_timeout_ms(model_key))
+
+
+def _openrouter_transport_call(*, final_text, voice_name, model_key, model_id,
+                               timeout_ms, temperature):
+    """Adapter OpenRouter con lo stile nel posto giusto per il modello.
+
+    Per i modelli `style_as_speech_metadata` (flash38) il blocco "[style:
+    ...]" esce dal testo e va nel campo `instructions` (0 leak su 30, probe
+    08/10/2026); per gli altri (flash31, che ignora `instructions`) resta
+    inline nel testo, come su Cloudflare e Vertex.
+    """
+    instructions = None
+    text = final_text
+    if (GEMINI_MODELS.get(model_key) or {}).get("style_as_speech_metadata"):
+        block, body = split_style_block(final_text)
+        if block is not None:
+            instructions = block[len(_STYLE_BLOCK_PREFIX):-1].strip()
+            text = body
+    return _transport.openrouter_call(
+        final_text=text, voice_name=voice_name, model_key=model_key,
+        model_id=model_id, timeout_ms=timeout_ms, temperature=temperature,
+        instructions=instructions)
+
+
+def _trip_to_fallback(model_key, *, reason, detail, job_id):
+    """Fa scattare il breaker e sposta il modello sul suo ripiego
+    (`fallback_backends` del catalogo: Vertex di default, OpenRouter per
+    flash31, API key per flash38).
 
     L'email parte solo al primo chiamante: con piu' job in corso N thread
     scoprono l'avaria insieme, e `trip()` e' idempotente sotto lock.
 
     Raises:
-        GeminiUnavailable: se Vertex non e' pronto (spec §4.4 p.4). Il trip e'
-            comunque persistito e la notifica comunque inviata PRIMA di
-            sollevare: e' proprio il caso in cui l'admin deve sapere che
-            Cloudflare e' caduto e che non c'e' rete di sicurezza sotto.
+        GeminiUnavailable: se nessun ripiego e' pronto (spec §4.4 p.4). Il
+            trip e' comunque persistito e la notifica comunque inviata PRIMA
+            di sollevare: e' proprio il caso in cui l'admin deve sapere che
+            il backend e' caduto e che non c'e' rete di sicurezza sotto.
     """
-    first = _backend_state.trip(model_key, reason=reason, detail=detail,
-                                job_id=job_id)
     # Prontezza decisa in un solo posto, la stessa che usa _resolve_backend:
     # il percorso di emergenza e' il momento peggiore per divergere.
-    ready = _vertex_ready()
+    target = _fallback_target(model_key)
+    first = _backend_state.trip(model_key, reason=reason, detail=detail,
+                                job_id=job_id, active=target or "vertex")
+    ready = bool(target)
     if ready:
-        _set_backend(model_key, "vertex")
+        _set_backend(model_key, target)
     else:
         # Nessuna destinazione valida: il modello resta disabilitato invece di
         # essere marcato "vertex" e finire in un KeyError dentro _get_client.
         with _BACKEND_LOCK:
             _BACKEND[model_key or _BACKEND_DEFAULT_KEY] = False
         print(f"[gemini-tts] Backend di {model_key} DISABILITATO: breaker "
-              f"scattato e Vertex non e' pronto (credenziali/progetto assenti)")
+              f"scattato e nessun ripiego pronto (credenziali assenti)")
 
     if first:
         # Appuntamento per il rientro, fissato una sola volta (`first`): con
@@ -915,8 +1060,12 @@ def _trip_to_vertex(model_key, *, reason, detail, job_id):
 
     if not ready:
         raise GeminiUnavailable(
-            f"Backend Cloudflare fuori uso per {model_key} ({reason}) e Vertex "
-            f"non e' configurato: nessun backend Gemini disponibile")
+            f"Backend primario fuori uso per {model_key} ({reason}) e nessun "
+            f"ripiego configurato: nessun backend Gemini disponibile")
+
+
+# Nome storico, usato dai test e dai commenti: resta come alias.
+_trip_to_vertex = _trip_to_fallback
 
 
 USD_EUR_RATE = _pricing.usd_eur_rate()
@@ -1170,11 +1319,33 @@ def _model_may_use_cloudflare(model_key):
     serve a sapere quali backend possono addebitare un job (riserva di budget
     nel caso peggiore), non chi sta eseguendo adesso.
     """
-    choice = env_str("ABM_GEMINI_BACKEND", "auto").lower()
-    if choice != "cloudflare":
+    if configured_primary_backend(model_key) != "cloudflare":
         return False
     m = GEMINI_MODELS.get(model_key) or {}
     return bool(m.get("id_cloudflare")) and m.get("cf_output_usd_per_mtok") is not None
+
+
+def _or_topup_fee():
+    """Commissione sull'acquisto del credito OpenRouter (5,5% via Stripe,
+    minimo $0.80). Come per Cloudflare: si paga comprando, non spendendo."""
+    return _f("ABM_OR_CREDIT_TOPUP_FEE", 0.055)
+
+
+def _or_effective(rate):
+    """Tariffa OpenRouter comprensiva della commissione di ricarica."""
+    return rate * (1.0 + _or_topup_fee())
+
+
+def _model_may_use_openrouter(model_key):
+    """True se la configurazione puo' far girare il modello su OpenRouter:
+    come primario, o come ripiego del breaker (chiave presente)."""
+    m = GEMINI_MODELS.get(model_key) or {}
+    if not m.get("id_openrouter") or m.get("or_output_usd_per_mtok") is None:
+        return False
+    if configured_primary_backend(model_key) == "openrouter":
+        return True
+    return ("openrouter" in (m.get("fallback_backends") or ())
+            and _openrouter_ready(model_key))
 
 
 # IVA 22% come costo non detraibile: la fatturano Vertex e l'API key (Google
@@ -1207,6 +1378,9 @@ def _net_rates(model_key, backend):
     if backend == "cloudflare" and m.get("cf_output_usd_per_mtok") is not None:
         return (_cf_effective(m["cf_input_usd_per_mtok"]),
                 _cf_effective(m["cf_output_usd_per_mtok"]))
+    if backend == "openrouter" and m.get("or_output_usd_per_mtok") is not None:
+        return (_or_effective(m["or_input_usd_per_mtok"]),
+                _or_effective(m["or_output_usd_per_mtok"]))
     return m["input_usd_per_mtok"], m["output_usd_per_mtok"]
 
 
@@ -1525,11 +1699,14 @@ def worst_case_rates(model_key):
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
-    g_in, g_out = actual_rates(model_key, "vertex")
-    if not _model_may_use_cloudflare(model_key):
-        return g_in, g_out
-    c_in, c_out = actual_rates(model_key, "cloudflare")
-    return max(g_in, c_in), max(g_out, c_out)
+    w_in, w_out = actual_rates(model_key, "vertex")
+    if _model_may_use_cloudflare(model_key):
+        c_in, c_out = actual_rates(model_key, "cloudflare")
+        w_in, w_out = max(w_in, c_in), max(w_out, c_out)
+    if _model_may_use_openrouter(model_key):
+        o_in, o_out = actual_rates(model_key, "openrouter")
+        w_in, w_out = max(w_in, o_in), max(w_out, o_out)
+    return w_in, w_out
 
 
 def worst_case_cost_breakdown(input_tokens, output_tokens, model_key):
@@ -3256,7 +3433,7 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     # Restano PRIMA del loop (una volta per chiamata) come da comportamento
     # storico del percorso Vertex: spostarli dentro il loop introdurrebbe un
     # throttle fra i retry che oggi non c'e'.
-    if _resolve_backend(model_key) != "cloudflare":
+    if _resolve_backend(model_key) not in _BREAKER_BACKENDS:
         _check_rpd_cap(model_key)
         _throttle_rpm(model_key)
 
@@ -3294,23 +3471,27 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         # id_cloudflare != id_vertex viene abilitato. _resolve_model_id rifa'
         # la stessa risoluzione backend (cache, quindi a costo zero) e resta
         # corretta per vertex/apikey.
-        call_model_id = (GEMINI_MODELS[model_key].get("id_cloudflare")
-                         if backend == "cloudflare" else _resolve_model_id(model_key))
+        call_model_id = _external_model_id(model_key, backend)
+        if backend == "cloudflare":
+            call_timeout_ms = _cf_timeout_ms()
+        elif backend == "openrouter":
+            call_timeout_ms = _or_timeout_ms(model_key)
+        else:
+            call_timeout_ms = _http_timeout_ms(model_key)
         try:
             out = transport(
                 final_text=final_text,
                 voice_name=voice_name,
                 model_key=model_key,
                 model_id=call_model_id,
-                timeout_ms=(_cf_timeout_ms() if backend == "cloudflare"
-                            else _http_timeout_ms(model_key)),
+                timeout_ms=call_timeout_ms,
                 temperature=_temperature(),
             )
             pcm_data = out["pcm"]
             usage_input = out.get("input_tokens")
             usage_output = out.get("output_tokens")
             backend_used = backend
-            if backend == "cloudflare":
+            if backend in _BREAKER_BACKENDS:
                 _backend_state.record_success(model_key)
             else:
                 # Spec §6: il contatore RPD e' quello del progetto Google. Una
@@ -3326,31 +3507,32 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             # (sospetto S1 della review finale, chiuso).
             last_err = str(te)
 
-            # --- Circuit breaker: solo per Cloudflare, solo per guasti del
-            # backend. Un contenuto rifiutato o un parametro sbagliato sono
-            # difetti del payload: farebbero cadere il backend per colpa di un
-            # chunk (spec §4.4 punto 4).
-            if backend == "cloudflare" and te.kind in ("backend_down",
-                                                       "retryable",
-                                                       "rate_limited"):
+            # --- Circuit breaker: solo per i backend esterni (Cloudflare,
+            # OpenRouter), solo per guasti del backend. Un contenuto rifiutato
+            # o un parametro sbagliato sono difetti del payload: farebbero
+            # cadere il backend per colpa di un chunk (spec §4.4 punto 4).
+            if backend in _BREAKER_BACKENDS and te.kind in ("backend_down",
+                                                            "retryable",
+                                                            "rate_limited"):
+                prefix = "cf" if backend == "cloudflare" else "or"
                 if te.kind == "backend_down":
-                    _trip_to_vertex(model_key,
-                                    reason="cf_backend_down",
-                                    detail=f"HTTP {te.http_status} "
-                                           f"code {te.provider_code}",
-                                    job_id=job_id)
-                    # La stessa chiamata prosegue su Vertex con i tentativi
+                    _trip_to_fallback(model_key,
+                                      reason=f"{prefix}_backend_down",
+                                      detail=f"HTTP {te.http_status} "
+                                             f"code {te.provider_code}",
+                                      job_id=job_id)
+                    # La stessa chiamata prosegue sul ripiego con i tentativi
                     # rimanenti: l'audio e' identico byte per byte, il job in
                     # corso non si accorge del cambio.
                     attempt -= 1
                     continue
                 failures = _backend_state.record_failure(model_key)
                 if failures >= _cf_trip_failures():
-                    _trip_to_vertex(model_key,
-                                    reason="cf_consecutive_failures",
-                                    detail=f"{failures} fallimenti consecutivi; "
-                                           f"ultimo: {str(te)[:120]}",
-                                    job_id=job_id)
+                    _trip_to_fallback(model_key,
+                                      reason=f"{prefix}_consecutive_failures",
+                                      detail=f"{failures} fallimenti consecutivi; "
+                                             f"ultimo: {str(te)[:120]}",
+                                      job_id=job_id)
                     attempt -= 1
                     continue
 
