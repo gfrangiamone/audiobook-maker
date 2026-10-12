@@ -23,7 +23,7 @@ import os
 import ffmpeg_tools
 from i18n import norm_lang as _norm_lang
 from voice_utils import clone_token as _clone_token, parse_rate_pct as _parse_rate_pct
-from env_utils import env_float as _f, env_int as _i
+from env_utils import env_float as _f, env_int as _i, env_str
 import re
 import threading
 import time
@@ -107,11 +107,11 @@ _COLD_DELAY_FLOOR = 30.0
 
 
 def endpoint_id():
-    return os.environ.get("ABM_VOXCPM_ENDPOINT_ID", "").strip()
+    return env_str("ABM_VOXCPM_ENDPOINT_ID")
 
 
 def api_key():
-    return os.environ.get("ABM_VOXCPM_API_KEY", "").strip()
+    return env_str("ABM_VOXCPM_API_KEY")
 
 
 def rate_eur_per_mchar():
@@ -135,7 +135,7 @@ def _tariffa_dichiarata():
     dichiarando quella tariffa per tutto l'endpoint, non lasciando il default.
     Ed e' l'ultima parola: il listino per scheda non si consulta piu'.
     """
-    return bool(os.environ.get("ABM_VOXCPM_USD_PER_HOUR", "").strip())
+    return bool(env_str("ABM_VOXCPM_USD_PER_HOUR"))
 
 
 def _tariffa_scheda(gpu, default, dichiarata):
@@ -1072,7 +1072,7 @@ def denoise_mine():
     `denoise` solo per le voci il cui campione non e' ancora stato pulito.
     Sulla GPU del worker la pulizia mandava in OOM il motore.
     """
-    return os.environ.get("ABM_VOXCPM_DENOISE_MINE", "1").strip() != "0"
+    return env_str("ABM_VOXCPM_DENOISE_MINE", "1") != "0"
 
 
 def clone_block(voice_id):

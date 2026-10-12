@@ -6,13 +6,14 @@ sono mai bloccanti: send_push ritorna 'ok' | 'unregistered' | 'error'.
 """
 from gcp_auth import ServiceAccount
 import os
+from env_utils import env_str
 import retry_util as _retry
 import threading
 import time
 
 import requests
 
-_FCM_CREDENTIALS_FILE = os.environ.get("ABM_FCM_CREDENTIALS_FILE", "")
+_FCM_CREDENTIALS_FILE = env_str("ABM_FCM_CREDENTIALS_FILE")
 _FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 _SEND_RETRIES = 3
 

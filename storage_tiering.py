@@ -6,13 +6,13 @@
   caricato su cold storage (sopravvive a restart del worker).
 - is_offloadable: estensioni dei file di output da spostare su cold.
 """
-import os
+from env_utils import env_int
 from fileio import data_dir
 from pathlib import Path
 
 _DATA_DIR = data_dir().resolve()
-_HOT_SEC = int(os.environ.get("ABM_HOT_WINDOW_SEC", "64800"))
-_HOT_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "172800"))
+_HOT_SEC = env_int("ABM_HOT_WINDOW_SEC", 64800)
+_HOT_GEMINI_SEC = env_int("ABM_HOT_WINDOW_GEMINI_SEC", 172800)
 
 _OFFLOADABLE_EXT = (".mp3", ".m4b", ".zip", ".abm", ".epub", ".txt")
 # File .txt transitori che possono comparire in output_*/ ma NON sono output

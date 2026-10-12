@@ -11,6 +11,7 @@ indice in memoria. Il dialogo col worker sta in `voxcpm_tts.py`.
 """
 import json
 import os
+from env_utils import env_str
 from voice_utils import VOXCPM_CATALOG_PREFIX, VOXCPM_CATALOG_SCHEMA
 import threading
 
@@ -34,7 +35,7 @@ def catalog_dir():
     `ABM_VOXCPM_CATALOG_DIR` la sposta: aggiornare il catalogo e' sostituire
     una cartella, non toccare il codice.
     """
-    raw = (os.environ.get("ABM_VOXCPM_CATALOG_DIR") or "").strip()
+    raw = env_str("ABM_VOXCPM_CATALOG_DIR")
     return os.path.abspath(raw) if raw else _DEFAULT_DIR
 
 

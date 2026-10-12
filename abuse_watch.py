@@ -22,9 +22,8 @@ Spec: docs/superpowers/specs/2026-09-03-quota-containment-design.md
 import hashlib
 import json
 import llm_client
-import os
 from client_identity import DEFAULT_IP_SALT as _DEFAULT_SALT, ip_salt as _ip_salt, salted_hash as _salted_hash
-from env_utils import env_float as _env_float, env_int
+from env_utils import env_float as _env_float, env_int, env_str
 import queue
 import re
 import threading
@@ -99,8 +98,8 @@ def _env_int(name, default, floor=0):
 def kill_enabled():
     """Kill e 403 attivi solo con ABM_ABUSE_KILL_ENABLE=1 E un admin da avvisare
     (ABM_ADMIN_EMAIL): nessuna azione distruttiva senza audit nel digest."""
-    flag = (os.environ.get("ABM_ABUSE_KILL_ENABLE", "0") or "0").strip().lower()
-    admin = (os.environ.get("ABM_ADMIN_EMAIL") or "").strip()
+    flag = env_str("ABM_ABUSE_KILL_ENABLE", "0").lower()
+    admin = env_str("ABM_ADMIN_EMAIL")
     return flag in ("1", "true", "yes", "on") and bool(admin)
 
 

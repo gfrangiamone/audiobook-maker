@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import ffmpeg_tools
 import os
-from env_utils import env_float as _env_float
+from env_utils import env_float as _env_float, env_str
 import wave
 from dataclasses import dataclass, field, asdict
 
@@ -313,7 +313,7 @@ RESPIRI_TONO_CORTO_S = 0.12
 
 
 def respiri_enabled():
-    return (os.environ.get("ABM_VOICE_CLONE_BREATHS") or "1").strip() != "0"
+    return env_str("ABM_VOICE_CLONE_BREATHS", "1") != "0"
 
 
 def _corse(mask):
@@ -599,7 +599,7 @@ def init(data_dir):
 
 
 def asr_enabled():
-    return (os.environ.get("ABM_VOICE_CLONE_ASR") or "1").strip() != "0"
+    return env_str("ABM_VOICE_CLONE_ASR", "1") != "0"
 
 
 def max_cer():
@@ -607,7 +607,7 @@ def max_cer():
 
 
 def _asr_model_name():
-    return (os.environ.get("ABM_VOICE_CLONE_ASR_MODEL") or "base").strip() or "base"
+    return env_str("ABM_VOICE_CLONE_ASR_MODEL", "base") or "base"
 
 
 def _asr_timeout():
@@ -662,7 +662,7 @@ def _new_model(name, download_root):
 
 
 def _whisper_dir():
-    base = _data_dir or os.environ.get("ABM_DATA_DIR") or tempfile.gettempdir()
+    base = _data_dir or env_str("ABM_DATA_DIR") or tempfile.gettempdir()
     path = os.path.join(base, "whisper")
     os.makedirs(path, exist_ok=True)
     return path

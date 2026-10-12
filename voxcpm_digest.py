@@ -25,7 +25,7 @@ server: e' l'unico modo perche' due letture dello stesso giorno diano lo
 stesso risultato.
 """
 import json
-import os
+from env_utils import env_str
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -37,7 +37,7 @@ from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 # memoria perche' un riavvio del server non deve ne' saltare un giorno ne'
 # rispedirlo: il digest arriva una volta sola per giorno, comunque vada il
 # processo.
-_DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "."))
+_DATA_DIR = Path(env_str("ABM_DATA_DIR", "."))
 _code_tagliate = _MonthlyJsonl("voxcpm_code_tagliate", lambda: _DATA_DIR)
 _MARKER = "voxcpm_digest_last.txt"
 

@@ -7,18 +7,15 @@ Centralizza tre controlli ricorrenti su input untrusted:
 
 Tutti i limiti sono override-abili via env var ABM_ZIP_*.
 """
-import os
+from env_utils import env_int, env_float
 import posixpath
 import zipfile
 from typing import Iterable
 
 # Limiti zip-bomb (override via env)
-ZIP_MAX_ENTRY_UNCOMPRESSED = int(os.environ.get(
-    "ABM_ZIP_MAX_ENTRY_MB", "200")) * 1024 * 1024     # 200 MB per entry
-ZIP_MAX_TOTAL_UNCOMPRESSED = int(os.environ.get(
-    "ABM_ZIP_MAX_TOTAL_MB", "500")) * 1024 * 1024     # 500 MB totale
-ZIP_MAX_COMPRESSION_RATIO = float(os.environ.get(
-    "ABM_ZIP_MAX_RATIO", "200"))                      # uncompressed/compressed
+ZIP_MAX_ENTRY_UNCOMPRESSED = env_int("ABM_ZIP_MAX_ENTRY_MB", 200) * 1024 * 1024     # 200 MB per entry
+ZIP_MAX_TOTAL_UNCOMPRESSED = env_int("ABM_ZIP_MAX_TOTAL_MB", 500) * 1024 * 1024     # 500 MB totale
+ZIP_MAX_COMPRESSION_RATIO = env_float("ABM_ZIP_MAX_RATIO", 200.0)                      # uncompressed/compressed
 
 
 class ZipSafetyError(ValueError):

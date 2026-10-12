@@ -76,7 +76,7 @@ import math
 import os
 import pricing_common
 import fileio
-from env_utils import env_float as _f_env
+from env_utils import env_float as _f_env, env_str
 import threading
 import time
 from datetime import datetime, timezone
@@ -868,9 +868,9 @@ def _declared_balance_usd():
     il pre-allarme in silenzio - l'admin scoprirebbe il credito finito dal
     failover, cioe' proprio cio' che il pre-allarme esiste per evitare.
     """
-    if (os.environ.get("ABM_CF_CREDIT_BALANCE_USD", "") or "").strip():
+    if env_str("ABM_CF_CREDIT_BALANCE_USD"):
         return _f_env("ABM_CF_CREDIT_BALANCE_USD", 0.0)
-    if (os.environ.get("ABM_CF_CREDIT_BALANCE_EUR", "") or "").strip():
+    if env_str("ABM_CF_CREDIT_BALANCE_EUR"):
         usd = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) / usd_eur_rate()
         _warn_legacy_env("ABM_CF_CREDIT_BALANCE_EUR",
                          "ABM_CF_CREDIT_BALANCE_USD", usd)
@@ -886,9 +886,9 @@ def _alert_threshold_usd():
     dal nome vecchio e soglia presa dal default, cioe' una soglia diversa da
     quella che l'admin crede di aver impostato.
     """
-    if (os.environ.get("ABM_CF_CREDIT_ALERT_USD", "") or "").strip():
+    if env_str("ABM_CF_CREDIT_ALERT_USD"):
         return _f_env("ABM_CF_CREDIT_ALERT_USD", _DEFAULT_ALERT_USD)
-    if (os.environ.get("ABM_CF_CREDIT_ALERT_EUR", "") or "").strip():
+    if env_str("ABM_CF_CREDIT_ALERT_EUR"):
         usd = _f_env("ABM_CF_CREDIT_ALERT_EUR", 0.0) / usd_eur_rate()
         _warn_legacy_env("ABM_CF_CREDIT_ALERT_EUR",
                          "ABM_CF_CREDIT_ALERT_USD", usd)
@@ -920,7 +920,7 @@ def credit_check_enabled():
     differenza conta al primo incidente: davanti a un pannello muto, la
     prima serve a distinguere una configurazione dimenticata da una scelta.
     """
-    raw = (os.environ.get("ABM_CF_CREDIT_CHECK", "") or "").strip().lower()
+    raw = env_str("ABM_CF_CREDIT_CHECK").lower()
     if not raw:
         return True
     return raw in ("true", "1", "yes", "on")

@@ -24,7 +24,7 @@ import io
 import math
 import os
 import ffmpeg_tools
-from env_utils import env_float, env_int
+from env_utils import env_float, env_int, env_str
 import subprocess
 import sys
 import tempfile
@@ -51,7 +51,7 @@ def init(data_dir):
 
 def enabled():
     """`ABM_VOICE_CLONE_DENOISE=0` spegne la pulizia sul server."""
-    return (os.environ.get("ABM_VOICE_CLONE_DENOISE") or "1").strip() != "0"
+    return env_str("ABM_VOICE_CLONE_DENOISE", "1") != "0"
 
 
 def _threads():
@@ -128,7 +128,7 @@ def _main(src, dst):
     from modelscope.utils.constant import Tasks
     import voice_clone_audio as vca
 
-    torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS") or 2))
+    torch.set_num_threads(env_int("OMP_NUM_THREADS", 2))
     with open(src, "rb") as f:
         raw = f.read()
     # La pipeline stampa un avanzamento per ogni finestra da 2 s.

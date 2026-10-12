@@ -49,13 +49,14 @@ un'altra epoch o la sua dir e' sparita. Prima di quel controllo, un assembly
 obsoleto declassava a `error` un job gia' consegnato (23/08/2026).
 """
 import os
+from env_utils import env_str, env_float
 import threading
 import time
 
 # Attesa massima per uno slot. Scaduta, il job procede COMUNQUE senza slot:
 # un permesso trattenuto da un encode patologico non deve appendere per sempre
 # un audiolibro gia' sintetizzato (e gia' pagato).
-ASSEMBLY_WAIT_TIMEOUT_SEC = float(os.environ.get("ABM_ASSEMBLY_WAIT_TIMEOUT_SEC", "1800"))
+ASSEMBLY_WAIT_TIMEOUT_SEC = env_float("ABM_ASSEMBLY_WAIT_TIMEOUT_SEC", 1800.0)
 
 
 def _default_slots():
@@ -68,7 +69,7 @@ def _default_slots():
 
 
 def _configured_slots():
-    raw = (os.environ.get("ABM_MAX_CONCURRENT_ASSEMBLY") or "").strip()
+    raw = env_str("ABM_MAX_CONCURRENT_ASSEMBLY")
     if raw:
         try:
             v = int(raw)
@@ -88,7 +89,7 @@ PRIORITY_PREMIUM = 10
 
 # Anti-starvation: secondi in coda oltre i quali un waiter viene pesato come
 # un premium. Con 0 la promozione e' disattivata (priorita' pura).
-ASSEMBLY_STARVE_SEC = float(os.environ.get("ABM_ASSEMBLY_STARVE_SEC", "900"))
+ASSEMBLY_STARVE_SEC = env_float("ABM_ASSEMBLY_STARVE_SEC", 900.0)
 
 _state_lock = threading.Lock()
 _waiters = []   # _Waiter in attesa di uno slot

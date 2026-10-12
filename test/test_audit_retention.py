@@ -51,7 +51,7 @@ def test_defaults_from_env(monkeypatch):
     monkeypatch.setenv("ABM_AUDIT_KEEP_MONTHS", "-3")
     assert jsonl_audit.cost_keep_months() == 0 and jsonl_audit.audit_keep_months() == 0   # 0 = mai purgare
     import load_metrics
-    assert inspect.getsource(load_metrics).count('"ABM_LOAD_METRICS_RETENTION_MONTHS", "6"') == 1
+    assert inspect.getsource(load_metrics).count('env_int("ABM_LOAD_METRICS_RETENTION_MONTHS", 6)') == 1
 
 
 def test_every_writer_is_registered_with_the_right_policy():

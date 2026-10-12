@@ -25,7 +25,7 @@ import json
 import os
 from client_identity import email_hash as _ci_email_hash, norm_email as _norm_email
 from voice_utils import VOXCPM_MINE_PREFIX, clone_token as _clone_token
-from env_utils import env_int as _env_int
+from env_utils import env_int as _env_int, env_str
 import re
 import secrets
 import shutil
@@ -187,7 +187,7 @@ def retention_sec():
 
 
 def enabled():
-    raw = (os.environ.get("ABM_VOICE_CLONE_ENABLED") or "1").strip().lower()
+    raw = env_str("ABM_VOICE_CLONE_ENABLED", "1").lower()
     return raw not in ("0", "false", "no", "off")
 
 

@@ -16,6 +16,7 @@ Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 
 import html
 import os
+from env_utils import env_str, env_int
 import i18n as _i18n
 import email_layout as _layout
 import email_layout as _layout
@@ -30,15 +31,15 @@ import time
 # SMTP config (letti da os.environ — stessa logica di audiobook_app.py)
 # ---------------------------------------------------------------------------
 
-SMTP_HOST = os.environ.get("ABM_SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("ABM_SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("ABM_SMTP_USER", "")
-SMTP_PASS = os.environ.get("ABM_SMTP_PASS", "")
-SMTP_FROM = os.environ.get("ABM_SMTP_FROM", os.environ.get("ABM_SMTP_USER", "") or "noreply@audiobook-maker.com")
+SMTP_HOST = env_str("ABM_SMTP_HOST")
+SMTP_PORT = env_int("ABM_SMTP_PORT", 587)
+SMTP_USER = env_str("ABM_SMTP_USER")
+SMTP_PASS = env_str("ABM_SMTP_PASS")
+SMTP_FROM = env_str("ABM_SMTP_FROM", "noreply@audiobook-maker.com", fallback="ABM_SMTP_USER")
 # Casella di assistenza utenti (form "Contatta supporto" del sito).
 # Inoltrata via MX esterno alla mailbox del titolare: qui serve solo l'indirizzo.
-SUPPORT_EMAIL = os.environ.get("ABM_SUPPORT_EMAIL", "support@audiobook-maker.com")
-BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
+SUPPORT_EMAIL = env_str("ABM_SUPPORT_EMAIL", "support@audiobook-maker.com")
+BASE_URL = env_str("ABM_BASE_URL").rstrip("/")
 
 # ---------------------------------------------------------------------------
 # Voce campionata: testi email in sette lingue (i18n/voice_clone_emails.json)
@@ -50,12 +51,12 @@ _VC_I18N = _i18n.load("voice_clone_emails")
 # Admin digest config
 # ---------------------------------------------------------------------------
 
-ADMIN_EMAIL = os.environ.get("ABM_ADMIN_EMAIL", "")
+ADMIN_EMAIL = env_str("ABM_ADMIN_EMAIL")
 ADMIN_DIGEST_INTERVAL_SEC = 24 * 60 * 60  # 24 ore tra un digest e il successivo
 
 # Il digest quotidiano VoxCPM: acceso quando c'e' un admin a cui mandarlo,
 # spegnibile senza toccare l'altro digest.
-VOXCPM_DIGEST = os.environ.get("ABM_VOXCPM_DIGEST", "1").strip().lower() not in (
+VOXCPM_DIGEST = env_str("ABM_VOXCPM_DIGEST", "1").lower() not in (
     "0", "false", "off", "no")
 
 _admin_queue = []          # list of dicts: {title, author, filename, voice, chapters, words, duration_est, timestamp}

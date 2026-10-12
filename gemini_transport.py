@@ -17,7 +17,7 @@ conosce il modello.
 
 import base64
 import binascii
-import os
+from env_utils import env_str
 
 import requests
 
@@ -254,8 +254,8 @@ def cloudflare_call(*, final_text, voice_name, model_key, model_id,
     Il token viene letto dall'ambiente e non compare mai in un messaggio di
     errore: gli header non vengono mai serializzati in un'eccezione.
     """
-    account_id = os.environ.get("ABM_CF_ACCOUNT_ID", "").strip()
-    token = os.environ.get("ABM_CF_API_TOKEN", "").strip()
+    account_id = env_str("ABM_CF_ACCOUNT_ID")
+    token = env_str("ABM_CF_API_TOKEN")
     if not account_id or not token:
         raise TransportError(
             "backend Cloudflare non configurato "

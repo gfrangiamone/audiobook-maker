@@ -5,6 +5,7 @@ automatico (file grandi resumabili) e presigned URL temporanei per il redirect.
 Cambiare provider = cambiare le env var ABM_S3_*, nessuna modifica al codice.
 """
 import os
+from env_utils import env_str, env_int
 import threading
 import uuid
 from urllib.parse import quote
@@ -18,13 +19,13 @@ except ImportError:  # boto3 assente: il backend resta semplicemente disabilitat
     Config = None
     ClientError = Exception
 
-_ENDPOINT = os.environ.get("ABM_S3_ENDPOINT", "").strip()
-_ACCESS_KEY = os.environ.get("ABM_S3_ACCESS_KEY", "").strip()
-_SECRET_KEY = os.environ.get("ABM_S3_SECRET_KEY", "").strip()
-_BUCKET = os.environ.get("ABM_S3_BUCKET", "").strip()
-_REGION = os.environ.get("ABM_S3_REGION", "us-east-1").strip() or "us-east-1"
-_KEY_PREFIX = os.environ.get("ABM_S3_KEY_PREFIX", "").strip().strip("/")
-_PRESIGN_TTL = int(os.environ.get("ABM_S3_PRESIGN_TTL_SEC", "21600"))  # 6h default
+_ENDPOINT = env_str("ABM_S3_ENDPOINT")
+_ACCESS_KEY = env_str("ABM_S3_ACCESS_KEY")
+_SECRET_KEY = env_str("ABM_S3_SECRET_KEY")
+_BUCKET = env_str("ABM_S3_BUCKET")
+_REGION = env_str("ABM_S3_REGION", "us-east-1")
+_KEY_PREFIX = env_str("ABM_S3_KEY_PREFIX").strip("/")
+_PRESIGN_TTL = env_int("ABM_S3_PRESIGN_TTL_SEC", 21600)  # 6h default
 
 _client = None
 _client_lock = threading.Lock()
@@ -35,10 +36,10 @@ def is_enabled():
     Legge l'ambiente a runtime per non dipendere dal momento dell'import."""
     return bool(
         boto3
-        and os.environ.get("ABM_S3_ENDPOINT", "").strip()
-        and os.environ.get("ABM_S3_ACCESS_KEY", "").strip()
-        and os.environ.get("ABM_S3_SECRET_KEY", "").strip()
-        and os.environ.get("ABM_S3_BUCKET", "").strip()
+        and env_str("ABM_S3_ENDPOINT")
+        and env_str("ABM_S3_ACCESS_KEY")
+        and env_str("ABM_S3_SECRET_KEY")
+        and env_str("ABM_S3_BUCKET")
     )
 
 

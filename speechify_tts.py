@@ -11,8 +11,7 @@ Anti-import-circolare: nessun import di audiobook_app. Le costanti condivise
 import base64
 import contextlib as _contextlib
 import io
-import os
-from env_utils import env_bool as _b, env_float as _f, env_int as _i
+from env_utils import env_bool as _b, env_float as _f, env_int as _i, env_str
 import threading
 import time
 import pricing_common as _pricing
@@ -144,7 +143,7 @@ _CHUNK_MIN_CHARS = 200  # floor: sotto questo il TTS perde contesto/qualita'
 
 
 def api_key():
-    return os.environ.get("ABM_SPEECHIFY_API_KEY", "").strip()
+    return env_str("ABM_SPEECHIFY_API_KEY")
 
 
 def is_available():

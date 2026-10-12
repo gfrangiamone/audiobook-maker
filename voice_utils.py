@@ -6,7 +6,7 @@ Gemini e del relativo predicato, prima duplicati in audiobook_app,
 generation_engine e storage_tiering.
 """
 
-import os
+from env_utils import env_str
 
 GEMINI_VOICE_PREFIX = "gemini:"
 
@@ -89,7 +89,7 @@ def premium_model_enabled(model_key):
     esplicitamente vero)."""
     if not model_key:
         return True
-    raw = (os.environ.get(premium_model_env_name(model_key)) or "").strip()
+    raw = env_str(premium_model_env_name(model_key))
     if model_key in _MODEL_DEFAULT_OFF:
         return raw.lower() in _MODEL_ENABLE_VALUES
     if not raw:

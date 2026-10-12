@@ -8,17 +8,16 @@ Modulo foglia: dipende solo da `db` e dalla stdlib. Lo stato dell'app
 import hashlib
 import hmac
 import json
-import os
 from client_identity import email_hash as _ci_email_hash, norm_email as _norm
 from fileio import load_json
-from env_utils import env_int as _env_int
+from env_utils import env_int as _env_int, env_str
 import secrets
 import time
 
 import db
 
 
-ENABLE = os.environ.get("ABM_ACCOUNT_ENABLE", "1").strip().lower() not in ("0", "false", "no", "off")
+ENABLE = env_str("ABM_ACCOUNT_ENABLE", "1").lower() not in ("0", "false", "no", "off")
 SESSION_DAYS = _env_int("ABM_ACCOUNT_SESSION_DAYS", 90)
 CODE_TTL_MIN = _env_int("ABM_ACCOUNT_CODE_TTL_MIN", 10)
 CODE_MAX_ATTEMPTS = _env_int("ABM_ACCOUNT_CODE_MAX_ATTEMPTS", 5)
@@ -28,8 +27,8 @@ GRACE_DAYS = _env_int("ABM_ACCOUNT_GRACE_DAYS", 90)
 # Account demo per la revisione degli store (Play Console / App Review): per
 # questa email il codice di login e' fisso e non parte nessuna email. Spento
 # se una delle due variabili manca o il codice non e' di 6 cifre.
-REVIEW_EMAIL = os.environ.get("ABM_REVIEW_EMAIL", "").strip().lower()
-REVIEW_CODE = os.environ.get("ABM_REVIEW_CODE", "").strip()
+REVIEW_EMAIL = env_str("ABM_REVIEW_EMAIL").lower()
+REVIEW_CODE = env_str("ABM_REVIEW_CODE")
 
 PURPOSES = ("login", "delete")
 EMAIL_RATE_MAX = 3            # richieste di codice per email ...

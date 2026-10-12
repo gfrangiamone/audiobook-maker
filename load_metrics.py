@@ -28,7 +28,7 @@ dal path di /api/generate. Un'eccezione qui ucciderebbe un job pagato, quindi
 nessuna funzione pubblica solleva mai.
 """
 import json
-import os
+from env_utils import env_str, env_int
 from fileio import atomic_write_text
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 import threading
@@ -36,15 +36,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-ENABLED = (os.environ.get("ABM_LOAD_METRICS_ENABLED", "true").strip().lower()
+ENABLED = (env_str("ABM_LOAD_METRICS_ENABLED", "true").lower()
            not in ("0", "false", "no", "off"))
-SAMPLE_SEC = int(os.environ.get("ABM_LOAD_METRICS_SAMPLE_SEC", "30"))
-BUCKET_SEC = int(os.environ.get("ABM_LOAD_METRICS_BUCKET_SEC", "300"))
-RETENTION_MONTHS = int(os.environ.get("ABM_LOAD_METRICS_RETENTION_MONTHS", "6"))
+SAMPLE_SEC = env_int("ABM_LOAD_METRICS_SAMPLE_SEC", 30)
+BUCKET_SEC = env_int("ABM_LOAD_METRICS_BUCKET_SEC", 300)
+RETENTION_MONTHS = env_int("ABM_LOAD_METRICS_RETENTION_MONTHS", 6)
 # I gauge della sonda RunPod di VoxCPM2 vivono meno del resto: servono solo a
 # dire se nelle ultime settimane un worker sempre attivo sarebbe convenuto.
 # Oltre questa eta' vengono tolti dalle righe, che restano per il resto.
-VOXCPM_RETENTION_DAYS = int(os.environ.get("ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS", "31"))
+VOXCPM_RETENTION_DAYS = env_int("ABM_LOAD_METRICS_VOXCPM_RETENTION_DAYS", 31)
 _VOXCPM_GAUGES = ("vx_run", "vx_busy")
 
 # Confini dei bin, in secondi. L'ottavo bin e' overflow (> 20 min).

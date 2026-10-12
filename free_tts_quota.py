@@ -32,7 +32,7 @@ lista degli alias: tutte le letture e i consumi del mese passano dal canonico.
 """
 import hashlib
 import json
-import os
+from env_utils import env_str
 from client_identity import ip_salt as _ip_salt, norm_email as _norm_email, salted_hash as _salted_hash
 import time
 from pathlib import Path
@@ -60,7 +60,7 @@ def _month():
 
 def limit_chars():
     """Tetto mensile di caratteri per client sulle voci standard. 0 = feature off."""
-    raw = str(os.environ.get("ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH", DEFAULT_LIMIT_CHARS))
+    raw = env_str("ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH", str(DEFAULT_LIMIT_CHARS))
     try:
         return max(0, int(float(raw.replace("_", "").replace(",", "."))))
     except (TypeError, ValueError):
@@ -73,7 +73,7 @@ def cap_chars():
     Diverso da `limit_chars()`: oltre la quota il job passa comunque con il
     gate email, oltre il cap non passa in alcun modo.
     """
-    raw = str(os.environ.get("ABM_FREE_TTS_CAP_CHARS_PER_MONTH", DEFAULT_CAP_CHARS))
+    raw = env_str("ABM_FREE_TTS_CAP_CHARS_PER_MONTH", str(DEFAULT_CAP_CHARS))
     try:
         return max(0, int(float(raw.replace("_", "").replace(",", "."))))
     except (TypeError, ValueError):
