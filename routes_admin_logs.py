@@ -316,6 +316,7 @@ def _log_card_html(sid, s, client_session_count, client_color_map, now):
     card_status = f["status"]
     is_progress = card_status == "in_progress"
     cid = s.get("client_id", "")
+    sid_h = html_mod.escape(str(sid))
     cid_count = client_session_count.get(cid, 0) if cid else 0
 
     first = s["first_dt"].strftime("%H:%M")
@@ -341,19 +342,19 @@ def _log_card_html(sid, s, client_session_count, client_color_map, now):
                 streamed = min(job.get("opt_streamed_chars", 0), cur_ch_chars)
                 worked = done_chars + streamed
                 pct = min(99, int(worked / total_chars * 100))
-                pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+                pct_html = f' <span class="card-pct" data-sid="{sid_h}">({pct}%)</span>'
             elif st == "generating":
                 cur = job.get("progress_current", 0)
                 tot = job.get("progress_total", 0)
                 if tot > 0:
                     pct = int(cur / tot * 100)
-                    pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+                    pct_html = f' <span class="card-pct" data-sid="{sid_h}">({pct}%)</span>'
             elif st == "translating":
                 cur = job.get("tr_progress_current", 0)
                 tot = job.get("tr_progress_total", 0)
                 if tot > 0:
                     pct = int(cur / tot * 100)
-                    pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+                    pct_html = f' <span class="card-pct" data-sid="{sid_h}">({pct}%)</span>'
 
         delta = now - s["first_dt"]
         total_sec = int(delta.total_seconds())
@@ -379,6 +380,10 @@ def _log_card_html(sid, s, client_session_count, client_color_map, now):
 
     cip = s.get("client_ip", "")
     cid_short = cid[:8] if cid else " - "
+    # Valori dal log (job_id, client_id, ip arrivano dal client): mai grezzi
+    # nell'HTML della console admin (S3, 2026-10-12).
+    cip_h = html_mod.escape(str(cip or ""))
+    cid_short_h = html_mod.escape(str(cid_short))
     cid_color = client_color_map.get(cid, "var(--text-dim)")
     cid_badge = f' <span class="cid-count" style="color:{cid_color}">({cid_count})</span>' if cid_count >= 2 else ""
     cid_style = f'color:{cid_color};font-weight:600' if cid in client_color_map else 'color:var(--text-dim)'
@@ -458,7 +463,7 @@ def _log_card_html(sid, s, client_session_count, client_color_map, now):
     m4b_subbar = _m4b_subbar_html(job) if is_progress and job and job.get("m4b_progress_total", 0) > 0 else ""
 
     kill_btn = (
-        f'<button class="kill-btn" data-sid="{sid}" '
+        f'<button class="kill-btn" data-sid="{sid_h}" '
         f'data-title="{html_mod.escape(s["filename"])}" '
         f'title="Interrompi job (admin)">⛔</button>'
     ) if is_progress else ""
@@ -470,10 +475,10 @@ def _log_card_html(sid, s, client_session_count, client_color_map, now):
 <div class="card-timeline">{timeline}</div>
 <div class="card-meta">
 <div class="meta-row"><span class="meta-label">⌚</span><span>{first}  →  {last} ({elapsed_html})</span></div>
-<div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
-<div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
+<div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid_h}</code></div>
+<div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short_h}</code>{cid_badge}<span class="card-ip">{cip_h}</span></div>
 {tr_meta_html}
-<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}<button class="qr-btn" data-sid="{sid}" title="Copia il job sull'app (QR) a scopo di indagine — non altera il flusso dell'utente"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-6 2h2v2h-2v-2zm2 2h2v2h-2v-2zm2 0h2v2h-2v-2zm2 0h2v2h-2v-2z"/></svg>QR</button></div>
+<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}<button class="qr-btn" data-sid="{sid_h}" title="Copia il job sull'app (QR) a scopo di indagine — non altera il flusso dell'utente"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-6 2h2v2h-2v-2zm2 2h2v2h-2v-2zm2 0h2v2h-2v-2zm2 0h2v2h-2v-2z"/></svg>QR</button></div>
 </div>
 {m4b_subbar}
 </div>

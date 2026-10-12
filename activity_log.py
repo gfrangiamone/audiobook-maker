@@ -39,6 +39,18 @@ JOB_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,80}\Z")
 def is_job_id(value) -> bool:
     """True se `value` ha la forma di un job id."""
     return bool(isinstance(value, str) and JOB_ID_RE.match(value))
+
+
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def _clean_field(value, *, quoted=False) -> str:
+    """Campo di una riga del log: niente caratteri di controllo (a capo
+    compresi), cosi' una riga resta una riga. Nei campi non tra virgolette
+    il `#` (separatore di colonna) diventa `＃`; nel nome file, che il parser
+    legge tra virgolette, il `#` resta e sparisce solo la virgoletta."""
+    s = _CTRL_RE.sub(" ", str(value if value is not None else ""))
+    return s.replace('"', "'") if quoted else s.replace("#", "＃")
 _YM_IN_NAME = re.compile(r"^activity_(\d{4}-\d{2})\.log\Z")
 # Il recovery interroga molti descrittori in sequenza: 5 minuti bastano.
 _DELIVERED_TTL = 300.0
@@ -257,6 +269,12 @@ def log(job_id, filename, op, client_id="", ip="", voice="", lang="",
     key = None
     if job_id:
         key = (job_id, op) if epoch is None else (job_id, op, epoch)
+    # I campi possono arrivare dal client (job_id di un body JSON, nome file,
+    # voce): un a capo falsificherebbe righe intere del log (S3, 2026-10-12).
+    # Nel file entrano senza caratteri di controllo.
+    job_id, op, client_id, ip, voice, lang, platform = (
+        _clean_field(v) for v in (job_id, op, client_id, ip, voice, lang, platform))
+    filename = _clean_field(filename, quoted=True)
     line = (f'{job_id} # {now.strftime(TS_FMT)} # "{filename}" # {op} # {client_id}'
             f' # {ip} # {voice} # {lang} # {platform}\n')
     m = mode()
