@@ -1557,7 +1557,7 @@ def _arm_email_delivery(job, job_id, email, *, lang="en", output_format=None,
         job.setdefault("notify_download_type",
                        "podcast" if output_format == "zip_rss" else "audio")
         job.setdefault("notify_base_url", podcast_base_url or "")
-    job["notify_lang"] = lang or "en"
+    job["notify_lang"] = _i18n.safe_lang(lang)
     job["email_registered"] = True
     job["_auto_batch_notify"] = True
     cleanup._write_email_pending_marker(UPLOAD_DIR / job_id)
@@ -5862,7 +5862,7 @@ def api_register_email():
     job["notify_email"] = email
     job["notify_download_type"] = download_type
     job["notify_base_url"] = base_url
-    job["notify_lang"] = data.get("lang", "en")
+    job["notify_lang"] = _i18n.safe_lang(data.get("lang"))     # finisce nel token e in <html lang> (S4)
     # Keep job alive indefinitely while generating (disable heartbeat-based cleanup)
     job["email_registered"] = True
     _abuse_note(job_id, job, "email", email=email)

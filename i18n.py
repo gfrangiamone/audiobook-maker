@@ -34,6 +34,16 @@ def norm_lang(code, default=""):
     return s.split("-")[0].strip().lower() or default
 
 
+def safe_lang(code, default="en", supported=LANGS):
+    """`norm_lang` ristretto alle lingue supportate: tutto il resto da'
+    `default`. Per i valori che arrivano dal client e finiscono in attributi
+    HTML o literal JS (`<html lang>`, `notify_lang` del job, lingua del
+    token di download): mai un valore libero in quei contesti (S4,
+    2026-10-12)."""
+    code = norm_lang(code, "")
+    return code if code in supported else default
+
+
 def load(name):
     """`i18n/<name>.json` come dict (cache per processo). Un file assente o
     illeggibile da' {} e un avviso: le pagine degradano in inglese/chiavi

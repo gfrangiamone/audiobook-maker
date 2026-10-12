@@ -228,7 +228,7 @@ def token_download_page(token):
     if not token_info:
         return _render_dl_expired_page(), 410
 
-    lang = token_info.get("lang", "en")
+    lang = _i18n.safe_lang(token_info.get("lang"))      # dal token, scritto dal client (S4)
     created_at = token_info["created_at"]
     elapsed = time.time() - created_at
     # Retention per-token: PREMIUM (is_gemini) usa GEMINI_FILE_RETENTION_SEC.
@@ -748,6 +748,7 @@ def _serve_audio_download(token_info, job, job_id):
 
 def _generate_podcast_index_html(podcast_dir, title, author, cover_file, rss_fname, mp3_files, language="en"):
     """Generate an index.html landing page for the podcast folder (required by Netlify)."""
+    language = _i18n.safe_lang(language)      # finisce in <html lang> (S4)
     lang = language[:2] if language else "en"
     _labels = {
         "it": {"heading": "Podcast", "by": "di", "subscribe": "Iscriviti al Podcast",
@@ -976,6 +977,7 @@ def _serve_podcast_download(token_info, job, job_id):
 
 
 def _render_dl_expired_page(lang="en", retention_hours=0):
+    lang = _i18n.safe_lang(lang)      # finisce in <html lang> (S4)
     expired_t = _DL_PAGES_I18N.get("expired", {})
     t = expired_t.get(lang, expired_t.get("en", {}))
     # Se il chiamante non passa la retention reale del token (es. token gia`
@@ -988,12 +990,14 @@ def _render_dl_expired_page(lang="en", retention_hours=0):
 
 
 def _render_dl_deleted_page(lang="en"):
+    lang = _i18n.safe_lang(lang)      # finisce in <html lang> (S4)
     deleted_t = _DL_PAGES_I18N.get("deleted", {})
     t = deleted_t.get(lang, deleted_t.get("en", {}))
     return _render_page("dl_deleted", {"__P0__": (lang), "__P1__": (FAVICON_B64), "__P2__": (t['title']), "__P3__": (t['h2']), "__P4__": (t['p1']), "__P5__": (t['p2'])})
 
 
 def _render_dl_cooldown_page(lang="en", seconds=60, back_url=None):
+    lang = _i18n.safe_lang(lang)      # finisce in <html lang> (S4)
     cooldown_t = _DL_PAGES_I18N.get("cooldown", {})
     t = cooldown_t.get(lang, cooldown_t.get("en", {}))
     p2 = t['p2'].format(s=seconds)
@@ -1025,7 +1029,8 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     # (difesa XSS): `lang` arriva dal token e dovrebbe essere un codice a 2 lettere,
     # ma non vogliamo dipendere da quella garanzia in un literal JavaScript.
     _SUPPORTED_DL_LANGS = ("en", "it", "fr", "es", "de", "zh", "hi")
-    safe_lang = lang if lang in _SUPPORTED_DL_LANGS else "en"
+    safe_lang = _i18n.safe_lang(lang, supported=_SUPPORTED_DL_LANGS)
+    lang = safe_lang
 
     # Sec (XSS): book_title proviene dai metadati EPUB/PDF (controllati dall'autore del file).
     # Tutte le interpolazioni nel template devono passare per html.escape, altrimenti un
