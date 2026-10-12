@@ -243,16 +243,18 @@ Parametri per la funzionalità di traduzione del testo del libro in un'altra lin
 
 | Parametro | Valore default | File | Riga |
 |-----------|----------------|------|------|
-| `ABM_TRANSLATE_COST` | `3.0` (EUR per 1M caratteri input traduzione; accetta virgola decimale) | `payment.py` | 54–55 |
+| `ABM_TRANSLATE_COST` | `3.0` (EUR per 1M caratteri input traduzione; accetta virgola decimale) | `payment.py` | 82–83 |
 | `ABM_TRANSLATE_MIN_COST` | `1.5` (floor EUR sul totale dovuto, applicato solo quando si paga; gratis sotto soglia `ABM_LLM_FREE_THRESHOLD_EUR`) | `payment.py` | 56–57 |
 | `ABM_TRANSLATE_COST_IN_EUR_PER_MTOK` | `0.28` (Costo LLM input EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
 | `ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK` | `2.30` (Costo LLM output EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
 
-**Formula di pricing** (funzione `_estimate_translation_cost_eur` in `payment.py:75`):
+**Formula di pricing** (funzione `_estimate_translation_cost_eur` in `payment.py:187`, chiamata via `translation_estimate_for_job` con la lingua del libro `info.language`):
 
 ```
-raw = chars / 1M × ABM_TRANSLATE_COST
-      (+ chars / 1M × ABM_LLM_RATE_EUR_PER_MCHAR  se ottimizzazione AI attiva)
+billable = chars × pricing_common.token_weight(lingua libro)
+           (pricing_common.TRANSLATION_TOKEN_WEIGHT: ja/zh/ko 2.67, th 2.0 (tabella token TTS), ar 1.95, hi 1.65, ru/uk 1.3 (misurati sull'audit prod), latine e sconosciute 1.0; accetta anche i codici a tre lettere (jpn, zho, rus, hin, ara, tha, …) e zh_CN)
+raw = billable / 1M × ABM_TRANSLATE_COST
+      (+ billable / 1M × ABM_LLM_RATE_EUR_PER_MCHAR  se ottimizzazione AI attiva)
 se raw ≤ ABM_LLM_FREE_THRESHOLD_EUR → gratis (due = 0)
 altrimenti due = max(raw, ABM_TRANSLATE_MIN_COST)
 ```

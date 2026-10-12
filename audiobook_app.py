@@ -6890,7 +6890,7 @@ def api_paypal_create_order_translate():
     """Create a PayPal order for a book translation (+ optional AI optimization).
 
     Identica a /api/paypal_create_order salvo l'importo, calcolato sui caratteri
-    selezionati via payment._estimate_translation_cost_eur. La cattura resta
+    selezionati via payment.translation_estimate_for_job. La cattura resta
     /api/paypal_capture_order.
     """
     if not _paypal_available():
@@ -6912,7 +6912,7 @@ def api_paypal_create_order_translate():
     raw_sel = [str(x) for x in (data.get("selected_chapters") or [])]
     optimize = bool(data.get("optimize"))
     chars, _ = _translate_selected_chars(job, raw_sel)
-    est = payment._estimate_translation_cost_eur(chars, optimize=optimize)
+    est = payment.translation_estimate_for_job(job, chars, optimize=optimize)
     amount_eur = est["due_eur"]
     if not amount_eur or amount_eur <= 0:
         return jsonify({"error": "No payment required"}), 400
@@ -7827,7 +7827,7 @@ def api_translate_estimate(job_id):
         + request.args.getlist("selected_chapters[]")
     optimize = (request.args.get("optimize") or "").strip() in ("1", "true")
     chars, _ = _translate_selected_chars(job, raw_sel)
-    est = payment._estimate_translation_cost_eur(chars, optimize=optimize)
+    est = payment.translation_estimate_for_job(job, chars, optimize=optimize)
     est["available"] = translation_core.is_available()
     return jsonify(est)
 
@@ -7920,7 +7920,7 @@ def api_translate():
     if chars <= 0:
         return jsonify({"error": "No chapters selected"}), 400
 
-    est = payment._estimate_translation_cost_eur(chars, optimize=optimize)
+    est = payment.translation_estimate_for_job(job, chars, optimize=optimize)
     client_id = job.get("client_id", "")
 
     # Slot LLM per client (stesso slot dell'ottimizzazione) + claim atomico

@@ -19,6 +19,7 @@ Dipende solo dalla stdlib, da os.environ e dal modulo foglia community_store
 import json
 import os
 import pricing_common
+from i18n import norm_lang as _norm_lang
 from ratelimit import lockout_record as _lockout_record, lockout_remaining as _lockout_remaining, sliding_check as _sliding_check, window_record as _window_record
 from client_identity import norm_email as _norm_email
 import shutil
@@ -184,21 +185,30 @@ def llm_price_eur(char_count, *, is_combined=False):
     }
 
 
-def _estimate_translation_cost_eur(char_count, optimize=False):
+def _estimate_translation_cost_eur(char_count, optimize=False, source_lang=None):
     """Stima costo traduzione (+ eventuale ottimizzazione AI integrata).
 
-    raw = chars/1M × TRANSLATE_RATE (+ chars/1M × LLM_RATE se optimize).
+    billable = chars × pricing_common.token_weight(source_lang): i caratteri
+    CJK, thai, arabi, hindi e cirillici (anche `jpn`, `rus`, `zh_CN`) costano
+    piu' token di quelli latini su cui sono tarate le tariffe (pesi misurati
+    sull'audit di prod, CJK e thai dalla tabella token del TTS Gemini).
+    raw = billable/1M × TRANSLATE_RATE (+ billable/1M × LLM_RATE se optimize).
     Se raw ≤ LLM_FREE_THRESHOLD_EUR → gratis (due=0).
     Altrimenti due = max(raw, TRANSLATE_MIN_COST_EUR) — floor sul totale.
     """
-    raw = (char_count / 1_000_000.0) * TRANSLATE_RATE_EUR_PER_MCHAR
+    weight = pricing_common.token_weight(
+        _norm_lang(str(source_lang or "").replace("_", "-")))
+    billable = int(round(char_count * weight))
+    raw = (billable / 1_000_000.0) * TRANSLATE_RATE_EUR_PER_MCHAR
     if optimize:
-        raw += (char_count / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR
+        raw += (billable / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR
     raw = round(raw, 2)
     requires = raw > LLM_FREE_THRESHOLD_EUR
     due = round(max(raw, TRANSLATE_MIN_COST_EUR), 2) if requires else 0.0
     return {
         "chars": char_count,
+        "billable_chars": billable,
+        "token_weight": round(weight, 4),
         "raw_eur": raw,
         "due_eur": due,
         "requires_payment": requires,
@@ -207,6 +217,17 @@ def _estimate_translation_cost_eur(char_count, optimize=False):
         "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
         "optimize": bool(optimize),
     }
+
+
+def translation_estimate_for_job(job, char_count, optimize=False):
+    """`_estimate_translation_cost_eur` pesato sulla lingua del LIBRO
+    (`job["info"].language`, da metadati o rilevata all'upload), non sulla
+    sorgente scelta nel wizard: stima, ordine PayPal, avvio e audit leggono
+    la stessa lingua, e cambiare la sorgente non abbassa il prezzo."""
+    info = (job or {}).get("info")
+    return _estimate_translation_cost_eur(
+        char_count, optimize=optimize,
+        source_lang=getattr(info, "language", "") or "")
 
 
 def _translation_provider_cost_eur(prompt_tokens, completion_tokens):

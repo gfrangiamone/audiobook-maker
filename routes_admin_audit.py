@@ -311,7 +311,7 @@ def _synth_running_translation_audit_records():
             charged = float(pay.get("total_eur", 0) or 0)
             if charged <= 0:
                 charged = float(job.get("payment_amount_eur", 0) or 0)
-            est = payment._estimate_translation_cost_eur(chars_total, optimize=optimize)
+            est = payment.translation_estimate_for_job(job, chars_total, optimize=optimize)
             should_have_been = float(est.get("due_eur", 0.0) or 0.0)
             _llm_quota = (job.get("payment") or {}).get("llm_eur")
             combined_total = (round(charged + float(_llm_quota or 0), 4)

@@ -120,18 +120,9 @@ AUDIO_SAMPLE_RATE = 24000
 AUDIO_CHANNELS = 1
 AUDIO_SAMPLE_WIDTH_BYTES = 2
 
-# Per-language token ratios (chars per token).
-# Copre tutte le lingue ufficialmente supportate da Gemini TTS (vedi
-# SUPPORTED_UI_LANGUAGES) + zh legacy. Latin ~4.0, Cyrillic ~3.0, CJK ~1.5,
-# Indic/Arabic/Thai ~2.0.
-CHARS_PER_TOKEN_BY_LANG = {
-    "it": 4.0, "en": 4.0, "fr": 4.0, "es": 4.0, "de": 4.0, "pt": 4.0,
-    "nl": 4.0, "pl": 4.0, "ro": 4.0, "tr": 4.0, "id": 4.0, "vi": 4.0,
-    "ru": 3.0, "uk": 3.0,
-    "zh": 1.5, "ja": 1.5, "ko": 1.5,
-    "hi": 2.0, "ar": 2.0, "bn": 2.0, "mr": 2.0, "ta": 2.0, "te": 2.0, "th": 2.0,
-    "default": 4.0,
-}
+# Per-language token ratios (chars per token): la tabella sta in
+# pricing_common, condivisa col prezzo della traduzione.
+CHARS_PER_TOKEN_BY_LANG = _pricing.CHARS_PER_TOKEN_BY_LANG
 
 # Chunk piccoli (default 700 char) per stabilita` acustica e prosodia uniforme.
 # Lo strumento richiede Gemini Tier 2/3 (RPD elevato), quindi il costo aggiuntivo

@@ -54,9 +54,16 @@ Parametri: `PARAMETRI_CONFIGURAZIONE.md` §3.6.2.
    nome file (precompilato dal titolo), toggle ottimizzazione AI, stima costo, voucher.
 3. **Stima** — `GET /api/translate_estimate/<job_id>?target&optimize&selected_chapters`:
    ```
-   raw = chars/1M × ABM_TRANSLATE_COST (+ chars/1M × ABM_LLM_RATE_EUR_PER_MCHAR se optimize)
+   billable = chars × pricing_common.token_weight(info.language)   # vedi TRANSLATION_TOKEN_WEIGHT: ja/zh/ko 2.67, th 2.0 (tabella token TTS), ar 1.95, hi 1.65, ru/uk 1.3 (misurati sull'audit prod), latine e sconosciute 1.0; accetta anche i codici a tre lettere (jpn, zho, rus, hin, ara, tha, …) e zh_CN
+   raw = billable/1M × ABM_TRANSLATE_COST (+ billable/1M × ABM_LLM_RATE_EUR_PER_MCHAR se optimize)
    raw ≤ ABM_LLM_FREE_THRESHOLD_EUR → gratis ; altrimenti dovuto = max(raw, ABM_TRANSLATE_MIN_COST)
    ```
+   Il peso usa la lingua del **libro** (metadati o rilevata all'upload), non la sorgente
+   scelta nel wizard: stima, ordine PayPal, `/api/translate` e audit chiamano tutti
+   `payment.translation_estimate_for_job`. Pesi in `pricing_common.TRANSLATION_TOKEN_WEIGHT`:
+   costo mediano per carattere della sorgente / quello latino→en (0,50 €/M, n=18) sull'audit
+   `translation_cost_audit` lug-ott 2026; CJK e thai dalla tabella `CHARS_PER_TOKEN_BY_LANG` del TTS. `chars` nella risposta resta il conteggio reale
+   (mostrato all'utente); `billable_chars` e `token_weight` sono informativi.
    Risposta include `available` (gating: bottone Avvia disabilitato se backend assente).
 4. **Avvio** — `POST /api/translate`: validazioni (formato, lingue ISO, origine≠destinazione,
    destinazione ∈ lingue edge-tts), claim atomico stato `analyzed|translated → translating`

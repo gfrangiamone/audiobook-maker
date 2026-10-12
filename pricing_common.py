@@ -12,12 +12,67 @@ che prendeva il cambio da `speechify_tts`.
 - `free_result(gross_eur, threshold_eur)`: le quattro chiavi comuni dei
   dict prezzo (`user_price_eur`, `list_price_eur`, `is_free`,
   `free_threshold_eur`).
+- `CHARS_PER_TOKEN_BY_LANG`: caratteri per token
+  per lingua (stima token del TTS Gemini); `TRANSLATION_TOKEN_WEIGHT`,
+  `token_weight(language)`: peso di un carattere non latino rispetto al
+  latino nel prezzo della traduzione, misurato sull'audit di prod.
 """
 from env_utils import env_float
 
 DEFAULT_USD_EUR_RATE = 0.86
 DEFAULT_PAYPAL_FIXED_FEE_EUR = 0.34
 DEFAULT_PAYPAL_PERCENT_FEE = 3.4
+
+# Per-language token ratios (chars per token).
+# Copre tutte le lingue ufficialmente supportate da Gemini TTS (vedi
+# SUPPORTED_UI_LANGUAGES) + zh legacy. Latin ~4.0, Cyrillic ~3.0, CJK ~1.5,
+# Indic/Arabic/Thai ~2.0.
+CHARS_PER_TOKEN_BY_LANG = {
+    "it": 4.0, "en": 4.0, "fr": 4.0, "es": 4.0, "de": 4.0, "pt": 4.0,
+    "nl": 4.0, "pl": 4.0, "ro": 4.0, "tr": 4.0, "id": 4.0, "vi": 4.0,
+    "ru": 3.0, "uk": 3.0,
+    "zh": 1.5, "ja": 1.5, "ko": 1.5,
+    "hi": 2.0, "ar": 2.0, "bn": 2.0, "mr": 2.0, "ta": 2.0, "te": 2.0, "th": 2.0,
+    "default": 4.0,
+}
+
+
+# Peso di un carattere nel prezzo della traduzione, rispetto al latino.
+# Misurato sull'audit di prod (translation_cost_audit, lug-ott 2026, job
+# completati senza ottimizzazione, token reali): costo mediano per carattere
+# della lingua sorgente diviso quello delle sorgenti latine verso la stessa
+# destinazione (latino->en: 0.50 EUR/M car., n=18; le sorgenti qui sotto
+# vanno tutte verso en). La tabella token del TTS (4.0/ratio) sbagliava per
+# eccesso su russo (1.33) e hindi (2.0), per CJK e' confermata dai dati.
+TRANSLATION_TOKEN_WEIGHT = {
+    # ja->en 1.36 EUR/M = 2.7x (n=1, ja->de 2.39); stessa ratio 1.5 car/token
+    # del TTS anche per zh/ko, senza job propri a pieno costo.
+    "ja": CHARS_PER_TOKEN_BY_LANG["default"] / CHARS_PER_TOKEN_BY_LANG["ja"],
+    "zh": CHARS_PER_TOKEN_BY_LANG["default"] / CHARS_PER_TOKEN_BY_LANG["zh"],
+    "ko": CHARS_PER_TOKEN_BY_LANG["default"] / CHARS_PER_TOKEN_BY_LANG["ko"],
+    "ru": 1.3,    # 0.64 EUR/M, n=3
+    "uk": 1.3,    # nessun job: stessa scrittura cirillica del russo
+    "hi": 1.65,   # 0.83 EUR/M, n=6
+    "ar": 1.95,   # 0.98 EUR/M, n=4 (dispersione alta: 0.29-1.77)
+    # Nessun job reale: tabella token del TTS (4.0/2.0), da ricalibrare
+    # quando l'audit avra' campioni thai.
+    "th": CHARS_PER_TOKEN_BY_LANG["default"] / CHARS_PER_TOKEN_BY_LANG["th"],
+}
+
+# Codici ISO 639-2/3 dei metadati EPUB/PDF -> codice a due lettere.
+_ISO3_TO_ISO1 = {"jpn": "ja", "zho": "zh", "chi": "zh", "cmn": "zh",
+                 "yue": "zh", "kor": "ko", "rus": "ru", "ukr": "uk",
+                 "hin": "hi", "ara": "ar", "tha": "th"}
+
+
+def token_weight(language):
+    """Quanti caratteri latini vale un carattere di `language` nel prezzo
+    della traduzione (TRANSLATION_TOKEN_WEIGHT; 1.0 per latine e
+    sconosciute). Il codice arriva gia' normalizzato con `i18n.norm_lang`
+    (questo modulo e' foglia); accetta anche i codici a tre lettere."""
+    lang = language or ""
+    lang = _ISO3_TO_ISO1.get(lang, lang)
+    return max(1.0, TRANSLATION_TOKEN_WEIGHT.get(lang, 1.0))
 
 
 def usd_eur_rate():

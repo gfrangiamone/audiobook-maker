@@ -5494,7 +5494,7 @@ def _write_translation_audit(job_id, job, *, backend, model, source_lang,
 
         # Prezzo "dovuto" secondo il modello di pricing traduzione, sui char
         # effettivamente tradotti (+AI se attiva).
-        est = payment._estimate_translation_cost_eur(chars_total, optimize=optimize)
+        est = payment.translation_estimate_for_job(job, chars_total, optimize=optimize)
         should_have_been = float(est.get("due_eur", 0.0) or 0.0)
         delta_eur = round(should_have_been - charged, 4)
 
