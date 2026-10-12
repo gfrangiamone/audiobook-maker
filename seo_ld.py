@@ -23,10 +23,21 @@ LICENSE = "https://www.gnu.org/licenses/agpl-3.0.html"
 IN_LANGUAGES = [HREFLANG[lc] for lc in SITE_LANGS]
 
 
+_LD_ESCAPES = (("&", "\\u0026"), ("<", "\\u003c"), (">", "\\u003e"),
+               (" ", "\\u2028"), (" ", "\\u2029"))
+
+
 def ld_json(obj):
     """JSON per un tag `<script type="application/ld+json">`: niente escape
-    ASCII (il testo e' multilingue), `</` escapato perche' chiuderebbe il tag."""
-    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+    ASCII (il testo e' multilingue), ma `<`, `>`, `&` e i separatori di riga
+    Unicode escapati come `\\uXXXX` (JSON equivalente): dentro uno script il
+    parser HTML non interpreta entita', e `</script` o `<!--` in un valore
+    fornito dall'utente (feedback, titoli) chiuderebbero o spezzerebbero il
+    tag (S2, 2026-10-12)."""
+    s = json.dumps(obj, ensure_ascii=False)
+    for ch, esc in _LD_ESCAPES:
+        s = s.replace(ch, esc)
+    return s
 
 
 def in_language(lang):

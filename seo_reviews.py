@@ -12,10 +12,10 @@ typically well under 1 ms — safe to run on every page request.
 from __future__ import annotations
 
 import html as _html
-import json as _json
 from datetime import datetime, timezone
 
 import community_store
+import seo_ld as _seo_ld
 from i18n import pick as _i18n_pick
 
 
@@ -174,9 +174,11 @@ def build_reviews(lang: str) -> dict:
         },
         "review": review_entries,
     }
+    # Nome e testo dei feedback sono input utente: `seo_ld.ld_json` escapa
+    # `<`, `>` e `&`, cosi' nessun valore puo' chiudere lo script (S2).
     ld_block = (
         '<script type="application/ld+json">'
-        + _json.dumps(aggregate_doc, ensure_ascii=False)
+        + _seo_ld.ld_json(aggregate_doc)
         + "</script>"
     )
 
