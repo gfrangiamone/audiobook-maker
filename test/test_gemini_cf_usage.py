@@ -228,12 +228,12 @@ def test_worst_case_rates_pick_the_more_expensive_side_when_cloudflare_is_config
     assert (in_rate, out_rate) == (g_in, g_out)
 
 
-def test_worst_case_cost_breakdown_never_undercuts_the_pricing_listino_when_failover_is_possible(tmp_path, monkeypatch):
+def test_worst_case_cost_breakdown_never_undercuts_the_cloudflare_cost_when_failover_is_possible(tmp_path, monkeypatch):
     """Se il modello e' configurato su Cloudflare, il caso peggiore (possibile
-    failover a Vertex a meta' job) non deve mai riservare meno del listino
-    misto che l'utente ha effettivamente pagato: altrimenti il preflight
-    potrebbe far partire un job che sfora il cap se il breaker scatta."""
+    failover a Vertex a meta' job) non deve mai riservare meno del costo
+    Cloudflare: altrimenti il preflight potrebbe far partire un job che sfora
+    il cap se il breaker scatta."""
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
-    listino = gemini_tts.pricing_cost_breakdown(100000, 100000, "flash31")
+    cf = gemini_tts.actual_cost_breakdown(100000, 100000, "flash31", "cloudflare")
     worst = gemini_tts.worst_case_cost_breakdown(100000, 100000, "flash31")
-    assert worst["total_usd"] >= listino["total_usd"]
+    assert worst["total_usd"] >= cf["total_usd"]

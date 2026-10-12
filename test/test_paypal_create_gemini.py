@@ -172,18 +172,17 @@ def test_create_order_paypal_exception_500(client, jb):
 
 # ---------------------------------------------------------------------------
 # Quote lock (D2): il prezzo mostrato dalla stima e' quello con cui si crea
-# l'ordine, anche se il rate empirico si muove nel frattempo (le anteprime
-# audio ascoltate prima di pagare bastano a spostarlo).
+# l'ordine, anche se il listino si muove nel frattempo (un ritocco della
+# tabella car/s o della tariffa €/ora fra la stima e il click su PayPal).
 # ---------------------------------------------------------------------------
 
 def test_quote_lock_survives_rate_drift(client, jb, monkeypatch):
-    import gemini_tts
     quoted = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     assert quoted > 0
 
-    # Il rate empirico crolla fra la stima e il click su PayPal: il ricalcolo
-    # vivo darebbe un importo ben diverso da quello quotato.
-    monkeypatch.setattr(gemini_tts, "get_empirical_rate", lambda *a, **k: 9.0)
+    # La tabella car/s dell'italiano cala fra la stima e il click su PayPal:
+    # il ricalcolo vivo darebbe un importo ben diverso da quello quotato.
+    monkeypatch.setenv("ABM_GEMINI_CHARS_PER_SEC_IT", "9.0")
     drifted = _server_total(client, "pj1", "gemini:flash31:Zephyr", [0], False)
     assert abs(drifted - quoted) > 0.01, "il drift simulato non ha spostato il prezzo"
 

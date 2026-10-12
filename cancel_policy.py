@@ -1,71 +1,35 @@
 """Helper engine-agnostic per il calcolo del trattenuto su cancel volontario.
 
-Usato in Fase 1 da Gemini TTS (run_generation branch _CancelledError) e in
-Fase 2 (futura, spec separata) dall'optimization LLM. La firma e' agnostica
-rispetto al provider: il chiamante passa il costo di LISTINO (D1) gia'
-accumulato per la quota di lavoro eseguita, non il costo reale sostenuto dal
-backend che ha effettivamente eseguito il job.
+Usato da Gemini TTS (run_generation, ramo _CancelledError). Il chiamante passa
+il LISTINO della quota di lavoro gia' eseguita (per Gemini: tariffa €/ora x
+ore di audio prodotte), mai il costo sostenuto dal backend che ha eseguito:
+l'utente paga lo stesso lavoro allo stesso prezzo, qualunque infrastruttura
+lo abbia servito.
 
 Reference: docs/superpowers/specs/2026-05-25-cancel-gemini-floor-design.md
 """
 from __future__ import annotations
 
-import os
-from env_utils import env_float
 from typing import Dict
 
 
-def _paypal_fee_pct() -> float:
-    return env_float("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
+def compute_cancel_retention(list_price_consumed_eur: float,
+                             paid_eur: float) -> Dict[str, float]:
+    """Trattenuto e rimborso per un cancel volontario di un job pagato.
 
+    Il trattenuto e' il PREZZO di listino del lavoro gia' consegnato, col
+    tetto di quanto pagato: le commissioni PayPal sono dentro la tariffa,
+    quindi non si sommano a parte.
 
-def _paypal_fee_fixed_eur() -> float:
-    return env_float("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
-
-
-def compute_cancel_retention(provider_cost_eur: float,
-                              payment_method: str,
-                              paid_eur: float,
-                              margin_percent: float = 0.0) -> Dict[str, float]:
-    """Calcola trattenuto e refund per un cancel volontario di un job pagato.
-
-    Il trattenuto corrisponde al PREZZO che l'utente avrebbe pagato per la
-    quota di lavoro effettivamente eseguita, non al solo costo di listino
-    nudo: applichiamo il ricarico (margin) sul costo di listino consumato
-    cosi' da preservare la stessa marginalita' commerciale del job
-    completato.
-
-    Floor = provider_cost_eur * (1 + margin/100) + paypal_fees (se PayPal).
-    retained = min(paid, max(0, floor))
-    refund   = paid - retained
-
-    Args:
-        provider_cost_eur: costo di LISTINO (D1, es. tariffa Google TTS) per
-            la porzione di lavoro gia' eseguita, senza margin — non il costo
-            reale sostenuto dal backend che ha effettivamente eseguito il
-            job.
-        payment_method: "paypal" | "voucher" (o altro).
-        paid_eur: importo realmente versato dall'utente (cap del retained).
-        margin_percent: ricarico % applicato sopra il costo di listino
-            (es. 40.0 per +40%). Default 0 = mantiene il comportamento
-            legacy "trattieni solo il costo netto".
+        retained = min(paid, max(0, listino_consumato))
+        refund   = paid - retained
     """
     paid = max(0.0, float(paid_eur or 0.0))
-    cost = max(0.0, float(provider_cost_eur or 0.0))
-    margin = max(0.0, float(margin_percent or 0.0))
-    cost_with_margin = cost * (1.0 + margin / 100.0)
-    if payment_method == "paypal" and paid > 0:
-        fees = round(_paypal_fee_fixed_eur() + paid * _paypal_fee_pct() / 100.0, 2)
-    else:
-        fees = 0.0
-    raw_retained = cost_with_margin + fees
-    retained = round(min(paid, max(0.0, raw_retained)), 2)
+    consumed = max(0.0, float(list_price_consumed_eur or 0.0))
+    retained = round(min(paid, consumed), 2)
     refund = round(max(0.0, paid - retained), 2)
     return {
         "retained_eur": retained,
         "refund_eur": refund,
-        "paypal_fees_eur": round(fees, 2),
-        "provider_cost_eur": round(cost, 4),
-        "cost_with_margin_eur": round(cost_with_margin, 4),
-        "margin_percent": margin,
+        "list_price_consumed_eur": round(consumed, 4),
     }

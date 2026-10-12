@@ -90,98 +90,54 @@ def test_write_gemini_audit_swallows_internal_errors(monkeypatch, capsys):
     generation_engine._write_gemini_audit("j", job, "gemini:flash31:Zephyr", "it", "completed")
 
 
-def test_write_gemini_audit_drift_uses_pricing_cost_not_actual_cost(monkeypatch):
-    """Su un job servito da un backend piu' economico del listino (Cloudflare),
-    il rilevatore di deriva prezzo deve confrontare l'incasso col costo di
-    LISTINO, non col costo reale sostenuto: altrimenti ogni job su quel
-    backend genererebbe un falso allarme sistematico (D1).
-
-    Numeratore (delta_eur) e denominatore (pricing_cost_actual di delta_pct)
-    sono qui DELIBERATAMENTE non nulli e reciprocamente incoerenti fra
-    listino/reale: se should_have_been o delta_pct venissero calcolati sul
-    costo REALE anziche' sul listino, sia price_calls sia delta_pct
-    risulterebbero visibilmente diversi da quanto atteso (a differenza di un
-    caso a numeratore zero, dove 0/qualsiasi_cosa resta 0 e la regressione
-    passerebbe inosservata)."""
+def test_write_gemini_audit_drift_uses_real_audio_seconds_not_cost(monkeypatch):
+    """Il rilevatore di deriva prezzo confronta l'incasso col LISTINO sui
+    secondi di audio REALI, mai col costo del backend: su Cloudflare costo e
+    listino divergono per costruzione e un confronto col costo produrrebbe un
+    falso allarme sistematico."""
     captured = []
     monkeypatch.setattr(gemini_cost_audit, "append_record", lambda r: captured.append(r))
     price_calls = []
 
-    def _fake_price(cost_eur, model_key):
-        price_calls.append(cost_eur)
-        # Il prezzo "dovuto" scala col costo passato: se venisse passato il
-        # costo reale (0.30) invece del listino (1.80) il risultato sarebbe
-        # 1.05, non 6.30 - la differenza si propaga fino a delta_eur/pct.
-        return {"user_price_eur": round(cost_eur * 3.5, 2)}
+    def _fake_price(audio_seconds, model_key):
+        price_calls.append(audio_seconds)
+        return {"user_price_eur": round(audio_seconds / 3600 * 1.90, 2),
+                "list_price_eur": round(audio_seconds / 3600 * 1.90, 2)}
 
     monkeypatch.setattr(generation_engine.gemini_tts, "compute_user_price_eur", _fake_price)
     job = {
         "gemini_actual": {
             "input_tokens": 100, "output_tokens": 500, "chars": 50,
-            "audio_seconds": 12.5,
-            "google_cost_eur": 0.30,       # costo reale (Cloudflare, piu' economico)
-            "pricing_cost_eur": 1.80,      # costo di listino sugli stessi token
+            "audio_seconds": 7200.0,       # 2 h -> listino 3,80
+            "google_cost_eur": 0.30,       # costo reale (Cloudflare)
             "model_key": "flash31",
         },
-        "payment": {"total_eur": 5.0},
+        "payment": {"total_eur": 3.0},
     }
     generation_engine._write_gemini_audit(
         "job-cf", job, "gemini:flash31:Zephyr", "it", "completed"
     )
     assert len(captured) == 1
     rec = captured[0]
-    # compute_user_price_eur deve ricevere il LISTINO, mai il costo reale.
-    assert price_calls == [1.80]
+    assert price_calls == [7200.0]
     assert rec["google_cost_eur_actual"] == 0.30
-    assert rec["pricing_cost_eur_actual"] == 1.80
-    assert rec["margin_eur_actual"] == round(5.0 - 0.30, 4)
-    # should_have_been = 1.80 * 3.5 = 6.30 (mai 0.30 * 3.5 = 1.05)
-    assert rec["user_price_eur_should_have_been"] == 6.30
-    assert rec["delta_eur"] == round(6.30 - 5.0, 4)
-    # delta_pct deve dividere per il LISTINO (1.80), non per il reale (0.30):
-    # 1.30/1.80*100 = 72.22, ben distinguibile da 1.30/0.30*100 = 433.33.
-    assert rec["delta_pct"] == round((6.30 - 5.0) / 1.80 * 100, 2)
-
-
-def test_write_gemini_audit_pricing_cost_eur_defaults_to_actual_when_absent(monkeypatch):
-    """Job legacy senza pricing_cost_eur (pre-esistenti a questa correzione, o
-    job non-Cloudflare dove i due numeri coincidono comunque): il ripiego
-    sul costo reale deve preservare il comportamento storico."""
-    captured = []
-    monkeypatch.setattr(gemini_cost_audit, "append_record", lambda r: captured.append(r))
-    price_calls = []
-
-    def _fake_price(cost_eur, model_key):
-        price_calls.append(cost_eur)
-        return {"user_price_eur": 2.0}
-
-    monkeypatch.setattr(generation_engine.gemini_tts, "compute_user_price_eur", _fake_price)
-    job = {
-        "gemini_actual": {
-            "chars": 50, "google_cost_eur": 1.0, "model_key": "flash31",
-            # niente pricing_cost_eur
-        },
-        "payment": {"total_eur": 2.0},
-    }
-    generation_engine._write_gemini_audit(
-        "job-legacy", job, "gemini:flash31:Zephyr", "it", "completed"
-    )
-    assert len(captured) == 1
-    rec = captured[0]
-    assert price_calls == [1.0]
-    assert rec["pricing_cost_eur_actual"] == 1.0
+    assert "pricing_cost_eur_actual" not in rec
+    assert rec["margin_eur_actual"] == round(3.0 - 0.30, 4)
+    assert rec["user_price_eur_should_have_been"] == 3.80
+    assert rec["delta_eur"] == round(3.80 - 3.0, 4)
+    # delta_pct in punti percentuali del listino dovuto: 0.80/3.80.
+    assert rec["delta_pct"] == round((3.80 - 3.0) / 3.80 * 100, 2)
 
 
 def test_write_gemini_audit_reconciles_listino_not_real_cost(monkeypatch):
-    """F6: record_job_completion (reconciliation mensile stima/reale usata per
-    calibrare l'errore dell'estimatore token/durata) deve confrontare
-    LISTINO ex-ante con LISTINO ex-post sugli stessi token, mai col costo
-    REALE del backend che ha eseguito - altrimenti su Cloudflare l'errore
-    dell'estimatore sarebbe confuso col rumore di infrastruttura (D1)."""
+    """record_job_completion (reconciliation mensile stima/reale, per
+    calibrare la tabella car/s) confronta LISTINO quotato ex-ante con LISTINO
+    sui secondi reali, mai col costo del backend."""
     captured = []
     monkeypatch.setattr(gemini_cost_audit, "append_record", lambda r: captured.append(r))
     monkeypatch.setattr(generation_engine.gemini_tts, "compute_user_price_eur",
-                        lambda cost_eur, model_key: {"user_price_eur": 5.0})
+                        lambda audio_seconds, model_key: {"user_price_eur": 5.0,
+                                                          "list_price_eur": 5.0})
     rjc_calls = []
     monkeypatch.setattr(
         generation_engine.gemini_tts, "record_job_completion",
@@ -191,19 +147,18 @@ def test_write_gemini_audit_reconciles_listino_not_real_cost(monkeypatch):
     job = {
         "gemini_actual": {
             "input_tokens": 100, "output_tokens": 500, "chars": 50,
-            "audio_seconds": 12.5,
+            "audio_seconds": 9000.0,
             "google_cost_eur": 0.30,       # costo reale (Cloudflare)
-            "pricing_cost_eur": 1.80,      # listino sugli stessi token
             "model_key": "flash31",
         },
-        "gemini_estimate": {"google_cost_eur": 1.75},  # listino ex-ante
-        "payment": {"total_eur": 5.0},
+        "gemini_estimate": {"google_cost_eur": 1.75, "list_price_eur": 4.75},
+        "payment": {"total_eur": 4.75},
     }
     generation_engine._write_gemini_audit(
         "job-cf", job, "gemini:flash31:Zephyr", "it", "completed"
     )
     assert len(rjc_calls) == 1
     call = rjc_calls[0]
-    assert call["estimated_eur"] == 1.75
-    # actual_eur deve essere il LISTINO (1.80), mai il costo reale (0.30).
-    assert call["actual_eur"] == 1.80
+    assert call["estimated_eur"] == 4.75
+    assert call["actual_eur"] == 5.0
+    assert call["user_price_eur"] == 4.75

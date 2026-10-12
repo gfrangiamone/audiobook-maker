@@ -6446,7 +6446,7 @@ def api_gemini_estimate():
             "input_tokens_est": est["input_tokens_est"],
             "output_tokens_est": est["output_tokens_est"],
             "google_cost_eur": est["google_cost_eur"],
-            "margin_percent": est["margin_percent"],
+            "eur_per_audio_hour": est["eur_per_audio_hour"],
         },
     })
 

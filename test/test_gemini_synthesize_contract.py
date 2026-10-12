@@ -97,7 +97,7 @@ def test_the_derived_tokens_follow_the_per_model_rate(tmp_path, monkeypatch):
 def test_the_cost_of_a_cloudflare_call_is_not_zero(tmp_path, monkeypatch):
     """Il collegamento fra la derivazione e il cap di spesa giornaliero.
 
-    `google_cost_breakdown` e' esattamente la funzione che
+    `actual_cost_breakdown` e' esattamente la funzione che
     `generation_engine` applica ai token accumulati per ottenere
     `google_cost_eur_actual`, che `get_daily_spent_eur()` somma e
     `preflight_budget_check()` confronta con il cap.
@@ -110,8 +110,8 @@ def test_the_cost_of_a_cloudflare_call_is_not_zero(tmp_path, monkeypatch):
                                       "output_tokens": None})
 
     out = _synth(tmp_path)
-    costo = gemini_tts.google_cost_breakdown(
-        out["input_tokens"], out["output_tokens"], out["model_key"])
+    costo = gemini_tts.actual_cost_breakdown(
+        out["input_tokens"], out["output_tokens"], out["model_key"], out["backend"])
 
     assert costo["total_usd"] > 0
     assert costo["output_usd"] > 0

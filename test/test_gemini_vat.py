@@ -42,20 +42,15 @@ def test_breakdown_cloudflare_iva_zero():
 
 
 def test_listino_non_espone_iva():
-    bd = gemini_tts.pricing_cost_breakdown(100, 1000, "flash31")
-    assert not any("vat" in k for k in bd)
+    p = gemini_tts.compute_user_price_eur(3600.0, "flash31")
+    assert not any("vat" in k for k in p)
 
 
-def test_listino_flash31_invariato_rispetto_a_env_gonfiate(monkeypatch):
-    # Oggi in prod: env Vertex gonfiate del 22% e nessuna IVA separata.
-    # Dopo: env al netto + IVA 22%. Il listino misto deve coincidere.
-    monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
-    nuovo = gemini_tts.pricing_rates("flash31")
+def test_il_prezzo_non_cambia_con_l_iva(monkeypatch):
+    con = gemini_tts.compute_user_price_eur(3600.0, "flash31")
     monkeypatch.setenv("ABM_GEMINI_VAT_PERCENT", "0")
-    monkeypatch.setitem(gemini_tts.GEMINI_MODELS["flash31"], "input_usd_per_mtok", 1.22)
-    monkeypatch.setitem(gemini_tts.GEMINI_MODELS["flash31"], "output_usd_per_mtok", 24.4)
-    vecchio = gemini_tts.pricing_rates("flash31")
-    assert nuovo == pytest.approx(vecchio)
+    senza = gemini_tts.compute_user_price_eur(3600.0, "flash31")
+    assert con == senza
 
 
 def test_iva_negativa_trattata_come_zero(monkeypatch):

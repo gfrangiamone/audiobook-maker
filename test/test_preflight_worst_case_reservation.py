@@ -1,12 +1,12 @@
-"""Correzione 4: la riserva di budget preflight in /api/generate si fa sul
-caso PEGGIORE fra i backend abilitati (worst_case_cost_breakdown), non sul
-listino mostrato/addebitato all'utente (D1 tiene il prezzo fisso, il costo
-reale no). Se il modello e' configurato su Cloudflare e il circuit breaker
-devia a meta' job su Vertex, il costo reale puo' superare il listino misto:
-una riserva sul listino sforerebbe il cap interno in silenzio.
+"""La riserva di budget preflight in /api/generate si fa sul caso PEGGIORE
+fra i backend abilitati (worst_case_cost_breakdown), mai sul prezzo
+all'utente (tariffa fissa €/ora, slegata dal costo). Se il modello e'
+configurato su Cloudflare e il circuit breaker devia a meta' job su Vertex,
+il costo reale sale: una riserva sul costo Cloudflare sforerebbe il cap
+interno in silenzio.
 
-flash31 e' l'unico modello con `id_cloudflare` configurato (flash31 resta
-sempre su Vertex): serve a far divergere listino e caso-peggiore.
+flash31 e' l'unico modello con `id_cloudflare` configurato: serve a far
+divergere costo Cloudflare e caso-peggiore.
 """
 import time
 from unittest.mock import patch
@@ -97,7 +97,7 @@ def _pay(client, job_id, amount_eur, order_id):
     }
 
 
-def test_reservation_equals_listino_when_cloudflare_not_configured(client, env, monkeypatch):
+def test_reservation_equals_the_cost_estimate_when_cloudflare_not_configured(client, env, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
     _mk_job("pfw-vertex")
     amount = client.post("/api/combined_estimate", json={
@@ -113,15 +113,14 @@ def test_reservation_equals_listino_when_cloudflare_not_configured(client, env, 
 
     assert r.status_code == 200, r.get_data(as_text=True)
     job = audiobook_app.jobs["pfw-vertex"]
-    listino = float(job["gemini_estimate"]["google_cost_eur"])
-    assert captured["eur"] == pytest.approx(listino, rel=1e-6)
+    costo = float(job["gemini_estimate"]["google_cost_eur"])
+    assert captured["eur"] == pytest.approx(costo, rel=1e-6)
 
 
-def test_reservation_exceeds_listino_when_cloudflare_is_configured(client, env, monkeypatch):
-    """Il caso del rilievo Correzione 4: con Cloudflare abilitato il listino e'
-    piu' economico della tariffa Vertex pura (share del risparmio ceduto al
-    cliente), quindi la riserva sul caso peggiore deve essere strettamente
-    superiore al listino - mai uguale, mai inferiore."""
+def test_reservation_is_the_worst_case_when_cloudflare_is_configured(client, env, monkeypatch):
+    """Con Cloudflare abilitato il costo stimato del job e' gia' il caso
+    peggiore fra i backend (Vertex, piu' caro): la riserva deve combaciare
+    con quello e superare il costo Cloudflare puro."""
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
     _mk_job("pfw-cf")
     amount = client.post("/api/combined_estimate", json={
@@ -138,17 +137,17 @@ def test_reservation_exceeds_listino_when_cloudflare_is_configured(client, env, 
     assert r.status_code == 200, r.get_data(as_text=True)
     job = audiobook_app.jobs["pfw-cf"]
     est = job["gemini_estimate"]
-    cost_listino = float(est["google_cost_eur"])
-    assert captured["eur"] > cost_listino
-    # E deve combaciare esattamente col caso peggiore calcolato sugli stessi
-    # token stimati (nessuna euristica separata/duplicata nel call site).
     worst = gemini_tts.worst_case_cost_breakdown(
         est.get("input_tokens_est", 0), est.get("output_tokens_est", 0),
         est.get("model_key"))
     assert captured["eur"] == pytest.approx(worst["total_eur"], rel=1e-6)
-    # Il prezzo addebitato all'utente resta quello di LISTINO (est_pre/
-    # gemini_estimate["user_price_eur"], invariato da questa correzione): la
-    # riserva piu' alta e' interna, non si riversa mai sull'importo pagato.
+    assert captured["eur"] == pytest.approx(float(est["google_cost_eur"]), rel=1e-6)
+    cf_only = gemini_tts.actual_cost_breakdown(
+        est.get("input_tokens_est", 0), est.get("output_tokens_est", 0),
+        est.get("model_key"), "cloudflare")
+    assert captured["eur"] > cf_only["total_eur"]
+    # Il prezzo addebitato all'utente resta quello di LISTINO: la riserva e'
+    # interna, non si riversa mai sull'importo pagato.
     price_charged = float(job["payment"]["total_eur"])
     price_listino = round(float(est["user_price_eur"]), 2)
     assert price_charged == pytest.approx(price_listino, rel=1e-6)

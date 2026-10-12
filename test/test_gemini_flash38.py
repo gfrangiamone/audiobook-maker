@@ -10,7 +10,7 @@ def _reset(monkeypatch):
     gemini_tts._BACKEND = {}
     for env in ("ABM_GEMINI_BACKEND", "ABM_GEMINI_BACKEND_FLASH38",
                 "ABM_GEMINI_RPM_FLASH38", "ABM_GEMINI_MIN_INTERVAL_FLASH38_MS",
-                "ABM_GEMINI_38FLASH_MARGIN_PERCENT", "ABM_FLASH38_ENABLE"):
+                "ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR", "ABM_FLASH38_ENABLE"):
         monkeypatch.delenv(env, raising=False)
     yield
     gemini_tts._BACKEND = {}
@@ -32,7 +32,7 @@ def test_limiti_tier3():
     assert gemini_tts._http_timeout_ms("flash38") == 40000
     assert gemini_tts.preview_timeout_sec("flash38") == 45
     assert gemini_tts._audio_tokens_per_second("flash38") == pytest.approx(31.9)
-    assert gemini_tts.get_margin_percent("flash38") == 25.0
+    assert gemini_tts.eur_per_audio_hour("flash38") == 2.85
 
 
 def test_backend_per_modello_prevale(monkeypatch):
@@ -62,13 +62,17 @@ def test_modello_api_key_usa_id_pubblico(monkeypatch):
     assert gemini_tts._resolve_model_id("flash38") == "gemini-3.8-flash-tts"
 
 
-def test_prezzo_flash38_con_iva_e_margine(monkeypatch):
+def test_costo_flash38_su_google_con_iva(monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_VAT_PERCENT", "22")
-    bd = gemini_tts.pricing_cost_breakdown(0, 1_000_000, "flash38")
-    atteso = 18.0 * gemini_tts.USD_EUR_RATE * 1.22
-    assert bd["total_eur"] == pytest.approx(atteso)
-    p = gemini_tts.compute_user_price_eur(bd["total_eur"], "flash38")
-    assert p["base_price_eur"] == pytest.approx(atteso * 1.25, rel=1e-3)
+    bd = gemini_tts.actual_cost_breakdown(0, 1_000_000, "flash38", "apikey")
+    assert bd["total_eur"] == pytest.approx(18.0 * gemini_tts.USD_EUR_RATE * 1.22)
+
+
+def test_listino_flash38_e_premium_plus(monkeypatch):
+    monkeypatch.delenv("ABM_GEMINI_38FLASH_EUR_PER_AUDIO_HOUR", raising=False)
+    p = gemini_tts.compute_user_price_eur(3600.0, "flash38")
+    assert p["list_price_eur"] == pytest.approx(2.85)
+    assert p["list_price_eur"] > gemini_tts.compute_user_price_eur(3600.0, "flash31")["list_price_eur"]
 
 
 def test_flash38_spento_di_default():

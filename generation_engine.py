@@ -4908,35 +4908,26 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         pay = _payment_audit_fields(job)
         charged = pay["charged"]
         google_cost_actual = float(actual.get("google_cost_eur", 0.0) or 0.0)
-        # Fallback su google_cost_actual per job/test legacy che non hanno mai
-        # popolato pricing_cost_eur (pre-esistenti a questa correzione): senza
-        # Cloudflare configurato i due numeri coincidono comunque, quindi il
-        # fallback non altera il comportamento storico.
-        pricing_cost_actual = float(actual.get("pricing_cost_eur", google_cost_actual) or google_cost_actual)
+        audio_seconds_actual = float(actual.get("audio_seconds", 0) or 0)
         try:
             if gemini_tts is not None:
-                # L'audit di deriva prezzo confronta l'incasso col LISTINO
-                # (D1), non col costo realmente sostenuto: su Cloudflare i due
-                # numeri divergono per costruzione, e applicare il costo reale
-                # qui produrrebbe un falso allarme di deriva sistematico ad
-                # ogni job servito su quel backend (l'allarme che urla sempre
-                # e' un allarme morto). `margin_eur_actual`/`google_cost_eur_
-                # actual` sotto restano sul costo reale: sono contabilita', non
-                # rilevazione di deriva prezzo.
-                should = gemini_tts.compute_user_price_eur(pricing_cost_actual, model_key)
+                # Deriva di prezzo: l'incasso (quotato sui secondi STIMATI
+                # dalla tabella car/s) contro il listino sui secondi REALI.
+                # Un delta sistematico per lingua dice che la tabella va
+                # ritoccata (recalc-params). `margin_eur_actual` /
+                # `google_cost_eur_actual` restano sul costo del backend: sono
+                # contabilita', non rilevazione di deriva.
+                should = gemini_tts.compute_user_price_eur(audio_seconds_actual, model_key)
                 should_have_been = float(should.get("user_price_eur", 0.0))
             else:
                 should_have_been = 0.0
         except Exception:
             should_have_been = 0.0
         delta_eur = round(should_have_been - charged, 4)
-        # DELTA % = scostamento di ricarico in punti percentuali rispetto al
-        # costo di LISTINO. Ricarico effettivo = (charged - listino)/listino;
-        # ricarico atteso = (should - listino)/listino; il delta tra i due =
-        # delta_eur/listino. NB: non si divide piu` per `charged` (era
-        # ambiguo: scostamento di prezzo, non di margine), ne' per il costo
-        # reale (vedi nota sopra su Cloudflare).
-        delta_pct = round((delta_eur / pricing_cost_actual * 100), 2) if pricing_cost_actual > 0 else 0.0
+        # DELTA % = errore di stima della durata in punti percentuali del
+        # listino dovuto: positivo = audio piu' lungo del quotato (prezzo
+        # incassato basso), negativo = piu' corto.
+        delta_pct = round((delta_eur / should_have_been * 100), 2) if should_have_been > 0 else 0.0
         est = job.get("gemini_estimate") or {}
         rec = {
             "job_id": job_id,
@@ -4949,16 +4940,11 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "output_tokens_est": int(est.get("output_tokens_est", 0) or 0),
             "output_tokens_actual": int(actual.get("output_tokens", 0) or 0),
             "audio_seconds_est": float(est.get("audio_seconds_est", 0) or 0),
-            "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
+            "audio_seconds_actual": round(audio_seconds_actual, 2),
             "google_cost_eur_est": float(est.get("google_cost_eur", 0) or 0),
             "google_cost_eur_actual": round(google_cost_actual, 4),
             # Parte IVA gia' compresa in google_cost_eur_actual (netto = differenza).
             "vat_eur_actual": round(float(actual.get("vat_eur", 0.0) or 0.0), 4),
-            # Costo di listino sugli stessi token reali: base di
-            # `user_price_eur_should_have_been`/`delta_eur`/`delta_pct` sopra.
-            # Coincide con google_cost_eur_actual quando Cloudflare non e'
-            # configurato; diverge quando lo e' (D1).
-            "pricing_cost_eur_actual": round(pricing_cost_actual, 4),
             "user_price_eur_charged": charged,
             "user_price_eur_should_have_been": round(should_have_been, 2),
             "delta_eur": delta_eur,
@@ -4989,21 +4975,13 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         try:
             if (gemini_tts is not None and outcome == "completed"
                     and model_key in gemini_tts.GEMINI_MODELS):
-                # F6: entrambi i lati sul LISTINO (D1), mai prezzo vs costo
-                # reale. `estimated_eur` (est["google_cost_eur"]) e' gia'
-                # listino (estimate_book_cost usa l'alias google_cost_
-                # breakdown = pricing_cost_breakdown sui token STIMATI); qui
-                # `actual_eur` deve essere il listino sui token REALI
-                # (pricing_cost_actual), non il costo reale del backend che
-                # ha eseguito (google_cost_actual): altrimenti la reconciliation
-                # dell'errore di stima confonderebbe "il modello di stima
-                # token/durata ha sbagliato" con "questo job e' finito su un
-                # backend piu'/meno caro", che e' rumore di infrastruttura
-                # invisibile all'utente, non errore di calibrazione.
+                # Entrambi i lati sul LISTINO: quotato ex-ante contro dovuto
+                # sui secondi reali. Mai il costo del backend: confonderebbe
+                # l'errore della tabella car/s con la scelta di infrastruttura.
                 gemini_tts.record_job_completion(
                     model_key,
-                    estimated_eur=float(est.get("google_cost_eur", 0) or 0),
-                    actual_eur=pricing_cost_actual,
+                    estimated_eur=float(est.get("list_price_eur", 0) or 0),
+                    actual_eur=should_have_been,
                     user_price_eur=charged,
                 )
         except Exception as e:
@@ -6526,12 +6504,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             "chars": 0,
             "audio_seconds": 0.0,
             "google_cost_eur": 0.0,
-            # Costo di LISTINO (D1) sugli stessi token reali: serve solo
-            # all'audit di deriva prezzo (_write_gemini_audit), che confronta
-            # l'incasso col listino, non col costo realmente sostenuto (i due
-            # divergono su Cloudflare per costruzione). Non e' contabilita':
-            # per quella resta google_cost_eur.
-            "pricing_cost_eur": 0.0,
             # Quota IVA gia' compresa in google_cost_eur (0 su Cloudflare):
             # solo audit admin, mai esposta all'utente.
             "vat_eur": 0.0,
@@ -6883,18 +6855,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             bd.get("vat_eur", 0.0) or 0.0)
                     except Exception as e:
                         print(f"[{job_id}] actual_cost_breakdown failed (non-fatal): {e}")
-                    # Stesso chunk, tariffa di LISTINO (D1, non oscilla col
-                    # backend risolto): alimenta solo l'audit di deriva prezzo,
-                    # mai la contabilita' reale sopra.
-                    try:
-                        pbd = gemini_tts.pricing_cost_breakdown(
-                            result.get("input_tokens", 0),
-                            result.get("output_tokens", 0),
-                            model_key_local,
-                        )
-                        ga["pricing_cost_eur"] += float(pbd.get("total_eur", 0.0) or 0.0)
-                    except Exception as e:
-                        print(f"[{job_id}] pricing_cost_breakdown failed (non-fatal): {e}")
                     # Record usage per chunk (partial completions on cancel restano contabilizzate)
                     try:
                         gemini_tts.record_usage(
@@ -7690,36 +7650,25 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         if still_current and use_gemini:
             try:
                 actual = job.get("gemini_actual") or {}
-                google_cost = float(actual.get("google_cost_eur", 0.0) or 0.0)
-                # Base del trattenuto: LISTINO (D1), non costo reale. Il
-                # margine sotto e' calibrato per essere applicato sul costo
-                # di listino (stessa base di compute_user_price_eur, vedi
-                # correzione 3): passare il costo reale qui farebbe dipendere
-                # quanto tratteniamo dal backend che ha eseguito, e dal fatto
-                # che un failover a meta' job sia scattato o no - un utente
-                # vedrebbe cifre diverse per lo stesso lavoro svolto solo per
-                # una scelta di infrastruttura a lui invisibile. Fallback sul
-                # costo reale per job legacy senza pricing_cost_eur (prima di
-                # questa separazione i due numeri coincidevano comunque).
-                pricing_cost = float(actual.get("pricing_cost_eur", google_cost) or google_cost)
                 payment_meta = job.get("payment") or {}
                 paid = float(payment_meta.get("total_eur", 0) or 0)
                 method = payment_meta.get("method", "")
 
-                # Margin (ricarico) del modello: il trattenuto corrisponde al
-                # PREZZO che l'utente avrebbe pagato per la quota di lavoro
-                # eseguita, non al solo costo Google. Mantiene la stessa
-                # marginalita' commerciale del job completato.
-                margin_pct = 0.0
+                # Base del trattenuto: LISTINO sull'audio gia' prodotto
+                # (tariffa €/ora x secondi reali), mai il costo del backend
+                # che ha eseguito: un failover a meta' job non deve cambiare
+                # quanto tratteniamo per lo stesso lavoro consegnato.
+                list_consumed = 0.0
                 try:
                     if gemini_tts is not None and _is_gemini_voice(voice):
                         _mk, _, _ = gemini_tts.parse_voice_id(voice)
-                        margin_pct = float(gemini_tts.get_margin_percent(_mk) or 0.0)
-                except Exception as _mp_err:
-                    print(f"[{job_id}] margin lookup failed (using 0%): {_mp_err}")
+                        list_consumed = float(gemini_tts.compute_user_price_eur(
+                            float(actual.get("audio_seconds", 0.0) or 0.0), _mk
+                        ).get("list_price_eur", 0.0) or 0.0)
+                except Exception as _lp_err:
+                    print(f"[{job_id}] list price lookup failed (retaining 0): {_lp_err}")
 
-                cr = cancel_policy.compute_cancel_retention(
-                    pricing_cost, method, paid, margin_percent=margin_pct)
+                cr = cancel_policy.compute_cancel_retention(list_consumed, paid)
                 retained = cr["retained_eur"]
                 refund = cr["refund_eur"]
 

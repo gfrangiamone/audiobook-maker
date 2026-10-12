@@ -164,7 +164,8 @@ _DEFAULT_VERTEX_LOCATION_FLASH31 = "us-central1"
 
 # Ogni ramo "per modello" legge da qui: aggiungere un modello significa
 # aggiungere una voce, non cercare gli `if model_key == ...` sparsi.
-#   env_prefix               -> ABM_GEMINI_<prefix>_{INPUT,OUTPUT}_USD_PER_MTOK / _MARGIN_PERCENT
+#   env_prefix               -> ABM_GEMINI_<prefix>_{INPUT,OUTPUT}_USD_PER_MTOK / _EUR_PER_AUDIO_HOUR
+#   eur_per_audio_hour_default -> listino utente €/ora di audio (vedi eur_per_audio_hour)
 #   audio_tokens_per_second  -> default di _audio_tokens_per_second
 #   default_rpm / default_rpd-> 0 = nessun limite locale
 #   http_timeout_ms          -> timeout HTTP della singola chiamata
@@ -187,8 +188,10 @@ GEMINI_MODELS = {
         "env_prefix": "31FLASH",
         "input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK", 1.00),
         "output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK", 20.00),
-        "margin_default": 25.0,
-        "default_margin_percent": _f("ABM_GEMINI_31FLASH_MARGIN_PERCENT", 25.0),
+        # Listino all'utente, EUR per ora di audio stimata (vedi
+        # compute_user_price_eur). Fissato il 12/10/2026 al prezzo che la vecchia
+        # catena costo+margine+PayPal produceva su un libro medio.
+        "eur_per_audio_hour_default": 1.90,
         "audio_tokens_per_second": 25.0,
         "default_rpm": 0,
         "default_rpd": 0,
@@ -211,12 +214,11 @@ GEMINI_MODELS = {
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.8 (PREMIUM+)",
         "env_prefix": "38FLASH",
-        # Listino 2027 (non quello promozionale 2026): il prezzo utente non
-        # deve cambiare quando scade la promozione.
+        # Listino Google 2027 (non quello promozionale 2026), solo per la
+        # contabilita' del costo: il prezzo utente e' fisso e non ne dipende.
         "input_usd_per_mtok": _f("ABM_GEMINI_38FLASH_INPUT_USD_PER_MTOK", 1.00),
         "output_usd_per_mtok": _f("ABM_GEMINI_38FLASH_OUTPUT_USD_PER_MTOK", 18.00),
-        "margin_default": 25.0,
-        "default_margin_percent": _f("ABM_GEMINI_38FLASH_MARGIN_PERCENT", 25.0),
+        "eur_per_audio_hour_default": 2.85,
         # Misurato sul test Beren (27/09/2026); da riverificare in fattura.
         "audio_tokens_per_second": 31.9,
         "default_rpm": 800,
@@ -932,6 +934,8 @@ def _trip_to_vertex(model_key, *, reason, detail, job_id):
 
 
 USD_EUR_RATE = _pricing.usd_eur_rate()
+# Commissioni PayPal: non entrano piu' nel prezzo Gemini (il listino €/ora le
+# comprende). Restano per il calcolo della fee nell'audit admin e per Speechify.
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 PAYPAL_PERCENT_FEE = _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
 FREE_THRESHOLD_EUR = _f("ABM_GEMINI_FREE_THRESHOLD_EUR", 0.50)
@@ -1136,12 +1140,52 @@ def _gender_icon(gender):
     return ""
 
 
-def get_margin_percent(model_key):
-    """Margine corrente per il modello (legge env var aggiornata)."""
+def eur_per_audio_hour(model_key):
+    """Listino all'utente: EUR per ora di audio stimata, per modello.
+
+    Decisione commerciale (12/10/2026), non una derivata del costo: la tariffa
+    comprende gia' commissioni PayPal e margine, e non cambia quando cambia
+    il backend che esegue o il listino del fornitore. Override:
+    ABM_GEMINI_<PREFIX>_EUR_PER_AUDIO_HOUR.
+    """
     m = GEMINI_MODELS.get(model_key)
     if m is None:
         raise ValueError(f"Unknown model_key: {model_key}")
-    return _f(f"ABM_GEMINI_{m['env_prefix']}_MARGIN_PERCENT", m["margin_default"])
+    val = _f(f"ABM_GEMINI_{m['env_prefix']}_EUR_PER_AUDIO_HOUR",
+             m["eur_per_audio_hour_default"])
+    return val if val > 0 else m["eur_per_audio_hour_default"]
+
+
+def list_chars_per_second(language=None):
+    """Caratteri al secondo con cui il LISTINO converte il testo in ore di audio.
+
+    Tabella fissa per lingua (LANG_BASELINE_RATE, misurata sui job reali) con
+    override ABM_GEMINI_CHARS_PER_SEC_<LANG>: stesso libro, stesso prezzo,
+    sempre. Il rate empirico del log (get_empirical_rate) non entra nel
+    prezzo: serve alla stima del costo provider e alla calibrazione di questa
+    tabella, che si aggiorna a mano dall'audit (recalc-params).
+    """
+    lang = (language or "")[:2].lower()
+    base = baseline_rate(lang)
+    if not lang:
+        return base
+    val = _f(f"ABM_GEMINI_CHARS_PER_SEC_{lang.upper()}", base)
+    return val if val > 0 else base
+
+
+def speed_factor(rate_pct=0):
+    """Fattore di velocita' dallo slider: -20% -> 0.8 (audio piu' lungo)."""
+    rp = max(-50, min(50, int(_parse_rate_pct(rate_pct))))
+    return max(0.5, 1.0 + (rp / 100.0))
+
+
+def list_audio_seconds(text, language=None, rate_pct=0):
+    """Secondi di audio su cui si calcola il PREZZO: tabella fissa per lingua,
+    scalata dalla velocita' scelta. Deterministica."""
+    norm = _normalize_text(text)
+    if not norm:
+        return 0.0
+    return len(norm) / list_chars_per_second(language) / speed_factor(rate_pct)
 
 
 def _cf_topup_fee():
@@ -1153,24 +1197,17 @@ def _cf_topup_fee():
     return _f("ABM_CF_CREDIT_TOPUP_FEE", 0.05)
 
 
-def cf_saving_share():
-    """Quota del risparmio Cloudflare ceduta al cliente, in [0, 1]."""
-    pct = _f("ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT", 50.0)
-    return max(0.0, min(1.0, pct / 100.0))
-
-
 def _cf_effective(rate):
     """Tariffa Cloudflare comprensiva della commissione di ricarica."""
     return rate * (1.0 + _cf_topup_fee())
 
 
-def _pricing_uses_cloudflare(model_key):
-    """True se il LISTINO di questo modello si calcola su base Cloudflare.
+def _model_may_use_cloudflare(model_key):
+    """True se la CONFIGURAZIONE permette a questo modello di girare su Cloudflare.
 
-    Guarda la CONFIGURAZIONE, non il backend attivo: dopo un trip il modello
-    esegue su Vertex, ma il prezzo non deve oscillare sotto gli occhi
-    dell'utente (decisione D1). Usare `_resolve_backend` qui sarebbe il bug
-    piu' facile da introdurre e il piu' difficile da notare.
+    Guarda la configurazione, non il backend attivo ne' lo stato del breaker:
+    serve a sapere quali backend possono addebitare un job (riserva di budget
+    nel caso peggiore), non chi sta eseguendo adesso.
     """
     choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
     if choice != "cloudflare":
@@ -1180,9 +1217,8 @@ def _pricing_uses_cloudflare(model_key):
 
 
 # IVA 22% come costo non detraibile: la fatturano Vertex e l'API key (Google
-# Ireland), non Cloudflare. Fino al 27/09/2026 era dentro le env di costo
-# Vertex gonfiate a mano; ora le env sono il listino netto e l'IVA si somma
-# qui. Mai mostrata all'utente: entra nel prezzo come qualunque altro costo.
+# Ireland), non Cloudflare. Le env di costo sono il listino netto e l'IVA si
+# somma qui. Solo contabilita': il prezzo all'utente non ne dipende.
 _VAT_BACKENDS = ("vertex", "apikey")
 
 
@@ -1198,36 +1234,11 @@ def _vat_factor(backend):
     return 1.0
 
 
-def pricing_rates(model_key):
-    """(input, output) USD/Mtok da usare per il PREZZO all'utente.
-
-        tariffa = google - (google - cf_eff) * share
-
-    Con share=0 il listino resta quello Google; con share=1 tutto il risparmio
-    va al cliente. Se Cloudflare non e' configurato per questo modello, le
-    tariffe sono quelle Google pure e il comportamento e' identico a oggi.
-    """
-    if model_key not in GEMINI_MODELS:
-        raise ValueError(f"Unknown model_key: {model_key}")
-    m = GEMINI_MODELS[model_key]
-    # Tariffa Google LORDA IVA: sia Vertex sia l'API key la applicano, quindi
-    # il listino non dipende da quale dei due esegue.
-    g_in, g_out = actual_rates(model_key, "vertex")
-    if not _pricing_uses_cloudflare(model_key):
-        return g_in, g_out
-    share = cf_saving_share()
-    c_in = _cf_effective(m["cf_input_usd_per_mtok"])
-    c_out = _cf_effective(m["cf_output_usd_per_mtok"])
-    return (g_in - (g_in - c_in) * share,
-            g_out - (g_out - c_out) * share)
-
-
 def _net_rates(model_key, backend):
     """(input, output) USD/Mtok REALMENTE sostenute dal backend che ha eseguito.
 
-    Tariffe nette, senza IVA. Serve alla contabilita', non al listino: e'
-    l'unico numero con cui ha senso riconciliare la spesa e misurare il
-    margine vero.
+    Tariffe nette, senza IVA. Contabilita', mai prezzo: e' l'unico numero con
+    cui ha senso riconciliare la spesa e misurare il margine vero.
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
@@ -1481,10 +1492,8 @@ def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0, voic
          con fallback a tier-2/3. Questo evita che il rate-step richiesto
          non abbia campioni e produca un risultato invariato rispetto al
          cursore velocità.
-      2. Applica un fattore esplicito di velocità ricavato da rate_pct:
-            speed_factor = max(0.5, 1 + rate_pct/100)
-            audio_seconds = baseline_seconds / speed_factor
-         Così la stima è monotonica rispetto allo slider velocità.
+      2. Applica il fattore di velocita' (`speed_factor`, lo stesso del
+         listino), cosi' la stima e' monotonica rispetto allo slider.
     Fallback finale: baseline_rate(language) — il rate mediano misurato per
     quella lingua, non piu` una costante unica.
     Il testo viene normalizzato per coerenza con il conteggio dei sample.
@@ -1502,11 +1511,7 @@ def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0, voic
             rate = None
     if not rate or rate <= 0:
         rate = baseline_rate(language)
-    base_seconds = len(norm) / rate
-    # Converti rate_pct ("+10%", 10, "+0%", ecc.) a fattore moltiplicativo.
-    rp = max(-50, min(50, int(_parse_rate_pct(rate_pct))))
-    speed_factor = max(0.5, 1.0 + (rp / 100.0))
-    return base_seconds / speed_factor
+    return len(norm) / rate / speed_factor(rate_pct)
 
 
 def estimate_output_tokens(text, language=None, model_key=None, rate_pct=0, voice=None):
@@ -1528,18 +1533,6 @@ def _breakdown(input_tokens, output_tokens, in_rate, out_rate):
     }
 
 
-def pricing_cost_breakdown(input_tokens, output_tokens, model_key):
-    """Costo di RIFERIMENTO per il listino, dettagliato USD/EUR.
-
-    Usa la tariffa mista (D1): non cambia quando il failover esegue su Vertex.
-    E' l'ingresso di `compute_user_price_eur`.
-    """
-    if model_key not in GEMINI_MODELS:
-        raise ValueError(f"Unknown model_key: {model_key}")
-    in_rate, out_rate = pricing_rates(model_key)
-    return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
-
-
 def actual_cost_breakdown(input_tokens, output_tokens, model_key, backend):
     """Costo REALMENTE sostenuto dal backend che ha eseguito, IVA inclusa.
 
@@ -1554,23 +1547,6 @@ def actual_cost_breakdown(input_tokens, output_tokens, model_key, backend):
     bd["net_eur"] = bd["total_eur"] / f
     bd["vat_eur"] = bd["total_eur"] - bd["net_eur"]
     return bd
-
-
-def _budget_uses_cloudflare(model_key):
-    """True se questo modello puo' davvero finire eseguito su Cloudflare.
-
-    Stessa condizione booleana di `_pricing_uses_cloudflare` (choice ==
-    "cloudflare" e modello con listino CF configurato), ma con uno scopo
-    diverso: non decide il PREZZO (quello resta fisso sul listino, D1), serve
-    solo a capire quali backend possono concretamente addebitare questo job,
-    incluso l'esito di un eventuale trip del circuit breaker verso Vertex a
-    meta' lavorazione. Delega alla stessa implementazione (due copie della
-    stessa condizione divergono inevitabilmente nel tempo); resta una
-    funzione a se' per nome/intento, non solo un alias, cosi' i call site
-    restano leggibili sullo scopo (prezzo vs budget) senza dover guardare
-    l'implementazione.
-    """
-    return _pricing_uses_cloudflare(model_key)
 
 
 def worst_case_rates(model_key):
@@ -1589,7 +1565,7 @@ def worst_case_rates(model_key):
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
     g_in, g_out = actual_rates(model_key, "vertex")
-    if not _budget_uses_cloudflare(model_key):
+    if not _model_may_use_cloudflare(model_key):
         return g_in, g_out
     c_in, c_out = actual_rates(model_key, "cloudflare")
     return max(g_in, c_in), max(g_out, c_out)
@@ -1598,70 +1574,62 @@ def worst_case_rates(model_key):
 def worst_case_cost_breakdown(input_tokens, output_tokens, model_key):
     """Costo nel caso peggiore fra i backend abilitati per la config corrente.
 
-    Ingresso della riserva di budget preflight, non del prezzo mostrato o
-    addebitato all'utente (quello resta `pricing_cost_breakdown`).
+    Ingresso della riserva di budget preflight e della stima di costo
+    (`estimate_book_cost["google_cost_eur"]`), mai del prezzo all'utente.
     """
     in_rate, out_rate = worst_case_rates(model_key)
     return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
 
 
-# Alias storico: i chiamanti che chiedevano "il costo" intendevano il prezzo.
-# Mantenuto per non rompere in silenzio un chiamante dimenticato; i siti di
-# contabilita' sono stati spostati esplicitamente su actual_cost_breakdown.
-google_cost_breakdown = pricing_cost_breakdown
+def compute_user_price_eur(audio_seconds, model_key):
+    """Prezzo all'utente per `audio_seconds` secondi di audio (stimati o reali).
 
+        list_price = round(ore * eur_per_audio_hour(model), 2)
 
-def compute_user_price_eur(google_cost_eur, model_key):
-    """Calcola prezzo finale all'utente da costo Google netto.
-
-    Formula:
-        base   = google_cost x (1 + margin/100)
-        gross  = (base + PAYPAL_FIXED_FEE) / (1 - PAYPAL_PERCENT_FEE/100)
-        user_price = round(gross, 2)
-
-    IMPORTANTE - semantica di `margin/100`:
-        E` il margine NETTO operatore (cio` che intaschi DOPO la quota PayPal),
-        non il ricarico apparente che vede l'utente. Il prezzo finale e` gonfiato
-        ulteriormente dalle fee PayPal (gross-up percentuale + fee fissa) che
-        ricadono sul cliente. Conseguenza: con `margin=30`, l'utente vede un
-        ricarico effettivo di ~39-40% rispetto al costo Google netto (su libri
-        lunghi dove la fee fissa e` diluita). Asintoto: user_price/google_cost
-        -> (1 + margin/100) / (1 - PAYPAL_PERCENT_FEE/100). Dettagli e tabella
-        in md_files/ttsgemini.md §11.1.1.
-
-    Sotto FREE_THRESHOLD_EUR: user_price = 0.0, is_free = True.
+    Tariffa fissa per ora di audio, decisa commercialmente e indipendente dal
+    costo provider (come VoxCPM): commissioni PayPal e margine sono gia'
+    dentro. Sotto FREE_THRESHOLD_EUR il job e' gratis (`user_price_eur` = 0,
+    `is_free` = True); `list_price_eur` resta il valore pieno per la quota
+    gratuita e l'audit.
     """
-    if google_cost_eur < 0:
-        raise ValueError("google_cost_eur must be >= 0")
+    try:
+        secs = float(audio_seconds or 0.0)
+    except (TypeError, ValueError):
+        secs = 0.0
+    if secs < 0:
+        raise ValueError("audio_seconds must be >= 0")
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown model_key: {model_key}")
-
-    margin_pct = get_margin_percent(model_key)
-    base_eur = google_cost_eur * (1.0 + margin_pct / 100.0)
-    gross = _pricing.paypal_gross_up(base_eur, fixed_fee_eur=PAYPAL_FIXED_FEE_EUR,
-                                     percent_fee=PAYPAL_PERCENT_FEE)
+    rate = eur_per_audio_hour(model_key)
+    hours = secs / 3600.0
+    list_price = round(hours * rate, 2)
+    is_free = list_price < FREE_THRESHOLD_EUR
     return {
-        "google_cost_eur": round(google_cost_eur, 4),
-        "margin_percent": margin_pct,
-        "base_price_eur": round(base_eur, 4),
-        **_pricing.free_result(gross, FREE_THRESHOLD_EUR),
-        "paypal_fixed_fee_eur": PAYPAL_FIXED_FEE_EUR,
-        "paypal_percent_fee": PAYPAL_PERCENT_FEE,
+        "audio_seconds": round(secs, 2),
+        "audio_hours": round(hours, 4),
+        "eur_per_audio_hour": rate,
+        "list_price_eur": list_price,
+        "user_price_eur": 0.0 if is_free else list_price,
+        "is_free": is_free,
+        "free_threshold_eur": FREE_THRESHOLD_EUR,
     }
 
 
 def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
-    """Stima costo end-to-end della generazione audio di un libro.
+    """Stima prezzo e costo della generazione audio di un libro.
+
+    Due stime distinte, per due usi distinti:
+      - PREZZO: `audio_seconds_est` dalla tabella fissa car/s per lingua
+        (list_audio_seconds) scalata dalla velocita'; `user_price_eur` =
+        tariffa €/ora del modello. Deterministico.
+      - COSTO provider (`google_cost_eur`, budget e allarmi, mai mostrato):
+        secondi dal rate empirico del log (`audio_seconds_cost_est`), token
+        audio per modello, tariffa del backend piu' caro abilitato.
 
     Args:
         chapters: lista di oggetti con attributo `.text` (es. Chapter dataclass).
         voice_id: deve iniziare con 'gemini:'.
         language: ISO 639-1 (it/en/fr/es/de/zh/hi/...). Default 'it'.
-
-    Returns:
-        dict con chars_total, input_tokens_est, audio_seconds_est,
-        output_tokens_est, google_cost_eur, user_price_eur, is_free,
-        estimated_audio_minutes, model_key, language, model_label.
     """
     model_key, _, voice_name = parse_voice_id(voice_id)
 
@@ -1674,27 +1642,29 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
         chapters, spoken_title_prefix, normalize=_normalize_text)
 
     combined = " ".join(normalized_parts)
+    audio_seconds = list_audio_seconds(combined, language=language, rate_pct=rate_pct)
+    price = compute_user_price_eur(audio_seconds, model_key)
+
     input_tokens = estimate_input_tokens(combined, language)
-    audio_seconds = estimate_audio_seconds(combined, language=language, model_key=model_key,
-                                           rate_pct=rate_pct, voice=voice_name)
+    cost_seconds = estimate_audio_seconds(combined, language=language, model_key=model_key,
+                                          rate_pct=rate_pct, voice=voice_name)
     output_tokens = estimate_output_tokens(combined, language=language, model_key=model_key,
                                            rate_pct=rate_pct, voice=voice_name)
-
-    breakdown = google_cost_breakdown(input_tokens, output_tokens, model_key)
-    price = compute_user_price_eur(breakdown["total_eur"], model_key)
+    breakdown = worst_case_cost_breakdown(input_tokens, output_tokens, model_key)
 
     return {
         "chars_total": chars_total,
         "chars_per_chapter": chars_per_chapter,
         "input_tokens_est": input_tokens,
         "audio_seconds_est": audio_seconds,
+        "audio_seconds_cost_est": cost_seconds,
         "output_tokens_est": output_tokens,
         "google_cost_eur": breakdown["total_eur"],
         "google_cost_breakdown": breakdown,
+        "eur_per_audio_hour": price["eur_per_audio_hour"],
         "user_price_eur": price["user_price_eur"],
         "list_price_eur": price["list_price_eur"],
         "is_free": price["is_free"],
-        "margin_percent": price["margin_percent"],
         "estimated_audio_minutes": audio_seconds / 60.0,
         "model_key": model_key,
         "model_label": GEMINI_MODELS[model_key]["label"],
@@ -2171,23 +2141,20 @@ def record_usage(model_key, chars, input_tokens, output_tokens, google_cost_eur,
 
 
 def record_job_completion(model_key, estimated_eur, actual_eur, user_price_eur=0.0):
-    """Registra la chiusura di un job: stima ex-ante vs listino ex-post sugli
-    stessi token, per calibrare l'ERRORE DI STIMA (token/durata), non il
-    costo reale del backend che ha eseguito.
+    """Registra la chiusura di un job: listino ex-ante vs listino ex-post, per
+    calibrare l'ERRORE DI STIMA della durata, non il costo del backend.
 
     Da chiamare una sola volta a fine job (success o cancel parziale), DOPO che
-    tutti i chunk hanno gia` chiamato record_usage(). Tiene traccia dell'errore
-    sistematico di estimate_book_cost rispetto ai token reali di usage_metadata.
+    tutti i chunk hanno gia` chiamato record_usage().
 
     Args:
         model_key: chiave del modello (es. 'flash31')
-        estimated_eur: costo di LISTINO stimato pre-job sui token stimati
-            (da estimate_book_cost, che usa pricing_cost_breakdown)
-        actual_eur: costo di LISTINO sui token REALI (pricing_cost_breakdown
-            su usage_metadata), MAI il costo reale del backend che ha
-            eseguito (actual_cost_breakdown): mischiare le due basi
-            confonderebbe l'errore dell'estimatore con la scelta di
-            infrastruttura (Cloudflare/Vertex), che qui non deve entrare (D1).
+        estimated_eur: listino quotato pre-job (estimate_book_cost,
+            list_price_eur sui secondi stimati dalla tabella car/s)
+        actual_eur: listino sui secondi di audio REALI (compute_user_price_eur
+            su gemini_actual["audio_seconds"]), MAI il costo del backend che
+            ha eseguito: mischiare le due basi confonderebbe l'errore della
+            tabella car/s con la scelta di infrastruttura.
         user_price_eur: prezzo pagato dall'utente (se 0 = job gratuito o ignoto)
     """
     if model_key not in GEMINI_MODELS:

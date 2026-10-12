@@ -39,10 +39,10 @@ def test_the_restarted_run_resumes_from_what_was_already_spent(tmp_path):
     cost_carry.write(tmp_path, "gemini", {
         "input_tokens": 900, "output_tokens": 1800, "chars": 400_000,
         "audio_seconds": 7200.0, "google_cost_eur": 9.5,
-        "pricing_cost_eur": 11.0, "model_key": "flash31"})
+        "model_key": "flash31"})
     fresh = {"input_tokens": 0, "output_tokens": 0, "chars": 0,
              "audio_seconds": 0.0, "google_cost_eur": 0.0,
-             "pricing_cost_eur": 0.0, "model_key": None}
+             "model_key": None}
     cost_carry.resume(tmp_path, "gemini", fresh)
     assert fresh["chars"] == 400_000
     assert fresh["google_cost_eur"] == 9.5

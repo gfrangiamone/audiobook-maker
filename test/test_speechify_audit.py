@@ -176,38 +176,34 @@ def test_running_speechify_job_appears_in_live_records(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _apply_cancel_effective: base della deriva % preferisce il listino Gemini
+# _apply_cancel_effective: base della deriva % e' il listino dovuto
 # ---------------------------------------------------------------------------
-def test_apply_cancel_effective_uses_pricing_cost_actual_as_drift_base_when_present():
-    """Su un record Gemini con listino/costo reale separati (Cloudflare), la
-    percentuale di deriva post-rimborso deve usare il listino come
-    denominatore, non il costo reale: stesso principio di D1 applicato al
-    ricalcolo effettivo dopo un rimborso parziale."""
+def test_apply_cancel_effective_uses_listino_as_drift_base_when_present():
+    """Su un record con listino dovuto a consuntivo (TTS premium), la
+    percentuale di deriva post-rimborso divide per quel listino, non per il
+    costo del backend (Cloudflare, molto piu' basso)."""
     rec = {
         "outcome": "cancelled_partial",
         "user_price_eur_charged": 5.0,
-        "cancel_retained_eur": 5.0,
+        "cancel_retained_eur": 4.0,
         "google_cost_eur_actual": 0.30,
-        "pricing_cost_eur_actual": 1.80,
         "user_price_eur_should_have_been": 5.0,
     }
     routes_admin_audit._apply_cancel_effective(rec)
-    assert rec["_eff_revenue_eur"] == 5.0
+    assert rec["_eff_revenue_eur"] == 4.0
     # margine resta sul costo reale (contabilita', non deriva prezzo)
-    assert rec["_eff_margin_eur"] == round(5.0 - 0.30, 4)
-    # delta% deve dividere per il listino (1.80), non per il costo reale (0.30)
-    assert rec["_eff_delta_pct"] == 0.0
+    assert rec["_eff_margin_eur"] == round(4.0 - 0.30, 4)
+    # delta% = (5.0 - 4.0) / 5.0, non / 0.30
+    assert rec["_eff_delta_pct"] == 20.0
 
 
-def test_apply_cancel_effective_falls_back_to_cost_when_pricing_cost_absent():
-    """Record non-Gemini (Speechify) o Gemini legacy: nessun campo
-    pricing_cost_eur_actual, il ripiego sul costo reale preserva il
-    comportamento storico (invariato da questa correzione)."""
+def test_apply_cancel_effective_falls_back_to_cost_when_listino_absent():
+    """Record senza listino dovuto (traduzione/ottimizzazione): il ripiego sul
+    costo preserva il comportamento storico."""
     rec = {
         "outcome": "completed",
         "user_price_eur_charged": 1.0,
         "google_cost_eur_actual": 0.4,
-        "user_price_eur_should_have_been": 1.2,
     }
     routes_admin_audit._apply_cancel_effective(rec)
-    assert rec["_eff_delta_pct"] == round(((1.2 - 1.0) / 0.4) * 100, 2)
+    assert rec["_eff_delta_pct"] == round(((0.0 - 1.0) / 0.4) * 100, 2)

@@ -204,21 +204,16 @@ def _synth_running_gemini_audit_records():
                 if model_key == "?":
                     model_key = ga.get("model_key") or "?"
                 provider_cost_actual = float(ga.get("google_cost_eur", 0.0) or 0.0)
+                chars_total = int(ga.get("chars", 0) or 0)
+                audio_seconds = float(ga.get("audio_seconds", 0) or 0)
                 # Mirror di _write_gemini_audit (generation_engine.py): la riga
-                # "running" deve confrontare l'incasso col LISTINO (D1), non
-                # col costo reale accumulato finora, altrimenti su Cloudflare
-                # questa riga live urlerebbe una deriva prezzo falsa per
-                # l'intera durata del job.
-                pricing_cost_actual = float(
-                    ga.get("pricing_cost_eur", provider_cost_actual) or provider_cost_actual)
+                # "running" confronta l'incasso col LISTINO sull'audio prodotto
+                # finora, mai col costo del backend.
                 try:
-                    should = gemini_tts.compute_user_price_eur(pricing_cost_actual, model_key)
+                    should = gemini_tts.compute_user_price_eur(audio_seconds, model_key)
                     should_have_been = float(should.get("user_price_eur", 0.0))
                 except Exception:
                     should_have_been = 0.0
-                chars_total = int(ga.get("chars", 0) or 0)
-                audio_seconds = float(ga.get("audio_seconds", 0) or 0)
-                pricing_cost_field = pricing_cost_actual
                 vat_actual = float(ga.get("vat_eur", 0) or 0)
             elif is_vox:
                 # Mirror di _write_voxcpm_audit: costo = tempo di GPU stimato
@@ -241,7 +236,6 @@ def _synth_running_gemini_audit_records():
                 model_key = "v2"
                 chars_total = chars_metered
                 audio_seconds = float(va.get("audio_seconds", 0) or 0)
-                pricing_cost_field = provider_cost_actual
                 vat_actual = 0.0
             else:  # Speechify / Simba
                 sa = job.get("speechify_actual") or {}
@@ -256,9 +250,6 @@ def _synth_running_gemini_audit_records():
                     should_have_been = 0.0
                 chars_total = int(sa.get("chars", 0) or 0)
                 audio_seconds = float(sa.get("audio_seconds", 0) or 0)
-                # Speechify non ha una separazione listino/costo reale (un
-                # solo backend): coincide col costo, come nel record persistito.
-                pricing_cost_field = provider_cost_actual
                 vat_actual = 0.0
             delta_eur = round(should_have_been - charged, 4)
             _llm_quota = (job.get("payment") or {}).get("llm_eur")
@@ -274,7 +265,6 @@ def _synth_running_gemini_audit_records():
                 "audio_seconds_actual": round(audio_seconds, 2),
                 "google_cost_eur_actual": round(provider_cost_actual, 4),
                 "vat_eur_actual": round(vat_actual, 4),
-                "pricing_cost_eur_actual": round(pricing_cost_field, 4),
                 "user_price_eur_charged": round(charged, 4),
                 "user_price_eur_should_have_been": round(should_have_been, 2),
                 "delta_eur": delta_eur,
@@ -497,13 +487,10 @@ def _apply_cancel_effective(rec):
         return rec
     charged = float(rec.get("user_price_eur_charged", 0) or 0)
     cost = float(rec.get("google_cost_eur_actual", 0) or 0)
-    # Base per la % di deriva: LISTINO quando il record la porta (Gemini,
-    # dopo la separazione prezzo/costo reale), altrimenti il costo (unica
-    # nozione di costo per Speechify/traduzione/ottimizzazione). Coincide con
-    # `cost` quando Cloudflare non e' configurato o il record non e' Gemini:
-    # nessun cambio di comportamento in quei casi.
-    drift_base = float(rec.get("pricing_cost_eur_actual", cost) or cost)
     should = float(rec.get("user_price_eur_should_have_been", 0) or 0)
+    # Base per la % di deriva: il listino dovuto a consuntivo quando il record
+    # lo porta, altrimenti il costo (traduzione/ottimizzazione).
+    drift_base = should if should > 0 else cost
     cancel_retained = rec.get("cancel_retained_eur")
     outcome = rec.get("outcome") or ""
     if outcome in _FULL_REFUND_OUTCOMES:
@@ -628,7 +615,7 @@ def admin_api_gemini_cost_audit():
     agg_n = 0
     agg_rev = 0.0
     agg_cost = 0.0
-    agg_pricing_cost = 0.0
+    agg_should = 0.0
     agg_delta = 0.0
     agg_fee = 0.0
     for r in recs:
@@ -637,14 +624,11 @@ def admin_api_gemini_cost_audit():
             continue
         agg_n += 1
         agg_rev += float(r.get("_eff_revenue_eur", 0) or 0)
-        google_cost_actual = float(r.get("google_cost_eur_actual", 0) or 0)
-        agg_cost += google_cost_actual
-        # Base del delta_pct_avg: LISTINO (D1), non costo reale (vedi
-        # gemini_cost_audit.aggregate() per lo stesso pattern). Il costo
-        # reale (agg_cost) resta usato per margin_eur/net_margin_eur, che
-        # riguardano la marginalita' effettiva, non il confronto di prezzo.
-        agg_pricing_cost += float(
-            r.get("pricing_cost_eur_actual", google_cost_actual) or google_cost_actual)
+        agg_cost += float(r.get("google_cost_eur_actual", 0) or 0)
+        # Base del delta_pct_avg: listino dovuto sui secondi reali (vedi
+        # gemini_cost_audit.aggregate()). Il costo reale (agg_cost) resta
+        # usato per margin_eur/net_margin_eur.
+        agg_should += float(r.get("user_price_eur_should_have_been", 0) or 0)
         agg_delta += float(r.get("_eff_delta_eur", 0) or 0)
         agg_fee += float(r.get("_paypal_fee_eur", 0) or 0)
     agg = {
@@ -654,7 +638,7 @@ def admin_api_gemini_cost_audit():
         "margin_eur": round(agg_rev - agg_cost, 4),
         "paypal_fees_eur": round(agg_fee, 4),
         "net_margin_eur": round(agg_rev - agg_cost - agg_fee, 4),
-        "delta_pct_avg": round((agg_delta / agg_pricing_cost * 100), 2) if agg_pricing_cost > 0 else 0.0,
+        "delta_pct_avg": round((agg_delta / agg_should * 100), 2) if agg_should > 0 else 0.0,
         "filters": {"model": _norm(model), "language": _norm(language),
                     "date_from": date_from, "date_to": date_to},
     }
@@ -1432,32 +1416,35 @@ def admin_api_gemini_recalc_params():
         groups_global.setdefault((model, lang), []).append(rec)
         groups_rate.setdefault((model, lang, rstep), []).append(rec)
 
-    def _label_for(avg_delta_pct):
+    def _label_for(avg_delta_pct, lang):
+        # Il prezzo e' tariffa fissa x secondi stimati dalla tabella car/s per
+        # lingua: un delta sistematico e' un errore della tabella, non del
+        # margine. delta>0 = audio reale piu' lungo del quotato.
+        env = f"ABM_GEMINI_CHARS_PER_SEC_{str(lang).upper()}"
         if avg_delta_pct > 5:
-            return "margine alto, valuta riduzione tariffa utente"
+            return f"stima durata bassa (prezzo incassato sotto il dovuto), riduci {env}"
         if avg_delta_pct < -5:
-            return "margine in perdita, valuta aumento tariffa utente o sec_per_kchars"
+            return f"stima durata alta (prezzo incassato sopra il dovuto), alza {env}"
         return "parametri OK"
 
     def _rate_label(step):
         # Mappa step -> etichetta UI (cfr. SPEED_KEYS in app.js)
         return {-3: "vs", -2: "s", -1: "ss", 0: "n", 1: "sf", 2: "f", 3: "vf"}.get(int(step), str(step))
 
-    # DELTA% = delta_eur / listino (pricing_cost_eur_actual), sempre sulla
-    # base di LISTINO (D1), mai sul costo reale sostenuto dal backend che ha
-    # eseguito il job: coerente con gemini_cost_audit.aggregate() e con
-    # l'aggregato di admin_api_gemini_cost_audit(). Calcolato sui totali del
-    # gruppo: piu` robusto della media semplice di percentuali (outlier su
-    # record con costo molto piccolo). Fallback su google_cost_eur_actual per
-    # record storici pre-esistenti alla separazione listino/reale (dove i due
-    # numeri coincidevano comunque).
+    # DELTA% = sum(delta_eur) / sum(listino dovuto sui secondi reali): coerente
+    # con gemini_cost_audit.aggregate() e con admin_api_gemini_cost_audit().
+    # Calcolato sui totali del gruppo: piu` robusto della media semplice di
+    # percentuali (outlier su record molto piccoli).
     def _avg_delta_pct(recs):
         d_sum = sum(float(r.get("delta_eur") or 0) for r in recs)
-        c_sum = 0.0
-        for r in recs:
-            google_cost_actual = float(r.get("google_cost_eur_actual", 0) or 0)
-            c_sum += float(r.get("pricing_cost_eur_actual", google_cost_actual) or google_cost_actual)
-        return (d_sum / c_sum * 100.0) if c_sum > 0 else 0.0
+        s_sum = sum(float(r.get("user_price_eur_should_have_been") or 0) for r in recs)
+        return (d_sum / s_sum * 100.0) if s_sum > 0 else 0.0
+
+    def _measured_cps(recs):
+        # car/s reali del gruppo, da confrontare con la tabella car/s.
+        chars = sum(int(r.get("chars_total") or 0) for r in recs)
+        secs = sum(float(r.get("audio_seconds_actual") or 0) for r in recs)
+        return (chars / secs) if secs > 0 else None
 
     suggestions = []
     suggestions.append("=== Aggregato globale (model / lang) ===")
@@ -1468,7 +1455,7 @@ def admin_api_gemini_recalc_params():
             suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) campioni insufficienti (servono >=3)")
             continue
         avg = _avg_delta_pct(recs)
-        suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) avg delta {avg:+.2f}% — {_label_for(avg)}")
+        suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) avg delta {avg:+.2f}% — {_label_for(avg, lang)}")
 
     suggestions.append("")
     suggestions.append("=== Per velocità (model / lang / rate_step) ===")
@@ -1484,7 +1471,11 @@ def admin_api_gemini_recalc_params():
         if n < 3:
             suggestions.append(f"{head} campioni insufficienti")
         else:
-            suggestions.append(f"{head} avg delta {avg:+.2f}% — {_label_for(avg)}")
+            cps = _measured_cps(recs)
+            cps_str = f", car/s reali {cps:.2f}" if cps else ""
+            if cps and rstep == 0 and gemini_tts is not None:
+                cps_str += f" (tabella {gemini_tts.list_chars_per_second(lang):.2f})"
+            suggestions.append(f"{head} avg delta {avg:+.2f}%{cps_str} — {_label_for(avg, lang)}")
     return jsonify({
         "suggestions": suggestions,
         "groups_total": len(groups_global),

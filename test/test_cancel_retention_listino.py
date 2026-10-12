@@ -1,24 +1,21 @@
-"""F1: il trattenuto/rimborso di un cancel volontario Gemini deve dipendere
-dal costo di LISTINO della quota di lavoro eseguita, non dal costo REALE
-sostenuto dal backend che ha eseguito quel lavoro (D1 su un percorso di
-denaro). Prima della correzione, generation_engine.py passava
-`gemini_actual["google_cost_eur"]` (reale) a
-`cancel_policy.compute_cancel_retention`: un cancel su un chunk servito da
-Cloudflare e uno andato in failover su Vertex avrebbero trattenuto cifre
-diverse a parita' di lavoro svolto, per una scelta di infrastruttura invisibile
+"""Il trattenuto di un cancel volontario Gemini dipende dal LISTINO del
+lavoro consegnato (tariffa €/ora x secondi di audio prodotti), non dal costo
+sostenuto dal backend che lo ha eseguito: un cancel su un chunk servito da
+Cloudflare e uno andato in failover su Vertex trattengono la stessa cifra a
+parita' di audio consegnato, per una scelta di infrastruttura invisibile
 all'utente.
 
-Esercita il vero ramo _CancelledError di run_generation (non solo la funzione
-pura cancel_policy.compute_cancel_retention) cancellando il job dopo il primo
-di due chunk pianificati, con `actual_cost_breakdown` (reale) che varia per
-backend ma `pricing_cost_breakdown` (listino) costante fra gli scenari — cosi'
-come accade davvero quando lo stesso lavoro finisce eseguito su backend
-diversi a parita' di configurazione/tariffa di listino.
+Esercita il vero ramo _CancelledError di run_generation cancellando il job
+dopo il primo di due chunk pianificati, con `actual_cost_breakdown` (reale)
+che varia per backend.
 """
 import cancel_policy
 import gemini_cost_audit
 import gemini_tts
 import generation_engine
+
+# 1800 s di audio PCM 24 kHz s16le mono: mezz'ora -> 0,95 EUR a 1,90 EUR/h.
+_BYTES_HALF_HOUR = 24000 * 2 * 1800
 
 
 class _Info:
@@ -29,7 +26,7 @@ class _Info:
 
 
 def _run_cancel_after_first_chunk(monkeypatch, tmp_path, job_id, backend_first_chunk,
-                                  real_cost_eur, pricing_cost_eur):
+                                  real_cost_eur):
     """Esegue run_generation su un piano di 2 chunk, cancellando il job subito
     dopo che il primo e' stato processato (side effect della fake TTS), e
     restituisce il job risultante."""
@@ -49,7 +46,7 @@ def _run_cancel_after_first_chunk(monkeypatch, tmp_path, job_id, backend_first_c
             # processare il secondo chunk.
             job["cancelled"] = True
         return {
-            "success": True, "bytes_written": 1000,
+            "success": True, "bytes_written": _BYTES_HALF_HOUR,
             "input_tokens": 100, "output_tokens": 500,
             "model_key": "flash31", "voice_name": "Zephyr", "attempts_used": 1,
             "backend": backend_first_chunk,
@@ -60,11 +57,6 @@ def _run_cancel_after_first_chunk(monkeypatch, tmp_path, job_id, backend_first_c
         return {"total_eur": real_cost_eur}
     monkeypatch.setattr(generation_engine.gemini_tts, "actual_cost_breakdown",
                         fake_actual_breakdown, raising=False)
-
-    def fake_pricing_breakdown(in_t, out_t, model_key):
-        return {"total_eur": pricing_cost_eur}
-    monkeypatch.setattr(generation_engine.gemini_tts, "pricing_cost_breakdown",
-                        fake_pricing_breakdown, raising=False)
 
     plan = [
         {"chapter_index": 1, "chapter_title": "Cap 1", "chunk_index": 0,
@@ -98,38 +90,31 @@ def _run_cancel_after_first_chunk(monkeypatch, tmp_path, job_id, backend_first_c
 
 
 def test_cancel_retention_identical_across_backends_same_listino(monkeypatch, tmp_path):
-    """Stesso listino (0.30), costo reale diverso (Cloudflare 0.10 vs Vertex
+    """Stesso audio consegnato, costo reale diverso (Cloudflare 0.10 vs Vertex
     dopo failover 0.50): il trattenuto/rimborso deve coincidere."""
+    monkeypatch.delenv("ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR", raising=False)
     job_cf = _run_cancel_after_first_chunk(
         monkeypatch, tmp_path, "job-cf", backend_first_chunk="cloudflare",
-        real_cost_eur=0.10, pricing_cost_eur=0.30)
+        real_cost_eur=0.10)
     job_vertex = _run_cancel_after_first_chunk(
         monkeypatch, tmp_path, "job-vx", backend_first_chunk="vertex",
-        real_cost_eur=0.50, pricing_cost_eur=0.30)
+        real_cost_eur=0.50)
 
     assert job_cf["gemini_actual"]["google_cost_eur"] == 0.10
     assert job_vertex["gemini_actual"]["google_cost_eur"] == 0.50
-    assert job_cf["gemini_actual"]["pricing_cost_eur"] == 0.30
-    assert job_vertex["gemini_actual"]["pricing_cost_eur"] == 0.30
+    assert "pricing_cost_eur" not in job_cf["gemini_actual"]
 
     cm_cf = job_cf["cancel_meta"]
     cm_vx = job_vertex["cancel_meta"]
     assert cm_cf["retained_eur"] == cm_vx["retained_eur"]
     assert cm_cf["refund_eur"] == cm_vx["refund_eur"]
 
-    # Prova positiva: il trattenuto e' quello che darebbe cancel_policy sul
-    # LISTINO (0.30), non sul costo reale di nessuno dei due scenari.
-    margin_pct = gemini_tts.get_margin_percent("flash31")
-    expected = cancel_policy.compute_cancel_retention(
-        0.30, "paypal", 5.0, margin_percent=margin_pct)
-    assert cm_cf["retained_eur"] == expected["retained_eur"]
-    assert cm_cf["refund_eur"] == expected["refund_eur"]
+    # Prova positiva: il trattenuto e' il LISTINO della mezz'ora consegnata
+    # (0,95 EUR a 1,90 EUR/h), col tetto del pagato.
+    listino = gemini_tts.compute_user_price_eur(1800.0, "flash31")["list_price_eur"]
+    expected = cancel_policy.compute_cancel_retention(listino, 5.0)
+    assert cm_cf["retained_eur"] == expected["retained_eur"] == 0.95
+    assert cm_cf["refund_eur"] == expected["refund_eur"] == 4.05
 
-    # Prova negativa: NON e' il valore che si otterrebbe usando il costo
-    # reale (dimostra che il fix davvero cambia il comportamento pre-fix).
-    wrong_cf = cancel_policy.compute_cancel_retention(
-        0.10, "paypal", 5.0, margin_percent=margin_pct)
-    wrong_vx = cancel_policy.compute_cancel_retention(
-        0.50, "paypal", 5.0, margin_percent=margin_pct)
-    assert cm_cf["retained_eur"] != wrong_cf["retained_eur"]
-    assert cm_vx["retained_eur"] != wrong_vx["retained_eur"]
+    # Prova negativa: non e' ne' il costo reale ne' un suo multiplo.
+    assert cm_cf["retained_eur"] not in (0.10, 0.50)

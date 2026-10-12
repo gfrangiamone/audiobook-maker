@@ -11,7 +11,7 @@ def test_flash25_rimosso_dal_catalogo():
 
 
 def test_campi_catalogo_presenti_per_ogni_modello():
-    richiesti = {"env_prefix", "margin_default", "audio_tokens_per_second",
+    richiesti = {"env_prefix", "eur_per_audio_hour_default", "audio_tokens_per_second",
                  "default_rpm", "default_rpd", "http_timeout_ms",
                  "preview_timeout_sec", "backends_allowed",
                  "mark_unavailable_on_fatal"}
@@ -20,14 +20,14 @@ def test_campi_catalogo_presenti_per_ogni_modello():
 
 
 def test_flash31_valori_storici(monkeypatch):
-    for env in ("ABM_GEMINI_31FLASH_MARGIN_PERCENT",
+    for env in ("ABM_GEMINI_31FLASH_EUR_PER_AUDIO_HOUR",
                 "ABM_GEMINI_MIN_INTERVAL_FLASH31_MS", "ABM_GEMINI_RPM_FLASH31",
                 "ABM_GEMINI_RPD_FLASH31", "ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31",
                 "ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31",
                 "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31",
                 "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND"):
         monkeypatch.delenv(env, raising=False)
-    assert gemini_tts.get_margin_percent("flash31") == 25.0
+    assert gemini_tts.eur_per_audio_hour("flash31") == 1.90
     assert gemini_tts._min_interval_ms("flash31") == 0
     assert gemini_tts._rpd_cap("flash31") == 0
     assert gemini_tts._http_timeout_ms("flash31") == 60000
@@ -47,9 +47,9 @@ def test_rpm_vince_sull_alias(monkeypatch):
     assert gemini_tts._min_interval_ms("flash31") == 100
 
 
-def test_margine_modello_ignoto():
+def test_tariffa_modello_ignoto():
     with pytest.raises(ValueError):
-        gemini_tts.get_margin_percent("flash25")
+        gemini_tts.eur_per_audio_hour("flash25")
 
 
 def test_usage_e_rpd_iterano_il_catalogo():

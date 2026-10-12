@@ -1,12 +1,12 @@
 """Test /admin/api/gemini_cost_audit/recalc-params endpoint.
 
-NB: l'endpoint calcola DELTA% = sum(delta_eur) / sum(pricing_cost_eur_actual) * 100
-sul gruppo (model, lang), sempre sulla base di LISTINO (D1), mai sul costo
-reale sostenuto dal backend che ha eseguito il job (google_cost_eur_actual è
-usato solo come fallback per record legacy privi di pricing_cost_eur_actual,
-dove i due numeri coincidevano comunque). Produce un report a sezioni con
-header fissi ("=== Aggregato globale ===", "=== Per velocità ==="). I record
-vengono valutati solo se il gruppo ha >=3 campioni.
+L'endpoint calcola DELTA% = sum(delta_eur) / sum(user_price_eur_should_have_been)
+* 100 sul gruppo (model, lang): scostamento fra incasso e listino dovuto sui
+secondi reali, mai sul costo del backend. Un delta sistematico e' un errore
+della tabella car/s della lingua, e il suggerimento e' sull'env
+ABM_GEMINI_CHARS_PER_SEC_<LANG>. Report a sezioni con header fissi
+("=== Aggregato globale ===", "=== Per velocità ==="); i gruppi si valutano
+solo con >=3 campioni.
 """
 import pytest
 import gemini_cost_audit
@@ -26,18 +26,21 @@ def admin_headers():
     return {"X-Admin-Token": "test-admin-token"}
 
 
-def _add(model, lang, delta_eur, job_id, google_cost=0.5, pricing_cost=None):
+def _add(model, lang, delta_eur, job_id, google_cost=0.5, should=1.0,
+         chars=None, audio_seconds=None):
     rec = {
         "job_id": job_id,
         "model_key": model,
         "language": lang,
         "outcome": "completed",
         "user_price_eur_charged": 1.0,
+        "user_price_eur_should_have_been": should,
         "google_cost_eur_actual": google_cost,
         "delta_eur": delta_eur,
     }
-    if pricing_cost is not None:
-        rec["pricing_cost_eur_actual"] = pricing_cost
+    if chars is not None:
+        rec["chars_total"] = chars
+        rec["audio_seconds_actual"] = audio_seconds
     gemini_cost_audit.append_record(rec)
 
 
@@ -65,7 +68,8 @@ def test_recalc_params_empty_returns_no_groups(client, admin_headers):
 
 
 def test_recalc_params_emits_suggestion_for_full_group(client, admin_headers):
-    # 3 record stesso gruppo, delta positivo => DELTA% = 0.3/1.5 = +20% => margine alto
+    # 3 record, delta positivo => DELTA% = 0.3/3.0 = +10% => audio reale piu'
+    # lungo del quotato => stima durata bassa, ridurre car/s.
     for i in range(3):
         _add("flash31", "it", 0.1, f"j{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
@@ -75,7 +79,8 @@ def test_recalc_params_emits_suggestion_for_full_group(client, admin_headers):
     assert d["groups_evaluated"] == 1
     line = _global_line(d, "flash31", "it")
     assert line is not None
-    assert "margine alto" in line
+    assert "stima durata bassa" in line
+    assert "riduci ABM_GEMINI_CHARS_PER_SEC_IT" in line
 
 
 def test_recalc_params_skips_small_group(client, admin_headers):
@@ -93,8 +98,9 @@ def test_recalc_params_skips_small_group(client, admin_headers):
     assert "campioni insufficienti" in line
 
 
-def test_recalc_params_loss_suggestion(client, admin_headers):
-    # delta negativo => DELTA% = -0.3/1.5 = -20% => margine in perdita
+def test_recalc_params_high_estimate_suggestion(client, admin_headers):
+    # delta negativo => DELTA% = -0.3/3.0 = -10% => audio piu' corto del
+    # quotato => stima durata alta, alzare car/s.
     for i in range(3):
         _add("pro25", "en", -0.1, f"k{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
@@ -102,11 +108,12 @@ def test_recalc_params_loss_suggestion(client, admin_headers):
     d = r.get_json()
     line = _global_line(d, "pro25", "en")
     assert line is not None
-    assert "perdita" in line
+    assert "stima durata alta" in line
+    assert "alza ABM_GEMINI_CHARS_PER_SEC_EN" in line
 
 
 def test_recalc_params_ok_suggestion(client, admin_headers):
-    # delta piccolo => DELTA% = 0.03/1.5 = +2% (entro +-5%) => parametri OK
+    # delta piccolo => DELTA% = 0.03/3.0 = +1% (entro +-5%) => parametri OK
     for i in range(3):
         _add("flash31", "fr", 0.01, f"m{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
@@ -117,19 +124,30 @@ def test_recalc_params_ok_suggestion(client, admin_headers):
     assert "parametri OK" in line
 
 
-def test_recalc_params_uses_pricing_cost_not_actual(client, admin_headers):
-    # D1: DELTA% deve dividere per il LISTINO (pricing_cost_eur_actual),
-    # mai per il costo reale (google_cost_eur_actual). Qui i due differiscono
-    # deliberatamente: se il denominatore fosse il costo reale, il segnale
-    # sarebbe "margine alto" (falso allarme); sul listino resta "parametri OK".
-    # sum(delta)=0.15, sum(pricing)=7.5 => +2% (OK)
-    # sum(delta)=0.15, sum(google)=1.5  => +10% (margine alto) <- SBAGLIATO
+def test_recalc_params_uses_listino_not_actual_cost(client, admin_headers):
+    # DELTA% divide per il listino dovuto, mai per il costo del backend. Qui i
+    # due differiscono deliberatamente: sul costo (0.5*3) il segnale sarebbe
+    # +10% (falso allarme); sul listino (2.5*3) resta +2% (OK).
     for i in range(3):
-        _add("pro25", "de", 0.05, f"p{i}", google_cost=0.5, pricing_cost=2.5)
+        _add("pro25", "de", 0.05, f"p{i}", google_cost=0.5, should=2.5)
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     d = r.get_json()
     line = _global_line(d, "pro25", "de")
     assert line is not None
     assert "parametri OK" in line
-    assert "margine alto" not in line
+    assert "stima durata" not in line
+
+
+def test_recalc_params_reports_measured_chars_per_second(client, admin_headers):
+    # Per velocita' normale la riga riporta i car/s reali del gruppo accanto
+    # alla tabella di listino, per aggiornarla a colpo d'occhio.
+    for i in range(3):
+        _add("flash31", "it", 0.0, f"c{i}", chars=1200, audio_seconds=100.0)
+    r = client.get("/admin/api/gemini_cost_audit/recalc-params",
+                   headers=admin_headers)
+    d = r.get_json()
+    rate_line = next(s for s in d["suggestions"]
+                     if s.strip().startswith("[flash31 / it / step=+0"))
+    assert "car/s reali 12.00" in rate_line
+    assert "tabella 14.60" in rate_line

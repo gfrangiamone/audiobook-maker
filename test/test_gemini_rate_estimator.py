@@ -154,4 +154,7 @@ def test_estimate_book_cost_usa_la_voce(rate_log):
     veloce = gemini_tts.estimate_book_cost(chs, "gemini:flash31:Algenib", language="en")
     lenta = gemini_tts.estimate_book_cost(chs, "gemini:flash31:Enceladus", language="en")
     assert veloce["voice"] == "Algenib"
-    assert lenta["audio_seconds_est"] > veloce["audio_seconds_est"] * 1.15
+    # La voce muove la stima di COSTO (rate empirico), non il listino.
+    assert lenta["audio_seconds_cost_est"] > veloce["audio_seconds_cost_est"] * 1.15
+    assert lenta["audio_seconds_est"] == veloce["audio_seconds_est"]
+    assert lenta["list_price_eur"] == veloce["list_price_eur"]
