@@ -3102,7 +3102,17 @@ def admin_login():
     data = request.get_json(silent=True) or {}
     tok = (data.get("token") or "").strip()
     remember = bool(data.get("remember", True))
+    # Il token admin non si indovina alla velocita' della rete: 5 tentativi
+    # al minuto e 20 all'ora per IP, piu' la stessa pausa di `admin_required`
+    # su ogni fallimento (S10, 2026-10-12).
+    _ok, _retry = _ip_rl_check("admin_login", client_ip(), 5, 20)
+    if not _ok:
+        resp = jsonify({"error": "Too many attempts"})
+        resp.status_code = 429
+        resp.headers["Retry-After"] = str(max(1, int(_retry or 1)))
+        return resp
     if not _admin_auth_ok(tok):
+        time.sleep(0.5)
         return jsonify({"error": "Invalid token"}), 401
     resp = jsonify({"ok": True})
     # 30 giorni con "remember" (default), 8 ore altrimenti. Il cookie è HttpOnly+Strict
