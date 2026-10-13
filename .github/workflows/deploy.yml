@@ -19,7 +19,7 @@ jobs:
       ABM_ADMIN_TOKEN: ci-admin-token
       # Senza, l'import della app prova il default /var/lib/audiobook-maker,
       # non scrivibile sul runner: 128 errori di collection al primo run.
-      ABM_DATA_DIR: ${{ runner.temp }}/abm-data
+      ABM_DATA_DIR: /tmp/abm-data   # `runner.temp` non e' disponibile nell'env di job
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
