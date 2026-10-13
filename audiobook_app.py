@@ -7222,7 +7222,7 @@ def api_optimize():
             _claimed_pay = None
             with payment._payments_lock:
                 pay = payment._payments.get(payment_token)
-                if pay and not pay.get("used") and pay.get("amount_eur", 0) >= _due:
+                if pay and not pay.get("used") and not pay.get("pending_unfunded") and pay.get("amount_eur", 0) >= _due:
                     pay["used"] = True
                     pay["used_at"] = time.time()
                     pay["used_job_id"] = job_id
@@ -7380,7 +7380,7 @@ def api_optimize():
             if payment.payment_info(_combined_token) is not None:
                 with payment._payments_lock:
                     _pay = payment._payments.get(_combined_token)
-                    if (_pay and not _pay.get("used")
+                    if (_pay and not _pay.get("used") and not _pay.get("pending_unfunded")
                             and float(_pay.get("amount_eur", 0)) + 0.05
                             >= _expected_total):
                         _pay["used"] = True
@@ -7550,7 +7550,7 @@ def api_optimize():
             if payment.payment_info(_combined_token_spx) is not None:
                 with payment._payments_lock:
                     _pay_spx = payment._payments.get(_combined_token_spx)
-                    if (_pay_spx and not _pay_spx.get("used")
+                    if (_pay_spx and not _pay_spx.get("used") and not _pay_spx.get("pending_unfunded")
                             and float(_pay_spx.get("amount_eur", 0)) + 0.05
                             >= _expected_total_spx):
                         _pay_spx["used"] = True
@@ -7707,7 +7707,7 @@ def api_optimize():
             if payment.payment_info(_combined_token_vox) is not None:
                 with payment._payments_lock:
                     _pay_vox = payment._payments.get(_combined_token_vox)
-                    if (_pay_vox and not _pay_vox.get("used")
+                    if (_pay_vox and not _pay_vox.get("used") and not _pay_vox.get("pending_unfunded")
                             and float(_pay_vox.get("amount_eur", 0)) + 0.05
                             >= _expected_total_vox):
                         _pay_vox["used"] = True
@@ -8055,7 +8055,7 @@ def api_translate():
             _claimed_pay = None
             with payment._payments_lock:
                 pay = payment._payments.get(payment_token)
-                if pay and not pay.get("used") \
+                if pay and not pay.get("used") and not pay.get("pending_unfunded") \
                         and pay.get("amount_eur", 0) + 0.01 >= est["due_eur"]:
                     pay["used"] = True
                     pay["used_at"] = time.time()
