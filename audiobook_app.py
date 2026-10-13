@@ -6979,6 +6979,17 @@ def api_optimize():
     _gate = _premium_model_gate(_voice_in)
     if _gate is not None:
         return _gate
+    # Voce campionata con auto_generate: la generazione parte da
+    # run_optimization senza passare da /api/generate, quindi lo stesso gate
+    # di proprieta'/lingua della voce va applicato qui (S6, 2026-10-12).
+    if auto_generate and _voice_in.startswith(voice_clone.VOICE_ID_PREFIX):
+        _vc_err_code = voice_clone.check_use(_voice_in, _get_client_id(), _i18n.norm_lang(lang),
+                                             (data.get("locale") or "").strip())
+        if _vc_err_code:
+            _vc_status = {"voice_gone": 410, "voice_not_authorized": 403,
+                          "voice_lang_mismatch": 400}.get(_vc_err_code, 400)
+            return jsonify({"error": f"Voice sample not usable: {_vc_err_code}",
+                            "error_code": _vc_err_code}), _vc_status
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
         if sc == 404:
