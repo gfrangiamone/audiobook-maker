@@ -1017,6 +1017,56 @@ def test_consegna_fallita_risottomette_il_capitolo(tmp_path, monkeypatch):
     assert cancellate == ["voxcpm/j/ch1.pcm"] * 2
 
 
+def test_upload_fallito_sul_worker_risottomette_il_capitolo(tmp_path, monkeypatch):
+    # 13/10/2026: il worker ha sintetizzato ma non caricato, e il job e'
+    # tornato FAILED. Il libro era a 31 capitoli su 32: ora il capitolo si
+    # rifa' a concorrenza invariata con una URL firmata nuova.
+    import storage_backend
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    firme = []
+
+    def firma(key, ttl=None):
+        firme.append(key)
+        return f"https://r2.esempio/x?firma={len(firme)}"
+
+    monkeypatch.setattr(storage_backend, "presigned_put_url", firma)
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, ttl=None: "https://r2.esempio/x?get")
+    cancellate = []
+    monkeypatch.setattr(storage_backend, "delete_object", cancellate.append)
+    monkeypatch.setattr(voxcpm_tts, "_scarica",
+                        lambda url, dest: open(dest, "wb").write(b"\x07" * 64) and None)
+    esito = {"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
+             "audio_seconds": 1.0, "tts_seconds": 0.5, "failed_indices": []}
+    finto = FintoRunJob(
+        voxcpm_tts.VoxcpmConsegnaFallita(
+            "job j-1 FAILED: upload su presigned PUT fallito", "j-1"),
+        dict(esito))
+    stats, dest = sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
+    assert os.path.getsize(dest) == 64
+    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 32]
+    p1, p2 = (p["input"]["s3"]["put_url"] for p in finto.payload)
+    assert p1 != p2
+    assert stats["redone"] == 1
+    # Un PUT caduto a meta' puo' lasciare un oggetto: si toglie prima del
+    # giro nuovo, e poi come sempre dopo il download.
+    assert cancellate == ["voxcpm/j/ch1.pcm"] * 2
+
+
+def test_upload_fallito_a_oltranza_perde_il_capitolo(tmp_path, monkeypatch):
+    import storage_backend
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "presigned_put_url",
+                        lambda key, ttl=None: "https://r2.esempio/x?firma")
+    monkeypatch.setattr(storage_backend, "delete_object", lambda k: None)
+    finto = FintoRunJob(*[
+        voxcpm_tts.VoxcpmConsegnaFallita("upload su presigned PUT fallito")
+        for _ in range(voxcpm_tts.DELIVERY_RETRIES + 1)])
+    with pytest.raises(voxcpm_tts.VoxcpmConsegnaFallita):
+        sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
+    assert len(finto.payload) == voxcpm_tts.DELIVERY_RETRIES + 1
+
+
 def test_consegna_fallita_a_oltranza_perde_il_capitolo(tmp_path, monkeypatch):
     import storage_backend
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)

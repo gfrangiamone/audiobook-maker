@@ -492,6 +492,15 @@ _GPU_PRESSURE = ("out of memory", "cuda", "nvml", "cublas", "device-side",
 # appena nato ha ucciso un libro a 28 capitoli su 39.
 _PREPARAZIONE_VOCE = ("_denoise_ref", "_encode_cached", "encode_latents")
 
+# Inizio del campo `error` con cui il worker dice "ho sintetizzato, ma il
+# caricamento su R2 non e' andato" (`_deliver_audio` in handler.py). RunPod
+# marca FAILED ogni uscita con `error`, quindi il caso arriva qui e non in
+# `_consegna`. Il 13/10/2026 (px7jGh66O_do_D6cd4cfUg) un capitolo di 22 minuti
+# perso cosi' e' diventato un VoxcpmJobError nudo e ha ucciso il libro a 31
+# capitoli su 32. Solo gli upload falliti: una configurazione S3 mancante non
+# migliora rifacendo il capitolo.
+_UPLOAD_FALLITO = ("upload su presigned put fallito", "upload s3 fallito")
+
 # Quanto del dettaglio d'errore finisce nel messaggio dell'eccezione: la testa
 # (stato, campi diagnostici) e la coda, dove un traceback porta il tipo
 # dell'eccezione. Il solo `[:400]` di prima tagliava proprio quello.
@@ -590,6 +599,9 @@ def _errore_del_job(out, testo, job_id, completo=""):
         return VoxcpmMotoreCompromesso(testo, job_id)
     if any(k.lower() in basso for k in _PREPARAZIONE_VOCE):
         return VoxcpmMotoreCompromesso(testo, job_id)
+    errore = str(out.get("error") or "").lower()
+    if errore.startswith(_UPLOAD_FALLITO):
+        return VoxcpmConsegnaFallita(testo, job_id)
     return VoxcpmJobError(testo, job_id)
 
 
@@ -947,6 +959,12 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
             dettaglio = json.dumps(out) if out else json.dumps(
                 st.get("error") or st)
             testo = f"job {job_id} {stato}: {_accorcia_dettaglio(dettaglio)}"
+            if out.get("error") and len(dettaglio) > (_DETTAGLIO_TESTA
+                                                      + _DETTAGLIO_CODA):
+                # Su un'uscita lunga (chunk_samples, verifiche) la chiave
+                # `error` cade nel mezzo tagliato via: senza questa riga il
+                # motivo del guasto non resta in nessun log.
+                testo += f" | error: {str(out['error'])[:_DETTAGLIO_CODA]}"
             if (stato in ("TIMED_OUT", "CANCELLED")
                     or _EXEC_TIMEOUT_RUNPOD in dettaglio.lower()):
                 # RunPod l'ha chiuso lei, non il worker: e' "partito e mai
@@ -1609,6 +1627,21 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     capitolo = key or os.path.basename(str(dest_path))
     motivo_rifaccio = ""
     tentativo, rimbalzi, riconsegne, risottomissioni = 0, 0, 0, 0
+
+    def _riconsegna(e):
+        # La sintesi c'e' stata, e' l'audio a non essere arrivato: si rifa'
+        # il capitolo a concorrenza invariata (la GPU non c'entra) e senza
+        # toccare il budget dei silenzi. Due strade portano qui: il download
+        # fallito in `_consegna` e l'upload fallito sul worker.
+        nonlocal riconsegne
+        riconsegne += 1
+        stats["redone"] += 1
+        if riconsegne > DELIVERY_RETRIES:
+            raise e
+        _LOG.warning(
+            "capitolo sintetizzato ma non consegnato (%s): lo risottometto, "
+            "%d di %d", e, riconsegne, DELIVERY_RETRIES)
+
     while True:
         if cancelled is not None and cancelled():
             raise VoxcpmJobError("job annullato: nessun altro worker acceso")
@@ -1681,6 +1714,15 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 e, 60 * risottomissioni, risottomissioni,
                 SUBMIT_CHAPTER_RETRIES)
             riposa(60 * risottomissioni)
+            continue
+        except VoxcpmConsegnaFallita as e:
+            # L'upload sul worker e' caduto (`_errore_del_job`): RunPod ha
+            # marcato FAILED un job che l'audio l'aveva prodotto. Un PUT
+            # fallito a meta' puo' lasciare un oggetto: va tolto prima del
+            # giro nuovo, che firma una URL fresca sulla stessa chiave.
+            if su_r2:
+                _cancella_intermedio(key)
+            _riconsegna(e)
             continue
         except (VoxcpmBloccato, VoxcpmMotoreCompromesso) as e:
             # Stesso rimedio, due sintomi: il worker che si e' fermato e la
@@ -1795,20 +1837,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                     scritti = _consegna(out, dest_path, key, su_r2, conc,
                                         len(chunks))
                 except VoxcpmConsegnaFallita as e:
-                    # La sintesi c'e' stata, e' l'audio a non essere
-                    # arrivato: si rifa' il capitolo a concorrenza
-                    # invariata (la GPU non c'entra) e senza toccare il
-                    # budget dei silenzi. L'intermedio su R2, se c'era,
-                    # `_consegna` l'ha gia' cancellato: il giro nuovo ne
-                    # carica uno fresco sulla stessa chiave.
-                    riconsegne += 1
-                    stats["redone"] += 1
-                    if riconsegne > DELIVERY_RETRIES:
-                        raise
-                    _LOG.warning(
-                        "capitolo sintetizzato ma non consegnato (%s): lo "
-                        "risottometto, %d di %d", e, riconsegne,
-                        DELIVERY_RETRIES)
+                    # L'intermedio su R2, se c'era, `_consegna` l'ha gia'
+                    # cancellato: il giro nuovo ne carica uno fresco sulla
+                    # stessa chiave.
+                    _riconsegna(e)
                     continue
                 stats["bytes"] = scritti
                 return stats
