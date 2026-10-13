@@ -1516,6 +1516,8 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     - auto_cancel=True => l'interruzione NON e' stata chiesta dall'utente
       (heartbeat scaduto, job soppiantato): scrivergli "hai annullato tu"
       sarebbe falso e lo lascia senza spiegazione di cosa e' successo.
+    - download_url vuoto => nessun audio parziale (motori che non lo
+      consegnano): via oggetto, paragrafo e pulsante del download.
     """
     if not (email and _smtp_available()):
         return
@@ -1523,11 +1525,16 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     title_safe = _esc_html(_sanitize_header(book_title or t["default_title"], max_len=120))
     refund = f"{refund_eur:.2f}"
     kind = "autocancel" if auto_cancel else "cancel"
-    subject = t[f"{kind}_subject"].format(amount=refund)
+    subject_key = f"{kind}_subject" if download_url else f"{kind}_subject_nopartial"
+    subject = t[subject_key].format(amount=refund)
     heading = t[f"{kind}_heading"]
     intro = t[f"{kind}_intro"].format(title=title_safe)
     note = f"<p>{t['autocancel_note']}</p>" if auto_cancel else ""
     dl_safe = (download_url or "").replace('"', "%22")
+    partial_block = f"""<p>{t["partial_saved"]}</p>
+  <p style="text-align:center;margin:20px 0">
+    <a href="{dl_safe}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">{t["download_btn"]}</a>
+  </p>""" if download_url else ""
     if refund_eur > 0:
         refund_block = _premium_refund_block(t, refund, voucher_code, email)
     else:
@@ -1535,10 +1542,7 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     html_body = _layout.layout(f"""  <h2 style="color:#d97706">{heading}</h2>
   <p>{t["hello"]}</p>
   <p>{intro}</p>
-  <p>{t["partial_saved"]}</p>
-  <p style="text-align:center;margin:20px 0">
-    <a href="{dl_safe}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">{t["download_btn"]}</a>
-  </p>
+  {partial_block}
   <h3 style="margin-top:28px;color:#333">{t["refund_title"]}</h3>
   <table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0">
     <tr><td style="padding:6px 0;color:#666">{t["paid_label"]}</td><td style="padding:6px 0;text-align:right"><strong>{paid_eur:.2f} EUR</strong></td></tr>

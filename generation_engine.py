@@ -2828,9 +2828,13 @@ def _cancel_cleanup_workdir(job, job_id, work_dir, partial_audio_delivered):
     Job ucciso dalla moderazione anti-abuso (`abuse_terminated`): chunk e
     work_dir restano al loro posto per `ABM_ABUSE_KEEP_HOURS` (marcatore
     `abuse_kept_until`, letto dal cleanup loop di audiobook_app): il
-    ripristino da console e' un rilancio con riuso dei chunk. Altrimenti:
-    via i PCM/prompt intermedi e, se non e' stato consegnato audio parziale,
-    tutta la work_dir (comportamento storico del ramo _CancelledError).
+    ripristino da console e' un rilancio con riuso dei chunk. Motore con
+    riuso dei chunk (manifest di `chunk_reuse`): via solo i prompt, chunk e
+    manifest restano, cosi' un rilancio dello stesso job con gli stessi
+    parametri (per esempio solo un altro formato d'uscita) riparte dai
+    capitoli gia' sintetizzati; la work_dir la porta via la cleanup del job
+    ("stale analyzed"). Altrimenti: via i PCM/prompt intermedi e, se non e'
+    stato consegnato audio parziale, tutta la work_dir.
     """
     try:
         if not work_dir.exists():
@@ -2839,6 +2843,13 @@ def _cancel_cleanup_workdir(job, job_id, work_dir, partial_audio_delivered):
             job["abuse_kept_until"] = time.time() + abuse_watch.keep_hours() * 3600
             print(f"[{job_id}] abuse kill: work_dir conservata fino a "
                   f"{job['abuse_kept_until']:.0f}", flush=True)
+            return
+        if ((chunk_reuse.read_manifest(work_dir) or {}).get("engine")
+                in chunk_reuse.REUSABLE_ENGINES):
+            for p in work_dir.glob("prompt*.txt"):
+                try: p.unlink()
+                except OSError: pass
+            print(f"[{job_id}] cancel: chunk conservati per il riuso", flush=True)
             return
         # Conserva l'MP3 parziale finche' il token download e' vivo:
         # rimuoviamo solo i PCM/sub-dir intermedi, non output_dir.
@@ -2951,6 +2962,100 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0,
         job["refund_llm_eur"] = llm_eur
         _mark_optimization_refunded(job_id, llm_eur, reason)
     return result
+
+
+def _cancel_retention(job, engine, voice, info):
+    """(pagato, trattenuto, rimborso) del cancel di un job premium: il
+    trattenuto e' il listino del lavoro gia' consegnato da questo run, col
+    tetto del pagato (`cancel_policy`). La quota LLM non entra: sul cancel
+    volontario resta trattenuta a parte (vedi `_refund_gemini_payment`)."""
+    paid = float((job.get("payment") or {}).get("total_eur", 0) or 0)
+    consumed = _tts_engines.ENGINES[engine].consumed_list_price_eur(
+        job, voice, _audit_language(job, info))
+    cr = cancel_policy.compute_cancel_retention(consumed, paid)
+    return paid, cr["retained_eur"], cr["refund_eur"]
+
+
+def cancel_preview_amounts(job):
+    """Trattenuto e rimborso che un cancel UTENTE produrrebbe adesso, per la
+    modale di conferma (`/api/cancel_preview`). Stessa formula del ramo
+    _CancelledError di run_generation. None per voci non premium o job
+    senza pagamento premium: la modale ripiega sulla sua stima."""
+    voice = job.get("voice", "") or ""
+    eng = _tts_engines.premium_for_voice(voice)
+    if eng is None or not (job.get("payment") or {}).get("total_eur"):
+        return None
+    paid, retained, refund = _cancel_retention(job, eng.name, voice, job.get("info"))
+    return {"engine": eng.name, "paid_eur": round(paid, 2),
+            "retained_eur": retained, "refund_eur": refund,
+            # Solo Gemini consegna l'MP3 parziale al cancel.
+            "partial_audio": eng.name == "gemini"}
+
+
+def _cancel_refund_no_partial(job_id, job, voice, info, engine):
+    """Cancel di un job Speechify/VoxCPM pagato (nessun audio parziale).
+    Annullato dall'utente: si trattiene il listino del lavoro gia'
+    sintetizzato e si rimborsa il resto. Annullato da altro (kill admin,
+    heartbeat, moderazione): rimborso integrale, per l'utente e' un
+    fallimento. Poi audit, buono ed email PayPal. Mai fatale; un errore nel
+    calcolo della trattenuta ripiega sul rimborso integrale."""
+    paid = float((job.get("payment") or {}).get("total_eur", 0) or 0)
+    retained, refund = 0.0, round(paid, 2)
+    if job.get("cancel_reason") == "user" and not job.get("server_interrupted"):
+        try:
+            paid, retained, refund = _cancel_retention(job, engine, voice, info)
+        except Exception as e:
+            print(f"[{job_id}] {engine} cancel retention failed, full refund: {e}")
+    job["cancel_meta"] = {
+        "paid_eur": round(paid, 2),
+        "retained_eur": retained,
+        "refund_eur": refund,
+        "progress_pct": _progress_pct(job),
+        "partial_audio_delivered": False,
+    }
+    _write_premium_audit(
+        job_id, job, voice, info,
+        "cancelled_partial" if retained > 0 else "cancelled_refunded", engine)
+    try:
+        refund_result = _refund_gemini_payment(
+            job_id, job, "cancelled", retained_eur=retained)
+    except Exception as e:
+        print(f"[{job_id}] {engine} cancel refund failed (non-fatal): {e}")
+        return
+    print(f"[{job_id}] {engine} cancel ({job.get('cancel_reason') or '-'}): "
+          f"pagato {paid:.2f}, trattenuto {retained:.2f}, rimborso {refund:.2f} EUR")
+    # Il buono PayPal esiste solo in questa email: senza, il cliente non sa
+    # di averlo (job vTq5ItTo--xGTcjoVDWHMg, 13/10/2026: buono mai
+    # comunicato, libro ripagato). Il riaccredito su voucher resta silenzioso.
+    if refund_result and refund_result.get("method") == "paypal":
+        _send_cancel_email(job_id, job, info, paid, retained, refund,
+                           refund_result, None)
+
+
+def _send_cancel_email(job_id, job, info, paid, retained, refund,
+                       refund_result, download_url):
+    """Email del cancel di un job premium pagato: pagato, trattenuto,
+    rimborso e buono. `download_url` None = nessun audio parziale (VoxCPM,
+    Speechify). Best-effort."""
+    if not (refund_result and refund_result.get("email")):
+        return
+    try:
+        email_service._send_gemini_cancelled_partial_email(
+            email=refund_result["email"],
+            paid_eur=round(paid, 2),
+            retained_eur=retained,
+            refund_eur=refund,
+            voucher_code=refund_result.get("voucher_code"),
+            book_title=(getattr(info, "title", "") or
+                        job.get("original_filename", "")),
+            download_url=download_url,
+            lang=job.get("browser_lang", "it"),
+            # L'utente non ha annullato nulla se e' stato l'heartbeat (o
+            # un'altra causa automatica) a chiudere il job: il testo cambia.
+            auto_cancel=(job.get("cancel_reason", "user") != "user"),
+        )
+    except Exception as e:
+        print(f"[{job_id}] cancel email failed: {e}")
 
 
 def _mark_optimization_refunded(job_id, llm_eur, reason):
@@ -6430,6 +6535,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     # terminale per misurare durata ed esito di QUESTA generazione.
     job["_lm_gen_t0"] = time.time()
     job["cancelled"] = False
+    # Stato del run precedente sullo stesso job in memoria: il motivo del
+    # cancel (`_check_cancelled` lo scrive con setdefault) e i contatori
+    # VoxCPM (nascono con setdefault in `_voxcpm_pre_pass`). Senza questo
+    # pop un rilancio dopo un cancel eredita "user"/"heartbeat" e somma nel
+    # proprio audit i caratteri del run annullato, gia' auditati al cancel.
+    # gemini_actual e speechify_actual si riscrivono piu' sotto.
+    for _k in ("cancel_reason", "cancel_meta", "voxcpm_actual"):
+        job.pop(_k, None)
     my_epoch = job.get("gen_epoch", 0)
     job["last_poll"] = time.time()
     # Conserva il rate scelto sul job: serve all'audit Gemini (calibrazione
@@ -7696,28 +7809,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         if still_current and use_gemini:
             try:
-                actual = job.get("gemini_actual") or {}
-                payment_meta = job.get("payment") or {}
-                paid = float(payment_meta.get("total_eur", 0) or 0)
-                method = payment_meta.get("method", "")
-
                 # Base del trattenuto: LISTINO sull'audio gia' prodotto
                 # (tariffa €/ora x secondi reali), mai il costo del backend
                 # che ha eseguito: un failover a meta' job non deve cambiare
                 # quanto tratteniamo per lo stesso lavoro consegnato.
-                list_consumed = 0.0
-                try:
-                    if gemini_tts is not None and _is_gemini_voice(voice):
-                        _mk, _, _ = gemini_tts.parse_voice_id(voice)
-                        list_consumed = float(gemini_tts.compute_user_price_eur(
-                            float(actual.get("audio_seconds", 0.0) or 0.0), _mk
-                        ).get("list_price_eur", 0.0) or 0.0)
-                except Exception as _lp_err:
-                    print(f"[{job_id}] list price lookup failed (retaining 0): {_lp_err}")
-
-                cr = cancel_policy.compute_cancel_retention(list_consumed, paid)
-                retained = cr["retained_eur"]
-                refund = cr["refund_eur"]
+                paid, retained, refund = _cancel_retention(
+                    job, "gemini", voice, info)
 
                 # Encoding MP3 parziale (best-effort)
                 try:
@@ -7773,28 +7870,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 refund_result = _refund_gemini_payment(
                     job_id, job, "cancelled", retained_eur=retained)
 
-                if (refund_result and refund_result.get("email")
-                        and partial_audio_delivered
-                        and hasattr(email_service, "_send_gemini_cancelled_partial_email")):
-                    try:
-                        email_service._send_gemini_cancelled_partial_email(
-                            email=refund_result["email"],
-                            paid_eur=round(paid, 2),
-                            retained_eur=retained,
-                            refund_eur=refund,
-                            voucher_code=refund_result.get("voucher_code"),
-                            book_title=(getattr(info, "title", "") or
-                                        job.get("original_filename", "")),
-                            download_url=partial_download_url,
-                            lang=job.get("browser_lang", "it"),
-                            # L'utente non ha annullato nulla se e' stato
-                            # l'heartbeat (o un'altra causa automatica) a
-                            # chiudere il job: il testo dell'email cambia.
-                            auto_cancel=(job.get("cancel_reason", "user")
-                                         != "user"),
-                        )
-                    except Exception as e:
-                        print(f"[{job_id}] cancel partial email failed: {e}")
+                if partial_audio_delivered:
+                    _send_cancel_email(job_id, job, info, paid, retained, refund,
+                                       refund_result, partial_download_url)
             except Exception as cancel_err:
                 print(f"[{job_id}] Cancel partial flow error (fallback to legacy): {cancel_err}")
                 _write_premium_audit(job_id, job, voice, info, "cancelled_refunded", "gemini")
@@ -7805,16 +7883,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         elif use_gemini and not still_current:
             print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
         elif (use_speechify or use_voxcpm) and still_current:
-            # Cancel volontario di un job Speechify/VoxCPM pagato: rimborso
-            # INTEGRALE (nessuna retention parziale; l'audio parziale non viene
-            # consegnato per questi motori). Tasca premium job["payment"] come
-            # Gemini. _refund_gemini_payment e' no-op se il job non era pagato.
-            _engine = _premium_engine(False, use_speechify, use_voxcpm)
-            _write_premium_audit(job_id, job, voice, info, "cancelled_refunded", _engine)
-            try:
-                _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
-            except Exception as _ref_err:
-                print(f"[{job_id}] {_engine} cancel refund failed (non-fatal): {_ref_err}")
+            # Trattenuta solo sul cancel utente, rimborso del resto; nessun
+            # audio parziale. I capitoli VoxCPM restano nella work_dir per il
+            # riuso (`_cancel_cleanup_workdir`).
+            _cancel_refund_no_partial(
+                job_id, job, voice, info,
+                _premium_engine(False, use_speechify, use_voxcpm))
 
         if still_current:
             # Cancel volontario = job concluso per il batch: senza questo mark

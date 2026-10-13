@@ -5775,15 +5775,22 @@ def api_cancel_preview(job_id):
                 pct = max(0, min(100, int(job.get("tr_progress_current", 0) / _tt * 100)))
         lock_pct = env_int("ABM_GEMINI_CANCEL_LOCK_PCT", 70)
         # Il lock anti-abuso è una soglia sul cancel volontario delle voci
-        # PREMIUM (TTS Gemini): non si applica alla traduzione, il cui cancel
-        # non ha alcun lock. Evita la nota fuorviante nella modale admin.
-        _is_translation = job.get("status") == "translating"
+        # Gemini, come in /api/cancel: non si applica alla traduzione ne' agli
+        # altri motori PREMIUM, il cui cancel non ha alcun lock. Evita la nota
+        # fuorviante nella modale admin.
+        _lockable = (job.get("status") != "translating"
+                     and _is_gemini_voice(job.get("voice", "")
+                                          or job.get("opt_voice", "") or ""))
+        amounts = generation_engine.cancel_preview_amounts(job)
     return jsonify({
         "paid_eur": paid_eur,
         "paid_method": paid_method,
         "progress_pct": pct,
         "lock_pct": lock_pct,
-        "locked": (not _is_translation and 0 < lock_pct < 100 and pct > lock_pct),
+        "locked": (_lockable and 0 < lock_pct < 100 and pct > lock_pct),
+        # Trattenuto/rimborso calcolati dal server sul lavoro gia' consegnato
+        # (None: la modale usa la sua stima sull'avanzamento).
+        "cancel_amounts": amounts,
     })
 
 

@@ -94,6 +94,30 @@ class Engine:
             return m.estimate_book_cost(chapters, language=self.only_language)
         return m.estimate_book_cost(chapters, language=language or "it")
 
+    def consumed_list_price_eur(self, job, voice=None, language=None):
+        """Listino del lavoro gia' consegnato da questo run (`<motore>_actual`
+        sul job): base della trattenuta su un cancel volontario. Gemini paga
+        i secondi di audio, Speechify i caratteri fatturati, VoxCPM i
+        caratteri dei capitoli finiti pesati per lingua. 0.0 se il job non
+        ha misure o il listino non risponde."""
+        actual = (job or {}).get(f"{self.name}_actual") or {}
+        m = self.mod()
+        try:
+            if self.name == "gemini":
+                model_key = m.parse_voice_id(voice)[0]
+                price = m.compute_user_price_eur(
+                    float(actual.get("audio_seconds", 0.0) or 0.0), model_key)
+            elif self.name == "speechify":
+                price = m.compute_user_price_eur(
+                    int(actual.get("billable_chars", 0) or 0)
+                    or int(actual.get("chars", 0) or 0))
+            else:
+                price = m.compute_user_price_eur(
+                    int(actual.get("chars", 0) or 0), language)
+            return float(price.get("list_price_eur", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
 
 ENGINES = {
     "gemini": Engine("gemini", "gemini_tts", is_gemini_voice, "gemini_estimate", "_write_gemini_audit",

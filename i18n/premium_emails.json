@@ -28,7 +28,9 @@
       "interrupted_restart": "il servizio e' stato riavviato mentre la generazione era in corso e il lavoro non ha potuto riprendere"
     },
     "cancel_subject": "Audiobook Maker — Generazione annullata, audio parziale disponibile ({amount} EUR rimborsati)",
+    "cancel_subject_nopartial": "Audiobook Maker — Generazione annullata ({amount} EUR rimborsati)",
     "autocancel_subject": "Audiobook Maker — Generazione interrotta, audio parziale disponibile ({amount} EUR rimborsati)",
+    "autocancel_subject_nopartial": "Audiobook Maker — Generazione interrotta ({amount} EUR rimborsati)",
     "cancel_heading": "&#x26A0;&#xFE0F; Generazione annullata su tua richiesta",
     "autocancel_heading": "&#x26A0;&#xFE0F; Generazione interrotta",
     "cancel_intro": "hai annullato la generazione delle voci PREMIUM per <strong>{title}</strong> mentre era in corso.",
@@ -72,7 +74,9 @@
       "interrupted_restart": "the service was restarted while the generation was in progress and the job could not resume"
     },
     "cancel_subject": "Audiobook Maker — Generation cancelled, partial audio available ({amount} EUR refunded)",
+    "cancel_subject_nopartial": "Audiobook Maker — Generation cancelled ({amount} EUR refunded)",
     "autocancel_subject": "Audiobook Maker — Generation interrupted, partial audio available ({amount} EUR refunded)",
+    "autocancel_subject_nopartial": "Audiobook Maker — Generation interrupted ({amount} EUR refunded)",
     "cancel_heading": "&#x26A0;&#xFE0F; Generation cancelled at your request",
     "autocancel_heading": "&#x26A0;&#xFE0F; Generation interrupted",
     "cancel_intro": "you cancelled the PREMIUM voice generation for <strong>{title}</strong> while it was in progress.",
@@ -116,7 +120,9 @@
       "interrupted_restart": "le service a été redémarré pendant la génération et le traitement n'a pas pu reprendre"
     },
     "cancel_subject": "Audiobook Maker — Génération annulée, audio partiel disponible ({amount} EUR remboursés)",
+    "cancel_subject_nopartial": "Audiobook Maker — Génération annulée ({amount} EUR remboursés)",
     "autocancel_subject": "Audiobook Maker — Génération interrompue, audio partiel disponible ({amount} EUR remboursés)",
+    "autocancel_subject_nopartial": "Audiobook Maker — Génération interrompue ({amount} EUR remboursés)",
     "cancel_heading": "&#x26A0;&#xFE0F; Génération annulée à votre demande",
     "autocancel_heading": "&#x26A0;&#xFE0F; Génération interrompue",
     "cancel_intro": "vous avez annulé la génération avec voix PREMIUM de <strong>{title}</strong> alors qu'elle était en cours.",
@@ -160,7 +166,9 @@
       "interrupted_restart": "el servicio se reinició durante la generación y el trabajo no pudo reanudarse"
     },
     "cancel_subject": "Audiobook Maker — Generación cancelada, audio parcial disponible ({amount} EUR reembolsados)",
+    "cancel_subject_nopartial": "Audiobook Maker — Generación cancelada ({amount} EUR reembolsados)",
     "autocancel_subject": "Audiobook Maker — Generación interrumpida, audio parcial disponible ({amount} EUR reembolsados)",
+    "autocancel_subject_nopartial": "Audiobook Maker — Generación interrumpida ({amount} EUR reembolsados)",
     "cancel_heading": "&#x26A0;&#xFE0F; Generación cancelada a petición tuya",
     "autocancel_heading": "&#x26A0;&#xFE0F; Generación interrumpida",
     "cancel_intro": "has cancelado la generación con voz PREMIUM de <strong>{title}</strong> mientras estaba en curso.",
@@ -204,7 +212,9 @@
       "interrupted_restart": "der Dienst wurde während der laufenden Generierung neu gestartet, und der Auftrag konnte nicht fortgesetzt werden"
     },
     "cancel_subject": "Audiobook Maker — Generierung abgebrochen, Teilaudio verfügbar ({amount} EUR erstattet)",
+    "cancel_subject_nopartial": "Audiobook Maker — Generierung abgebrochen ({amount} EUR erstattet)",
     "autocancel_subject": "Audiobook Maker — Generierung unterbrochen, Teilaudio verfügbar ({amount} EUR erstattet)",
+    "autocancel_subject_nopartial": "Audiobook Maker — Generierung unterbrochen ({amount} EUR erstattet)",
     "cancel_heading": "&#x26A0;&#xFE0F; Generierung auf Ihren Wunsch abgebrochen",
     "autocancel_heading": "&#x26A0;&#xFE0F; Generierung unterbrochen",
     "cancel_intro": "Sie haben die laufende Generierung mit PREMIUM-Stimme für <strong>{title}</strong> abgebrochen.",
@@ -248,7 +258,9 @@
       "interrupted_restart": "生成过程中服务被重启，任务无法恢复"
     },
     "cancel_subject": "Audiobook Maker — 生成已取消，可下载部分音频（已退款 {amount} 欧元）",
+    "cancel_subject_nopartial": "Audiobook Maker — 生成已取消（已退款 {amount} 欧元）",
     "autocancel_subject": "Audiobook Maker — 生成已中断，可下载部分音频（已退款 {amount} 欧元）",
+    "autocancel_subject_nopartial": "Audiobook Maker — 生成已中断（已退款 {amount} 欧元）",
     "cancel_heading": "&#x26A0;&#xFE0F; 已按您的要求取消生成",
     "autocancel_heading": "&#x26A0;&#xFE0F; 生成已中断",
     "cancel_intro": "您在 <strong>{title}</strong> 的 PREMIUM 语音生成进行中将其取消了。",
@@ -292,7 +304,9 @@
       "interrupted_restart": "जनरेशन के दौरान सेवा पुनः आरंभ हुई और कार्य फिर से शुरू नहीं हो सका"
     },
     "cancel_subject": "Audiobook Maker — जनरेशन रद्द, आंशिक ऑडियो उपलब्ध ({amount} EUR रिफ़ंड)",
+    "cancel_subject_nopartial": "Audiobook Maker — जनरेशन रद्द ({amount} EUR रिफ़ंड)",
     "autocancel_subject": "Audiobook Maker — जनरेशन बाधित, आंशिक ऑडियो उपलब्ध ({amount} EUR रिफ़ंड)",
+    "autocancel_subject_nopartial": "Audiobook Maker — जनरेशन बाधित ({amount} EUR रिफ़ंड)",
     "cancel_heading": "&#x26A0;&#xFE0F; आपके अनुरोध पर जनरेशन रद्द",
     "autocancel_heading": "&#x26A0;&#xFE0F; जनरेशन बाधित",
     "cancel_intro": "आपने <strong>{title}</strong> के लिए चल रही PREMIUM आवाज़ की जनरेशन रद्द कर दी।",

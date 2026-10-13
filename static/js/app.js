@@ -5398,17 +5398,24 @@ function _mkCancelModal(modalId, titleText, resolveFn){
 
 // Modal di conferma cancel per voci PREMIUM (Gemini): l'utente sta per
 // rinunciare a parte dell'importo gia' versato. Promise<bool>.
-function _confirmCancelGeminiModal(paid, pct){
+// `amounts`: trattenuto/rimborso calcolati dal server (/api/cancel_preview,
+// campo cancel_amounts). Assente: stima sull'avanzamento.
+function _confirmCancelGeminiModal(paid, pct, amounts){
   return new Promise(function(resolve){
     function _tf(k, fallback){var v=t(k); return (v===k||!v)?fallback:v;}
     var paidNum=Number(paid)||0;
     var pctNum=Math.max(0,Math.min(100, Math.round(Number(pct)||0)));
-    var refundEst=Math.max(0, paidNum * (100 - pctNum) / 100 - 0.34);
+    var refundEst=(amounts && typeof amounts.refund_eur==='number')
+      ? amounts.refund_eur
+      : Math.max(0, paidNum * (100 - pctNum) / 100 - 0.34);
+    var noPartial=!!(amounts && amounts.partial_audio===false);
     var m=_mkCancelModal('cancelConfirmModal',
       _tf('cancel_confirm_title','Annullare la generazione?'), resolve);
     var p=document.createElement('p');
     p.style.cssText='margin:0 0 12px;color:#1f2937';
-    p.textContent=_tf('cancel_confirm_body','Stai per annullare la generazione delle voci PREMIUM. Riceverai l\'audio parziale già generato, ma una parte dell\'importo versato sarà trattenuta per coprire il costo del servizio già consumato.');
+    p.textContent=noPartial
+      ? _tf('cancel_confirm_body_nopartial','Stai per annullare la generazione delle voci PREMIUM. Verrà trattenuta la parte dell\'importo versato che copre i capitoli già generati e riceverai il rimborso del resto. L\'audio parziale non viene consegnato.')
+      : _tf('cancel_confirm_body','Stai per annullare la generazione delle voci PREMIUM. Riceverai l\'audio parziale già generato, ma una parte dell\'importo versato sarà trattenuta per coprire il costo del servizio già consumato.');
     m.body.insertBefore(p, m.footer);
     var ul=document.createElement('ul');
     ul.style.cssText='margin:0 0 12px;padding-left:8px;color:#1f2937;list-style:none';
@@ -5546,7 +5553,9 @@ function _completeCancelUI(){
 function cancelJob(){
   if(!jobId||!generating)return;
   var voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
-  if(_isGeminiVoiceId(voice)){
+  // Tutte le voci PREMIUM chiedono conferma: il cancel trattiene la quota
+  // gia' sintetizzata (VoxCPM/Speechify compresi, senza audio parziale).
+  if(_isGeminiVoiceId(voice)||_isSpeechifyVoiceId(voice)||_isVoxcpmVoiceId(voice)){
     // Snapshot autoritativo dal server: paid_eur viene letto da
     // job.payment.total_eur (stessa fonte usata dal refund handler).
     // Evita race condition con SSE quando l'utente fa F5 e clicca cancel
@@ -5563,7 +5572,7 @@ function cancelJob(){
       }
       var paid=d && typeof d.paid_eur==='number' ? d.paid_eur : paidFallback;
       var pct=d && typeof d.progress_pct==='number' ? d.progress_pct : pctFallback;
-      _confirmCancelGeminiModal(paid, pct).then(function(yes){
+      _confirmCancelGeminiModal(paid, pct, d && d.cancel_amounts).then(function(yes){
         if(!yes) return;
         // force=1: il modale di conferma è già un'azione esplicita dell'utente,
         // by-passa la guardia server email_registered (che resta attiva solo per
