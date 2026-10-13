@@ -41,7 +41,6 @@ def test_guard_and_logging_resolve_on_the_app(monkeypatch, tmp_path):
     monkeypatch.setattr(audiobook_app, "_admin_auth_ok", lambda provided: True)
     monkeypatch.setattr(payment, "_vouchers", {}, raising=False)
     monkeypatch.setattr(payment, "_save_vouchers", lambda: None)
-    monkeypatch.setattr(rv, "_save_vouchers", lambda: None)
     logged = []
     monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: logged.append(a[2]))
     monkeypatch.setattr(audiobook_app, "client_ip", lambda: "9.9.9.9")

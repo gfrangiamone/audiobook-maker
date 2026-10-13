@@ -22,7 +22,7 @@ import email_service
 import payment
 from email_service import _smtp_available
 from page_brand import page_template as _page_template
-from payment import VOUCHER_EXPIRY_DAYS, _create_voucher, _save_vouchers, _voucher_remaining
+from payment import VOUCHER_EXPIRY_DAYS, _create_voucher, _voucher_remaining
 
 bp = Blueprint("admin_vouchers", __name__)
 
@@ -97,7 +97,7 @@ def admin_api_vouchers():
 
     if request.method == "GET":
         items = []
-        for code, v in payment._vouchers.items():
+        for code, v in payment.iter_vouchers():
             items.append({
                 "code": code,
                 "email": v.get("email", ""),
@@ -151,10 +151,7 @@ def admin_api_vouchers():
             if m_job:
                 origin_job_id = m_job.group(1)
         if origin_job_id and not origin_order_id:
-            for _oid, _pay in payment._payments.items():
-                if origin_job_id in (_pay.get("used_for_job"), _pay.get("job_id")):
-                    origin_order_id = _oid
-                    break
+            origin_order_id = payment.order_id_for_job(origin_job_id)
     else:
         origin_job_id = origin_order_id = ""
 
@@ -167,7 +164,7 @@ def admin_api_vouchers():
         for _ in range(20):
             core = "-".join("".join(secrets.choice(_alpha) for _ in range(4)) for _ in range(3))
             cand = prefix + core
-            if cand not in payment._vouchers:
+            if payment.voucher_info(cand) is None:
                 custom_code = cand
                 break
         if not custom_code:
@@ -191,7 +188,7 @@ def admin_api_vouchers():
     return jsonify({
         "code": code,
         "amount_eur": bonus_amount,
-        "expires_at": payment._vouchers[code].get("expires_at"),
+        "expires_at": (payment.voucher_info(code) or {}).get("expires_at"),
         "kind": kind,
         "origin_job_id": origin_job_id or None,
         "origin_order_id": origin_order_id or None,
@@ -204,16 +201,8 @@ def admin_api_voucher_revoke(code):
     """Revoca (marca usato) un voucher."""
     code = (code or "").strip().upper()
     reason = ((request.get_json(silent=True) or {}).get("reason") or "").strip()[:200]
-    with payment._vouchers_lock:
-        if code not in payment._vouchers:
-            return jsonify({"error": "Not found"}), 404
-        v = payment._vouchers[code]
-        v["used"] = True
-        v["used_at"] = time.time()
-        v["remaining_eur"] = 0.0
-        v["revoked"] = True
-        v["revoke_reason"] = reason or "admin revoke"
-        _save_vouchers()
+    if not payment.revoke_voucher(code, reason):
+        return jsonify({"error": "Not found"}), 404
     _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", client_ip(), code[:8] + "...", reason[:40])
     print(f"[admin] voucher revoked via UI: {payment.mask_code(code)} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
@@ -226,14 +215,13 @@ def admin_api_voucher_notify(code):
     if not _smtp_available():
         return jsonify({"error": "SMTP not configured"}), 503
     code = (code or "").strip().upper()
-    with payment._vouchers_lock:
-        v = payment._vouchers.get(code)
-        if not v:
-            return jsonify({"error": "Not found"}), 404
-        email = (v.get("email") or "").strip()
-        amount_eur = float(v.get("amount_eur") or 0)
-        created_at = v.get("created_at") or time.time()
-        expires_at = v.get("expires_at")
+    v = payment.voucher_info(code)
+    if not v:
+        return jsonify({"error": "Not found"}), 404
+    email = (v.get("email") or "").strip()
+    amount_eur = float(v.get("amount_eur") or 0)
+    created_at = v.get("created_at") or time.time()
+    expires_at = v.get("expires_at")
     if not email or "@" not in email:
         return jsonify({"error": "voucher has no recipient email"}), 400
     if expires_at:

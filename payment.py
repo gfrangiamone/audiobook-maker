@@ -1030,6 +1030,58 @@ def email_for_token(token: str) -> str:
     return ""
 
 
+def payment_info(order_id) -> dict | None:
+    """Copia del record di un ordine PayPal catturato, o None se ignoto.
+
+    Per LEGGERE email/importo/stato fuori da payment.py senza toccare
+    `_payments`: le modifiche passano da consume/release/settle/refund (M4).
+    """
+    with _payments_lock:
+        pay = _payments.get(order_id or "")
+        return dict(pay) if isinstance(pay, dict) else None
+
+
+def voucher_info(code) -> dict | None:
+    """Come `payment_info` per un voucher (saldo via `_voucher_remaining`)."""
+    with _vouchers_lock:
+        v = _vouchers.get(code or "")
+        return dict(v) if isinstance(v, dict) else None
+
+
+def iter_vouchers():
+    """Istantanea `(codice, copia)` di tutti i voucher, per la console admin."""
+    with _vouchers_lock:
+        return [(c, dict(v)) for c, v in _vouchers.items()]
+
+
+def order_id_for_job(job_id) -> str:
+    """Ordine PayPal speso per `job_id` (`used_for_job` di consume_payment_token,
+    `used_job_id` dei claim in audiobook_app, o il `job_id` della capture), o ""."""
+    if not job_id:
+        return ""
+    with _payments_lock:
+        for oid, pay in _payments.items():
+            if job_id in (pay.get("used_for_job"), pay.get("used_job_id"), pay.get("job_id")):
+                return oid
+    return ""
+
+
+def revoke_voucher(code, reason="") -> bool:
+    """Console admin: marca usato un voucher (saldo a zero, `revoked=True`).
+    False se il codice non esiste."""
+    with _vouchers_lock:
+        v = _vouchers.get(code)
+        if not v:
+            return False
+        v["used"] = True
+        v["used_at"] = time.time()
+        v["remaining_eur"] = 0.0
+        v["revoked"] = True
+        v["revoke_reason"] = reason or "admin revoke"
+        _save_vouchers()
+    return True
+
+
 def _paypal_error_details(r):
     """Estrae (issue, name, description, debug_id) da una risposta PayPal 4xx/5xx.
 

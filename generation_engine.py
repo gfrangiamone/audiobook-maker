@@ -2490,7 +2490,7 @@ def _notify_user_premium_job_failed(job_id, job, refund):
     expiry = ""
     if code:
         try:
-            v = payment._vouchers.get(code, {})
+            v = payment.voucher_info(code) or {}
             amount = float(v.get("amount_eur", amount) or amount)
             if v.get("expires_at"):
                 expiry = time.strftime("%d/%m/%Y",
@@ -2595,16 +2595,8 @@ def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
         voucher_code = job.get("refund_voucher_code") or None
         # Determina email destinataria
         email = ""
-        try:
-            tok = payment_meta.get("token")
-            if method == "voucher" and tok:
-                v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
-                email = v.get("email", "") or ""
-            elif method == "paypal" and tok:
-                pay = payment._payments.get(tok, {})
-                email = pay.get("email", "") or ""
-        except Exception:
-            email = ""
+        tok = payment_meta.get("token")
+        email = payment.email_for_token(tok) if method in ("voucher", "paypal") else ""
         # Titolo libro
         book_title = ""
         try:
@@ -2922,24 +2914,15 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0,
     apply_bonus = not (reason == "cancelled" or float(retained_eur or 0.0) > 0)
     result = {"method": method, "amount_eur": refund_amt, "email": "", "voucher_code": None}
     if refund_amt <= 0:
-        try:
-            if method == "voucher":
-                v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
-                result["email"] = v.get("email", "") or ""
-            elif method == "paypal":
-                pay = payment._payments.get(tok, {})
-                result["email"] = pay.get("email", "") or ""
-        except Exception:
-            pass
+        if method in ("voucher", "paypal"):
+            result["email"] = payment.email_for_token(tok)
         return result
     try:
         if method == "voucher":
             payment._voucher_refund(tok, refund_amt, job_id=job_id, reason=reason)
-            voucher = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
-            result["email"] = voucher.get("email", "") or ""
+            result["email"] = payment.email_for_token(tok)
         elif method == "paypal":
-            pay = payment._payments.get(tok, {})
-            email = pay.get("email", "") or ""
+            email = payment.email_for_token(tok)
             result["email"] = email
             if email:
                 code, _bonus = payment._create_voucher(
@@ -3103,15 +3086,7 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
         return
     email = ""
     voucher_code = job.get("refund_voucher_code") or None
-    try:
-        if method == "voucher":
-            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
-            email = v.get("email", "") or ""
-        elif method == "paypal":
-            pay = payment._payments.get(tok, {})
-            email = pay.get("email", "") or ""
-    except Exception:
-        email = ""
+    email = payment.email_for_token(tok) if method in ("voucher", "paypal") else ""
     if not email:
         print(f"[{job_id}] No email available for refund notification "
               f"(method={method}, token={tok}).")
@@ -6007,15 +5982,7 @@ def _notify_user_preflight_blocked(job_id, job, info, pf):
     method = payment_meta.get("method", "")
     tok = payment_meta.get("token")
     _email_to = ""
-    try:
-        if method == "voucher" and tok:
-            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
-            _email_to = v.get("email", "") or ""
-        elif method == "paypal" and tok:
-            pay = payment._payments.get(tok, {})
-            _email_to = pay.get("email", "") or ""
-    except Exception:
-        _email_to = ""
+    _email_to = payment.email_for_token(tok) if method in ("voucher", "paypal") else ""
     try:
         _book_title = getattr(info, "title", "") or job.get("original_filename", "")
     except Exception:

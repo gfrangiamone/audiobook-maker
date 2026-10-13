@@ -40,9 +40,7 @@
   "templates/seo_i18n.py": 1
  },
  "payment_private_state": {
-  "audiobook_app.py": 26,
-  "generation_engine.py": 11,
-  "routes_admin_vouchers.py": 7
+  "audiobook_app.py": 5
  },
  "retry_loop_by_hand": {
   "community_moderator.py": 1,
@@ -64,7 +62,7 @@
   "fileio.py": 2,
   "free_tts_quota.py": 1,
   "gemini_tts.py": 2,
-  "generation_engine.py": 35,
+  "generation_engine.py": 34,
   "llm_client.py": 1,
   "load_metrics.py": 4,
   "output_reuse.py": 1,

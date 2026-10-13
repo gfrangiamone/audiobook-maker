@@ -246,8 +246,9 @@ def _estimate_chapter_seconds(ch, language):
 
 # Payment / voucher state and operations live in payment.py.
 # Re-exported names below keep the rest of audiobook_app.py working unchanged.
-# Mutable state dicts (payment._payments, payment._vouchers, payment._paid_opt_done) are accessed via
-# `payment.<name>` because _load_*() rebinds the module globals at startup.
+# Lo stato (ordini, voucher, paid_opt_done) si legge con payment.payment_info /
+# voucher_info / email_for_token e si modifica con le API di payment: i dict
+# privati non si toccano da qui (M4, ratchet payment_private_state).
 from payment import (
     PAYPAL_CLIENT_ID, PAYPAL_MODE, PAYPAL_API_BASE,
     LLM_RATE_EUR_PER_MCHAR, LLM_FREE_THRESHOLD_EUR,
@@ -1428,8 +1429,7 @@ def _refund_payment_on_orphan(job_id, job, reason):
         if method == "voucher":
             payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
         elif method == "paypal":
-            pay = payment._payments.get(tok, {})
-            email = pay.get("email", "") or ""
+            email = payment.email_for_token(tok)
             if email:
                 refund_code, _ = payment._create_voucher(
                     email, amt, origin_order_id=tok, origin_job_id=job_id,
@@ -6420,10 +6420,9 @@ def api_voucher_validate():
     body = None
     if not code or not email:
         outcome, status, body = "MISSING_FIELDS", 400, {"error": "Code and email required", "valid": False, "reason": "missing_fields"}
-    elif code not in payment._vouchers:
+    elif (v := payment.voucher_info(code)) is None:
         outcome, status, body = "NOT_FOUND", 404, {"error": "Voucher not found", "valid": False, "reason": "not_found"}
     else:
-        v = payment._vouchers[code]
         remaining = _voucher_remaining(v)
         if v.get("expires_at", 0) < time.time():
             outcome, status, body = "EXPIRED", 400, {"error": "Voucher expired", "valid": False, "reason": "expired"}
@@ -7219,7 +7218,7 @@ def api_optimize():
         # da parte di richieste concorrenti. La persistenza su disco avviene fuori dal lock
         # perché _save_payments() riacquisisce _payments_lock (non rientrante).
         valid = False
-        if payment_token in payment._payments:
+        if payment.payment_info(payment_token) is not None:
             _claimed_pay = None
             with payment._payments_lock:
                 pay = payment._payments.get(payment_token)
@@ -7235,8 +7234,7 @@ def api_optimize():
                 job["payment_email"] = _claimed_pay.get("email", "")
                 job["payment_amount_eur"] = _claimed_pay.get("amount_eur", 0)
                 valid = True
-        elif payment_token in payment._vouchers:
-            v = payment._vouchers[payment_token]
+        elif (v := payment.voucher_info(payment_token)) is not None:
             remaining = _voucher_remaining(v)
             if v.get("expires_at", 0) > time.time() and remaining >= _due - 0.01:
                 try:
@@ -7379,7 +7377,7 @@ def api_optimize():
                 }), 402
             # Validazione + consume del token combinato.
             _consumed = False
-            if _combined_token in payment._payments:
+            if payment.payment_info(_combined_token) is not None:
                 with payment._payments_lock:
                     _pay = payment._payments.get(_combined_token)
                     if (_pay and not _pay.get("used")
@@ -7393,11 +7391,11 @@ def api_optimize():
                         _consumed = True
                 if _consumed:
                     _save_payments()
-            elif _combined_token in payment._vouchers:
+            elif payment.voucher_info(_combined_token) is not None:
                 try:
                     payment._voucher_consume(_combined_token, _expected_total,
                                              job_id=job_id)
-                    _v = payment._vouchers.get(_combined_token, {})
+                    _v = payment.voucher_info(_combined_token) or {}
                     _consumed_method = "voucher"
                     _consumed_email = _v.get("email", "") or ""
                     _consumed = True
@@ -7549,7 +7547,7 @@ def api_optimize():
             _consumed_spx = False
             _consumed_method_spx = ""
             _consumed_email_spx = ""
-            if _combined_token_spx in payment._payments:
+            if payment.payment_info(_combined_token_spx) is not None:
                 with payment._payments_lock:
                     _pay_spx = payment._payments.get(_combined_token_spx)
                     if (_pay_spx and not _pay_spx.get("used")
@@ -7563,11 +7561,11 @@ def api_optimize():
                         _consumed_spx = True
                 if _consumed_spx:
                     _save_payments()
-            elif _combined_token_spx in payment._vouchers:
+            elif payment.voucher_info(_combined_token_spx) is not None:
                 try:
                     payment._voucher_consume(_combined_token_spx, _expected_total_spx,
                                              job_id=job_id)
-                    _v_spx = payment._vouchers.get(_combined_token_spx, {})
+                    _v_spx = payment.voucher_info(_combined_token_spx) or {}
                     _consumed_method_spx = "voucher"
                     _consumed_email_spx = _v_spx.get("email", "") or ""
                     _consumed_spx = True
@@ -7706,7 +7704,7 @@ def api_optimize():
             _consumed_vox = False
             _consumed_method_vox = ""
             _consumed_email_vox = ""
-            if _combined_token_vox in payment._payments:
+            if payment.payment_info(_combined_token_vox) is not None:
                 with payment._payments_lock:
                     _pay_vox = payment._payments.get(_combined_token_vox)
                     if (_pay_vox and not _pay_vox.get("used")
@@ -7720,11 +7718,11 @@ def api_optimize():
                         _consumed_vox = True
                 if _consumed_vox:
                     _save_payments()
-            elif _combined_token_vox in payment._vouchers:
+            elif payment.voucher_info(_combined_token_vox) is not None:
                 try:
                     payment._voucher_consume(_combined_token_vox, _expected_total_vox,
                                              job_id=job_id)
-                    _v_vox = payment._vouchers.get(_combined_token_vox, {})
+                    _v_vox = payment.voucher_info(_combined_token_vox) or {}
                     _consumed_method_vox = "voucher"
                     _consumed_email_vox = _v_vox.get("email", "") or ""
                     _consumed_vox = True
@@ -8053,7 +8051,7 @@ def api_translate():
                             "error_code": "payment_required",
                             "due_eur": est["due_eur"]}), 402
         valid = False
-        if payment_token in payment._payments:
+        if payment.payment_info(payment_token) is not None:
             _claimed_pay = None
             with payment._payments_lock:
                 pay = payment._payments.get(payment_token)
@@ -8070,8 +8068,7 @@ def api_translate():
                 job["payment_email"] = _claimed_pay.get("email", "")
                 job["payment_amount_eur"] = _claimed_pay.get("amount_eur", 0)
                 valid = True
-        elif payment_token in payment._vouchers:
-            v = payment._vouchers[payment_token]
+        elif (v := payment.voucher_info(payment_token)) is not None:
             remaining = _voucher_remaining(v)
             if v.get("expires_at", 0) > time.time() \
                     and remaining >= est["due_eur"] - 0.01:
@@ -8102,7 +8099,7 @@ def api_translate():
         # voucher non richiedono azione (nulla è stato scalato). Vedi incidente
         # JM9_Vyd3UmB_J9GTfLNT7w.
         _tok = (data.get("payment_token") or "").strip()
-        if _tok and _tok in payment._payments:
+        if _tok and payment.payment_info(_tok) is not None:
             try:
                 _settled = payment.settle_capture_consumed(
                     _tok, job_id=job_id, reason="translate_free_settle")
