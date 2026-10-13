@@ -1899,11 +1899,14 @@ def _email_html_body(t, dl_url, details_html=None, podcast_section=None):
 
 def _completion_email_texts(book_title, retention_h):
     """i18n email di completamento generazione (audio/podcast)."""
+    # Il titolo viene dai metadati del file caricato: nell'HTML va escapato,
+    # nel subject (testo) resta com'e' (S5, 2026-10-12).
+    title_html = _htmlesc.escape(str(book_title or ""))
     return {
         "it": {
             "subject": f"Audiobook Maker — \"{book_title}\" pronto per il download",
             "heading": "&#x1F3A7; Il tuo audiolibro &egrave; pronto!",
-            "body": f"La generazione di <strong>{book_title}</strong> &egrave; stata completata con successo.",
+            "body": f"La generazione di <strong>{title_html}</strong> &egrave; stata completata con successo.",
             "btn": "&#x2B07;&#xFE0F; Scarica il tuo libro",
             "warn": f"&#x23F0; Attenzione: i file saranno disponibili per il download soltanto per {retention_h} ore a partire dalla ricezione di questa email. Dopo tale periodo verranno cancellati automaticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Istruzioni per la pubblicazione del Podcast</strong>",
@@ -1915,7 +1918,7 @@ def _completion_email_texts(book_title, retention_h):
         "en": {
             "subject": f"Audiobook Maker — \"{book_title}\" ready for download",
             "heading": "&#x1F3A7; Your audiobook is ready!",
-            "body": f"The generation of <strong>{book_title}</strong> has been completed successfully.",
+            "body": f"The generation of <strong>{title_html}</strong> has been completed successfully.",
             "btn": "&#x2B07;&#xFE0F; Download your book",
             "warn": f"&#x23F0; Please note: the files will be available for download for {retention_h} hours only from the time you receive this email. After that, they will be automatically deleted.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Podcast Publishing Instructions</strong>",
@@ -1927,7 +1930,7 @@ def _completion_email_texts(book_title, retention_h):
         "fr": {
             "subject": f"Audiobook Maker — \"{book_title}\" pr&ecirc;t au t&eacute;l&eacute;chargement",
             "heading": "&#x1F3A7; Votre livre audio est pr&ecirc;t !",
-            "body": f"La g&eacute;n&eacute;ration de <strong>{book_title}</strong> a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
+            "body": f"La g&eacute;n&eacute;ration de <strong>{title_html}</strong> a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger votre livre",
             "warn": f"&#x23F0; Attention : les fichiers seront disponibles au t&eacute;l&eacute;chargement pendant {retention_h} heures seulement &agrave; compter de la r&eacute;ception de cet email. Pass&eacute; ce d&eacute;lai, ils seront automatiquement supprim&eacute;s.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instructions de publication du podcast</strong>",
@@ -1939,7 +1942,7 @@ def _completion_email_texts(book_title, retention_h):
         "es": {
             "subject": f"Audiobook Maker — \"{book_title}\" listo para descargar",
             "heading": "&#x1F3A7; &iexcl;Tu audiolibro est&aacute; listo!",
-            "body": f"La generaci&oacute;n de <strong>{book_title}</strong> se ha completado con &eacute;xito.",
+            "body": f"La generaci&oacute;n de <strong>{title_html}</strong> se ha completado con &eacute;xito.",
             "btn": "&#x2B07;&#xFE0F; Descargar tu libro",
             "warn": f"&#x23F0; Atenci&oacute;n: los archivos estar&aacute;n disponibles para descargar solo durante {retention_h} horas desde la recepci&oacute;n de este email. Despu&eacute;s de ese periodo se eliminar&aacute;n autom&aacute;ticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instrucciones para publicar el podcast</strong>",
@@ -1951,7 +1954,7 @@ def _completion_email_texts(book_title, retention_h):
         "de": {
             "subject": f"Audiobook Maker — \"{book_title}\" bereit zum Download",
             "heading": "&#x1F3A7; Dein H&ouml;rbuch ist fertig!",
-            "body": f"Die Generierung von <strong>{book_title}</strong> wurde erfolgreich abgeschlossen.",
+            "body": f"Die Generierung von <strong>{title_html}</strong> wurde erfolgreich abgeschlossen.",
             "btn": "&#x2B07;&#xFE0F; Dein Buch herunterladen",
             "warn": f"&#x23F0; Hinweis: Die Dateien stehen nur {retention_h} Stunden ab Erhalt dieser E-Mail zum Download bereit. Danach werden sie automatisch gel&ouml;scht.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Anleitung zur Podcast-Ver&ouml;ffentlichung</strong>",
@@ -1963,7 +1966,7 @@ def _completion_email_texts(book_title, retention_h):
         "pt": {
             "subject": f"Audiobook Maker — \"{book_title}\" pronto para o download",
             "heading": "&#x1F3A7; Seu audiolivro est&aacute; pronto!",
-            "body": f"A gera&ccedil;&atilde;o de <strong>{book_title}</strong> foi conclu&iacute;da com sucesso.",
+            "body": f"A gera&ccedil;&atilde;o de <strong>{title_html}</strong> foi conclu&iacute;da com sucesso.",
             "btn": "&#x2B07;&#xFE0F; Baixar seu livro",
             "warn": f"&#x23F0; Aten&ccedil;&atilde;o: os arquivos estar&atilde;o dispon&iacute;veis para download por apenas {retention_h} horas a partir do recebimento deste e-mail. Ap&oacute;s esse per&iacute;odo, eles ser&atilde;o exclu&iacute;dos automaticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instru&ccedil;&otilde;es de publica&ccedil;&atilde;o do Podcast</strong>",
@@ -1975,7 +1978,7 @@ def _completion_email_texts(book_title, retention_h):
         "zh": {
             "subject": f"Audiobook Maker — \"{book_title}\" 已准备好下载",
             "heading": "&#x1F3A7; 您的有声读物已准备好！",
-            "body": f"<strong>{book_title}</strong> 已成功生成。",
+            "body": f"<strong>{title_html}</strong> 已成功生成。",
             "btn": "&#x2B07;&#xFE0F; 下载您的书籍",
             "warn": f"&#x23F0; 请注意：文件仅在收到此邮件后{retention_h}小时内可供下载。之后将自动删除。",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>播客发布说明</strong>",
@@ -1989,11 +1992,14 @@ def _completion_email_texts(book_title, retention_h):
 
 def _opt_email_texts(book_title, retention_h):
     """i18n email di ottimizzazione testo completata (.abm)."""
+    # Il titolo viene dai metadati del file caricato: nell'HTML va escapato,
+    # nel subject (testo) resta com'e' (S5, 2026-10-12).
+    title_html = _htmlesc.escape(str(book_title or ""))
     return {
         "it": {
             "subject": f"Audiobook Maker — \"{book_title}\" ottimizzazione testo completata",
             "heading": "&#x2728; Ottimizzazione testo completata!",
-            "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> per la sintesi vocale &egrave; stata completata con successo.",
+            "body": f"L'ottimizzazione AI del testo di <strong>{title_html}</strong> per la sintesi vocale &egrave; stata completata con successo.",
             "btn": "&#x2B07;&#xFE0F; Scarica il tuo libro",
             "warn": f"&#x23F0; Attenzione: il file sar&agrave; disponibile per il download soltanto per {retention_h} ore.",
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
@@ -2001,7 +2007,7 @@ def _opt_email_texts(book_title, retention_h):
         "en": {
             "subject": f"Audiobook Maker — \"{book_title}\" text optimization completed",
             "heading": "&#x2728; Text optimization completed!",
-            "body": f"The AI text optimization of <strong>{book_title}</strong> for speech synthesis has been completed successfully.",
+            "body": f"The AI text optimization of <strong>{title_html}</strong> for speech synthesis has been completed successfully.",
             "btn": "&#x2B07;&#xFE0F; Download your book",
             "warn": f"&#x23F0; Please note: the file will be available for download for {retention_h} hours only.",
             "footer": "This email was automatically generated by Audiobook Maker.",
@@ -2009,7 +2015,7 @@ def _opt_email_texts(book_title, retention_h):
         "fr": {
             "subject": f"Audiobook Maker — \"{book_title}\" optimisation du texte termin&eacute;e",
             "heading": "&#x2728; Optimisation du texte termin&eacute;e !",
-            "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> pour la synth&egrave;se vocale a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
+            "body": f"L'optimisation AI du texte de <strong>{title_html}</strong> pour la synth&egrave;se vocale a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger votre livre",
             "warn": f"&#x23F0; Attention : le fichier sera disponible au t&eacute;l&eacute;chargement pendant {retention_h} heures seulement.",
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
@@ -2017,7 +2023,7 @@ def _opt_email_texts(book_title, retention_h):
         "es": {
             "subject": f"Audiobook Maker — \"{book_title}\" optimizaci&oacute;n de texto completada",
             "heading": "&#x2728; &iexcl;Optimizaci&oacute;n de texto completada!",
-            "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> para la s&iacute;ntesis de voz se ha completado con &eacute;xito.",
+            "body": f"La optimizaci&oacute;n AI del texto de <strong>{title_html}</strong> para la s&iacute;ntesis de voz se ha completado con &eacute;xito.",
             "btn": "&#x2B07;&#xFE0F; Descargar tu libro",
             "warn": f"&#x23F0; Atenci&oacute;n: el archivo estar&aacute; disponible para descargar solo durante {retention_h} horas.",
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
@@ -2025,7 +2031,7 @@ def _opt_email_texts(book_title, retention_h):
         "de": {
             "subject": f"Audiobook Maker — \"{book_title}\" Textoptimierung abgeschlossen",
             "heading": "&#x2728; Textoptimierung abgeschlossen!",
-            "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> f&uuml;r die Sprachsynthese wurde erfolgreich abgeschlossen.",
+            "body": f"Die KI-Textoptimierung von <strong>{title_html}</strong> f&uuml;r die Sprachsynthese wurde erfolgreich abgeschlossen.",
             "btn": "&#x2B07;&#xFE0F; Dein Buch herunterladen",
             "warn": f"&#x23F0; Hinweis: Die Datei steht nur {retention_h} Stunden zum Download bereit.",
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
@@ -2033,7 +2039,7 @@ def _opt_email_texts(book_title, retention_h):
         "pt": {
             "subject": f"Audiobook Maker — \"{book_title}\" otimiza&ccedil;&atilde;o de texto conclu&iacute;da",
             "heading": "&#x2728; Otimiza&ccedil;&atilde;o de texto conclu&iacute;da!",
-            "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{book_title}</strong> para s&iacute;ntese de voz foi conclu&iacute;da com sucesso.",
+            "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{title_html}</strong> para s&iacute;ntese de voz foi conclu&iacute;da com sucesso.",
             "btn": "&#x2B07;&#xFE0F; Baixar seu livro",
             "warn": f"&#x23F0; Aten&ccedil;&atilde;o: o arquivo estar&aacute; dispon&iacute;vel para download por apenas {retention_h} horas.",
             "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
@@ -2041,7 +2047,7 @@ def _opt_email_texts(book_title, retention_h):
         "zh": {
             "subject": f"Audiobook Maker — \"{book_title}\" 文本优化已完成",
             "heading": "&#x2728; 文本优化已完成！",
-            "body": f"<strong>{book_title}</strong> 的AI文本优化已成功完成。",
+            "body": f"<strong>{title_html}</strong> 的AI文本优化已成功完成。",
             "btn": "&#x2B07;&#xFE0F; 下载您的书籍",
             "warn": f"&#x23F0; 请注意：文件仅在{retention_h}小时内可供下载。",
             "footer": "此邮件由 Audiobook Maker 自动生成。",
@@ -2109,6 +2115,9 @@ def _send_completion_email(job_id):
     safe_name = job.get("podcast_safe_name", _safe_filename(book_title) or "audiolibro")
     rss_filename = f"{safe_name}_podcast.xml"
     rss_url = f"{base_url}/{rss_filename}" if base_url else rss_filename
+    # URL forniti dall'utente: escapati sia nell'href sia nel testo (S5).
+    base_url_html = _htmlesc.escape(base_url)
+    rss_url_html = _htmlesc.escape(rss_url)
 
     _email_i18n = _completion_email_texts(book_title, retention_h)
 
@@ -2122,11 +2131,11 @@ def _send_completion_email(job_id):
         <p style="margin:0 0 10px">{t['podcast_intro']}</p>
         <p style="margin:0 0 8px">{t['podcast_p1']}</p>
         <p style="margin:0 0 12px;padding:8px 12px;background:#e2e8f0;border-radius:4px;font-family:monospace;word-break:break-all">
-          &#x1F4C1; <a href="{base_url}" style="color:#3b82f6">{base_url}/</a>
+          &#x1F4C1; <a href="{base_url_html}" style="color:#3b82f6">{base_url_html}/</a>
         </p>
         <p style="margin:0 0 8px">{t['podcast_p2']}</p>
         <p style="margin:0 0 12px;padding:8px 12px;background:#e2e8f0;border-radius:4px;font-family:monospace;word-break:break-all">
-          &#x1F4E1; <a href="{rss_url}" style="color:#3b82f6">{rss_url}</a>
+          &#x1F4E1; <a href="{rss_url_html}" style="color:#3b82f6">{rss_url_html}</a>
         </p>
         <p style="margin:0">{t['podcast_p3']}</p>
       </div>"""
@@ -2236,11 +2245,14 @@ def _opt_failed_email_texts(book_title, amount_eur):
     (ottimizzazione gratuita). Mai il codice del buono qui: per PayPal lo
     porta l'email del buono, per il voucher resta quello gia' in mano."""
     amt = f"{amount_eur:.2f}"
+    # Il titolo viene dai metadati del file caricato: nell'HTML va escapato,
+    # nel subject (testo) resta com'e' (S5, 2026-10-12).
+    title_html = _htmlesc.escape(str(book_title or ""))
     return {
         "it": {
             "subject": f"Audiobook Maker — \"{book_title}\" ottimizzazione testo non riuscita",
             "heading": "&#x26A0;&#xFE0F; Ottimizzazione testo non riuscita",
-            "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine: il servizio di elaborazione non era disponibile. Di solito &egrave; un problema temporaneo: riprova tra un po'.",
+            "body": f"L'ottimizzazione AI del testo di <strong>{title_html}</strong> non &egrave; andata a buon fine: il servizio di elaborazione non era disponibile. Di solito &egrave; un problema temporaneo: riprova tra un po'.",
             "btn": "&#x1F504; Riprova",
             "refund_voucher": f"Nessun addebito: {amt} EUR sono stati ri-accreditati sul buono che hai usato e sono subito disponibili.",
             "refund_paypal": f"Nessun addebito: riceverai in un'email separata un buono di rimborso da {amt} EUR (o pi&ugrave;).",
@@ -2250,7 +2262,7 @@ def _opt_failed_email_texts(book_title, amount_eur):
         "en": {
             "subject": f"Audiobook Maker — \"{book_title}\" text optimization failed",
             "heading": "&#x26A0;&#xFE0F; Text optimization failed",
-            "body": f"The AI text optimization of <strong>{book_title}</strong> could not be completed: the processing service was unavailable. This is usually temporary: please try again in a while.",
+            "body": f"The AI text optimization of <strong>{title_html}</strong> could not be completed: the processing service was unavailable. This is usually temporary: please try again in a while.",
             "btn": "&#x1F504; Try again",
             "refund_voucher": f"You have not been charged: {amt} EUR has been credited back to the voucher you used and is available right away.",
             "refund_paypal": f"You have not been charged: you will receive a refund voucher of {amt} EUR (or more) in a separate email.",
@@ -2260,7 +2272,7 @@ def _opt_failed_email_texts(book_title, amount_eur):
         "fr": {
             "subject": f"Audiobook Maker — \"{book_title}\" échec de l'optimisation du texte",
             "heading": "&#x26A0;&#xFE0F; &Eacute;chec de l'optimisation du texte",
-            "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> n'a pas pu aboutir : le service de traitement n'&eacute;tait pas disponible. C'est g&eacute;n&eacute;ralement temporaire : r&eacute;essayez un peu plus tard.",
+            "body": f"L'optimisation AI du texte de <strong>{title_html}</strong> n'a pas pu aboutir : le service de traitement n'&eacute;tait pas disponible. C'est g&eacute;n&eacute;ralement temporaire : r&eacute;essayez un peu plus tard.",
             "btn": "&#x1F504; R&eacute;essayer",
             "refund_voucher": f"Aucun d&eacute;bit : {amt} EUR ont &eacute;t&eacute; recr&eacute;dit&eacute;s sur le bon utilis&eacute; et sont disponibles imm&eacute;diatement.",
             "refund_paypal": f"Aucun d&eacute;bit : vous recevrez dans un email s&eacute;par&eacute; un bon de remboursement de {amt} EUR (ou plus).",
@@ -2270,7 +2282,7 @@ def _opt_failed_email_texts(book_title, amount_eur):
         "es": {
             "subject": f"Audiobook Maker — \"{book_title}\" la optimización de texto ha fallado",
             "heading": "&#x26A0;&#xFE0F; La optimizaci&oacute;n de texto ha fallado",
-            "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> no se ha podido completar: el servicio de procesamiento no estaba disponible. Suele ser algo temporal: vuelve a intentarlo dentro de un rato.",
+            "body": f"La optimizaci&oacute;n AI del texto de <strong>{title_html}</strong> no se ha podido completar: el servicio de procesamiento no estaba disponible. Suele ser algo temporal: vuelve a intentarlo dentro de un rato.",
             "btn": "&#x1F504; Reintentar",
             "refund_voucher": f"No se ha cobrado nada: {amt} EUR se han devuelto al cup&oacute;n que usaste y est&aacute;n disponibles de inmediato.",
             "refund_paypal": f"No se ha cobrado nada: recibir&aacute;s en un email aparte un cup&oacute;n de reembolso de {amt} EUR (o m&aacute;s).",
@@ -2280,7 +2292,7 @@ def _opt_failed_email_texts(book_title, amount_eur):
         "de": {
             "subject": f"Audiobook Maker — \"{book_title}\" Textoptimierung fehlgeschlagen",
             "heading": "&#x26A0;&#xFE0F; Textoptimierung fehlgeschlagen",
-            "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> konnte nicht abgeschlossen werden: Der Verarbeitungsdienst war nicht erreichbar. Das ist meist vor&uuml;bergehend: Bitte versuche es sp&auml;ter erneut.",
+            "body": f"Die KI-Textoptimierung von <strong>{title_html}</strong> konnte nicht abgeschlossen werden: Der Verarbeitungsdienst war nicht erreichbar. Das ist meist vor&uuml;bergehend: Bitte versuche es sp&auml;ter erneut.",
             "btn": "&#x1F504; Erneut versuchen",
             "refund_voucher": f"Es wurde nichts berechnet: {amt} EUR wurden deinem verwendeten Gutschein wieder gutgeschrieben und sind sofort verf&uuml;gbar.",
             "refund_paypal": f"Es wurde nichts berechnet: Du erh&auml;ltst in einer separaten E-Mail einen Erstattungsgutschein &uuml;ber {amt} EUR (oder mehr).",
@@ -2290,7 +2302,7 @@ def _opt_failed_email_texts(book_title, amount_eur):
         "pt": {
             "subject": f"Audiobook Maker — \"{book_title}\" falha na otimização de texto",
             "heading": "&#x26A0;&#xFE0F; Falha na otimiza&ccedil;&atilde;o de texto",
-            "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{book_title}</strong> n&atilde;o p&ocirc;de ser conclu&iacute;da: o servi&ccedil;o de processamento n&atilde;o estava dispon&iacute;vel. Normalmente &eacute; tempor&aacute;rio: tente novamente daqui a pouco.",
+            "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{title_html}</strong> n&atilde;o p&ocirc;de ser conclu&iacute;da: o servi&ccedil;o de processamento n&atilde;o estava dispon&iacute;vel. Normalmente &eacute; tempor&aacute;rio: tente novamente daqui a pouco.",
             "btn": "&#x1F504; Tentar novamente",
             "refund_voucher": f"Nada foi cobrado: {amt} EUR foram devolvidos ao voucher que voc&ecirc; usou e j&aacute; est&atilde;o dispon&iacute;veis.",
             "refund_paypal": f"Nada foi cobrado: voc&ecirc; receber&aacute; em um e-mail separado um voucher de reembolso de {amt} EUR (ou mais).",
@@ -2300,7 +2312,7 @@ def _opt_failed_email_texts(book_title, amount_eur):
         "zh": {
             "subject": f"Audiobook Maker — \"{book_title}\" 文本优化失败",
             "heading": "&#x26A0;&#xFE0F; 文本优化失败",
-            "body": f"<strong>{book_title}</strong> 的AI文本优化未能完成：处理服务暂时不可用。这通常是暂时性的问题，请稍后再试。",
+            "body": f"<strong>{title_html}</strong> 的AI文本优化未能完成：处理服务暂时不可用。这通常是暂时性的问题，请稍后再试。",
             "btn": "&#x1F504; 重试",
             "refund_voucher": f"未产生任何费用：{amt} EUR 已退回您使用的优惠券，可立即使用。",
             "refund_paypal": f"未产生任何费用：您将在另一封邮件中收到价值 {amt} EUR（或更多）的退款优惠券。",
@@ -2361,11 +2373,14 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
     nessuna promessa). Mai il nome del motore."""
     amt = f"{amount_eur:.2f}"
     code = voucher_code or ""
+    # Il titolo viene dai metadati del file caricato: nell'HTML va escapato,
+    # nel subject (testo) resta com'e' (S5, 2026-10-12).
+    title_html = _htmlesc.escape(str(book_title or ""))
     return {
         "it": {
             "subject": f"Audiobook Maker — \"{book_title}\" generazione non riuscita",
             "heading": "&#x26A0;&#xFE0F; Generazione dell'audiolibro non riuscita",
-            "body": f"La generazione di <strong>{book_title}</strong> si &egrave; interrotta per un guasto del servizio voci e non &egrave; stato possibile completarla. Ci scusiamo per l'inconveniente: il file parziale non &egrave; stato consegnato.",
+            "body": f"La generazione di <strong>{title_html}</strong> si &egrave; interrotta per un guasto del servizio voci e non &egrave; stato possibile completarla. Ci scusiamo per l'inconveniente: il file parziale non &egrave; stato consegnato.",
             "btn": "&#x1F504; Riprova",
             "refund_paypal": f"Ti abbiamo rimborsato l'intero importo pagato, ottimizzazione del testo compresa, con un buono di {amt} EUR: codice <strong>{code}</strong>, valido fino al {expiry}. Inseriscilo al prossimo pagamento.",
             "refund_voucher": f"Ti abbiamo riaccreditato l'intero importo pagato, ottimizzazione del testo compresa ({amt} EUR), sul buono che hai usato: &egrave; gi&agrave; disponibile.",
@@ -2375,7 +2390,7 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
         "en": {
             "subject": f"Audiobook Maker — \"{book_title}\" generation failed",
             "heading": "&#x26A0;&#xFE0F; Audiobook generation failed",
-            "body": f"The generation of <strong>{book_title}</strong> stopped because of a voice service failure and could not be completed. We apologise for the inconvenience: the partial file was not delivered.",
+            "body": f"The generation of <strong>{title_html}</strong> stopped because of a voice service failure and could not be completed. We apologise for the inconvenience: the partial file was not delivered.",
             "btn": "&#x1F504; Try again",
             "refund_paypal": f"We refunded the full amount you paid, text optimization included, with a {amt} EUR voucher: code <strong>{code}</strong>, valid until {expiry}. Enter it at your next payment.",
             "refund_voucher": f"We credited the full amount you paid, text optimization included ({amt} EUR), back to the voucher you used: it is already available.",
@@ -2385,7 +2400,7 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
         "fr": {
             "subject": f"Audiobook Maker — \"{book_title}\" g&eacute;n&eacute;ration &eacute;chou&eacute;e",
             "heading": "&#x26A0;&#xFE0F; La g&eacute;n&eacute;ration du livre audio a &eacute;chou&eacute;",
-            "body": f"La g&eacute;n&eacute;ration de <strong>{book_title}</strong> s'est interrompue &agrave; cause d'une panne du service vocal et n'a pas pu &ecirc;tre termin&eacute;e. Nous nous excusons pour la g&ecirc;ne : le fichier partiel n'a pas &eacute;t&eacute; livr&eacute;.",
+            "body": f"La g&eacute;n&eacute;ration de <strong>{title_html}</strong> s'est interrompue &agrave; cause d'une panne du service vocal et n'a pas pu &ecirc;tre termin&eacute;e. Nous nous excusons pour la g&ecirc;ne : le fichier partiel n'a pas &eacute;t&eacute; livr&eacute;.",
             "btn": "&#x1F504; R&eacute;essayer",
             "refund_paypal": f"Nous vous avons rembours&eacute; la totalit&eacute; du montant pay&eacute;, optimisation du texte comprise, avec un bon de {amt} EUR : code <strong>{code}</strong>, valable jusqu'au {expiry}. Saisissez-le lors de votre prochain paiement.",
             "refund_voucher": f"Nous avons recr&eacute;dit&eacute; la totalit&eacute; du montant pay&eacute;, optimisation du texte comprise ({amt} EUR), sur le bon que vous avez utilis&eacute; : il est d&eacute;j&agrave; disponible.",
@@ -2395,7 +2410,7 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
         "es": {
             "subject": f"Audiobook Maker — \"{book_title}\" generaci&oacute;n fallida",
             "heading": "&#x26A0;&#xFE0F; La generaci&oacute;n del audiolibro ha fallado",
-            "body": f"La generaci&oacute;n de <strong>{book_title}</strong> se interrumpi&oacute; por un fallo del servicio de voces y no se pudo completar. Disculpa las molestias: el archivo parcial no se ha entregado.",
+            "body": f"La generaci&oacute;n de <strong>{title_html}</strong> se interrumpi&oacute; por un fallo del servicio de voces y no se pudo completar. Disculpa las molestias: el archivo parcial no se ha entregado.",
             "btn": "&#x1F504; Reintentar",
             "refund_paypal": f"Te hemos reembolsado el importe total pagado, optimizaci&oacute;n del texto incluida, con un bono de {amt} EUR: c&oacute;digo <strong>{code}</strong>, v&aacute;lido hasta el {expiry}. Introd&uacute;celo en tu pr&oacute;ximo pago.",
             "refund_voucher": f"Hemos devuelto el importe total pagado, optimizaci&oacute;n del texto incluida ({amt} EUR), al bono que usaste: ya est&aacute; disponible.",
@@ -2405,7 +2420,7 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
         "de": {
             "subject": f"Audiobook Maker — \"{book_title}\" Erstellung fehlgeschlagen",
             "heading": "&#x26A0;&#xFE0F; Erstellung des H&ouml;rbuchs fehlgeschlagen",
-            "body": f"Die Erstellung von <strong>{book_title}</strong> wurde durch eine St&ouml;rung des Sprachdienstes unterbrochen und konnte nicht abgeschlossen werden. Wir entschuldigen uns: Die unvollst&auml;ndige Datei wurde nicht ausgeliefert.",
+            "body": f"Die Erstellung von <strong>{title_html}</strong> wurde durch eine St&ouml;rung des Sprachdienstes unterbrochen und konnte nicht abgeschlossen werden. Wir entschuldigen uns: Die unvollst&auml;ndige Datei wurde nicht ausgeliefert.",
             "btn": "&#x1F504; Erneut versuchen",
             "refund_paypal": f"Wir haben dir den gesamten bezahlten Betrag, Textoptimierung inklusive, mit einem Gutschein &uuml;ber {amt} EUR erstattet: Code <strong>{code}</strong>, g&uuml;ltig bis {expiry}. Gib ihn bei deiner n&auml;chsten Zahlung ein.",
             "refund_voucher": f"Wir haben den gesamten bezahlten Betrag, Textoptimierung inklusive ({amt} EUR), deinem verwendeten Gutschein gutgeschrieben: Er ist bereits verf&uuml;gbar.",
@@ -2415,7 +2430,7 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
         "pt": {
             "subject": f"Audiobook Maker — \"{book_title}\" gera&ccedil;&atilde;o falhou",
             "heading": "&#x26A0;&#xFE0F; A gera&ccedil;&atilde;o do audiolivro falhou",
-            "body": f"A gera&ccedil;&atilde;o de <strong>{book_title}</strong> foi interrompida por uma falha do servi&ccedil;o de vozes e n&atilde;o p&ocirc;de ser conclu&iacute;da. Pedimos desculpa: o arquivo parcial n&atilde;o foi entregue.",
+            "body": f"A gera&ccedil;&atilde;o de <strong>{title_html}</strong> foi interrompida por uma falha do servi&ccedil;o de vozes e n&atilde;o p&ocirc;de ser conclu&iacute;da. Pedimos desculpa: o arquivo parcial n&atilde;o foi entregue.",
             "btn": "&#x1F504; Tentar novamente",
             "refund_paypal": f"Reembolsamos o valor total pago, otimiza&ccedil;&atilde;o do texto inclu&iacute;da, com um voucher de {amt} EUR: c&oacute;digo <strong>{code}</strong>, v&aacute;lido at&eacute; {expiry}. Use-o no pr&oacute;ximo pagamento.",
             "refund_voucher": f"Devolvemos o valor total pago, otimiza&ccedil;&atilde;o do texto inclu&iacute;da ({amt} EUR), ao voucher que voc&ecirc; usou: j&aacute; est&aacute; dispon&iacute;vel.",
@@ -2425,7 +2440,7 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
         "zh": {
             "subject": f"Audiobook Maker — \"{book_title}\" 生成失败",
             "heading": "&#x26A0;&#xFE0F; 有声书生成失败",
-            "body": f"<strong>{book_title}</strong> 的生成因语音服务故障而中断，未能完成。非常抱歉：不完整的文件未予交付。",
+            "body": f"<strong>{title_html}</strong> 的生成因语音服务故障而中断，未能完成。非常抱歉：不完整的文件未予交付。",
             "btn": "&#x1F504; 重试",
             "refund_paypal": f"我们已全额退还您支付的金额（包括文本优化），退款优惠券价值 {amt} EUR：代码 <strong>{code}</strong>，有效期至 {expiry}。请在下次付款时输入。",
             "refund_voucher": f"我们已将您支付的全部金额（包括文本优化，{amt} EUR）退回您使用的优惠券，可立即使用。",
@@ -2435,7 +2450,7 @@ def _premium_failed_email_texts(book_title, amount_eur, voucher_code, expiry):
         "hi": {
             "subject": f"Audiobook Maker — \"{book_title}\" निर्माण विफल",
             "heading": "&#x26A0;&#xFE0F; ऑडियोबुक का निर्माण विफल रहा",
-            "body": f"<strong>{book_title}</strong> का निर्माण वॉइस सेवा की खराबी के कारण रुक गया और पूरा नहीं हो सका। असुविधा के लिए हमें खेद है: अधूरी फ़ाइल नहीं भेजी गई।",
+            "body": f"<strong>{title_html}</strong> का निर्माण वॉइस सेवा की खराबी के कारण रुक गया और पूरा नहीं हो सका। असुविधा के लिए हमें खेद है: अधूरी फ़ाइल नहीं भेजी गई।",
             "btn": "&#x1F504; फिर से प्रयास करें",
             "refund_paypal": f"हमने आपके द्वारा भुगतान की गई पूरी राशि, टेक्स्ट ऑप्टिमाइज़ेशन सहित, {amt} EUR के वाउचर से लौटा दी है: कोड <strong>{code}</strong>, {expiry} तक मान्य। इसे अपने अगले भुगतान पर दर्ज करें।",
             "refund_voucher": f"हमने भुगतान की गई पूरी राशि, टेक्स्ट ऑप्टिमाइज़ेशन सहित ({amt} EUR), आपके उपयोग किए गए वाउचर में वापस जमा कर दी है: यह पहले से उपलब्ध है।",
@@ -3753,11 +3768,14 @@ def run_translation(job_id):
 # (subject/heading/body/btn/warn/footer); i placeholder {book_title}/{retention_h}
 # sono interpolati a runtime in _send_translation_email.
 def _tr_email_texts(book_title, retention_h):
+    # Il titolo viene dai metadati del file caricato: nell'HTML va escapato,
+    # nel subject (testo) resta com'e' (S5, 2026-10-12).
+    title_html = _htmlesc.escape(str(book_title or ""))
     return {
         "it": {
             "subject": f"\U0001F4D6 La tua traduzione è pronta — {book_title}",
             "heading": "&#x1F4D6; La tua traduzione &egrave; pronta!",
-            "body": f"La traduzione di <strong>{book_title}</strong> &egrave; completata!",
+            "body": f"La traduzione di <strong>{title_html}</strong> &egrave; completata!",
             "btn": "&#x2B07;&#xFE0F; Scarica la traduzione",
             "warn": f"&#x23F0; Il link scade tra {retention_h} ore.",
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
@@ -3765,7 +3783,7 @@ def _tr_email_texts(book_title, retention_h):
         "en": {
             "subject": f"\U0001F4D6 Your translation is ready — {book_title}",
             "heading": "&#x1F4D6; Your translation is ready!",
-            "body": f"The translation of <strong>{book_title}</strong> is complete!",
+            "body": f"The translation of <strong>{title_html}</strong> is complete!",
             "btn": "&#x2B07;&#xFE0F; Download your translation",
             "warn": f"&#x23F0; The link expires in {retention_h} hours.",
             "footer": "This email was automatically generated by Audiobook Maker.",
@@ -3773,7 +3791,7 @@ def _tr_email_texts(book_title, retention_h):
         "fr": {
             "subject": f"\U0001F4D6 Votre traduction est prête — {book_title}",
             "heading": "&#x1F4D6; Votre traduction est pr&ecirc;te !",
-            "body": f"La traduction de <strong>{book_title}</strong> est termin&eacute;e !",
+            "body": f"La traduction de <strong>{title_html}</strong> est termin&eacute;e !",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger la traduction",
             "warn": f"&#x23F0; Le lien expire dans {retention_h} heures.",
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
@@ -3781,7 +3799,7 @@ def _tr_email_texts(book_title, retention_h):
         "es": {
             "subject": f"\U0001F4D6 Tu traducción está lista — {book_title}",
             "heading": "&#x1F4D6; &iexcl;Tu traducci&oacute;n est&aacute; lista!",
-            "body": f"&iexcl;La traducci&oacute;n de <strong>{book_title}</strong> se ha completado!",
+            "body": f"&iexcl;La traducci&oacute;n de <strong>{title_html}</strong> se ha completado!",
             "btn": "&#x2B07;&#xFE0F; Descargar la traducci&oacute;n",
             "warn": f"&#x23F0; El enlace caduca en {retention_h} horas.",
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
@@ -3789,7 +3807,7 @@ def _tr_email_texts(book_title, retention_h):
         "de": {
             "subject": f"\U0001F4D6 Deine Übersetzung ist fertig — {book_title}",
             "heading": "&#x1F4D6; Deine &Uuml;bersetzung ist fertig!",
-            "body": f"Die &Uuml;bersetzung von <strong>{book_title}</strong> ist abgeschlossen!",
+            "body": f"Die &Uuml;bersetzung von <strong>{title_html}</strong> ist abgeschlossen!",
             "btn": "&#x2B07;&#xFE0F; &Uuml;bersetzung herunterladen",
             "warn": f"&#x23F0; Der Link l&auml;uft in {retention_h} Stunden ab.",
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
@@ -3797,7 +3815,7 @@ def _tr_email_texts(book_title, retention_h):
         "pt": {
             "subject": f"\U0001F4D6 Sua tradução está pronta — {book_title}",
             "heading": "&#x1F4D6; Sua tradu&ccedil;&atilde;o est&aacute; pronta!",
-            "body": f"A tradu&ccedil;&atilde;o de <strong>{book_title}</strong> foi conclu&iacute;da!",
+            "body": f"A tradu&ccedil;&atilde;o de <strong>{title_html}</strong> foi conclu&iacute;da!",
             "btn": "&#x2B07;&#xFE0F; Baixar a tradu&ccedil;&atilde;o",
             "warn": f"&#x23F0; O link expira em {retention_h} horas.",
             "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
@@ -3805,7 +3823,7 @@ def _tr_email_texts(book_title, retention_h):
         "zh": {
             "subject": f"\U0001F4D6 您的翻译已就绪 — {book_title}",
             "heading": "&#x1F4D6; 您的翻译已就绪！",
-            "body": f"<strong>{book_title}</strong> 的翻译已完成！",
+            "body": f"<strong>{title_html}</strong> 的翻译已完成！",
             "btn": "&#x2B07;&#xFE0F; 下载翻译",
             "warn": f"&#x23F0; 链接将在{retention_h}小时后过期。",
             "footer": "此邮件由 Audiobook Maker 自动生成。",

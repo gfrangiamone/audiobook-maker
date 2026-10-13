@@ -5838,6 +5838,10 @@ def api_register_email():
     if download_type not in ("audio", "chapters", "podcast", "translated"):
         download_type = "audio"
     base_url = (data.get("base_url") or "").strip()
+    # Finisce come link nell'email del podcast: solo http(s), lunghezza
+    # limitata; niente `javascript:` o altri schemi (S5, 2026-10-12).
+    if base_url and (len(base_url) > 2048 or not re.match(r"^https?://[^\s<>\"']+$", base_url)):
+        return jsonify({"error": "invalid_base_url"}), 400
 
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
