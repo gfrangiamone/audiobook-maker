@@ -4409,9 +4409,18 @@ def api_check_language():
         job, err, sc = _check_job_owner(data.get("job_id"))
         if err is not None:
             return jsonify({"mismatch": False})
+        # `lang` e' la chiave del memo nel job e finisce nel prompt del giudice
+        # (una chiamata LLM a pagamento per ogni valore nuovo): solo codici
+        # lingua, e non piu' di 10 al minuto per IP (S8, 2026-10-13).
+        _lang = _i18n.norm_lang(data.get("lang"))
+        if _lang and not re.fullmatch(r"[a-z]{2,3}", _lang):     # vuoto: la lingua viene dalla voce
+            return jsonify({"mismatch": False})
+        _ok, _ = _ip_rl_check("check_language", client_ip(), 10, 60)
+        if not _ok:
+            return jsonify({"mismatch": False})
         hit = _language_mismatch_hit(
             job, data.get("job_id"), data.get("voice") or "",
-            data.get("lang"), _parse_selected_chapters(
+            _lang, _parse_selected_chapters(
                 data.get("selected_chapters")))
         if hit is None:
             return jsonify({"mismatch": False})
