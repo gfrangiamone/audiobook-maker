@@ -1,11 +1,37 @@
-ruff
-boto3
+# Dipendenze di PRODUZIONE (O1, 2026-10-13). Prima mancavano flask, edge-tts,
+# ebooklib, beautifulsoup4, lxml, pymupdf, openai e Pillow (un server nuovo non
+# partiva: erano installati a mano) e `ruff` stava qui invece che in
+# requirements-dev.txt. Versioni minime = quelle con cui il codice e' stato
+# scritto e provato; il blocco esatto per host si genera sul server con
+# `pip freeze > requirements.lock` dopo un deploy riuscito (vedi
+# md_files/ANALISI_POST_PIANO_2026-10.md, O1).
+
+# --- web app
+flask>=3.0
+flask-compress>=1.15
+werkzeug>=3.0
+requests>=2.31  # client HTTP (push FCM, PayPal, R2, Cloudflare, Speechify, VoxCPM)
+
+# --- parser ebook
+ebooklib>=0.18
+beautifulsoup4>=4.12
+lxml>=5.0
+pymupdf>=1.24  # PDF (importato come fitz/pymupdf in pdf_to_tts)
+defusedxml>=0.7  # XML sicuro in secure_archive
+
+# --- motori TTS e LLM
+edge-tts>=7.0
 google-genai>=2.25  # Part.speech_metadata: stile del 3.8 fuori dalla trascrizione (gemini_tts._transport_contents)
-flask-compress
-google-auth>=2.23  # FCM HTTP v1 push notifications (app mobile)
-requests  # client HTTP per push FCM (push_service)
+google-auth>=2.23  # FCM HTTP v1 push notifications (app mobile) e service account Vertex
+openai>=1.0  # client compatibile OpenAI per ottimizzazione e traduzione (llm_client, translation_core)
+
+# --- storage, media, immagini
+boto3  # R2/S3 (storage_backend)
+pillow>=10.0  # copertine di ripiego (cover_utils) e QR
 qrcode[pil]>=7.4  # QR di trasferimento job sull'app mobile
 numpy>=1.26  # misure acustiche del campione vocale (voice_clone_audio)
+
+# --- voci campionate
 faster-whisper>=1.2  # verifica ASR del campione vocale su CPU (voice_clone_audio); porta ctranslate2
 zhconv  # cinese tradizionale->semplificato nel CER (voice_clone_audio)
 typesafe-sdk>=0.7  # giudizi semantici tipizzati (semantic_judge); opzionale a runtime

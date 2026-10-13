@@ -1,0 +1,4 @@
+# Strumenti di sviluppo e test: NON si installano in produzione (O1, 2026-10-13).
+-r requirements.txt
+pytest>=8.0
+ruff

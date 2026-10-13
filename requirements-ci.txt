@@ -1,0 +1,24 @@
+# Dipendenze per il gate di test in GitHub Actions (O2, 2026-10-13): tutto
+# requirements.txt tranne lo stack torch/modelscope/faster-whisper, che pesa
+# gigabyte e serve solo alla pulizia e all'ASR dei campioni vocali (importato
+# tardi, i test lo sostituiscono). Da tenere allineato a requirements.txt.
+flask>=3.0
+flask-compress>=1.15
+werkzeug>=3.0
+requests>=2.31
+ebooklib>=0.18
+beautifulsoup4>=4.12
+lxml>=5.0
+pymupdf>=1.24
+defusedxml>=0.7
+edge-tts>=7.0
+google-genai>=2.25
+google-auth>=2.23
+openai>=1.0
+boto3
+pillow>=10.0
+qrcode[pil]>=7.4
+numpy>=1.26
+zhconv
+typesafe-sdk>=0.7
+pytest>=8.0
