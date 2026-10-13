@@ -26,7 +26,12 @@ import metrics_store
 import storage_backend
 import storage_tiering
 import token_store as _tkstore
-from env_utils import env_str
+from env_utils import env_int, env_str
+
+# Validita' (s) di un transfer token dalla creazione: dopo, il claim risponde
+# 410 (S11, 2026-10-13). Default un giorno; il token sta nel QR della pagina
+# /dl e nelle email, non deve sopravvivere al link inoltrato.
+TRANSFER_TOKEN_TTL_SEC = env_int("ABM_TRANSFER_TOKEN_TTL_SEC", 86400, floor=600)
 
 bp = Blueprint("mobile", __name__)
 
@@ -229,6 +234,12 @@ def api_transfer_claim(token):
     info = _tkstore.transfer_tokens.get(token)
     if not isinstance(info, dict):
         return jsonify({"error": "invalid_token"}), 404
+    # Il transfer token compare come QR sulla pagina /dl: chi riceve il link
+    # inoltrato non deve poter prendere il job per sempre. Scade dopo
+    # ABM_TRANSFER_TOKEN_TTL_SEC e, per gli utenti, vale per un solo
+    # dispositivo (S11, 2026-10-13).
+    if time.time() - float(info.get("created_at") or 0) > TRANSFER_TOKEN_TTL_SEC:
+        return jsonify({"error": "token_expired", "error_code": "token_expired"}), 410
     cid = _get_client_id()
     if not cid:
         return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
@@ -304,6 +315,10 @@ def api_transfer_claim(token):
         print(f"[transfer] admin copy claimed for job {job_id} by cid {cid}")
         return jsonify({"ok": True, "job_id": job_id, "admin_copy": True})
 
+    _claimed_by = info.get("claimed_by")
+    if _claimed_by and _claimed_by != cid:
+        return jsonify({"error": "already_claimed", "error_code": "already_claimed"}), 409
+
     moved = False
     job_done = False
     with _jobs_lock:
@@ -332,6 +347,11 @@ def api_transfer_claim(token):
             job["transferred_to_mobile"] = True
             job_done = job.get("status") in ("done", "optimized")
             moved = True
+    if moved:
+        # Primo claim riuscito: da qui il token vale solo per questo cid (S11).
+        with _tkstore.transfer_lock:
+            info["claimed_by"] = cid
+        _tkstore.save_transfer_tokens()
     # Job già completato senza download token (caso del sito senza email/batch):
     # creane uno ORA, altrimenti l'app non vede i formati e non può scaricare, e
     # il job/file verrebbero ripuliti poco dopo. _create_download_token è
