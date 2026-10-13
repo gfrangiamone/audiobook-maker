@@ -19,7 +19,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
+from env_utils import env_int
 from fileio import load_json, write_json_safe
 
 MANIFEST_NAME = ".chunks_manifest.json"
@@ -134,10 +136,92 @@ def reusable_indices(work_dir, fp: dict, total_chunks: int, ext: str,
     return out
 
 
+# Tetto di chunk per job VoxCPM: un capitolo piu' lungo si sintetizza a
+# segmenti, un job RunPod ciascuno. Il 13/10/2026 un libro senza capitoli
+# rilevati (un capitolo solo, 2064 chunk, 448.662 caratteri) e' diventato un
+# job unico: dopo 22 minuti di sintesi un chunk non e' tornato entro il tetto
+# del worker, il motore e' stato dichiarato compromesso e il capitolo buttato
+# per intero, da rifare da capo a concorrenza 8. A segmenti si perde solo il
+# segmento in corso, e il riuso li riconosce uno per uno.
+VOXCPM_SEGMENT_MAX_CHUNKS = 300
+
+# Fine di frase: un taglio fra segmenti cade dopo un chunk che chiude una
+# frase, cosi' la giunzione fra due job (che il worker non smussa) e' una
+# pausa che il testo aveva gia'.
+_FINE_FRASE = re.compile(r"[.!?…][\"'»”’)\]]*\s*$")
+
+
+def voxcpm_segment_max_chunks() -> int:
+    """`ABM_VOXCPM_SEGMENT_MAX_CHUNKS`, 0 = capitoli mai spezzati."""
+    return max(0, env_int("ABM_VOXCPM_SEGMENT_MAX_CHUNKS",
+                          VOXCPM_SEGMENT_MAX_CHUNKS))
+
+
+def voxcpm_segments(plan, max_chunks=None):
+    """Le unita' di lavoro VoxCPM: `[(chapter_index, parte, [indici]), ...]`.
+
+    Un capitolo entro `max_chunks` e' una parte sola (parte 0, come prima).
+    Uno piu' lungo si divide in `ceil(n / max_chunks)` parti di lunghezza
+    simile; ogni taglio si sposta, entro un decimo della parte, dopo un chunk
+    che chiude una frase. Deterministico sul piano: la sintesi e la regola del
+    riuso lo chiamano entrambe e devono vedere gli stessi segmenti. L'audio
+    di un segmento sta nel file-parte del suo primo chunk, quindi la
+    concatenazione in ordine dei file resta il libro anche se il tetto cambia
+    fra due tentativi.
+    """
+    if max_chunks is None:
+        max_chunks = voxcpm_segment_max_chunks()
+    ordine, per_capitolo = [], {}
+    for i, blocco in enumerate(plan):
+        ci = blocco.get("chapter_index", 0)
+        if ci not in per_capitolo:
+            per_capitolo[ci] = []
+            ordine.append(ci)
+        per_capitolo[ci].append(i)
+    out = []
+    for ci in ordine:
+        indici = per_capitolo[ci]
+        n = len(indici)
+        if not max_chunks or n <= max_chunks:
+            out.append((ci, 0, indici))
+            continue
+        parti = -(-n // max_chunks)
+        passo = n / parti
+        finestra = max(1, int(passo / 10))
+        tagli, prec = [], 0
+        for k in range(1, parti):
+            ideale = round(k * passo)
+            scelto = ideale
+            # Il chunk che precede il taglio deve chiudere una frase: si
+            # cerca vicino all'ideale, alternando avanti e indietro.
+            for d in range(finestra + 1):
+                trovato = None
+                for t in (ideale + d, ideale - d):
+                    if (prec < t < n and t - prec <= max_chunks
+                            and _FINE_FRASE.search(
+                                plan[indici[t - 1]].get("text") or "")):
+                        trovato = t
+                        break
+                if trovato is not None:
+                    scelto = trovato
+                    break
+            scelto = min(max(scelto, prec + 1), prec + max_chunks)
+            tagli.append(scelto)
+            prec = scelto
+        bordi = [0] + tagli + [n]
+        # L'ultimo pezzo puo' sforare di poco se i tagli si sono spostati
+        # indietro: lo si accetta, il tetto e' una misura di rischio.
+        for parte in range(len(bordi) - 1):
+            out.append((ci, parte, indici[bordi[parte]:bordi[parte + 1]]))
+    return out
+
+
 def _voxcpm_reusable_indices(work_dir, total_chunks: int, ext: str,
                               plan) -> set:
-    """Riuso VoxCPM: capitolo-atomico, non per chunk (§7.3 — un job e' un
-    capitolo, e il PCM che il worker restituisce non si ricuce a pezzi).
+    """Riuso VoxCPM: segmento-atomico, non per chunk (§7.3 — un job e' un
+    capitolo, o un segmento di un capitolo lungo, vedi `voxcpm_segments`, e
+    il PCM che il worker restituisce non si ricuce a pezzi). Sotto, "capitolo"
+    vale per segmento.
 
     Un capitolo e' riusabile se e solo se: il file-parte del suo PRIMO chunk
     esiste e non e' vuoto (l'audio del capitolo ci sta tutto li', scritto in
@@ -152,18 +236,8 @@ def _voxcpm_reusable_indices(work_dir, total_chunks: int, ext: str,
     quali chunk appartengono a quale capitolo non si puo' applicare la regola."""
     if not plan:
         return set()
-    base = str(work_dir)
-    ordine = []
-    per_capitolo = {}
-    for i, blocco in enumerate(plan[:total_chunks]):
-        ci = blocco.get("chapter_index", 0)
-        if ci not in per_capitolo:
-            per_capitolo[ci] = []
-            ordine.append(ci)
-        per_capitolo[ci].append(i)
     out = set()
-    for ci in ordine:
-        indici = per_capitolo[ci]
+    for _ci, _parte, indici in voxcpm_segments(plan[:total_chunks]):
         testa = indici[0]
         head_path = str(chunk_path(work_dir, testa, ext))
         try:

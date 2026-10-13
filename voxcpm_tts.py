@@ -1009,6 +1009,14 @@ CFG_READ = 2.0
 # quanto guadagni in stabilita', e il capitolo che non passa a 4 non passa.
 _CONCURRENCY_FLOOR = 4
 
+# Di quanto si stringe la concorrenza a ogni rifacimento (motore
+# compromesso, worker bloccato, chunk a silenzio): 32 -> 24 -> 18. Prima era
+# un quarto (32 -> 8 -> 4): sul capitolo da 2064 chunk del 13/10/2026 il
+# rifacimento a 8 avrebbe quadruplicato un giro gia' di 22 minuti, per un
+# guasto (un chunk non tornato) che col carico non c'entrava. Il tetto dei
+# segmenti (`chunk_reuse.voxcpm_segments`) limita gia' quanto lavoro si perde.
+_CONCURRENCY_SHRINK = 0.75
+
 # FIFO, non LRU: le voci di un libro sono poche (una manciata di personaggi),
 # il tetto serve solo contro un chiamante che passasse voice_id a raffica
 # (es. un audit su tutto il catalogo) senza mai liberare la cache.
@@ -1862,7 +1870,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 stats["bytes"] = scritti
                 return stats
 
-        nuova_conc = max(_CONCURRENCY_FLOOR, conc // 4)
+        nuova_conc = max(_CONCURRENCY_FLOOR, int(conc * _CONCURRENCY_SHRINK))
         # Il rifacimento costa GPU gia' pagata e rallenta il capitolo: il
         # motivo va nel log, non solo il contatore `redone` dell'audit.
         _LOG.warning(

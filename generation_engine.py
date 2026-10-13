@@ -4009,23 +4009,26 @@ def _pcm_sample_rate(job, use_speechify, use_voxcpm):
 def _voxcpm_chapter_groups(plan, reusable):
     """I chunk del piano raggruppati per capitolo, in ordine.
 
-    Ritorna `[(chapter_index, [indice_chunk, ...]), ...]`, saltando i capitoli
-    i cui chunk sono TUTTI riusabili da un tentativo precedente.
+    Ritorna `[((chapter_index, parte), [indice_chunk, ...]), ...]`, saltando
+    i gruppi i cui chunk sono TUTTI riusabili da un tentativo precedente. Un
+    capitolo lungo si divide in segmenti (`chunk_reuse.voxcpm_segments`), un
+    job ciascuno: `parte` e' 0 per i capitoli interi e per il primo segmento.
 
-    Il riuso e' per capitolo e non per chunk perche' l'unita' di lavoro e' il
-    capitolo (§7.3): rigenerare un solo chunk costerebbe comunque il job
-    intero, e il PCM che torna e' del capitolo, non ricucibile a pezzi.
+    Il riuso e' per gruppo e non per chunk perche' l'unita' di lavoro e' il
+    job (§7.3): rigenerare un solo chunk costerebbe comunque il job intero, e
+    il PCM che torna non e' ricucibile a pezzi.
     """
-    ordine = []
-    per_capitolo = {}
-    for i, blocco in enumerate(plan):
-        ci = blocco.get("chapter_index", 0)
-        if ci not in per_capitolo:
-            per_capitolo[ci] = []
-            ordine.append(ci)
-        per_capitolo[ci].append(i)
-    return [(ci, per_capitolo[ci]) for ci in ordine
-            if not set(per_capitolo[ci]) <= set(reusable)]
+    return [((ci, parte), indici)
+            for ci, parte, indici in chunk_reuse.voxcpm_segments(plan)
+            if not set(indici) <= set(reusable)]
+
+
+def _voxcpm_chiave(job_id, gid):
+    """La chiave R2 del job del gruppo `gid` = (capitolo, parte). Il primo
+    segmento tiene il nome di sempre, gli altri un suffisso."""
+    ci, parte = gid
+    coda = f"_p{parte:02d}" if parte else ""
+    return f"voxcpm/{job_id}/ch{ci:06d}{coda}.pcm"
 
 
 def _voxcpm_lotto_chars():
@@ -4396,7 +4399,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     def _sintetizza(ci, indici, barra_indici, dest):
         """Un job RunPod sui chunk `indici`, audio in `dest`.
 
-        `ci` e' il capitolo che dà la chiave su R2 e riceve l'avanzamento
+        `ci` e' il gruppo (capitolo, parte) che dà la chiave su R2 e riceve l'avanzamento
         (il primo del lotto); `barra_indici` i chunk che quell'avanzamento
         copre.
         """
@@ -4408,7 +4411,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 # Un job = un capitolo (o un lotto, col suo primo capitolo):
                 # la chiave e' univoca e permette di risalire dal file su R2
                 # al job che l'ha prodotto.
-                key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
+                key=_voxcpm_chiave(job_id, ci),
                 cancelled=cancelled,
                 speed=passo,
                 # Il payload del worker non porta l'indice di capitolo, e non
@@ -4518,7 +4521,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                                     "code_tagliate_dettaglio", [])
                                 for _riga in _dett:
                                     _riga = dict(_riga)
-                                    _riga["capitolo"] = ci
+                                    _riga["capitolo"] = ci[0]
                                     # Il primo chunk del capitolo nel piano: e'
                                     # la chiave con cui l'assemblaggio sa dove
                                     # comincia il suo PCM nel libro.

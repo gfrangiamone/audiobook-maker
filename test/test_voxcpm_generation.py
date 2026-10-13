@@ -75,19 +75,19 @@ def test_pcm_sample_rate_per_motore():
 
 def test_i_chunk_si_raggruppano_per_capitolo():
     gruppi = generation_engine._voxcpm_chapter_groups(PIANO, set())
-    assert gruppi == [(0, [0, 1]), (1, [2]), (2, [3, 4, 5])]
+    assert gruppi == [((0, 0), [0, 1]), ((1, 0), [2]), ((2, 0), [3, 4, 5])]
 
 
 def test_un_capitolo_tutto_riusabile_si_salta():
     gruppi = generation_engine._voxcpm_chapter_groups(PIANO, {0, 1})
-    assert gruppi == [(1, [2]), (2, [3, 4, 5])]
+    assert gruppi == [((1, 0), [2]), ((2, 0), [3, 4, 5])]
 
 
 def test_un_capitolo_riusabile_a_meta_si_rifa_intero():
     # Rigenerare un solo chunk costerebbe comunque il job intero, e il PCM
     # parziale non si potrebbe ricucire: non c'e' mezza misura.
     gruppi = generation_engine._voxcpm_chapter_groups(PIANO, {3, 4})
-    assert gruppi == [(0, [0, 1]), (1, [2]), (2, [3, 4, 5])]
+    assert gruppi == [((0, 0), [0, 1]), ((1, 0), [2]), ((2, 0), [3, 4, 5])]
 
 
 class FintaSintesi:
@@ -907,9 +907,9 @@ def test_i_lotti_sono_consecutivi_e_sotto_il_tetto():
     lotti = generation_engine._voxcpm_lotti(gruppi, piano, 1000)
     # Il capitolo piu' lungo del tetto va da solo, gli altri si accostano
     # finche' ci stanno, senza scavalcare l'ordine del libro.
-    assert [[ci for ci, _ in l] for l in lotti] == [[0, 1], [2], [3], [4]]
+    assert [[ci for (ci, _p), _ in l] for l in lotti] == [[0, 1], [2], [3], [4]]
     # Tetto 0: un capitolo per lotto, come prima dei lotti.
-    assert [[ci for ci, _ in l] for l in generation_engine._voxcpm_lotti(
+    assert [[ci for (ci, _p), _ in l] for l in generation_engine._voxcpm_lotti(
         gruppi, piano, 0)] == [[0], [1], [2], [3], [4]]
 
 
@@ -986,3 +986,78 @@ def test_senza_chunk_samples_si_torna_a_un_job_per_capitolo(tmp_path,
     va = job["voxcpm_actual"]
     assert va["jobs"] == 4
     assert len(va["runpod"]) == 4
+
+
+# --- capitoli lunghi a segmenti (13/10/2026, O0AqzrItdTxHV1LohYVEJQ) --------
+
+def _piano_lungo(n, ci=0, fine=". "):
+    return [{"chapter_index": ci, "text": f"Frase {i}{fine}"} for i in range(n)]
+
+
+def test_capitolo_lungo_si_divide_in_segmenti_sotto_il_tetto():
+    piano = _piano_lungo(2064)
+    seg = chunk_reuse.voxcpm_segments(piano, 300)
+    assert len(seg) == 7
+    assert [p for _, p, _ in seg] == list(range(7))
+    assert all(len(ix) <= 300 for _, _, ix in seg)
+    # Contigui, in ordine, senza buchi ne' doppioni.
+    assert [i for _, _, ix in seg for i in ix] == list(range(2064))
+
+
+def test_il_taglio_cade_dopo_una_fine_di_frase():
+    piano = _piano_lungo(20, fine=", ")
+    piano[10]["text"] = "Fine della frase."
+    seg = chunk_reuse.voxcpm_segments(piano, 15)
+    assert [ix[0] for _, _, ix in seg] == [0, 11]
+
+
+def test_senza_fine_di_frase_si_taglia_a_meta():
+    seg = chunk_reuse.voxcpm_segments(_piano_lungo(20, fine=", "), 15)
+    assert [len(ix) for _, _, ix in seg] == [10, 10]
+
+
+def test_tetto_zero_e_capitoli_corti_restano_interi(monkeypatch):
+    piano = _piano_lungo(5, ci=0) + _piano_lungo(400, ci=1)
+    assert [(c, p) for c, p, _ in chunk_reuse.voxcpm_segments(piano, 0)] == [(0, 0), (1, 0)]
+    monkeypatch.setenv("ABM_VOXCPM_SEGMENT_MAX_CHUNKS", "0")
+    assert len(generation_engine._voxcpm_chapter_groups(piano, set())) == 2
+    monkeypatch.setenv("ABM_VOXCPM_SEGMENT_MAX_CHUNKS", "300")
+    gruppi = generation_engine._voxcpm_chapter_groups(piano, set())
+    assert [g for g, _ in gruppi] == [(0, 0), (1, 0), (1, 1)]
+
+
+def test_chiave_r2_del_segmento():
+    assert generation_engine._voxcpm_chiave("j", (3, 0)) == "voxcpm/j/ch000003.pcm"
+    assert generation_engine._voxcpm_chiave("j", (3, 2)) == "voxcpm/j/ch000003_p02.pcm"
+
+
+def test_riuso_per_segmento(tmp_path, monkeypatch):
+    # Il primo segmento consegnato, il secondo perso a meta': si riusa solo
+    # il primo, il capitolo non si rifa' intero.
+    monkeypatch.setenv("ABM_VOXCPM_SEGMENT_MAX_CHUNKS", "300")
+    piano = _piano_lungo(400)
+    seg = chunk_reuse.voxcpm_segments(piano)
+    primo, secondo = seg[0][2], seg[1][2]
+    for posto, i in enumerate(primo):
+        chunk_reuse.chunk_path(tmp_path, i, "pcm").write_bytes(b"xx" if posto == 0 else b"")
+    chunk_reuse.chunk_path(tmp_path, secondo[0], "pcm").write_bytes(b"xx")
+    riusabili = chunk_reuse._voxcpm_reusable_indices(tmp_path, len(piano), "pcm", piano)
+    assert riusabili == set(primo)
+    gruppi = generation_engine._voxcpm_chapter_groups(piano, riusabili)
+    assert [g for g, _ in gruppi] == [(0, 1)]
+
+
+def test_capitolo_lungo_un_job_per_segmento(tmp_path, sintesi_finta, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_SEGMENT_MAX_CHUNKS", "3")
+    piano = [{"chapter_index": 0, "text": f"Frase {i}."} for i in range(7)]
+    pre = generation_engine._voxcpm_pre_pass(piano, VOCE, "+0%", tmp_path,
+                                             "job-9", set())
+    assert [len(c["chunks"]) for c in sintesi_finta.chiamate] == [2, 3, 2]
+    assert [c["key"] for c in sintesi_finta.chiamate] == [
+        "voxcpm/job-9/ch000000.pcm", "voxcpm/job-9/ch000000_p01.pcm",
+        "voxcpm/job-9/ch000000_p02.pcm"]
+    # L'audio di ogni segmento sta sul suo primo chunk; la concatenazione in
+    # ordine dei file resta il capitolo intero.
+    dimensioni = [os.path.getsize(tmp_path / f"chunk_{i:06d}.pcm") for i in range(7)]
+    assert dimensioni == [4, 0, 6, 0, 0, 4, 0]
+    assert sorted(pre) == list(range(7))

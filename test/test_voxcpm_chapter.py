@@ -603,7 +603,7 @@ def test_motore_compromesso_si_rifa_a_batch_stretto(tmp_path, monkeypatch):
         voxcpm_tts.VoxcpmMotoreCompromesso("motore compromesso", "j2"),
         esito_ok())
     stats, _ = sintetizza(finto, tmp_path, monkeypatch)
-    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 8]
+    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 24]
     assert stats["redone"] == 1
 
 
@@ -612,7 +612,7 @@ def test_chunk_a_silenzio_buttano_il_capitolo(tmp_path, monkeypatch):
     # a valle passerebbe ogni verifica. Il silenzio va riconosciuto qui.
     finto = FintoRunJob(esito_ok(failed_indices=[1]), esito_ok())
     stats, _ = sintetizza(finto, tmp_path, monkeypatch)
-    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 8]
+    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 24]
     assert stats["redone"] == 1
     assert stats["failed_chunks"] == 0
 
@@ -633,9 +633,9 @@ def test_rimbalzi_e_rifacimenti_lasciano_il_motivo_nel_log(
     assert any("cap.pcm respinto" in r and "jR" in r
                and "spegnimento" in r for r in righe)
     assert any("cap.pcm da rifare" in r and "VoxcpmMotoreCompromesso" in r
-               and "jM" in r and "32 -> 8" in r for r in righe)
+               and "jM" in r and "32 -> 24" in r for r in righe)
     assert any("cap.pcm da rifare" in r and "a silenzio (chunk 1)" in r
-               and "8 -> 4" in r for r in righe)
+               and "24 -> 18" in r for r in righe)
 
 
 def test_silenzio_ostinato_e_un_fallimento(tmp_path, monkeypatch):
@@ -649,12 +649,12 @@ def test_silenzio_ostinato_e_un_fallimento(tmp_path, monkeypatch):
 
 
 def test_la_concorrenza_non_scende_sotto_quattro(tmp_path, monkeypatch):
-    monkeypatch.setenv("ABM_VOXCPM_CONCURRENCY", "8")
+    monkeypatch.setenv("ABM_VOXCPM_CONCURRENCY", "5")
     finto = FintoRunJob(esito_ok(failed_indices=[0]),
                         esito_ok(failed_indices=[0]),
                         esito_ok())
     sintetizza(finto, tmp_path, monkeypatch)
-    assert [p["input"]["concurrency"] for p in finto.payload] == [8, 4, 4]
+    assert [p["input"]["concurrency"] for p in finto.payload] == [5, 4, 4]
 
 
 def test_coda_satura_non_si_ritenta(tmp_path, monkeypatch):
