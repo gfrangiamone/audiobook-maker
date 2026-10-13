@@ -6,6 +6,38 @@ import routes_admin_logs
 
 import pytest
 
+# Test che dipendono da risorse NON tracciate da git (il catalogo voci VoxCPM
+# in `voxcpm2/`, 578 MB di wav; il wrapper PowerShell del banco di prova):
+# in locale girano, nel gate CI (`deploy.yml`, O2) vengono saltati con la
+# ragione esplicita invece di fallire. "*" = tutto il file.
+_LOCAL_ASSET_TESTS = {
+    "test_voice_clone_replica.py": {"*"},
+    "test_voxcpm_runpod.py": {"test_il_capitolo_inoltra_gli_avanzamenti", "test_l_interruttore_spegne_l_inoltro"},
+    "test_admin_voice_xss.py": {"test_voice_id_regex_accepts_every_voxcpm_catalog_id"},
+    "test_audio_generation_tags.py": {"test_tags_voce_voxcpm_non_scambia_lid_per_la_lingua"},
+    "test_free_quota_generate_enforcement.py": {"test_voxcpm_libro_oltre_cap_gratuito_richiede_pagamento"},
+    "test_cf_tts_bench.py": {"test_wrapper_eseguito_davvero_non_inietta_langs"},
+}
+
+
+def _voxcpm_catalog_present():
+    try:
+        import os
+        import voxcpm_catalog
+        return os.path.exists(os.path.join(voxcpm_catalog.catalog_dir(), "voices.json"))
+    except Exception:      # noqa: BLE001
+        return False
+
+
+def pytest_collection_modifyitems(config, items):
+    if _voxcpm_catalog_present():
+        return
+    skip = pytest.mark.skip(reason="risorsa locale non tracciata assente (catalogo VoxCPM voxcpm2/ o wrapper PowerShell)")
+    for item in items:
+        names = _LOCAL_ASSET_TESTS.get(item.fspath.basename)
+        if names and ("*" in names or item.originalname in names or item.name.split("[")[0] in names):
+            item.add_marker(skip)
+
 
 @pytest.fixture(autouse=True)
 def _reset_log_sessions_cache():
