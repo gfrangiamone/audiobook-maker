@@ -4478,6 +4478,15 @@ def api_generate():
             return jsonify({"error": "Session expired. Re-upload file."}), 400
         return err, sc
 
+    # Rifiuto anticipato, sotto lock, PRIMA di scrivere qualunque parametro
+    # sul job: un secondo POST durante una generazione in corso non deve
+    # toccare voce, formato o capitoli del job attivo (li leggono email,
+    # download e retention). Il claim atomico vero resta piu' sotto, con
+    # rimborso e rilascio prenotazione (M7, 2026-10-13).
+    with _jobs_lock:
+        if job["status"] not in ("analyzed", "optimized"):
+            return jsonify({"error": "Generation already running or completed."}), 400
+
     # Store format and podcast URL for email/download handlers
     job["output_format"] = output_format
     # Snapshot dei parametri di generazione sul job: servono al recupero batch
