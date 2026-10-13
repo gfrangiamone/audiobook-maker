@@ -5480,6 +5480,11 @@ def api_account_progress():
     return resp
 
 
+# Durata massima (s) di uno stream SSE di avanzamento prima della chiusura
+# (il client riapre). S7, 2026-10-13.
+SSE_MAX_SEC = env_int("ABM_SSE_MAX_SEC", 1800, floor=30)
+
+
 def _sse_event(payload):
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -5499,6 +5504,11 @@ def _sse_stream(job_id, build, *, sleep_sec=2.0):
     e' disponibile dentro il generator: il chiamante cattura prima quello
     che gli serve (owner check, lingua)."""
     def gen():
+        # Durata massima dello stream (S7, 2026-10-13): ogni stream occupa un
+        # thread del server; su un job fermo (es. `analyzed`) o abbandonato
+        # restava aperto per sempre. Il client (EventSource) riapre da solo
+        # dopo la chiusura, quindi una generazione lunga non ne risente.
+        deadline = time.time() + SSE_MAX_SEC
         while True:
             if job_id not in jobs:
                 yield _sse_event({"status": "error", "error": "Job not found"})
@@ -5507,7 +5517,7 @@ def _sse_stream(job_id, build, *, sleep_sec=2.0):
             job["last_poll"] = time.time()
             payload, terminal = build(job)
             yield _sse_event(payload)
-            if terminal:
+            if terminal or time.time() >= deadline:
                 break
             time.sleep(sleep_sec)
     return _sse_response(gen())
