@@ -1182,3 +1182,24 @@ def test_senza_campioni_coerenti_niente_minuto():
     assert "inizio_s" not in dett[0]
     dett = voxcpm_tts._dettaglio_code_tagliate([1], {}, CHUNKS)
     assert "inizio_s" not in dett[0]
+
+
+def test_motore_compromesso_aspetta_che_il_worker_esca(tmp_path, monkeypatch):
+    # 13/10/2026: il capitolo rimandato subito finiva al worker guasto, ancora
+    # nella sua grazia di spegnimento, e tornava respinto piu' volte di fila.
+    pause = []
+    finto = FintoRunJob(
+        voxcpm_tts.VoxcpmMotoreCompromesso("engine_dead OOM", "jM"),
+        esito_ok())
+    sintetizza(finto, tmp_path, monkeypatch, sleep=pause.append)
+    assert pause == [15.0]
+    monkeypatch.setenv("ABM_VOXCPM_DEAD_ENGINE_PAUSE_SEC", "30")
+    assert voxcpm_tts.dead_engine_pause_sec() == 30.0
+
+
+def test_worker_bloccato_si_rifa_senza_pausa(tmp_path, monkeypatch):
+    pause = []
+    finto = FintoRunJob(
+        voxcpm_tts.VoxcpmBloccato("giro oltre il tetto", "jB"), esito_ok())
+    sintetizza(finto, tmp_path, monkeypatch, sleep=pause.append)
+    assert pause == []

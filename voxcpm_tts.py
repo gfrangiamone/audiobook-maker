@@ -246,6 +246,18 @@ def concurrency():
     return max(1, _i("ABM_VOXCPM_CONCURRENCY", 32))
 
 
+def dead_engine_pause_sec():
+    """Pausa prima di risottomettere un capitolo dopo `VoxcpmMotoreCompromesso`.
+
+    Il worker col motore morto risponde e resta in servizio per la sua grazia
+    di spegnimento (`ABM_VOXCPM_SHUTDOWN_GRACE` del worker, 10 s): un
+    capitolo rimandato subito finisce proprio a lui e torna respinto, piu'
+    volte di fila (13/10/2026: 6 rimbalzi su `vTq5ItTo--xGTcjoVDWHMg`, tutti
+    sul worker appena guasto). Aspettare oltre la grazia lo lascia uscire.
+    """
+    return max(0.0, _f("ABM_VOXCPM_DEAD_ENGINE_PAUSE_SEC", 15.0))
+
+
 # Caratteri per chunk. Non e' un limite dell'API: e' il punto in cui il
 # modello riancora il timbro al campione. VoxCPM2 e' autoregressivo e dentro
 # un chunk il conditioning si auto-alimenta (issue OpenBMB/VoxCPM#302): su
@@ -1731,6 +1743,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 raise
             motivo_rifaccio = "%s (job %s): %s" % (
                 type(e).__name__, e.job_id, _breve(e))
+            if isinstance(e, VoxcpmMotoreCompromesso):
+                # Il worker guasto si sta spegnendo: va lasciato uscire
+                # prima di rimettere il capitolo in coda (vedi
+                # `dead_engine_pause_sec`).
+                riposa(dead_engine_pause_sec())
         else:
             if "failed_indices" not in out:
                 # Assente e' un worker che non rispetta il protocollo, non un
