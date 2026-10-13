@@ -3094,7 +3094,7 @@ def _refund_job_payment(job_id, job, reason="error"):
             job["refund_done"] = True
             _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_ISSUED",
                           job.get("client_id", ""), "", "", "")
-            print(f"[{job_id}] Voucher issued: {code} ({bonus_amount:.2f} EUR) -> {payment_email} (reason={reason})")
+            print(f"[{job_id}] Voucher issued: {payment.mask_code(code)} ({bonus_amount:.2f} EUR) -> {payment_email} (reason={reason})")
     except Exception as ve:
         print(f"[{job_id}] Failed to refund payment: {ve}")
 

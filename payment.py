@@ -635,7 +635,7 @@ def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = ""
             if "used_at" in v:
                 del v["used_at"]
         _save_vouchers()
-    print(f"[vouchers] Refund {amount:.2f} EUR -> {code} (new balance {new_remaining:.2f} EUR) reason={reason}")
+    print(f"[vouchers] Refund {amount:.2f} EUR -> {mask_code(code)} (new balance {new_remaining:.2f} EUR) reason={reason}")
     return new_remaining
 
 
@@ -775,7 +775,7 @@ def _recover_orphaned_voucher_charges(jobs):
                 )
                 recovered += 1
             except Exception as e:
-                print(f"[startup] Recovery failed for voucher {code} job {use_job_id}: {e}")
+                print(f"[startup] Recovery failed for voucher {mask_code(code)} job {use_job_id}: {e}")
     if recovered:
         print(f"[startup] Recovered {recovered} orphaned voucher charge(s)")
 
@@ -1088,6 +1088,13 @@ class PayPalCaptureRefusedError(ValueError):
 # `../../payments/captures/<id>/refund?` potrebbe trasformare la capture in
 # un rimborso (S1, 2026-10-12). Esclusi `/`, `.`, `?`, `#`, spazi, `<`.
 _ORDER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}\Z")
+
+
+def mask_code(code) -> str:
+    """Codice voucher per log e stampe: prime 4 cifre e `…`. Un codice intero
+    sul journal e' spendibile da chi legge i log (S13, 2026-10-13)."""
+    s = str(code or "")
+    return s if len(s) <= 4 else s[:4] + "…"
 
 
 def is_order_id(order_id) -> bool:

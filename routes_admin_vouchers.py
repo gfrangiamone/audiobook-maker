@@ -185,7 +185,7 @@ def admin_api_vouchers():
         code=custom_code,
     )
     _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "...", email)
-    print(f"[admin] voucher created via UI: {code} kind={kind} email={email} "
+    print(f"[admin] voucher created via UI: {payment.mask_code(code)} kind={kind} email={email} "
           f"amount={amount:.2f} days={days} job={origin_job_id or '-'} "
           f"order={origin_order_id or '-'} ip={ip}")
     return jsonify({
@@ -215,7 +215,7 @@ def admin_api_voucher_revoke(code):
         v["revoke_reason"] = reason or "admin revoke"
         _save_vouchers()
     _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", client_ip(), code[:8] + "...", reason[:40])
-    print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
+    print(f"[admin] voucher revoked via UI: {payment.mask_code(code)} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
 
 
@@ -246,5 +246,5 @@ def admin_api_voucher_notify(code):
     if not ok:
         return jsonify({"error": "send failed"}), 502
     _log_activity("", "", "ADMIN_VOUCHER_NOTIFY", "", client_ip(), code[:8] + "...", email)
-    print(f"[admin] voucher notification email sent: {code} -> {email}")
+    print(f"[admin] voucher notification email sent: {payment.mask_code(code)} -> {email}")
     return jsonify({"ok": True, "code": code, "email": email})
