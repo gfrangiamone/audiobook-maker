@@ -160,6 +160,7 @@ import routes_community
 import routes_mobile
 import routes_account
 import routes_pages
+import routes_health
 from book_model import Chapter, WORDS_PER_MINUTE
 import cleanup
 import tts_engines
@@ -8453,6 +8454,8 @@ app.register_blueprint(routes_pages.bp)
 # I deep link /t e /s riusano la pagina install del seam pagine.
 routes_tokens.configure(routes_pages._render_install_page)
 app.register_blueprint(routes_tokens.bp)
+routes_health.configure(jobs=lambda: jobs, jobs_lock=_jobs_lock, data_dir=lambda: UPLOAD_DIR)
+app.register_blueprint(routes_health.bp)
 
 
 def _detect_lang_from_request() -> str:
