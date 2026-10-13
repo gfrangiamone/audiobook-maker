@@ -35,8 +35,8 @@ def _setup(monkeypatch, audiobook_app, job_id, chars, tmp_path):
     # ~`chars` caratteri: quota Speechify sopra soglia, quota LLM sotto soglia.
     info = _Info([_Ch(1, "a" * chars)])
     # Job legacy senza client_id -> _check_job_owner passa senza cookie.
-    audiobook_app.jobs = {job_id: {"job_id": job_id, "status": "analyzed",
-                                   "info": info}}
+    monkeypatch.setitem(audiobook_app.jobs, job_id,
+                        {"job_id": job_id, "status": "analyzed", "info": info})
     monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
     monkeypatch.setattr(audiobook_app.speechify_tts, "is_available", lambda: True)
     # Nessun avvio reale dell'ottimizzazione (i path che partono lo fanno solo

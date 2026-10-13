@@ -31,7 +31,7 @@ def test_sse_partial_is_terminal_with_completion_payload(monkeypatch):
     }
     if not hasattr(audiobook_app, "jobs"):
         pytest.skip("audiobook_app.jobs non trovato")
-    audiobook_app.jobs = {"JP": job}
+    monkeypatch.setitem(audiobook_app.jobs, "JP", job)
 
     # Safety net: se il branch terminale mancasse (regressione), evita il loop
     # infinito forzando 'done' dopo alcuni poll.

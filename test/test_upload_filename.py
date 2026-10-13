@@ -4,16 +4,12 @@ l'estensione validata: secure_filename() su nomi interamente non-ASCII
 file veniva salvato come '<jobdir>/pdf'. Conseguenze in produzione: descrittori
 di recovery con input_path troncato e dispatch del parser sbagliato
 (_parse_book cade su parse_txt quando manca il suffisso)."""
-import importlib
 import pytest
 
 
 @pytest.fixture
-def aa(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import audiobook_app
-    importlib.reload(audiobook_app)
-    return audiobook_app
+def aa(fresh_app, tmp_path):
+    return fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
 
 
 def test_nonascii_name_keeps_extension(aa):

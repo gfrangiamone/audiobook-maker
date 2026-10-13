@@ -447,7 +447,7 @@ def test_sse_payload_contains_m4b_fields(monkeypatch):
     # Adattati a come è strutturato in produzione.
     if not hasattr(audiobook_app, "jobs"):
         pytest.skip("audiobook_app.jobs non trovato come attributo modulo")
-    audiobook_app.jobs = {"J6": job}
+    monkeypatch.setitem(audiobook_app.jobs, "J6", job)
 
     # Facciamo terminare il loop SSE dopo il primo yield
     # facendo diventare il job "done" al primo poll.
@@ -550,7 +550,7 @@ def test_admin_card_renders_m4b_subbar(monkeypatch):
     # jobs è il global dict in audiobook_app.
     if not hasattr(audiobook_app, "jobs"):
         pytest.skip("audiobook_app.jobs non trovato")
-    audiobook_app.jobs = {"J7": test_job}
+    monkeypatch.setitem(audiobook_app.jobs, "J7", test_job)
 
     client = audiobook_app.app.test_client()
 
@@ -576,7 +576,7 @@ def test_sse_payload_exposes_m4b_failed(monkeypatch):
     }
     if not hasattr(audiobook_app, "jobs"):
         pytest.skip("audiobook_app.jobs non trovato")
-    audiobook_app.jobs = {"J7": job}
+    monkeypatch.setitem(audiobook_app.jobs, "J7", job)
 
     client = audiobook_app.app.test_client()
     resp = client.get("/api/progress/J7")

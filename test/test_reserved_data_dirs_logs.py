@@ -5,46 +5,39 @@ mensili + activity.db dentro il data dir, accanto alle cartelle dei job. Lo
 sweep delle cartelle orfane la scambierebbe per una job dir abbandonata e la
 cancellerebbe da disco e da cold, come successo alle voci il 12/09/2026.
 """
-import importlib
 import cleanup
 
 import pytest
 
 
-def _app(monkeypatch, tmp_path, log_dir=None):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    if log_dir is None:
-        monkeypatch.delenv("ABM_ACTIVITY_LOG_DIR", raising=False)
-    else:
-        monkeypatch.setenv("ABM_ACTIVITY_LOG_DIR", str(log_dir))
-    import audiobook_app
-    importlib.reload(audiobook_app)
-    return audiobook_app
+def _app(fresh_app, tmp_path, log_dir=None):
+    return fresh_app(env={"ABM_DATA_DIR": str(tmp_path),
+                          "ABM_ACTIVITY_LOG_DIR": None if log_dir is None else str(log_dir)})
 
 
-def test_data_logs_non_e_una_job_dir(monkeypatch, tmp_path):
-    app = _app(monkeypatch, tmp_path, tmp_path / "logs")
+def test_data_logs_non_e_una_job_dir(fresh_app, tmp_path):
+    app = _app(fresh_app, tmp_path, tmp_path / "logs")
     (tmp_path / "logs").mkdir()
     (tmp_path / "jobABC").mkdir()
     assert cleanup._is_job_dir(tmp_path / "logs") is False
     assert cleanup._is_job_dir(tmp_path / "jobABC") is True
 
 
-def test_logs_resta_riservata_anche_senza_env(monkeypatch, tmp_path):
-    app = _app(monkeypatch, tmp_path)
+def test_logs_resta_riservata_anche_senza_env(fresh_app, tmp_path):
+    app = _app(fresh_app, tmp_path)
     (tmp_path / "logs").mkdir()
     assert cleanup._is_job_dir(tmp_path / "logs") is False
 
 
-def test_log_dir_con_nome_qualsiasi_nel_data_dir_e_riservata(monkeypatch, tmp_path):
-    app = _app(monkeypatch, tmp_path, tmp_path / "business_log")
+def test_log_dir_con_nome_qualsiasi_nel_data_dir_e_riservata(fresh_app, tmp_path):
+    app = _app(fresh_app, tmp_path, tmp_path / "business_log")
     (tmp_path / "business_log").mkdir()
     assert cleanup._is_job_dir(tmp_path / "business_log") is False
 
 
-def test_il_cold_delete_rifiuta_il_prefisso_dei_log(monkeypatch, tmp_path):
+def test_il_cold_delete_rifiuta_il_prefisso_dei_log(fresh_app, monkeypatch, tmp_path):
     import storage_backend
-    app = _app(monkeypatch, tmp_path, tmp_path / "business_log")
+    app = _app(fresh_app, tmp_path, tmp_path / "business_log")
     cancellati = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
@@ -53,10 +46,10 @@ def test_il_cold_delete_rifiuta_il_prefisso_dei_log(monkeypatch, tmp_path):
     assert cancellati == []
 
 
-def test_sweep_orfane_non_tocca_i_log(monkeypatch, tmp_path):
+def test_sweep_orfane_non_tocca_i_log(fresh_app, monkeypatch, tmp_path):
     """Simula il ciclo: tutte le scansioni del data dir passano da _is_job_dir,
     quindi basta che nessuna voce riservata sia considerata job dir."""
-    app = _app(monkeypatch, tmp_path, tmp_path / "logs")
+    app = _app(fresh_app, tmp_path, tmp_path / "logs")
     logs = tmp_path / "logs"
     logs.mkdir()
     (logs / "activity_2026-09.log").write_text("x", encoding="utf-8")

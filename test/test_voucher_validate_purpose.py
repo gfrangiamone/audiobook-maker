@@ -1,11 +1,12 @@
 """Test per l'estensione di /api/voucher_validate con purpose + amount_eur."""
 import pytest
-from audiobook_app import app
+import audiobook_app
 import payment
 
 
 @pytest.fixture
 def client(monkeypatch):
+    app = audiobook_app.app
     app.config['TESTING'] = True
     # Disabilita rate limit per i test (rispondi sempre "allowed").
     import audiobook_app as ab
@@ -103,6 +104,7 @@ def test_amount_eur_non_numeric_does_not_crash(client):
 def test_rate_limit_response_includes_valid_and_reason(monkeypatch):
     """Issue 2: 429 rate-limit response must include valid:False and reason."""
     import audiobook_app as ab
+    app = audiobook_app.app
     app.config['TESTING'] = True
     # Force rate limit denial
     monkeypatch.setattr(ab, "_voucher_rl_check", lambda ip, email: (False, 60, "rate_limit"))

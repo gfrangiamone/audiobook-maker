@@ -1,15 +1,12 @@
 # test/test_translation_audit_write.py
-import importlib
 
 
-def test_write_completed_record(tmp_path, monkeypatch):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("ABM_TRANSLATE_COST_IN_EUR_PER_MTOK", "1.0")
-    monkeypatch.setenv("ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK", "2.0")
-    import translation_cost_audit, payment, generation_engine
-    importlib.reload(translation_cost_audit)
-    importlib.reload(payment)
-    importlib.reload(generation_engine)
+def test_write_completed_record(tmp_path, fresh_app):
+    import translation_cost_audit, generation_engine
+    fresh_app(env={"ABM_DATA_DIR": str(tmp_path),
+                   "ABM_TRANSLATE_COST_IN_EUR_PER_MTOK": "1.0",
+                   "ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK": "2.0"},
+              leaves=("translation_cost_audit", "payment"))
 
     job = {"payment": {"total_eur": 3.5, "method": "voucher",
                        "token": "VOUCHER-XYZ-123456789", "source": ""}}
@@ -36,14 +33,12 @@ def test_write_completed_record(tmp_path, monkeypatch):
     assert r["payment_token_short"] == "VOUCHER-..."
 
 
-def test_write_failed_record_uses_partial_usage(tmp_path, monkeypatch):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("ABM_TRANSLATE_COST_IN_EUR_PER_MTOK", "1.0")
-    monkeypatch.setenv("ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK", "1.0")
-    import translation_cost_audit, payment, generation_engine
-    importlib.reload(translation_cost_audit)
-    importlib.reload(payment)
-    importlib.reload(generation_engine)
+def test_write_failed_record_uses_partial_usage(tmp_path, fresh_app):
+    import translation_cost_audit, generation_engine
+    fresh_app(env={"ABM_DATA_DIR": str(tmp_path),
+                   "ABM_TRANSLATE_COST_IN_EUR_PER_MTOK": "1.0",
+                   "ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK": "1.0"},
+              leaves=("translation_cost_audit", "payment"))
 
     job = {"payment": {"total_eur": 2.0, "method": "paypal", "token": "PPORDER123"}}
     generation_engine._write_translation_audit(
@@ -59,10 +54,9 @@ def test_write_failed_record_uses_partial_usage(tmp_path, monkeypatch):
     assert r["tokens_estimated"] is True
 
 
-def test_write_is_non_fatal(tmp_path, monkeypatch):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+def test_write_is_non_fatal(tmp_path, fresh_app):
     import generation_engine
-    importlib.reload(generation_engine)
+    fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     # usage_report None non deve sollevare
     generation_engine._write_translation_audit(
         "JOB3", {"payment": {}}, backend="", model="", source_lang="it",

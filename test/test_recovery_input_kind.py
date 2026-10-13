@@ -2,18 +2,14 @@
 con nome interamente non-ASCII prima del fix su _safe_upload_name): il file su
 disco si chiama letteralmente 'pdf'/'epub'/'txt', esiste, ma _parse_book —
 che smista per suffisso — cadeva su parse_txt e il recovery falliva sempre."""
-import importlib
 import io
 import zipfile
 import pytest
 
 
 @pytest.fixture
-def aa(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import audiobook_app
-    importlib.reload(audiobook_app)
-    return audiobook_app
+def aa(fresh_app, tmp_path):
+    return fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
 
 
 def _spy(aa, monkeypatch):

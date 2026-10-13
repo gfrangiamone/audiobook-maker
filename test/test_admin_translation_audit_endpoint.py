@@ -1,21 +1,15 @@
-import importlib
 import routes_admin_audit
 
 
-def _app(tmp_path, monkeypatch):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("ABM_ADMIN_TOKEN", "secret")
-    monkeypatch.setenv("ABM_TRANSLATE_COST_IN_EUR_PER_MTOK", "1.0")
-    monkeypatch.setenv("ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK", "1.0")
-    import translation_cost_audit, payment, audiobook_app
-    importlib.reload(translation_cost_audit)
-    importlib.reload(payment)
-    importlib.reload(audiobook_app)
-    return audiobook_app
+def _app(tmp_path, fresh_app):
+    return fresh_app(env={"ABM_DATA_DIR": str(tmp_path), "ABM_ADMIN_TOKEN": "secret",
+                          "ABM_TRANSLATE_COST_IN_EUR_PER_MTOK": "1.0",
+                          "ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK": "1.0"},
+                     leaves=("translation_cost_audit", "payment"))
 
 
-def test_synth_running_translation(tmp_path, monkeypatch):
-    app = _app(tmp_path, monkeypatch)
+def test_synth_running_translation(tmp_path, fresh_app, monkeypatch):
+    app = _app(tmp_path, fresh_app)
     app.jobs["LIVE1"] = {
         "status": "translating",
         "tr_params": {"source_lang": "it", "target_lang": "en", "optimize": False},
@@ -35,8 +29,8 @@ def test_synth_running_translation(tmp_path, monkeypatch):
     assert r["user_price_eur_charged"] == 3.0
 
 
-def test_synth_ignores_non_translating(tmp_path, monkeypatch):
-    app = _app(tmp_path, monkeypatch)
+def test_synth_ignores_non_translating(tmp_path, fresh_app, monkeypatch):
+    app = _app(tmp_path, fresh_app)
     app.jobs["G1"] = {"status": "generating", "voice": "edge:it-IT-X"}
     recs = routes_admin_audit._synth_running_translation_audit_records()
     app.jobs.pop("G1", None)
@@ -66,16 +60,16 @@ def _seed(app):
         "outcome": "failed_refunded", "ts": "2026-07-16T09:30:00+00:00"})
 
 
-def test_endpoint_requires_admin(tmp_path, monkeypatch):
-    app = _app(tmp_path, monkeypatch)
+def test_endpoint_requires_admin(tmp_path, fresh_app, monkeypatch):
+    app = _app(tmp_path, fresh_app)
     c = _client(app)
     assert c.get("/admin/api/translation_cost_audit").status_code == 401
     assert c.get("/admin/api/translation_cost_audit",
                  headers={"X-Admin-Token": "wrong"}).status_code == 401
 
 
-def test_endpoint_records_and_aggregates(tmp_path, monkeypatch):
-    app = _app(tmp_path, monkeypatch)
+def test_endpoint_records_and_aggregates(tmp_path, fresh_app, monkeypatch):
+    app = _app(tmp_path, fresh_app)
     _seed(app)
     c = _client(app)
     r = c.get("/admin/api/translation_cost_audit",
@@ -94,8 +88,8 @@ def test_endpoint_records_and_aggregates(tmp_path, monkeypatch):
     assert r1["_eff_revenue_eur"] == 0.0
 
 
-def test_endpoint_filter_target_lang(tmp_path, monkeypatch):
-    app = _app(tmp_path, monkeypatch)
+def test_endpoint_filter_target_lang(tmp_path, fresh_app, monkeypatch):
+    app = _app(tmp_path, fresh_app)
     _seed(app)
     c = _client(app)
     d = c.get("/admin/api/translation_cost_audit?target_lang=en",
@@ -103,8 +97,8 @@ def test_endpoint_filter_target_lang(tmp_path, monkeypatch):
     assert [rec["job_id"] for rec in d["records"]] == ["C1"]
 
 
-def test_languages_endpoint(tmp_path, monkeypatch):
-    app = _app(tmp_path, monkeypatch)
+def test_languages_endpoint(tmp_path, fresh_app, monkeypatch):
+    app = _app(tmp_path, fresh_app)
     _seed(app)
     c = _client(app)
     d = c.get("/admin/api/translation_cost_audit/languages",

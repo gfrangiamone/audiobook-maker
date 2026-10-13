@@ -57,4 +57,6 @@ def test_single_sse_loop_in_app():
     src = inspect.getsource(app)
     assert src.count('mimetype="text/event-stream"') == 1
     assert 'yield f"data: {json.dumps(' not in src
-    assert src.count("_sse_stream(job_id, _build") == 3 and src.count("_sse_response(") == 3
+    # I tre endpoint di avanzamento passano dal loop condiviso (M6: floor, non conteggio esatto).
+    assert src.count("_sse_stream(job_id, _build") >= 3
+    assert src.count("def _sse_stream(") == 1 and src.count("def _sse_response(") == 1

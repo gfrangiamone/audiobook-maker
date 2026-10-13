@@ -1,14 +1,11 @@
 """Il serving fa redirect 302 al presigned URL quando il locale è assente
 ma l'oggetto esiste su cold storage."""
-import importlib
 import pytest
 
 
 @pytest.fixture
-def app_client(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import audiobook_app
-    importlib.reload(audiobook_app)
+def app_client(fresh_app, tmp_path):
+    audiobook_app = fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     audiobook_app.app.config["TESTING"] = True
     return audiobook_app, audiobook_app.app.test_client()
 

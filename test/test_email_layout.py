@@ -128,7 +128,10 @@ def test_vc_and_acct_senders_share_i18n_send(monkeypatch):
     assert len(sent) == 2 and "https://x/m" in sent[1][2]
     assert es.send_account_deleted("", "it") is False
     src = pathlib.Path(es.__file__).read_text(encoding="utf-8")
-    assert src.count("def _i18n_send(") == 1 and "safe = {k:" in src and src.count("safe = {k:") == 1
+    assert src.count("def _i18n_send(") == 1
+    # I valori vengono escapati, gli URL no (comportamento, non conteggio: M6).
+    assert es.send_voice_clone_expiring("u@x.it", "en", days="<b>3</b>", manage_url="https://x/m?a=1&b=2") is True
+    assert "&lt;b&gt;3&lt;/b&gt;" in sent[2][2] and "https://x/m?a=1&b=2" in sent[2][2]
     assert "dashed #8b5cf6" not in src and "linear-gradient" not in src and "<!DOCTYPE" not in src
 
 

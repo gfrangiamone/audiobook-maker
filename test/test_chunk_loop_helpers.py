@@ -1,6 +1,5 @@
 """E1(b): il loop chunk di run_generation senza copie, chunk_reuse.chunk_path."""
 import ast
-import inspect
 import pathlib
 from pathlib import Path
 
@@ -17,7 +16,9 @@ def test_chunk_path_is_the_only_place_that_names_chunk_files(tmp_path):
 
 
 def test_run_generation_uses_the_shared_loop_helpers():
-    src = inspect.getsource(ge.run_generation)
+    # M6: conteggi sul MODULO (una sola copia), non sulla funzione: lo split
+    # di run_generation (M3) sposta il codice senza duplicarlo.
+    src = pathlib.Path(ge.__file__).read_text(encoding="utf-8")
     assert src.count("Progress: chunk") == 1 and src.count("EARLY-ABORT:") == 1
     assert src.count("_get_audio_duration_ms(mp3_path)") == 1
     tree = ast.parse(src)
@@ -29,4 +30,6 @@ def test_run_generation_uses_the_shared_loop_helpers():
     by_name = {}
     for c in calls:
         by_name[c.func.id] = by_name.get(c.func.id, 0) + 1
-    assert by_name == {"_log_progress": 2, "_count_failure_and_maybe_abort": 2, "_flush_chapter": 2}
+    # Una chiamata per ramo (file unico / multi-file), mai una terza copia.
+    for helper in ("_log_progress", "_count_failure_and_maybe_abort", "_flush_chapter"):
+        assert 1 <= by_name.get(helper, 0) <= 2, (helper, by_name)

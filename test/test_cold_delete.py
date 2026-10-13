@@ -1,12 +1,10 @@
 """La rimozione definitiva di una job dir cancella anche il prefisso su cold."""
-import importlib
 import cleanup
 
 
-def test_delete_cold_prefix_called(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import storage_backend, audiobook_app
-    importlib.reload(audiobook_app)
+def test_delete_cold_prefix_called(fresh_app, monkeypatch, tmp_path):
+    import storage_backend
+    fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     deleted = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: deleted.append(p))
@@ -14,10 +12,9 @@ def test_delete_cold_prefix_called(monkeypatch, tmp_path):
     assert deleted == ["jobZ/"]
 
 
-def test_delete_cold_noop_when_disabled(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import storage_backend, audiobook_app
-    importlib.reload(audiobook_app)
+def test_delete_cold_noop_when_disabled(fresh_app, monkeypatch, tmp_path):
+    import storage_backend
+    fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     called = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: called.append(p))
@@ -25,12 +22,11 @@ def test_delete_cold_noop_when_disabled(monkeypatch, tmp_path):
     assert called == []
 
 
-def test_no_cold_delete_when_forensic_protected(monkeypatch, tmp_path):
+def test_no_cold_delete_when_forensic_protected(fresh_app, monkeypatch, tmp_path):
     """Job sotto retention forense: i file locali sono preservati, quindi anche
     gli oggetti cold NON devono essere cancellati."""
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import storage_backend, audiobook_app
-    importlib.reload(audiobook_app)
+    import storage_backend
+    fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     # crea la work dir del job così work_dir.exists() è True
     (tmp_path / "jobF").mkdir()
     deleted = []

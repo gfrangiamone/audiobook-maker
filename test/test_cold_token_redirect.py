@@ -2,17 +2,14 @@
 file evacuato (locale assente) deve fare redirect 302 alla copia cold (presigned
 URL), invece di ritornare 404/410. Verifica che il fix della cold-redirect sia
 cablato nelle rotte /dl/<token>/* e non solo dentro _send_file_throttled."""
-import importlib
 import time
 import pytest
 import token_store
 
 
 @pytest.fixture
-def app_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import audiobook_app
-    importlib.reload(audiobook_app)
+def app_env(fresh_app, tmp_path):
+    audiobook_app = fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     audiobook_app.app.config["TESTING"] = True
     return audiobook_app, tmp_path
 

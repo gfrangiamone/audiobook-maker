@@ -91,7 +91,12 @@ def test_simulator_thread_is_stopped(monkeypatch, tmp_path):
 
 
 def test_engine_has_a_single_m4b_loop():
+    import inspect
     import pathlib
     src = pathlib.Path(ge.__file__).read_text(encoding="utf-8")
-    assert src.count("range(1, 3)") == 1 and src.count("target=_m4b_progress_simulator") == 1
-    assert "_m4b_phase_cb" not in src and src.count("_run_m4b_conversion(") == 4
+    # Un solo simulatore e un solo loop di tentativi, dentro _run_m4b_conversion.
+    assert src.count("target=_m4b_progress_simulator") == 1
+    assert src.count("def _run_m4b_conversion(") == 1
+    assert inspect.getsource(ge._run_m4b_conversion).count("range(1, 3)") == 1
+    assert "_m4b_phase_cb" not in src
+    assert src.count("_run_m4b_conversion(") >= 3      # def + i chiamanti, mai un loop inline

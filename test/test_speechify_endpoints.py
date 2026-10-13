@@ -51,11 +51,8 @@ def test_voices_include_speechify_when_available(client):
     assert any(i.startswith("speechify:simba-3.2:") for i in ids)
 
 
-def test_voices_exclude_speechify_without_key(monkeypatch):
-    monkeypatch.delenv("ABM_SPEECHIFY_API_KEY", raising=False)
-    import importlib
-    import audiobook_app
-    importlib.reload(audiobook_app)
+def test_voices_exclude_speechify_without_key(fresh_app):
+    audiobook_app = fresh_app(env={"ABM_SPEECHIFY_API_KEY": None})
     audiobook_app._invalidate_voices_cache()
     audiobook_app.app.config["TESTING"] = True
     c = audiobook_app.app.test_client()

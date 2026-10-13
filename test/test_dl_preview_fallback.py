@@ -10,17 +10,14 @@ Cause:
 
 Questi test bloccano la regressione di entrambi.
 """
-import importlib
 import time
 import pytest
 import token_store
 
 
 @pytest.fixture
-def app_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import audiobook_app
-    importlib.reload(audiobook_app)
+def app_env(fresh_app, tmp_path):
+    audiobook_app = fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     audiobook_app.app.config["TESTING"] = True
     return audiobook_app, tmp_path
 

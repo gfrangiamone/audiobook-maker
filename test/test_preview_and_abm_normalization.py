@@ -20,7 +20,6 @@ due percorsi che l'utente usa per giudicare il risultato non ne beneficiavano:
    ottimizzazione AI inclusa, come sempre — cosi` quello che si legge e` quello
    che si sente.
 """
-import importlib
 import io
 import json
 import shutil
@@ -40,10 +39,8 @@ ATTESO = "L'amore e la sua disintegrazione nella societa occidentale."
 
 
 @pytest.fixture
-def app_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    import audiobook_app
-    importlib.reload(audiobook_app)
+def app_env(fresh_app, tmp_path):
+    audiobook_app = fresh_app(env={"ABM_DATA_DIR": str(tmp_path)})
     audiobook_app.app.config["TESTING"] = True
     return audiobook_app, tmp_path
 

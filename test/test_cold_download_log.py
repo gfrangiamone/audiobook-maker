@@ -2,7 +2,6 @@
 un semplice redirect 302 alla copia cold: sul redirect non sappiamo se l'utente
 abbia davvero ricevuto il file (vedi incidente filtro IP sul token R2, dove ogni
 redirect finiva in 403 ma il log registrava un download riuscito)."""
-import importlib
 import time
 from datetime import datetime
 
@@ -11,10 +10,8 @@ import token_store
 
 
 @pytest.fixture
-def app_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path / "data"))
-    import audiobook_app
-    importlib.reload(audiobook_app)
+def app_env(fresh_app, monkeypatch, tmp_path):
+    audiobook_app = fresh_app(env={"ABM_DATA_DIR": str(tmp_path / "data")})
     audiobook_app.app.config["TESTING"] = True
     # il log mensile va scritto in tmp, non nella working copy
     log_dir = tmp_path / "app"

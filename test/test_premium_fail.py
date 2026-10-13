@@ -91,8 +91,13 @@ def test_exit_paths_of_run_generation_go_through_premium_fail():
     for name in ("_notify_user_gemini_job_failed(", "_admin_alert_gemini_failure(", "_notify_user_premium_job_failed("):
         assert name not in src, name
     # Le uscite con rimborso (quota/budget, eccezione Gemini, tutti i chunk
-    # falliti, nessun output) e i wrapper passano da _premium_fail.
-    assert src.count("_premium_fail(") == 5                        # + preflight
+    # falliti, nessun output) e i wrapper passano da _premium_fail: le tre
+    # notifiche sono chiamate SOLO da li' (invariante sul modulo, M6).
+    assert "_premium_fail(" in src
+    mod = inspect.getsource(ge)
+    pf = inspect.getsource(ge._premium_fail)
+    for name in ("_notify_user_gemini_job_failed(", "_admin_alert_gemini_failure(", "_notify_user_premium_job_failed("):
+        assert mod.count(name) - mod.count("def " + name) == pf.count(name) == 1, name
     assert '_premium_job_failed(job_id, job, voice, info, e, "voxcpm")' in src
     for fn in (ge._premium_job_failed, ge._gemini_quality_refund):
         assert "_premium_fail(" in inspect.getsource(fn)

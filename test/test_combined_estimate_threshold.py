@@ -28,10 +28,13 @@ class _Info:
         self.language = "en"
 
 
-def _setup_job(audiobook_app, job_id="CE1"):
+def _setup_job(monkeypatch, audiobook_app, job_id="CE1"):
     info = _Info([_Ch(1, "Hello world. " * 50)])
     job = {"job_id": job_id, "status": "analyzed", "info": info}
-    audiobook_app.jobs = {job_id: job}
+    # Nel dict condiviso, non `audiobook_app.jobs = {...}`: riassegnarlo
+    # scollega l'engine (configurato col dict originale) per il resto della
+    # sessione di test (M6).
+    monkeypatch.setitem(audiobook_app.jobs, job_id, job)
     return job_id
 
 
@@ -41,7 +44,7 @@ def test_combined_estimate_uses_speechify_threshold_for_speechify_voice(monkeypa
         pytest.skip("audiobook_app.jobs non trovato")
     monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.40")
-    job_id = _setup_job(audiobook_app)
+    job_id = _setup_job(monkeypatch, audiobook_app)
 
     client = audiobook_app.app.test_client()
     resp = client.post("/api/combined_estimate", json={
@@ -64,7 +67,7 @@ def test_combined_estimate_uses_gemini_threshold_for_non_speechify_voice(monkeyp
         pytest.skip("audiobook_app.jobs non trovato")
     monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.40")
-    job_id = _setup_job(audiobook_app, "CE2")
+    job_id = _setup_job(monkeypatch, audiobook_app, "CE2")
 
     client = audiobook_app.app.test_client()
     # Voce standard (non premium): nessuna stima premium, total 0 -> is_free True,

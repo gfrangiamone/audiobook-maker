@@ -174,19 +174,11 @@ def test_l_anteprima_non_esiste_per_voxcpm(client, motore):
     assert r.get_json()["error"] == "voxcpm_preview_unsupported"
 
 
-def test_il_cap_caratteri_e_quello_di_voxcpm(motore, monkeypatch):
-    monkeypatch.setenv("ABM_MAX_VOXCPM_TEXT_CHARS", "1234")
-    import importlib
-    importlib.reload(audiobook_app)
+def test_il_cap_caratteri_e_quello_di_voxcpm(motore, fresh_app):
+    # fresh_app ricarica a fine test con l'ambiente di inizio sessione: il
+    # modulo non resta con MAX_VOXCPM_TEXT_CHARS=1234 (era un bug di isolamento).
+    fresh_app(env={"ABM_MAX_VOXCPM_TEXT_CHARS": "1234"})
     assert audiobook_app._max_text_chars_for_voice(VOCE) == 1234
-    # Il reload sotto va fatto SENZA la env var, non con essa ancora attiva:
-    # monkeypatch la ripristina solo a fine test (dopo il return), quindi un
-    # secondo reload qui dentro la vedrebbe di nuovo "1234" e il modulo
-    # resterebbe con MAX_VOXCPM_TEXT_CHARS=1234 per il resto della sessione
-    # di test (era un bug di isolamento: rotto ogni test successivo che
-    # generasse con la voce VoxCPM senza aspettarsi quel cap).
-    monkeypatch.delenv("ABM_MAX_VOXCPM_TEXT_CHARS", raising=False)
-    importlib.reload(audiobook_app)
 
 
 def test_stima_e_addebito_dicono_lo_stesso_numero(client, job_grande):

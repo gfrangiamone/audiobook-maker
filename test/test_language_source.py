@@ -11,8 +11,8 @@ SORGENTE = pathlib.Path("audiobook_app.py").read_text(encoding="utf-8")
 
 def _derive(language, language_detected):
     """Copia della regola, per testarla senza montare l'app intera."""
-    from audiobook_app import _derive_language_source
-    return _derive_language_source(language, language_detected)
+    import audiobook_app
+    return audiobook_app._derive_language_source(language, language_detected)
 
 
 def _block(marker, source=SORGENTE):

@@ -1,18 +1,14 @@
 """La finestra calda evacua i file di output locali se: marker presente,
 età oltre la finestra, e oggetto confermato su cold storage."""
-import importlib
 import cleanup
 import pytest
 
 
 @pytest.fixture
-def aa(monkeypatch, tmp_path):
-    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("ABM_HOT_WINDOW_SEC", "7200")
+def aa(fresh_app, tmp_path):
     import storage_tiering
-    importlib.reload(storage_tiering)
-    import audiobook_app
-    importlib.reload(audiobook_app)
+    audiobook_app = fresh_app(env={"ABM_DATA_DIR": str(tmp_path), "ABM_HOT_WINDOW_SEC": "7200"},
+                              leaves=("storage_tiering",))
     return audiobook_app, storage_tiering
 
 

@@ -1,6 +1,7 @@
 """Residui E1/E2 (2026-10-10): cookie_secure() unico, _is_resume_or_probe_request
 nei 7 inline, request.json -> get_json(silent=True), trim_preview in text_reflow,
 _pagination in routes_admin_audit, niente UTC naive in guide_content."""
+import ast
 import inspect
 import re
 
@@ -28,7 +29,11 @@ def test_cookie_secure_single_rule(monkeypatch):
         assert aa.cookie_secure() is True
         assert routes_account._acct_cookie_secure() is True
     src = inspect.getsource(aa)
-    assert "is_https" not in src and src.count("secure=cookie_secure()") == 3
+    assert "is_https" not in src
+    # Ogni `secure=` dei cookie e' cookie_secure() (AST, non conteggio: M6).
+    secure = [kw.value for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)
+              for kw in n.keywords if kw.arg == "secure"]
+    assert secure and all(isinstance(v, ast.Call) and getattr(v.func, "id", "") == "cookie_secure" for v in secure)
 
 
 def test_no_inline_probe_or_request_json_left():

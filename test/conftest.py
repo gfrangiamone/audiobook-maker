@@ -1,10 +1,17 @@
 from datetime import datetime
 from unittest.mock import patch
 
+import importlib
+import os
 import sys
 import routes_admin_logs
 
 import pytest
+
+# M6: ambiente della sessione PRIMA di ogni test. `fresh_app` lo rimette al
+# momento del reload di ripristino, cosi' i moduli tornano ai default anche se
+# un'altra fixture ha ancora le sue env attive.
+_ENV_AT_START = dict(os.environ)
 
 # Test che dipendono da risorse NON tracciate da git (il catalogo voci VoxCPM
 # in `voxcpm2/`, 578 MB di wav; il wrapper PowerShell del banco di prova):
@@ -37,6 +44,55 @@ def pytest_collection_modifyitems(config, items):
         names = _LOCAL_ASSET_TESTS.get(item.fspath.basename)
         if names and ("*" in names or item.originalname in names or item.name.split("[")[0] in names):
             item.add_marker(skip)
+
+
+def _reload_chain(leaves=()):
+    """Ordine fisso: prima le foglie chieste, poi generation_engine, poi
+    audiobook_app (che riconfigura blueprint ed engine e rilega jobs). Un
+    reload di una foglia o dell'engine SENZA l'app lasciava l'engine con lo
+    stato di configure() azzerato: il 404 "job not found" che compariva
+    solo nella suite completa."""
+    for name in leaves:
+        importlib.reload(importlib.import_module(name))
+    import generation_engine
+    importlib.reload(generation_engine)
+    import audiobook_app
+    importlib.reload(audiobook_app)
+    return audiobook_app
+
+
+@pytest.fixture
+def fresh_app():
+    """`fresh_app(env={...}, leaves=(...))` ricarica i moduli con le env date
+    (valore None = variabile tolta) e ritorna il modulo `audiobook_app`.
+
+    A fine test ricarica di nuovo con l'ambiente di inizio sessione: i test
+    successivi trovano i default, non la ABM_DATA_DIR del tmp_path di un
+    altro test. E' l'unico posto dove si fa `importlib.reload` dell'app o
+    dell'engine (test_m6_test_hygiene)."""
+    mp = pytest.MonkeyPatch()
+    used = {"leaves": None}
+
+    def _go(env=None, leaves=()):
+        for k, v in (env or {}).items():
+            if v is None:
+                mp.delenv(k, raising=False)
+            else:
+                mp.setenv(k, str(v))
+        used["leaves"] = tuple(leaves)
+        return _reload_chain(used["leaves"])
+
+    yield _go
+    mp.undo()
+    if used["leaves"] is not None:
+        current = dict(os.environ)
+        os.environ.clear()
+        os.environ.update(_ENV_AT_START)
+        try:
+            _reload_chain(used["leaves"])
+        finally:
+            os.environ.clear()
+            os.environ.update(current)
 
 
 @pytest.fixture(autouse=True)
