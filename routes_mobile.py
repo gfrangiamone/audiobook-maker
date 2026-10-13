@@ -39,7 +39,7 @@ _cfg = {}
 _jobs_lock = None
 generation_engine = None
 
-FUNCS = ['_get_client_id', '_log_activity', 'client_ip', '_client_platform', '_share_link_for', '_safe_share_filename', '_effective_retention_for_token_info', '_qr_data_uri', '_transfer_payload_for', '_check_job_owner', '_find_files_in_outputs', '_job_original_filename', '_send_file_throttled']
+FUNCS = ['_get_client_id', '_log_activity', 'client_ip', '_ip_rl_check','_client_platform', '_share_link_for', '_safe_share_filename', '_effective_retention_for_token_info', '_qr_data_uri', '_transfer_payload_for', '_check_job_owner', '_find_files_in_outputs', '_job_original_filename', '_send_file_throttled']
 VALUES = ('jobs', 'upload_dir', 'share_ttl_sec', 'share_max_bytes', 'share_upload_ttl_sec', 'client_emails_map')
 
 
@@ -84,6 +84,9 @@ def _log_activity(*a, **k):
 
 def client_ip(*a, **k):
     return _cfg["client_ip"](*a, **k)
+
+def _ip_rl_check(*a, **k):      # rate limit di share/create (S12)
+    return _cfg["_ip_rl_check"](*a, **k)
 
 def _client_platform(*a, **k):
     return _cfg["_client_platform"](*a, **k)
@@ -387,6 +390,15 @@ def api_share_create():
     cid = _get_client_id()
     if not cid:
         return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
+    # Ogni share "upload" e' un presigned PUT su R2 (dimensione verificata
+    # solo in finalize): con un cid inventato si poteva caricare senza limite.
+    # Tetto per IP, non per cid (S12, 2026-10-13).
+    _ok, _retry = _ip_rl_check("share_create", client_ip(), 10, 60)
+    if not _ok:
+        resp = jsonify({"error": "rate_limited", "error_code": "rate_limited"})
+        resp.status_code = 429
+        resp.headers["Retry-After"] = str(max(1, int(_retry or 1)))
+        return resp
     body = request.get_json(silent=True) or {}
     job_id = (body.get("job_id") or "").strip()
     filename = _safe_share_filename(body.get("filename") or "audiolibro.m4b")

@@ -6076,6 +6076,7 @@ routes_mobile.configure(
     _jobs_lock=_jobs_lock,
     generation_engine=generation_engine,
     jobs=lambda: jobs,
+    _ip_rl_check=lambda *a, **k: _ip_rl_check(*a, **k),      # share/create (S12)
     upload_dir=lambda: UPLOAD_DIR,
     share_ttl_sec=lambda: ABM_SHARE_TTL_SEC,
     share_max_bytes=lambda: ABM_SHARE_MAX_BYTES,
