@@ -2561,9 +2561,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         traceback.print_exc()
         job = jobs.get(job_id)
         if job:
-            job["status"] = "error"
             job["progress_message"] = f"Internal error: {e}"
             job["last_poll"] = time.time()
+            # Via la funzione canonica: spill dei testi, storno della quota
+            # standard, notifica account e telemetria valgono anche per un
+            # crash del wrapper (M2, 2026-10-13; prima status scritto a mano).
+            generation_engine._set_job_status(job, "error")
 
 #  -  -  Activity log  -  -
 

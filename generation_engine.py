@@ -2777,9 +2777,9 @@ def _log_m4b_progress(job_id: str, job: dict, event: str, **fields) -> None:
             job.get("original_filename", ""),
             "M4B_" + event,
             client_id=job.get("client_id", ""),
-            client_ip=job.get("ip", ""),
+            client_ip=job.get("client_ip", ""),
             voice=payload,
-            browser_lang=job.get("lang", ""),
+            browser_lang=job.get("browser_lang", ""),
             epoch=job.get("gen_epoch"),
         )
     except Exception as e:
@@ -3164,7 +3164,7 @@ def run_optimization(job_id, selected_chapters=None):
     # dell'input): l'ottimizzazione deve produrre testo adatto alla voce
     # che lo leggera`. Fallback finale: lingua del libro estratta in fase
     # di parsing (utile solo se per qualche motivo opt_lang non e` settato).
-    lang = job.get("opt_lang") or job.get("lang") or "it"
+    lang = job.get("opt_lang") or "it"   # "lang" non e' mai scritto sul job (M2)
     prompt = _get_llm_prompt(lang)
     if prompt:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri). "
@@ -3526,6 +3526,10 @@ def run_translation(job_id):
             raise translation_core.TranslationCancelled("cancelled at start")
         backend = translation_core.resolve_backend()
         provider, model, base_url = translation_core.make_client_provider(backend)
+        # Letti da /api/admin/audit-translations: prima restavano variabili
+        # locali e l'audit admin mostrava backend e modello vuoti (M2).
+        job["tr_backend"] = backend
+        job["tr_model"] = model
         _log(f"translation start {source}->{target} fmt={out_format} "
              f"opt={optimize} backend={backend} model={model} "
              f"chapters={len(chapters)} chars={total_chars}")
