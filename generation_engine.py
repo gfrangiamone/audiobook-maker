@@ -2866,8 +2866,9 @@ def _cancel_cleanup_workdir(job, job_id, work_dir, partial_audio_delivered):
         # Se NON e' stato consegnato audio parziale, rimuovi tutta la work_dir.
         if not partial_audio_delivered:
             shutil.rmtree(str(work_dir), ignore_errors=True)
-    except Exception:
-        pass
+    except Exception as e:      # noqa: BLE001
+        # Best-effort, ma una work_dir rimasta sul disco va vista nel log (M4).
+        print(f"[{job_id}] cancel: pulizia work_dir fallita: {e}", flush=True)
 
 
 def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0,
@@ -5112,8 +5113,11 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         try:
             import gemini_tts as _gtts
             _gtts.release_reservation(job_id)
-        except Exception:
-            pass
+        except Exception as rel_err:      # noqa: BLE001
+            # La reservation resta a contare nel preflight dei prossimi job
+            # fino al riavvio: va detto (M4).
+            print(f"[{job_id}] WARNING release_reservation fallita: {rel_err} "
+                  f"(budget resta prenotato fino al riavvio)", flush=True)
         # Reconciliation a livello mensile (gemini_tts_usage.json): registra
         # il delta stima/reale per consentire calibrazione del modello di costo.
         # Solo job davvero completati - per i cancel partiali la stima ex-ante
@@ -5199,15 +5203,24 @@ def _accumulate_speechify_actual(job, block, result):
     if sa is None or not isinstance(result, dict):
         return
     try:
-        sa["chars"] += len(block.get("text", "") or "")
-        sa["billable_chars"] += int(result.get("billable_chars", 0) or 0)
+        # Prima i calcoli, poi le scritture: un valore malformato non deve
+        # lasciare lo store aggiornato a meta'.
+        chars = len(block.get("text", "") or "")
+        billable = int(result.get("billable_chars", 0) or 0)
         bw = int(result.get("bytes_written", 0) or 0)
         sr = int(result.get("sample_rate", 48000) or 48000) or 48000
-        sa["audio_seconds"] += bw / (sr * 2.0)
-        if not sa.get("model_key"):
-            sa["model_key"] = getattr(speechify_tts, "MODEL_ID", "simba-3.2")
-    except Exception:
-        pass
+    except (TypeError, ValueError) as e:
+        # Chunk non contabilizzato: senza traccia il costo reale resterebbe
+        # sottostimato in silenzio (M4). Il contatore finisce nell'audit.
+        sa["skipped_chunks"] = int(sa.get("skipped_chunks", 0) or 0) + 1
+        print(f"[speechify] chunk non contabilizzato ({e}); "
+              f"skipped_chunks={sa['skipped_chunks']}", flush=True)
+        return
+    sa["chars"] += chars
+    sa["billable_chars"] += billable
+    sa["audio_seconds"] += bw / (sr * 2.0)
+    if not sa.get("model_key"):
+        sa["model_key"] = getattr(speechify_tts, "MODEL_ID", "simba-3.2")
 
 
 def _write_speechify_audit(job_id, job, voice_id, language, outcome):
@@ -7878,8 +7891,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _write_premium_audit(job_id, job, voice, info, "cancelled_refunded", "gemini")
                 try:
                     _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
-                except Exception:
-                    pass
+                except Exception as refund_err:      # noqa: BLE001
+                    # Soldi non restituiti: traccia nel job e nell'activity
+                    # log (console admin), non un `pass` muto (M4).
+                    job["refund_error"] = str(refund_err)[:200]
+                    print(f"[{job_id}] Cancel fallback refund FAILED: {refund_err}", flush=True)
+                    _log_activity(job_id, job.get("original_filename", ""), "REFUND_FAILED",
+                                  job.get("client_id", ""), job.get("client_ip", ""),
+                                  str(refund_err)[:80], "")
         elif use_gemini and not still_current:
             print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
         elif (use_speechify or use_voxcpm) and still_current:

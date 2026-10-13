@@ -11,12 +11,12 @@ Usage:
 """
 
 import asyncio
-import concurrent.futures
 import logging
 import re
 import json
 import os
 import i18n as _i18n
+import retry_util
 import seo_ld
 from ratelimit import cooldown_counter as _cooldown_counter, sliding_check as _sliding_check
 from client_identity import EMAIL_RE as _ACCT_EMAIL_RE, ip_salt as _ip_salt, mask_email as _mask_email_ci, salted_hash as _salted_hash
@@ -3792,7 +3792,7 @@ def api_analyze():
 def api_preview_audio(job_id):
     """Serve l'MP3 di anteprima come endpoint GET.
     Il browser può usare l'URL direttamente come audio.src  -  nessun problema di autoplay policy.
-    Il timeout è gestito da concurrent.futures (funziona sempre, a differenza di asyncio.wait_for).
+    Il timeout è gestito da retry_util.run_with_timeout (funziona sempre, a differenza di asyncio.wait_for).
     """
     if not job_id:
         return jsonify({"error": "Job non trovato"}), 404
@@ -3932,7 +3932,7 @@ def api_preview_audio(job_id):
                          conditional=True)
 
     # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
-    # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
+    # retry_util.run_with_timeout interrompe l'attesa indipendentemente
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_gemini_preview = gemini_tts is not None and _is_gemini_voice(voice)
     use_speechify_preview = _is_speechify_voice(voice) and speechify_tts.is_available()
@@ -4136,9 +4136,10 @@ def api_preview_audio(job_id):
         except Exception:
             pass
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_generate).result(timeout=_wrapper_timeout)
-    except concurrent.futures.TimeoutError:
+        # Niente `with` sull'executor: lo shutdown(wait=True) dell'uscita
+        # aspettava la fine di _generate e il 504 arrivava solo allora (M4).
+        retry_util.run_with_timeout(_generate, _wrapper_timeout)
+    except TimeoutError:
         return jsonify({"error": f"Timeout: il servizio TTS non ha risposto in {_wrapper_timeout} secondi."}), 504
     except Exception as e:
         # EMPTY-RESPONSE: Gemini ha risposto senza audio (finish_reason=OTHER
@@ -4178,7 +4179,7 @@ def api_preview_audio(job_id):
             }), 503
         # HTTP timeout: il client genai non ha ricevuto risposta entro il
         # timeout configurato (ABM_GEMINI_HTTP_TIMEOUT_MS, default 25s).
-        # Distinguiamo dal ThreadPoolExecutor timeout (504) perche` qui
+        # Distinguiamo dal timeout di run_with_timeout (504) perche` qui
         # abbiamo info sulla causa (API lenta/irraggiungibile).
         _ctx = getattr(e, "__context__", None)
         _is_http_timeout = False

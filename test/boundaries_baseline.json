@@ -39,10 +39,47 @@
   "generation_engine.py": 1,
   "templates/seo_i18n.py": 1
  },
+ "payment_private_state": {
+  "audiobook_app.py": 26,
+  "generation_engine.py": 11,
+  "routes_admin_vouchers.py": 7
+ },
  "retry_loop_by_hand": {
   "community_moderator.py": 1,
   "gemini_tts.py": 1,
   "generation_engine.py": 1,
   "tts_backend_state.py": 1
+ },
+ "silent_except": {
+  "abuse_watch.py": 3,
+  "activity_log.py": 1,
+  "assembly_queue.py": 2,
+  "audio_utils.py": 1,
+  "audiobook_app.py": 45,
+  "cleanup.py": 7,
+  "cover_utils.py": 3,
+  "db.py": 1,
+  "email_service.py": 1,
+  "epub_to_tts.py": 4,
+  "fileio.py": 2,
+  "free_tts_quota.py": 1,
+  "gemini_tts.py": 2,
+  "generation_engine.py": 35,
+  "llm_client.py": 1,
+  "load_metrics.py": 4,
+  "output_reuse.py": 1,
+  "payment.py": 2,
+  "pdf_to_tts.py": 1,
+  "premium_chunk.py": 2,
+  "recovery.py": 2,
+  "retry_util.py": 1,
+  "routes_dl.py": 1,
+  "routes_mobile.py": 3,
+  "routes_pages.py": 1,
+  "routes_voice_clone.py": 1,
+  "token_store.py": 1,
+  "voice_clone_demo.py": 1,
+  "voxcpm_ranking.py": 1,
+  "voxcpm_tts.py": 1
  }
 }

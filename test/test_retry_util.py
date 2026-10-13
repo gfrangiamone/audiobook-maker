@@ -112,4 +112,4 @@ def test_retry_util_is_a_leaf():
     src = pathlib.Path(ru.__file__).read_text(encoding="utf-8")
     mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
-    assert mods <= {"asyncio", "re", "time"}
+    assert mods <= {"asyncio", "re", "threading", "time"}

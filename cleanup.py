@@ -639,6 +639,10 @@ def _job_service_was_delivered(job_id):
       - traduzione prodotta (`translated_chapters`/`translated_lang`)
       - ottimizzazione AA completata (`ai_optimized`/`opt_completed_at`)
       - marker `.email_sent` finalizzato su disco (cross-restart, job già fuori memoria)
+
+    Ritorna None se il marker su disco non si e' potuto leggere (errore I/O):
+    "non so" non e' "non consegnato", e il chiamante rinvia la decisione sul
+    rimborso al giro successivo (M4).
     """
     try:
         with _jobs_lock:
@@ -662,8 +666,10 @@ def _job_service_was_delivered(job_id):
             content = marker.read_text(encoding="utf-8").strip()
             if content and content != _EMAIL_MARKER_PENDING:
                 return True
-    except Exception:
-        pass
+    except OSError as e:
+        print(f"[cleanup] {job_id} marker di consegna illeggibile ({e}): "
+              f"riconciliazione rinviata", flush=True)
+        return None
     return False
 
 
@@ -728,7 +734,12 @@ def _reconcile_unused_capture_for_job(job_id, reason=""):
         bloccare il loop di cleanup).
     """
     # Guard falso-positivo: servizio già consegnato → settle silenzioso.
-    if _job_service_was_delivered(job_id):
+    delivered = _job_service_was_delivered(job_id)
+    if delivered is None:
+        # Esito ignoto (marker illeggibile): nessun rimborso e nessun settle
+        # su un'eccezione; il capture resta `used=false` e si riprova.
+        return
+    if delivered:
         try:
             settled = payment.settle_delivered_captures_for_job(job_id, reason=reason)
         except Exception as e:

@@ -13,9 +13,12 @@ tre predicati «status HTTP transitorio» e due parser di `Retry-After`.
   messaggio ("retryDelay: 22s", "retry in 6h12m51.7s"), `None` se assente.
 - `retry_after_from_error(err)`: come sopra, leggendo anche i `details`
   strutturati dell'SDK Google.
+- `run_with_timeout(fn, timeout_sec)`: `fn()` in un thread, `TimeoutError`
+  allo scadere SENZA aspettare che il thread finisca.
 """
 import asyncio
 import re
+import threading
 import time
 
 # Le stesse espressioni che gemini_tts usava da solo: 'retryDelay: 22371s'
@@ -123,6 +126,31 @@ def retry_call(fn, *, attempts, is_retryable=None, wait=1.0, sleep=time.sleep,
             if seconds > 0:
                 sleep(seconds)
     raise RuntimeError("unreachable")
+
+
+def run_with_timeout(fn, timeout_sec, *, name="run_with_timeout"):
+    """Esegue `fn()` in un thread daemon e ritorna il suo risultato entro
+    `timeout_sec`; allo scadere solleva `TimeoutError` SUBITO e il thread
+    resta a finire il suo lavoro in background (risultato perso). Un
+    `with ThreadPoolExecutor` qui aspetterebbe la fine del lavoro nello
+    `shutdown(wait=True)` dell'uscita, e il timeout non limiterebbe nulla
+    (anteprima audio, M4). Un'eccezione di `fn` viene rilanciata tal quale."""
+    box = {}
+
+    def _runner():
+        try:
+            box["result"] = fn()
+        except BaseException as e:  # noqa: BLE001 - si rilancia nel chiamante
+            box["exc"] = e
+
+    t = threading.Thread(target=_runner, name=name, daemon=True)
+    t.start()
+    t.join(max(0.0, float(timeout_sec)))
+    if t.is_alive():
+        raise TimeoutError(f"{name}: nessuna risposta in {timeout_sec} s")
+    if "exc" in box:
+        raise box["exc"]
+    return box.get("result")
 
 
 async def retry_call_async(fn, *, attempts, is_retryable=None, wait=1.0,

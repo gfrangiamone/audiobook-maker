@@ -57,6 +57,12 @@ PATTERNS = [
     ("html_doctype_in_py", r"<!DOCTYPE html", {"email_layout"}),   # le email sono documenti interi
     ("naive_utc", r"\.utcnow\(\)|\.utcfromtimestamp\(", set()),
     ("mirror_comment", r"(?i)(mirror (del|of)|clone di|identica a .* salvo)", set()),
+    # M4: `except [Exception]: pass` nasconde errori che dovrebbero avere un
+    # esito (log, contatore, stato). Un `except OSError: pass` mirato non conta.
+    ("silent_except", r"except(\s+(Exception|BaseException)(\s+as\s+\w+)?)?\s*:(\s*#[^\n]*)*\s*pass\b", set()),
+    # M4: lo stato di payment si legge con payment_info/voucher_info/token_email
+    # e si modifica con le sue API, non toccando i dict privati.
+    ("payment_private_state", r"payment\._(vouchers|payments)\b", set()),
 ]
 
 
@@ -141,6 +147,9 @@ if __name__ == "__main__":
     if BASELINE.exists():
         old = json.loads(BASELINE.read_text(encoding="utf-8"))
         for name in counts:
+            if name not in old:
+                print(f"nuovo pattern {name}: baseline iniziale {sum(counts[name].values())}")
+                continue
             for f, n in counts[name].items():
                 if n > old.get(name, {}).get(f, 0):
                     sys.exit(f"RIFIUTATO: {name} in {f} salirebbe da "
