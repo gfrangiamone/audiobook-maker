@@ -15,13 +15,39 @@ import os
 import tempfile
 
 import edge_tts
+import edge_tts.communicate as _edge_communicate
+from edge_tts.constants import TRUSTED_CLIENT_TOKEN
 
 import retry_util as _retry
 import tts_split
 from audio_utils import _concatenate_mp3, _generate_silence_mp3
-from env_utils import env_int
+from env_utils import env_int, env_str
 from text_reflow import _sanitize_tts_text
 from voice_utils import rate_speed_factor as _rate_speed_factor_vu
+
+# Endpoint websocket di edge-tts. Dal 10/10/2026 speech.platform.bing.com
+# risponde 403 a ~1 richiesta su 4 (rollout Microsoft, issue upstream
+# rany2/edge-tts#490, nessuna release dopo 7.2.8): decine di migliaia di chunk
+# al giorno finivano in silenzio. api.msedgeservices.com da prod: 30/30 ok
+# contro 22/30. `ABM_EDGE_TTS_ENDPOINT=legacy` torna all'URL della libreria;
+# un URL completo lo sostituisce. Da togliere quando upstream rilascia il fix.
+_EDGE_WSS_MSEDGE = ("wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
+                    "?Ocp-Apim-Subscription-Key=" + TRUSTED_CLIENT_TOKEN)
+_EDGE_WSS_LEGACY = _edge_communicate.WSS_URL
+
+
+def _edge_wss_url(setting):
+    """URL websocket per `ABM_EDGE_TTS_ENDPOINT` (vuoto -> msedgeservices)."""
+    s = (setting or "").strip()
+    if s.lower() == "legacy":
+        return _EDGE_WSS_LEGACY
+    if s.lower().startswith("wss://"):
+        return s
+    return _EDGE_WSS_MSEDGE
+
+
+# edge_tts.communicate legge WSS_URL dal proprio modulo a ogni connessione.
+_edge_communicate.WSS_URL = _edge_wss_url(env_str("ABM_EDGE_TTS_ENDPOINT"))
 
 # Timeout (secondi) per una singola chiamata edge-tts. edge-tts non applica
 # receive_timeout alla websocket (ws_connect senza timeout in aiohttp): su
@@ -89,6 +115,17 @@ class _EdgeTruncated(Exception):
     """L'MP3 di edge-tts e' arrivato troncato: si ritenta come un errore."""
 
 
+# Il nuovo endpoint limita i burst con 429 (issue #490): la pausa standard da
+# 1-2 s non basta a farlo rientrare.
+_EDGE_429_WAIT = 3.0
+
+
+def _edge_retry_wait(attempt, exc):
+    if getattr(exc, "status", None) == 429:
+        return _EDGE_429_WAIT * (attempt + 1)
+    return _retry.backoff(attempt, base=1.0)
+
+
 async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     """Singola chiamata edge-tts con retry/backoff esponenziale.
 
@@ -128,7 +165,7 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
                   f"({len(text)} chars: \"{snippet}...\"): {e}")
 
     try:
-        return await _retry.retry_call_async(_once, attempts=max_retries, wait=1.0, on_retry=_log)
+        return await _retry.retry_call_async(_once, attempts=max_retries, wait=_edge_retry_wait, on_retry=_log)
     except Exception as e:      # noqa: BLE001 - esauriti i tentativi: silenzio esplicito
         last_error = e if not isinstance(e, _EdgeTruncated) else str(e)
         if not isinstance(e, _EdgeTruncated):

@@ -244,6 +244,38 @@ def test_errore_nell_output_di_un_job_completato():
     assert "upload" in str(e.value)
 
 
+def test_upload_fallito_sul_worker_e_una_consegna_fallita():
+    # 13/10/2026 (px7jGh66O_do_D6cd4cfUg): capitolo di 22 minuti sintetizzato,
+    # PUT su R2 caduta, RunPod marca FAILED per via di `error`. L'uscita e'
+    # quella di un capitolo riuscito, lunga: `error` cade nel mezzo che il
+    # messaggio taglia, e il guasto diventava un VoxcpmJobError nudo.
+    output = {"audio_seconds": 1352.93, "bytes": 129881120, "chars": 20855,
+              "chunk_samples": list(range(500_000, 500_200)),
+              "error": "upload su presigned PUT fallito: HTTP 503: SlowDown",
+              "failed_indices": [], "worker": "bhjjuql5w9rq9y"}
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-up"})],
+        get=[FintaRisposta(body={"status": "FAILED", "output": output})],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmConsegnaFallita) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert e.value.ritentabile is True
+    assert "SlowDown" in str(e.value)
+
+
+def test_configurazione_s3_mancante_resta_non_ritentabile():
+    # Rifare il capitolo non aggiunge le ABM_S3_* sull'endpoint.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-cf"})],
+        get=[FintaRisposta(body={"status": "FAILED", "output": {
+            "error": "'s3.key' richiesto ma configurazione S3 incompleta, "
+                     "mancano: ABM_S3_BUCKET"}})],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert type(e.value) is voxcpm_tts.VoxcpmJobError
+
+
 def test_residuo_di_avanzamento_su_failed_non_declassa_il_guasto():
     # F1 (review finale): se il worker muore senza mai scrivere l'esito
     # (OOM, segfault, kill), l'SDK non manda l'esito finale e il record
