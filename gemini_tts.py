@@ -67,6 +67,15 @@ LANG_BASELINE_RATE = {
     # Nessun job reale: hangul sillabico con spazi fra le parole, stimato per
     # difetto (prezzo semmai alto) finche` il rate log non ha campioni propri.
     "ko": 6.0,
+    # Scritture non latine sotto la mediana globale (audit mag-ott 2026, car/s
+    # riportati a velocita' 0). Sui 13.9 globali il listino quotava audio piu'
+    # corto del reale: il job FYFw2hBi5thGL0ijcGCw7g (th, 2.8k car.) e` durato
+    # +27% del preventivo ed e` uscito gratis sopra soglia. Campioni pochi:
+    # valori arrotondati per difetto (prezzo semmai alto), da ricalibrare.
+    "th": 11.4,   # n=2: 10.97 / 11.81
+    "uk": 11.3,   # n=2
+    "ru": 11.9,   # n=1
+    "bn": 8.5,    # n=1: 8.55
 }
 
 # Mediana globale su tutte le lingue: default per quelle senza dati propri.

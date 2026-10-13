@@ -69,6 +69,21 @@ def test_scritture_cjk_hanno_baseline_propria(lang):
     assert gemini_tts.baseline_rate(lang) < 7.0
 
 
+@pytest.mark.parametrize("lang", ["th", "uk", "ru", "bn"])
+def test_scritture_lente_non_ricadono_sulla_mediana_globale(lang):
+    # Job FYFw2hBi5thGL0ijcGCw7g: il thai sui 13.9 globali quotava 223 s contro
+    # 283 reali e passava gratis sotto soglia. Queste lingue leggono meno
+    # car/s della mediana: il listino deve usare il loro rate.
+    assert gemini_tts.baseline_rate(lang) < gemini_tts.CHARS_PER_AUDIO_SECOND
+
+
+def test_preventivo_thai_del_job_fyfw_non_e_piu_gratis():
+    # 2796 car. a -10%: con 11.4 car/s il listino supera la soglia di 0.15 EUR.
+    secs = gemini_tts.list_audio_seconds("ก" * 2796, language="th", rate_pct=-10)
+    assert secs == pytest.approx(2796 / 11.4 / 0.9, rel=0.01)
+    assert secs * 2.22 / 3600 > 0.15
+
+
 def test_clamp_lascia_al_giapponese_il_suo_rate_reale(rate_log):
     # 290 chunk reali del job E0d9F a ~5.5 char/sec: prima il clamp sulla
     # banda latina li riportava a 10.4, dimezzando la stima di durata.
