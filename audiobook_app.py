@@ -7931,6 +7931,13 @@ def api_translate_title(job_id):
     cache = job.setdefault("tr_title_cache", {})
     if target in cache:
         return jsonify({"title": cache[target], "cached": True})
+    # Ogni target nuovo e' una chiamata LLM a pagamento: solo lingue che il
+    # servizio sa trattare, e non piu' di 10 al minuto per IP (S9, 2026-10-13).
+    if target not in translation_core.EDGE_LANGS_FALLBACK:
+        return jsonify({"title": ""})
+    _ok, _ = _ip_rl_check("translate_title", client_ip(), 10, 60)
+    if not _ok:
+        return jsonify({"title": ""})
     if not translation_core.is_available():
         return jsonify({"title": ""})
     try:
