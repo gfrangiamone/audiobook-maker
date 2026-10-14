@@ -77,11 +77,9 @@ let og_url=document.querySelector('meta[property="og:url"]');
 if(!og_url){og_url=document.createElement("meta");og_url.setAttribute("property","og:url");document.head.appendChild(og_url)}
 og_url.content=baseUrl + "/" + lang + "/";
 let og_img=document.querySelector('meta[property="og:image"]');
-if(!og_img){og_img=document.createElement("meta");og_img.setAttribute("property","og:image");document.head.appendChild(og_img)}
-og_img.content=baseUrl + "/og-image.png";
+if(!og_img){og_img=document.createElement("meta");og_img.setAttribute("property","og:image");document.head.appendChild(og_img);og_img.content=baseUrl + "/og-image.png"}
 let tw_img=document.querySelector('meta[name="twitter:image"]');
-if(!tw_img){tw_img=document.createElement("meta");tw_img.setAttribute("name","twitter:image");document.head.appendChild(tw_img)}
-tw_img.content=baseUrl + "/og-image.png";
+if(!tw_img){tw_img=document.createElement("meta");tw_img.setAttribute("name","twitter:image");document.head.appendChild(tw_img);tw_img.content=baseUrl + "/og-image.png"}
 let tw_img_alt=document.querySelector('meta[name="twitter:image:alt"]');
 if(!tw_img_alt){tw_img_alt=document.createElement("meta");tw_img_alt.setAttribute("name","twitter:image:alt");document.head.appendChild(tw_img_alt)}
 tw_img_alt.content=s.title;

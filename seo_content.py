@@ -23,6 +23,7 @@ Il blocco si adatta al tema della pagina usando le CSS custom properties
 from content_store import content_json
 from i18n import pick as _i18n_pick
 import seo_ld as _seo_ld
+from og_image_data import og_image_url
 from datetime import datetime
 from html import escape
 import json
@@ -351,7 +352,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "inLanguage": _seo_ld.IN_LANGUAGES,
         "featureList": features,
         "isAccessibleForFree": True,
-        "screenshot": f"{base_url}/og-image.png",
+        "screenshot": og_image_url(base_url),
         "dateModified": iso_modified,
         "author": _seo_ld.AUTHOR,
         "license": _seo_ld.LICENSE,
@@ -405,7 +406,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "description": c["direct_answer"],
         "inLanguage": _seo_ld.in_language(lang),
         "isPartOf": {"@type": "WebSite", "url": base_url, "name": "Audiobook Maker"},
-        "primaryImageOfPage": f"{base_url}/og-image.png",
+        "primaryImageOfPage": og_image_url(base_url),
         "datePublished": "2022-06-01",
         "dateModified": iso_modified,
         "accessibilityFeature": ["displayTransformability", "audioDescription"],

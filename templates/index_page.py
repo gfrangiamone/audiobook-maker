@@ -65,6 +65,7 @@ _FRAGMENT_ORDER = [
 
 # Mappe hreflang / og:locale e relativi tag: page_brand (foglia).
 import page_brand as _brand
+from og_image_data import og_image_url
 
 
 def build_html_template(
@@ -130,7 +131,7 @@ def build_html_template(
             "__SEO_LD_DESC__":   seo.get("ld_desc", ""),
             "__H1_TAGLINE__":    seo.get("tagline", ""),
             "__SUBTITLE__":      seo.get("subtitle", ""),
-            "__SEO_OG_IMAGE__":  f"{base_url}/og-image.png" if base_url else "/og-image.png",
+            "__SEO_OG_IMAGE__":  og_image_url(base_url),
             "__OG_LOCALE__":     current_locale,
             "__OG_LOCALE_ALT__": og_locale_alt_block,
             "__SEO_PUBLISHED__": "2022-06-01",

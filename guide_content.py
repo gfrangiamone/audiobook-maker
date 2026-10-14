@@ -14,6 +14,7 @@ from __future__ import annotations
 from content_store import content_json, content_text, content_exists
 from i18n import pick as _i18n_pick
 import page_brand as _brand
+from og_image_data import og_image_url
 import seo_ld as _seo_ld
 
 
@@ -128,7 +129,7 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
         "dateModified": date_modified,
         "image": {
             "@type": "ImageObject",
-            "url": f"{base}/og-image.png",
+            "url": og_image_url(base),
             "width": 1200,
             "height": 630,
         },
@@ -235,7 +236,7 @@ def build_guide_html(
     head = _brand.seo_head(
         desc=meta["desc"], keywords=meta["kw"], canonical=canonical, hreflang=hreflang_block,
         og_type="article", og_title=meta["title"], og_desc=meta["desc"], og_url=canonical,
-        og_image=f"{base_url}/og-image.png", lang=lang, twitter=True,
+        og_image=og_image_url(base_url), lang=lang, twitter=True,
         ld=[article_ld, breadcrumb_ld, *extra_ld])
     body_html = (f'<article>\n<h1>{meta["h1"]}</h1>\n{article_dates_html}\n{body}\n'
                  f'<a class="cta" href="{app_home}">{cta_label} &rarr;</a>\n</article>')
