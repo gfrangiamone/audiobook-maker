@@ -30,10 +30,12 @@ from voice_utils import rate_speed_factor as _rate_speed_factor_vu
 
 # Endpoint websocket di edge-tts. Dal 10/10/2026 speech.platform.bing.com
 # risponde 403 a ~1 richiesta su 4 (rollout Microsoft, issue upstream
-# rany2/edge-tts#490, nessuna release dopo 7.2.8): decine di migliaia di chunk
-# al giorno finivano in silenzio. api.msedgeservices.com da prod: 30/30 ok
-# contro 22/30. `ABM_EDGE_TTS_ENDPOINT=legacy` torna all'URL della libreria;
-# un URL completo lo sostituisce. Da togliere quando upstream rilascia il fix.
+# rany2/edge-tts#490): decine di migliaia di chunk al giorno finivano in
+# silenzio. api.msedgeservices.com da prod: 30/30 ok contro 22/30, ma limita i
+# burst con 429. edge-tts 7.3.0 (token Sec-MS-GEC v2) risolve i 403 sul
+# legacy: `ABM_EDGE_TTS_ENDPOINT=legacy` torna all'URL della libreria; un URL
+# completo lo sostituisce. Da togliere quando il legacy risulta stabile in prod
+# (scripts/edge_endpoint_probe.py).
 _EDGE_WSS_MSEDGE = ("wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
                     "?Ocp-Apim-Subscription-Key=" + TRUSTED_CLIENT_TOKEN)
 _EDGE_WSS_LEGACY = _edge_communicate.WSS_URL

@@ -20,7 +20,7 @@ pymupdf>=1.24  # PDF (importato come fitz/pymupdf in pdf_to_tts)
 defusedxml>=0.7  # XML sicuro in secure_archive
 
 # --- motori TTS e LLM
-edge-tts>=7.0
+edge-tts>=7.3.1  # token Sec-MS-GEC v2: risolve i 403 dell'endpoint legacy (rany2/edge-tts#490)
 google-genai>=2.25  # Part.speech_metadata: stile del 3.8 fuori dalla trascrizione (gemini_tts._transport_contents)
 google-auth>=2.23  # FCM HTTP v1 push notifications (app mobile) e service account Vertex
 openai>=1.0  # client compatibile OpenAI per ottimizzazione e traduzione (llm_client, translation_core)
