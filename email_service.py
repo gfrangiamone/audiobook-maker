@@ -17,6 +17,7 @@ Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 import html
 import os
 from env_utils import env_str, env_int
+import edge_health
 import i18n as _i18n
 import email_layout as _layout
 import email_layout as _layout
@@ -1498,6 +1499,63 @@ def admin_notify_gemini_model_unavailable(model_key, detail, job_id, cooldown_se
         _send_email(ADMIN_EMAIL, subject, html_body)
     except Exception as e:
         print(f"[email] admin_notify_gemini_model_unavailable fallita: {e}")
+
+
+def admin_notify_edge_tts_degraded(snap):
+    """Notifica URGENTE: edge-tts sbaglia oltre soglia (`edge_health.record_call`).
+
+    Gira nel thread dell'allerta, quindi puo' permettersi la lettura (5 s
+    al massimo) dell'ultima release su PyPI: nell'incidente del 10/10/2026 la
+    causa era una libreria da aggiornare e il confronto delle versioni e' la
+    prima cosa da guardare. Le firme d'errore arrivano dalle eccezioni della
+    libreria: solo HTML-escapate. Un guasto SMTP non propaga.
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+    installed = snap.get("library_version") or "?"
+    latest = edge_health.latest_release()
+    outdated = bool(latest) and latest != installed
+    silence = snap.get("reason") == "silence"
+    if silence:
+        title = "URGENTE — edge-tts: chunk finiti in silenzio"
+        lead = (f"Nell'ultima finestra il <strong>{snap['fail_pct']}%</strong> delle chiamate "
+                f"edge-tts ha esaurito i tentativi ed e' stato sostituito da silenzio "
+                f"(soglia {snap['fail_threshold_pct']}%): i libri delle voci standard escono "
+                f"con buchi.")
+    else:
+        title = "edge-tts: tentativi falliti oltre soglia"
+        lead = (f"Il <strong>{snap['retry_pct']}%</strong> dei tentativi edge-tts fallisce "
+                f"(soglia {snap['retry_threshold_pct']}%). Il retry per ora li recupera, "
+                f"ma e' il segnale che di solito precede i chunk in silenzio.")
+    if outdated:
+        lead += (f"<br><br><strong>E' disponibile edge-tts {_esc_html(latest)}</strong> "
+                 f"(installata {_esc_html(installed)}): verificare il changelog e aggiornare "
+                 f"<code>requirements.txt</code>.")
+    errors = "<br>".join(f"{n}&times; {_esc_html(_sanitize_header(sig, max_len=120))}"
+                         for sig, n in snap.get("top_errors") or []) or "—"
+    minutes = int(snap.get("window_sec") or 0) // 60
+    rows = "".join([
+        _layout.row("Finestra", f"ultimi {minutes} minuti", width="40%"),
+        _layout.row("Chiamate in silenzio", f"{snap['failed']}/{snap['calls']} ({snap['fail_pct']}%)"),
+        _layout.row("Tentativi falliti", f"{snap['attempt_errors']}/{snap['attempts']} ({snap['retry_pct']}%)"),
+        _layout.row("edge-tts installata", _esc_html(installed)),
+        _layout.row("Ultima su PyPI", _esc_html(latest or "non raggiungibile")),
+        _layout.row("Errori piu' frequenti", errors, last=True, mono=True),
+    ])
+    hours = int(snap.get("cooldown_sec") or 0) // 3600
+    subject = _sanitize_header(
+        f"[ABM-ADMIN] {'URGENTE ' if silence else ''}edge-tts degradato: "
+        f"{snap['fail_pct']}% silenzio, {snap['retry_pct']}% retry", max_len=200)
+    html_body = _layout.admin_alert(
+        title, "#b91c1c" if silence else "#d97706", lead_html=lead, rows_html=rows,
+        note_html=(f"Prossimo avviso al piu' presto fra {hours} h. Soglie in "
+                   f"<code>ABM_EDGE_ALERT_*</code>, disattivabile con <code>ABM_EDGE_ALERT=0</code>. "
+                   f"Endpoint: <code>ABM_EDGE_TTS_ENDPOINT</code>."))
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+        print(f"[admin] Allerta edge-tts inviata ({snap.get('reason')})")
+    except Exception as e:
+        print(f"[admin] Invio allerta edge-tts fallito: {e}")
 
 
 def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,

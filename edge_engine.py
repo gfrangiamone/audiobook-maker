@@ -3,7 +3,9 @@
 `generate_chunk_mp3` (async): testo -> MP3 via edge-tts con retry/backoff
 (`_edge_tts_call`), timeout per chiamata (`ABM_EDGE_TTS_TIMEOUT`), rilevamento
 dell'output troncato dalla sola dimensione del file e silenzio esplicito quando
-tutti i tentativi falliscono. Le voci Multilingual passano frase per frase
+tutti i tentativi falliscono. Ogni tentativo e ogni esito finale vanno a
+`edge_health`, che allerta l'admin se il tasso di errore supera la soglia.
+Le voci Multilingual passano frase per frase
 (`tts_split._split_sentences_for_tts`) e i pezzi vengono concatenati.
 
 Dipende da `tts_split` (solo splitting, chiamato qualificato cosi' i test che
@@ -18,6 +20,7 @@ import edge_tts
 import edge_tts.communicate as _edge_communicate
 from edge_tts.constants import TRUSTED_CLIENT_TOKEN
 
+import edge_health
 import retry_util as _retry
 import tts_split
 from audio_utils import _concatenate_mp3, _generate_silence_mp3
@@ -143,7 +146,7 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     """
     snippet = text[:60].replace('\n', ' ')
 
-    async def _once(attempt):
+    async def _synth(attempt):
         communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
         await asyncio.wait_for(
             communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
@@ -159,13 +162,27 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
             raise _EdgeTruncated("truncated_output (stream chiuso a meta')")
         return True
 
+    async def _once(attempt):
+        try:
+            ok = await _synth(attempt)
+        except _EdgeTruncated:
+            edge_health.record_attempt("truncated")
+            raise
+        except Exception as e:  # noqa: BLE001 - contato e rilanciato al retry
+            edge_health.record_attempt(edge_health.error_signature(e))
+            raise
+        edge_health.record_attempt()
+        return ok
+
     def _log(attempt, e, _wait):
         if not isinstance(e, _EdgeTruncated):
             print(f"[tts] Attempt {attempt+1}/{max_retries} failed "
                   f"({len(text)} chars: \"{snippet}...\"): {e}")
 
     try:
-        return await _retry.retry_call_async(_once, attempts=max_retries, wait=_edge_retry_wait, on_retry=_log)
+        ok = await _retry.retry_call_async(_once, attempts=max_retries, wait=_edge_retry_wait, on_retry=_log)
+        edge_health.record_call(True)
+        return ok
     except Exception as e:      # noqa: BLE001 - esauriti i tentativi: silenzio esplicito
         last_error = e if not isinstance(e, _EdgeTruncated) else str(e)
         if not isinstance(e, _EdgeTruncated):
@@ -173,6 +190,7 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
                   f"({len(text)} chars: \"{snippet}...\"): {e}")
     print(f"[tts] WARNING: all {max_retries} attempts failed "
           f"({len(text)} chars). Last: {last_error}")
+    edge_health.record_call(False)
     _generate_silence_mp3(output_path, duration_sec=1)
     return False
 

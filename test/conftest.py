@@ -123,6 +123,14 @@ def _no_live_denoise(monkeypatch):
     monkeypatch.setenv("ABM_VOICE_CLONE_DENOISE", "0")
 
 
+@pytest.fixture(autouse=True)
+def _no_edge_alert(monkeypatch):
+    """Nessuna allerta edge-tts dai test che simulano errori a raffica: il
+    notifier registrato da `audiobook_app` scriverebbe nell'activity log da un
+    thread mentre gira un altro test. `test_edge_health` la riaccende."""
+    monkeypatch.setenv("ABM_EDGE_ALERT", "0")
+
+
 @pytest.fixture
 def reset_backend_cache():
     """Reset cache backend Gemini tra test (module-level state)."""

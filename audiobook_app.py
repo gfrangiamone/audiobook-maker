@@ -165,6 +165,7 @@ from book_model import Chapter, WORDS_PER_MINUTE
 import cleanup
 import tts_engines
 import jsonl_audit
+import edge_health
 import email_service
 import push_service
 import metrics_store
@@ -563,6 +564,16 @@ if gemini_tts is not None:
     gemini_tts.set_credit_alert_notifier(_on_cf_credit_alert)
     gemini_tts.set_backend_return_notifier(_on_tts_backend_return)
     gemini_tts.set_model_unavailable_notifier(_on_gemini_model_unavailable)
+
+
+def _on_edge_tts_degraded(snap):
+    email_service.admin_notify_edge_tts_degraded(snap)
+    _log_activity("", "", "EDGE_TTS_DEGRADED", "", "", "edge-tts",
+                  f"{snap.get('reason')}: silenzio {snap.get('fail_pct')}%, "
+                  f"retry {snap.get('retry_pct')}%", epoch=time.time())
+
+
+edge_health.set_notifier(_on_edge_tts_degraded)
 
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
