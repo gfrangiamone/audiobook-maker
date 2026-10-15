@@ -518,6 +518,38 @@ def voucher_covers(v: dict, service) -> bool:
     return bool(service) and service in services
 
 
+def best_voucher_for(email, service, amount_eur) -> dict | None:
+    """Voucher di `email` che puo' pagare subito `amount_eur` per `service`
+    (stessi controlli di /api/voucher_validate), o None. Fra piu' candidati
+    sceglie quello in scadenza prima, a parita' il saldo piu' basso: si
+    spendono per primi i buoni che altrimenti andrebbero persi."""
+    email = _norm_email(email)
+    if not email:
+        return None
+    try:
+        amount = max(0.0, float(amount_eur or 0))
+    except (TypeError, ValueError):
+        amount = 0.0
+    now = time.time()
+    best = None
+    with _vouchers_lock:
+        for code, v in _vouchers.items():
+            if not isinstance(v, dict) or _norm_email(v.get("email")) != email:
+                continue
+            if v.get("revoked") or v.get("expires_at", 0) <= now:
+                continue
+            if not voucher_covers(v, service):
+                continue
+            remaining = _voucher_remaining(v)
+            if remaining < 0.01 or remaining < amount:
+                continue
+            key = (v.get("expires_at", 0), remaining)
+            if best is None or key < best[0]:
+                best = (key, {"code": code, "remaining_eur": remaining,
+                              "expires_at": v.get("expires_at")})
+    return best[1] if best else None
+
+
 def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
                     kind="refund", note="", created_by="auto_refund",
                     expiry_days=None, apply_bonus=True, code=None, services=None):

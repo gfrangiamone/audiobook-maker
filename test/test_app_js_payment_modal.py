@@ -190,9 +190,14 @@ def test_payment_happens_at_generate_not_at_toggle():
 
 def test_pay_modal_opens_on_paypal_tab():
     """_openPayModalCtx deve aprire il popup sul pannello PayPal (metodo
-    dominante), non su quello del buono."""
+    dominante), non su quello del buono. Passa al buono solo
+    _suggestAccountVoucher, quando l'utente loggato ne ha uno capiente."""
     assert "switchPayTab('paypal')" in APP
-    assert "switchPayTab('voucher')" not in APP
+    assert APP.count("switchPayTab('voucher')") == 1
+    start = APP.find("async function _suggestAccountVoucher")
+    assert start >= 0
+    assert "switchPayTab('voucher')" in APP[start:APP.find("\n}\n", start)]
+    assert "/api/account/voucher_suggest" in APP[start:]
 
 
 def test_switch_pay_tab_syncs_aria_selected():

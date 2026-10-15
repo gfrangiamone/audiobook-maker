@@ -112,6 +112,42 @@ def test_validate_by_purpose(client):
     assert r.status_code == 200
 
 
+def test_best_voucher_for(store):
+    assert payment.best_voucher_for("svc@x.it", "voxcpm", 1.0) is None
+    small = _voucher(services=["voxcpm"], amount=2.0)
+    big = _voucher(services=None, amount=20.0)
+    _voucher(services=["flash38"], amount=50.0)
+    _voucher(services=None, amount=99.0, email="other@x.it")
+    # Scadenza piu' vicina per prima: il "big" scade prima del "small".
+    payment._vouchers[big]["expires_at"] = payment._vouchers[small]["expires_at"] - 10
+    assert payment.best_voucher_for("SVC@x.it", "voxcpm", 1.5)["code"] == big
+    payment._vouchers[big]["revoked"] = True
+    assert payment.best_voucher_for("svc@x.it", "voxcpm", 1.5)["code"] == small
+    # Saldo insufficiente, servizio non coperto, scaduto.
+    assert payment.best_voucher_for("svc@x.it", "voxcpm", 3.0) is None
+    assert payment.best_voucher_for("svc@x.it", "speechify", 1.0) is None
+    payment._vouchers[small]["expires_at"] = 1
+    assert payment.best_voucher_for("svc@x.it", "voxcpm", 1.0) is None
+
+
+def test_account_voucher_suggest(client, monkeypatch):
+    import accounts
+    import routes_account
+    monkeypatch.setattr(accounts, "enabled", lambda: True)
+    monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
+    url = "/api/account/voucher_suggest?purpose=gemini&voice=voxcpm:v2:it-IT/Stefano&amount_eur=1.5"
+    monkeypatch.setattr(routes_account, "_current_account", lambda: None)
+    assert client.get(url).status_code == 401
+    monkeypatch.setattr(routes_account, "_current_account",
+                        lambda: {"id": 1, "email": "svc@x.it"})
+    assert client.get(url).get_json() == {"voucher": None}
+    code = _voucher(services=["voxcpm"], amount=5.0)
+    d = client.get(url).get_json()["voucher"]
+    assert d == {"code": code, "email": "svc@x.it", "remaining_eur": 5.0}
+    r = client.get("/api/account/voucher_suggest?purpose=gemini&voice=gemini:flash38:Kore&amount_eur=1")
+    assert r.get_json() == {"voucher": None}
+
+
 def _admin(monkeypatch):
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-svc")
     monkeypatch.setattr(audiobook_app, "_admin_auth_ok", lambda provided: True)

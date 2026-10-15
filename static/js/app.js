@@ -2286,7 +2286,7 @@ async function onGenerateClick() {
 //   lines: [{labelKey, amount}]  (1 o 2 righe; le righe in eccesso vengono nascoste)
 //   total: number
 //   geminiAmount?: number  (importo premium per la stima rimborso; default 0)
-//   voucherPurpose: string  (passato a /api/voucher_validate, solo audit)
+//   voucherPurpose: string  (con voucherVoice: servizio verificato da /api/voucher_validate e /api/account/voucher_suggest)
 //   paypal: { endpoint, buildBody:()=>({...}) }
 //   onConfirm: (token)=>void
 //   onCancel?: ()=>void  (chiusura senza conferma; usato dai flussi promise-based)
@@ -2366,6 +2366,33 @@ function _openPayModalCtx(ctx) {
   switchPayTab('paypal');
   const modal = document.getElementById('geminiPayModal');
   if (modal) modal.hidden = false;
+  _suggestAccountVoucher(ctx);
+}
+
+// Utente loggato con un buono capiente per questo servizio: il modale passa
+// alla tab Buono con codice ed email gia' compilati. La verifica resta un
+// click dell'utente (con autoConfirm partirebbe il job senza che lo scelga).
+async function _suggestAccountVoucher(ctx) {
+  if (!((typeof _acctLoggedIn === 'function') && _acctLoggedIn())) return;
+  const qs = new URLSearchParams({
+    purpose: ctx.voucherPurpose || 'gemini',
+    voice: ctx.voucherVoice || '',
+    amount_eur: String(Number(ctx.total) || 0),
+  });
+  let v = null;
+  try {
+    const r = await fetch('/api/account/voucher_suggest?' + qs.toString(), { cache: 'no-store' });
+    if (r.ok) v = (await r.json()).voucher;
+  } catch (e) { return; }
+  const modal = document.getElementById('geminiPayModal');
+  // Modale chiuso/riaperto nel frattempo, o pagamento gia' avviato: non toccare.
+  if (!v || _payCtx !== ctx || !modal || modal.hidden || _payState.token || _geminiPayCaptured) return;
+  const vc = document.getElementById('geminiPayVoucherCode');
+  if (!vc || vc.value.trim()) return;
+  vc.value = v.code;
+  const ve = document.getElementById('geminiPayVoucherEmail');
+  if (ve) ve.value = v.email;
+  switchPayTab('voucher');
 }
 
 // Chiamante Gemini: costruisce il contesto e apre il popup.

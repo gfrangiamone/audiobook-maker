@@ -4,7 +4,7 @@
 Blueprint `account`: `/api/auth/{request,verify,logout,logout_all,
 logout_device,me}`, `/auth/<token>` (magic link con anti-CSRF), `/account`
 (pagina), `/api/account/jobs` (elenco con download e stato riconciliato),
-`/api/account/jobs/delete`, `/api/account/delete_request`,
+`/api/account/jobs/delete`, `/api/account/voucher_suggest`, `/api/account/delete_request`,
 `/api/account/delete_confirm`; con i cookie di sessione e CSRF, l'invio
 dei codici, la cancellazione dell'account, le righe dei job e le voci
 dell'utente. Spostato pari pari da `audiobook_app`; lo stato vive in
@@ -26,6 +26,7 @@ import account_page
 import accounts
 import email_service
 import i18n as _i18n
+import payment
 import pending_jobs
 import routes_mobile
 import routes_voice_clone
@@ -456,6 +457,26 @@ def api_auth_me():
         "lang": acct.get("lang") or "en", "plan": acct.get("plan") or "free",
         "sessions_count": accounts.sessions_count(acct["id"]),
     })
+
+
+@bp.route("/api/account/voucher_suggest", methods=["GET"])
+def api_account_voucher_suggest():
+    """Buono dell'utente loggato che copre il pagamento in corso (`purpose`,
+    `voice`, `amount_eur` come /api/voucher_validate): il modale di pagamento
+    apre la tab Buono gia' compilata. Solo il proprietario vede i propri codici."""
+    gate = _acct_gate()
+    if gate:
+        return gate
+    acct = _current_account()
+    if not acct:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    service = payment.voucher_service_for_purpose(
+        request.args.get("purpose") or "", request.args.get("voice") or "")
+    v = payment.best_voucher_for(acct["email"], service, request.args.get("amount_eur"))
+    if not v:
+        return jsonify({"voucher": None})
+    return jsonify({"voucher": {"code": v["code"], "email": acct["email"],
+                                "remaining_eur": v["remaining_eur"]}})
 
 
 _ACCT_PER_PAGE = 50
