@@ -2293,7 +2293,8 @@ async function onGenerateClick() {
 function _openPayModalCtx(ctx) {
   _payCtx = ctx;
   _payConfirmed = false;
-  _payState = { total: ctx.total, gemini: ctx.geminiAmount || 0, token: null, method: null };
+  _payState = { total: ctx.total, gemini: ctx.geminiAmount || 0, token: null, method: null, voucherRemaining: 0, suggested: null };
+  _payVoucherCheck = null;
   // Titolo e avviso: personalizzabili per flusso (default = quelli storici del
   // markup). La funzione è condivisa da tutti i flussi di pagamento e viene
   // richiamata a ogni apertura: basta la scelta con `||` per ripristinare la
@@ -2370,8 +2371,9 @@ function _openPayModalCtx(ctx) {
 }
 
 // Utente loggato con un buono capiente per questo servizio: il modale passa
-// alla tab Buono con codice ed email gia' compilati. La verifica resta un
-// click dell'utente (con autoConfirm partirebbe il job senza che lo scelga).
+// alla tab Buono con codice ed email gia' compilati e verificati (il saldo
+// compare sotto i campi). La conferma resta dell'utente: con autoConfirm
+// partirebbe il job senza che abbia scelto il buono.
 async function _suggestAccountVoucher(ctx) {
   if (!((typeof _acctLoggedIn === 'function') && _acctLoggedIn())) return;
   const qs = new URLSearchParams({
@@ -2387,12 +2389,36 @@ async function _suggestAccountVoucher(ctx) {
   const modal = document.getElementById('geminiPayModal');
   // Modale chiuso/riaperto nel frattempo, o pagamento gia' avviato: non toccare.
   if (!v || _payCtx !== ctx || !modal || modal.hidden || _payState.token || _geminiPayCaptured) return;
+  // Il totale puo' essere cambiato durante la richiesta: mai proporre un
+  // buono che non copre l'importo da pagare adesso.
+  if (!(Number(v.remaining_eur) + 0.005 >= Number(_payState.total))) return;
   const vc = document.getElementById('geminiPayVoucherCode');
   if (!vc || vc.value.trim()) return;
   vc.value = v.code;
   const ve = document.getElementById('geminiPayVoucherEmail');
   if (ve) ve.value = v.email;
+  _payState.suggested = v.code;
   switchPayTab('voucher');
+  validateVoucherForPayment({ noAutoConfirm: true });
+}
+
+// Buono gia' compilato che non copre piu' il totale (quotazione aggiornata):
+// via token e campi; se era quello proposto dall'account si torna a PayPal.
+function _dropVoucherIfShort() {
+  if (_payState.method !== 'voucher' || !(_payState.voucherRemaining + 0.005 < _payState.total)) return;
+  const code = _payState.token;
+  _payState.token = null; _payState.method = null; _payVoucherCheck = null;
+  _disarmPayConfirm();
+  const btn = document.getElementById('btnPayConfirm');
+  if (btn) btn.disabled = true;
+  if (code && code === _payState.suggested) {
+    const vc = document.getElementById('geminiPayVoucherCode'); if (vc) vc.value = '';
+    const vErr = document.getElementById('payVoucherError'); if (vErr) { vErr.textContent = ''; vErr.style.color = ''; }
+    switchPayTab('paypal');
+    return;
+  }
+  const errEl = document.getElementById('payVoucherError');
+  if (errEl) { errEl.style.color = ''; errEl.textContent = (typeof t === 'function' && t('pay_err_insufficient')) || 'Saldo insufficiente'; }
 }
 
 // Chiamante Gemini: costruisce il contesto e apre il popup.
@@ -2547,6 +2573,7 @@ async function _refreshQuoteInPayModal(serverAmount){
   }
   const tEl=document.getElementById('payModalTotal');
   if(tEl)tEl.textContent='€'+tot.toFixed(2);
+  _dropVoucherIfShort();
 }
 async function renderPaypalGeminiButtons(){
   const container=document.getElementById('paypalGeminiContainer');
@@ -2680,24 +2707,51 @@ function switchPayTab(tab) {
   }
 }
 
-async function validateVoucherForPayment() {
+// Ultima verifica del modale: { key, done }. La verifica parte al blur di
+// entrambi i campi e il server ne concede 5 al minuto per IP: rifare quella
+// appena fatta (stessi codice, email, voce, importo) brucia tentativi e
+// finisce in un 429. Azzerata a ogni apertura del modale.
+let _payVoucherCheck = null;
+
+async function validateVoucherForPayment(opts) {
   const code = (document.getElementById('geminiPayVoucherCode')?.value || '').trim();
   const email = (document.getElementById('geminiPayVoucherEmail')?.value || '').trim();
   const errEl = document.getElementById('payVoucherError');
   if (!errEl) return;
+  const voice = (_payCtx && _payCtx.voucherVoice) || '';
+  const key = [code.toUpperCase(), email.toLowerCase(), voice, _payState.total].join('|');
+  // Stessa verifica gia' fatta o in corso: il messaggio a schermo e' gia' il suo.
+  if (code && email && _payVoucherCheck && _payVoucherCheck.key === key) return;
   errEl.style.color = '';
   errEl.textContent = '';
   if (!code || !email) {
     errEl.textContent = (typeof t === 'function' && t('pay_err_empty')) || 'Inserisci codice e email';
     return;
   }
+  const check = { key };
+  _payVoucherCheck = check;
+  // Combinazione nuova: il buono verificato prima non vale piu' come token.
+  if (_payState.method === 'voucher') {
+    _payState.token = null; _payState.method = null;
+    _disarmPayConfirm();
+    const btn = document.getElementById('btnPayConfirm');
+    if (btn) btn.disabled = true;
+  }
   try {
     const r = await fetch('/api/voucher_validate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ code, email, purpose: (_payCtx && _payCtx.voucherPurpose) || 'gemini', voice: (_payCtx && _payCtx.voucherVoice) || '', amount_eur: _payState.total }),
+      body: JSON.stringify({ code, email, purpose: (_payCtx && _payCtx.voucherPurpose) || 'gemini', voice, amount_eur: _payState.total }),
     });
     const d = await r.json();
+    if (_payVoucherCheck !== check) return;  // superata da una verifica piu' recente
+    if (r.status === 429 || /^rate_limit|^email_locked/.test(d.reason || '')) {
+      // Limite tentativi: si potra' riprovare la stessa combinazione.
+      _payVoucherCheck = null;
+      const s = Math.max(1, Math.ceil(Number(d.retry_after) || 60));
+      errEl.textContent = (typeof t === 'function' && t('pay_err_rate_limit', { s })) || `Troppi tentativi: riprova fra ${s} secondi`;
+      return;
+    }
     if (!d.valid) {
       const map = {
         not_found: (typeof t === 'function' && t('pay_err_voucher_not_found')) || 'Buono non trovato',
@@ -2713,15 +2767,26 @@ async function validateVoucherForPayment() {
     }
     _payState.token = code;
     _payState.method = 'voucher';
+    _payState.voucherRemaining = Number(d.remaining_eur) || 0;
     // Memorizza l'email del voucher per precompilare (senza registrarla) il box
     // di notifica durante la generazione: l'utente la conferma esplicitamente.
     lastVoucherEmail = email;
     try { localStorage.setItem('abm_v_email', email); } catch (e) {}
     errEl.style.color = '#27ae60';
     const rem = (typeof d.remaining_eur === 'number') ? d.remaining_eur.toFixed(2) : '0.00';
-    errEl.textContent = ((typeof t === 'function' && t('pay_ok_remaining')) || 'Saldo disponibile') + ` €${rem}`;
-    _payAfterPaid();
+    // Buono proposto dall'account: il saldo lo distingue dagli altri buoni
+    // dell'utente (i codici PROMO si somigliano tutti).
+    errEl.textContent = (code.toUpperCase() === (_payState.suggested || '').toUpperCase())
+      ? ((typeof t === 'function' && t('pay_ok_suggested', { rem })) || `Buono del tuo account, saldo disponibile €${rem}`)
+      : ((typeof t === 'function' && t('pay_ok_remaining')) || 'Saldo disponibile') + ` €${rem}`;
+    if (opts && opts.noAutoConfirm) {
+      const btn = document.getElementById('btnPayConfirm');
+      if (btn) btn.disabled = false;
+    } else {
+      _payAfterPaid();
+    }
   } catch (e) {
+    if (_payVoucherCheck === check) _payVoucherCheck = null;
     errEl.textContent = (typeof t === 'function' && t('pay_err_network')) || 'Errore di rete';
   }
 }

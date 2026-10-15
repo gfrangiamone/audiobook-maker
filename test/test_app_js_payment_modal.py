@@ -200,6 +200,31 @@ def test_pay_modal_opens_on_paypal_tab():
     assert "/api/account/voucher_suggest" in APP[start:]
 
 
+def _fn(name):
+    start = APP.find(name)
+    assert start >= 0, name
+    return APP[start:APP.find("\n}\n", start)]
+
+
+def test_voucher_validate_dedup_and_rate_limit():
+    """Blur su codice ed email: la stessa verifica non si rifa' (5/min per IP),
+    il 429 ha un messaggio suo e libera la combinazione per riprovare."""
+    body = _fn("async function validateVoucherForPayment")
+    assert "_payVoucherCheck.key === key" in body
+    assert "r.status === 429" in body and "pay_err_rate_limit" in body
+    assert "_payVoucherCheck = null" in _fn("function _openPayModalCtx")
+
+
+def test_suggested_voucher_must_cover_total():
+    """Mai proporre un buono che non copre il totale corrente, e toglierlo se
+    la quotazione aggiornata lo supera; la verifica automatica non conferma."""
+    body = _fn("async function _suggestAccountVoucher")
+    assert "v.remaining_eur" in body and "_payState.total" in body
+    assert "noAutoConfirm: true" in body
+    assert "_dropVoucherIfShort()" in _fn("async function _refreshQuoteInPayModal")
+    assert "pay_ok_suggested" in _fn("async function validateVoucherForPayment")
+
+
 def test_switch_pay_tab_syncs_aria_selected():
     """role=\"tab\": senza aggiornare aria-selected lo screen reader annuncia
     sempre la linguetta di default del markup."""
