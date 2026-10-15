@@ -63,6 +63,28 @@ def test_optimize_rejects_malformed_voice(client, monkeypatch):
     assert r.get_json().get("error_code") == "invalid_voice"
 
 
+def test_voice_id_shape_rejects_placeholder():
+    """15/10/2026: il segnaposto del selettore e' arrivato come voce edge."""
+    import voice_utils as vu
+    for ok in ("it-IT-IsabellaNeural", "en-US-AvaMultilingualNeural",
+               "zh-CN-liaoning-XiaobeiNeural", "iu-Latn-CA-SiqiniqNeural",
+               "gemini:flash31:Zephyr", "voxcpm:v2:zh-CN/Peiyu 3"):
+        assert vu.voice_id_shape_ok(ok), ok
+    for bad in ("Select a language first", "Seleziona prima una lingua",
+                "", None, "IsabellaNeural", "it-IT"):
+        assert not vu.voice_id_shape_ok(bad), bad
+
+
+@pytest.mark.parametrize("path", ["/api/generate", "/api/optimize"])
+def test_routes_reject_placeholder_voice(client, monkeypatch, path):
+    monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
+    for voice in ("Select a language first", ""):
+        r = client.post(path, json={"job_id": "whatever", "voice": voice,
+                                    "auto_generate": True})
+        assert r.status_code == 400, voice
+        assert r.get_json().get("error_code") == "invalid_voice"
+
+
 def test_admin_log_escapes_voice_in_render(client, monkeypatch):
     """Una sessione di log con voice malevola (simulando un log storico
     pre-validazione) deve essere renderizzata con escape, non come HTML."""

@@ -3866,6 +3866,8 @@ async function startCombinedGeneration(combinedPaymentToken){
   }catch(e){}
 
   if(!(await _validateLanguage()))return;
+  // Selettore ancora sul segnaposto: il server rifiuterebbe la voce vuota.
+  if(!getCurrentVoiceId()){showS3Err(t('voice_ph')||'Select a language first');return}
   // Donate modal for returning users — saltato per Voci PREMIUM: chiedere
   // una donazione subito dopo (o in luogo di) un pagamento Premium e' UX
   // contraddittoria. La generazione gratis con voci Standard mantiene il prompt.

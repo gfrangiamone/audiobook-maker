@@ -5,6 +5,7 @@ CLAUDE.md §1). Qui vive la definizione unica del prefisso voce PREMIUM
 Gemini e del relativo predicato, prima duplicati in audiobook_app,
 generation_engine e storage_tiering.
 """
+import re
 
 from env_utils import env_str
 
@@ -158,6 +159,25 @@ def engine_for_voice(voice):
     if is_voxcpm_voice(voice):
         return "voxcpm"
     return "edge"
+
+
+# Voce edge-tts: lingua-regione-Nome, con varianti fra mezzo
+# (zh-CN-liaoning-XiaobeiNeural, iu-Latn-CA-SiqiniqNeural), mai spazi.
+# Il 15/10/2026 il testo del segnaposto del selettore ("Select a language
+# first", <option> senza value) e' arrivato a /api/generate come voce: la
+# regex generale lo accetta (gli spazi servono a VoxCPM) e il job e' partito
+# consumando quota, con 39 chunk su 39 in silenzio.
+_EDGE_VOICE_RE = re.compile(r"^[a-z]{2,3}(?:-[A-Za-z0-9]+){2,}$")
+
+
+def voice_id_shape_ok(voice):
+    """False se una voce instradata a edge non ha la forma di un nome edge-tts.
+
+    Le voci degli altri motori passano: le valida il rispettivo catalogo.
+    """
+    if engine_for_voice(voice) != "edge":
+        return True
+    return bool(voice) and isinstance(voice, str) and bool(_EDGE_VOICE_RE.match(voice))
 
 
 # === Velocita' di lettura ("+10%") ===========================================

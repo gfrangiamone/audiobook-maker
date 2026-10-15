@@ -642,6 +642,7 @@ from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import voice_model_enabled as _voice_model_enabled
 from voice_utils import voice_model_key as _voice_model_key
 from voice_utils import parse_rate_pct as _parse_rate_pct
+from voice_utils import voice_id_shape_ok as _voice_id_shape_ok
 
 
 def _premium_model_gate(voice):
@@ -4452,7 +4453,7 @@ def api_generate():
     data = request.json
     job_id = data.get("job_id")
     voice = data.get("voice", "it-IT-IsabellaNeural")
-    if not _VOICE_ID_RE.match(voice or ""):
+    if not _VOICE_ID_RE.match(voice or "") or not _voice_id_shape_ok(voice):
         return jsonify({"error": "Invalid voice id.",
                         "error_code": "invalid_voice"}), 400
     rate = data.get("rate", "+0%")
@@ -7021,7 +7022,10 @@ def api_optimize():
     data = request.get_json(silent=True) or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
     lang = data.get("lang")
     _voice_in = data.get("voice") or ""
-    if _voice_in and not _VOICE_ID_RE.match(_voice_in):
+    # Voce presente ma vuota con auto_generate: il selettore era sul segnaposto
+    # (chiave assente resta il default storico IsabellaNeural, piu' sotto).
+    if ((_voice_in or (auto_generate and "voice" in data))
+            and (not _VOICE_ID_RE.match(_voice_in) or not _voice_id_shape_ok(_voice_in))):
         return jsonify({"error": "Invalid voice id.",
                         "error_code": "invalid_voice"}), 400
     # La voce arriva qui per il ramo auto-generate: se il modello PREMIUM e'
