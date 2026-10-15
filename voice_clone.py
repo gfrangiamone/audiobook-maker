@@ -1250,7 +1250,8 @@ def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
         else:
             try:
                 method = payment.consume_payment_token(payment_token, price, job_id,
-                                                       purpose="voice_clone")
+                                                       purpose="voice_clone",
+                                                       service="voice_clone")
             except ValueError as e:
                 raise PaymentInvalid(str(e)) from e
             pay = {"type": method, "token": payment_token, "amount_eur": price, "paid_at": t}

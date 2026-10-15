@@ -24,6 +24,8 @@ import pricing_common
 from i18n import norm_lang as _norm_lang
 from ratelimit import lockout_record as _lockout_record, lockout_remaining as _lockout_remaining, sliding_check as _sliding_check, window_record as _window_record
 from client_identity import norm_email as _norm_email
+from voice_utils import (is_gemini_voice, is_speechify_voice, is_voxcpm_voice,
+                         voice_model_key)
 import shutil
 import threading
 import time
@@ -457,9 +459,68 @@ def _generate_voucher_code():
             return code
 
 
+# Servizi pagabili con un voucher, scelti dall'admin alla creazione. Un
+# voucher senza campo "services" (rimborsi automatici, voucher legacy) li
+# copre tutti. Le voci TTS si distinguono per modello: flash31/flash38 sono il
+# model_key della voce Gemini, "speechify" e "voxcpm" il motore. Un voucher
+# valido per un modello TTS paga anche l'ottimizzazione AI addebitata insieme
+# alla sintesi: il consumo combinato passa il solo servizio TTS.
+VOUCHER_SERVICES = ("llm", "translate", "voxcpm", "flash31", "flash38",
+                    "speechify", "voice_clone")
+VOUCHER_DEFAULT_SERVICES = ("llm", "translate", "voxcpm", "voice_clone")
+
+
+def voucher_service_for_voice(voice) -> str:
+    """Servizio voucher di una voce premium ('gemini:flash38:Kore' -> 'flash38').
+    "" per voci standard; un modello Gemini fuori elenco resta col suo
+    model_key, quindi nessun voucher ristretto lo copre."""
+    if is_voxcpm_voice(voice):
+        return "voxcpm"
+    if is_speechify_voice(voice):
+        return "speechify"
+    if is_gemini_voice(voice):
+        return voice_model_key(voice) or "gemini"
+    return ""
+
+
+def voucher_service_for_purpose(purpose, voice="") -> str:
+    """Servizio da verificare in /api/voucher_validate: `purpose` del modale di
+    pagamento ('llm', 'translate', 'voice_clone', 'gemini' = voce premium) e
+    voce attiva. "" quando non e' determinabile (il consumo verifica comunque)."""
+    purpose = (purpose or "").strip().lower()
+    if purpose in ("llm", "translate", "voice_clone"):
+        return purpose
+    if purpose == "gemini":
+        return voucher_service_for_voice(voice)
+    return ""
+
+
+def normalize_voucher_services(raw) -> list:
+    """Elenco servizi dall'input admin, nell'ordine di VOUCHER_SERVICES.
+    Solleva ValueError su chiave ignota o elenco vuoto."""
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("services must be a list")
+    keys = {str(s).strip().lower() for s in raw}
+    unknown = keys - set(VOUCHER_SERVICES)
+    if unknown:
+        raise ValueError(f"unknown services: {', '.join(sorted(unknown))}")
+    if not keys:
+        raise ValueError("at least one service required")
+    return [s for s in VOUCHER_SERVICES if s in keys]
+
+
+def voucher_covers(v: dict, service) -> bool:
+    """True se il voucher puo' pagare `service`. Senza "services" copre tutto;
+    con l'elenco serve un servizio esplicito (fail-closed)."""
+    services = v.get("services")
+    if services is None:
+        return True
+    return bool(service) and service in services
+
+
 def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
                     kind="refund", note="", created_by="auto_refund",
-                    expiry_days=None, apply_bonus=True, code=None):
+                    expiry_days=None, apply_bonus=True, code=None, services=None):
     """Create a voucher.
 
     kind: "refund" (auto-emesso dopo fallimento pagato), "promo" (generato da admin),
@@ -469,6 +530,7 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
     expiry_days: None  ->  usa VOUCHER_EXPIRY_DAYS (refund). Gli admin possono passare un valore custom.
     apply_bonus: se False salva l'importo nominale (usato per promo/gift).
     code: se fornito, usa quel codice invece di generarne uno (utile per PROMO- prefix).
+    services: elenco da `normalize_voucher_services`; None = tutti i servizi.
     """
     if code is None:
         code = _generate_voucher_code()
@@ -495,6 +557,8 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
         "note": (note or "")[:500],
         "created_by": created_by,    # "auto_refund" | "admin"
     }
+    if services is not None:
+        _vouchers[code]["services"] = list(services)
     _save_vouchers()
     return code, bonus_amount
 
@@ -517,10 +581,12 @@ def _voucher_remaining(v: dict) -> float:
         return 0.0
 
 
-def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
+def _voucher_consume(code: str, amount: float, job_id: str = "",
+                     service: str = "") -> float:
     """Scala ``amount`` EUR dal saldo del voucher ``code``. Ritorna il nuovo saldo
     residuo. Se il saldo scende sotto 0.01 EUR il voucher viene marcato ``used=True``.
-    Solleva ``ValueError`` se il voucher non e spendibile o il saldo e insufficiente.
+    Solleva ``ValueError`` se il voucher non e spendibile, non copre ``service``
+    (vedi `voucher_covers`) o il saldo e insufficiente.
 
     Money-critical: the entire read-modify-write of ``remaining_eur`` must run
     under ``_vouchers_lock`` to prevent concurrent overspend of the pool.
@@ -531,6 +597,8 @@ def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
             raise ValueError("voucher not found")
         if v.get("expires_at", 0) <= time.time():
             raise ValueError("voucher expired")
+        if not voucher_covers(v, service):
+            raise ValueError(f"voucher not valid for service {service or '?'}")
         remaining = _voucher_remaining(v)
         # Arrotondamenti: se la differenza e <= 0.01 permettiamo lo spend (evita errori di 1 cent)
         if amount > remaining + 0.01:
@@ -928,9 +996,11 @@ def _mark_paid_job_done(job_id: str, purpose: str = "gemini"):
 
 
 def consume_payment_token(token: str, amount_eur: float, job_id: str,
-                          purpose: str = "gemini") -> str:
+                          purpose: str = "gemini", service: str = "") -> str:
     """Consume a payment token (voucher or captured PayPal order).
 
+    `service` (VOUCHER_SERVICES) vale solo per i voucher: uno ristretto che
+    non lo copre e' rifiutato.
     Returns the method used ("voucher" or "paypal").
     Raises ValueError if invalid / insufficient.
     """
@@ -938,7 +1008,7 @@ def consume_payment_token(token: str, amount_eur: float, job_id: str,
         raise ValueError("missing payment_token")
     # Try voucher first
     if token in _vouchers:
-        _voucher_consume(token, amount_eur, job_id=job_id)
+        _voucher_consume(token, amount_eur, job_id=job_id, service=service)
         _mark_paid_job_done(job_id, purpose=purpose)
         return "voucher"
     # Then PayPal captured order — atomic check-and-set under _payments_lock

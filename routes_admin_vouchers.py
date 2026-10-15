@@ -114,6 +114,8 @@ def admin_api_vouchers():
                 "created_by": v.get("created_by", ""),
                 "origin_order_id": v.get("origin_order_id"),
                 "revoked": bool(v.get("revoked")),
+                # None = tutti i servizi (rimborsi automatici, voucher legacy).
+                "services": v.get("services"),
             })
         return jsonify({"vouchers": items, "count": len(items)})
 
@@ -140,6 +142,12 @@ def admin_api_vouchers():
         return jsonify({"error": "days out of range (1..3650)"}), 400
     if kind not in ("promo", "gift", "refund"):
         return jsonify({"error": "invalid kind"}), 400
+    # Servizi pagabili: senza campo valgono i default della UI.
+    try:
+        services = payment.normalize_voucher_services(
+            data.get("services", list(payment.VOUCHER_DEFAULT_SERVICES)))
+    except ValueError as e:
+        return jsonify({"error": f"invalid services: {e}"}), 400
 
     # Rimborsi manuali: devono restare tracciabili al job d'origine, altrimenti
     # payment.has_refund_for_job() non li vede e il rimborso automatico (recovery
@@ -180,16 +188,19 @@ def admin_api_vouchers():
         expiry_days=days,
         apply_bonus=False,       # promo/gift: importo nominale, niente +10%
         code=custom_code,
+        services=services,
     )
     _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "...", email)
     print(f"[admin] voucher created via UI: {payment.mask_code(code)} kind={kind} email={email} "
-          f"amount={amount:.2f} days={days} job={origin_job_id or '-'} "
+          f"amount={amount:.2f} days={days} services={','.join(services)} "
+          f"job={origin_job_id or '-'} "
           f"order={origin_order_id or '-'} ip={ip}")
     return jsonify({
         "code": code,
         "amount_eur": bonus_amount,
         "expires_at": (payment.voucher_info(code) or {}).get("expires_at"),
         "kind": kind,
+        "services": services,
         "origin_job_id": origin_job_id or None,
         "origin_order_id": origin_order_id or None,
     })

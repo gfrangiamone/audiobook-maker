@@ -2411,6 +2411,8 @@ function openPaymentModal(estimate) {
     minNote: _payMinNoteText(estimate, _adjust),
     geminiAmount: _premium,
     voucherPurpose: 'gemini',
+    // Voce attiva: il server verifica che il buono copra quel modello TTS.
+    voucherVoice: (typeof getCurrentVoiceId === 'function') ? getCurrentVoiceId() : '',
     paypal: {
       endpoint: '/api/paypal_create_order_gemini',
       buildBody: () => {
@@ -2666,7 +2668,7 @@ async function validateVoucherForPayment() {
     const r = await fetch('/api/voucher_validate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ code, email, purpose: (_payCtx && _payCtx.voucherPurpose) || 'gemini', amount_eur: _payState.total }),
+      body: JSON.stringify({ code, email, purpose: (_payCtx && _payCtx.voucherPurpose) || 'gemini', voice: (_payCtx && _payCtx.voucherVoice) || '', amount_eur: _payState.total }),
     });
     const d = await r.json();
     if (!d.valid) {
@@ -2677,6 +2679,7 @@ async function validateVoucherForPayment() {
         insufficient: (typeof t === 'function' && t('pay_err_insufficient')) || 'Saldo insufficiente',
         expired: (typeof t === 'function' && t('pay_err_expired')) || 'Buono scaduto',
         used: (typeof t === 'function' && t('pay_err_used')) || 'Buono già utilizzato',
+        not_applicable: (typeof t === 'function' && t('pay_err_not_applicable')) || 'Buono non valido per questo servizio',
       };
       errEl.textContent = map[d.reason] || ((typeof t === 'function' && t('pay_err_unknown')) || 'Errore validazione');
       return;

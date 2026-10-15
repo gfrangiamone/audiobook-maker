@@ -42,6 +42,9 @@
   .toolbar > div{flex:1;min-width:150px}
   #tokenGate{max-width:420px;margin:80px auto}
   .hint{font-size:.8rem;color:var(--muted);margin-top:4px}
+  .svc{display:flex;flex-wrap:wrap;gap:6px 18px}
+  .svc label{display:flex;align-items:center;gap:6px;margin:0;color:var(--ink);font-size:.9rem;cursor:pointer}
+  .svc input{width:auto}
 </style>
 </head><body>
 
@@ -80,6 +83,17 @@
       </div>
       <div><label>Order ID PayPal (opzionale)</label><input id="cOrderId" placeholder="ricavato dal job se vuoto"></div>
     </div>
+    <label>Servizi utilizzabili *</label>
+    <div class="svc" id="cServices">
+      <label><input type="checkbox" value="llm" checked> Ottimizzazione AI del testo</label>
+      <label><input type="checkbox" value="translate" checked> Traduzione</label>
+      <label><input type="checkbox" value="voxcpm" checked> TTS VoxCPM2</label>
+      <label><input type="checkbox" value="flash31"> TTS Gemini 3.1</label>
+      <label><input type="checkbox" value="flash38"> TTS Gemini 3.8</label>
+      <label><input type="checkbox" value="speechify"> TTS Speechify</label>
+      <label><input type="checkbox" value="voice_clone" checked> Voce campionata</label>
+    </div>
+    <div class="hint">Un voucher valido per un modello TTS paga anche l'ottimizzazione AI addebitata insieme alla sintesi di quel libro.</div>
     <label>Nota (causale interna)</label>
     <textarea id="cNote" rows="2" placeholder="Es: campagna lancio, influencer X, compenso collaboratore..."></textarea>
     <div id="createMsg"></div>
@@ -104,7 +118,7 @@
     <div style="overflow-x:auto">
       <table id="tbl">
         <thead><tr>
-          <th>Codice</th><th>Tipo</th><th>Saldo / Iniziale</th><th>Email</th><th>Creato</th><th>Scade</th><th>Stato</th><th>Nota</th><th></th>
+          <th>Codice</th><th>Tipo</th><th>Saldo / Iniziale</th><th>Email</th><th>Creato</th><th>Scade</th><th>Stato</th><th>Servizi</th><th>Nota</th><th></th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -170,6 +184,12 @@ function statusOf(v){
 
 function escapeHtml(s){return(s||'').replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 
+var SVC_NAMES={llm:'Ottimizzazione AI',translate:'Traduzione',voxcpm:'VoxCPM2',flash31:'Gemini 3.1',flash38:'Gemini 3.8',speechify:'Speechify',voice_clone:'Voce campionata'};
+function servicesLabel(s){
+  if(s==null)return'<span style="color:var(--muted)">tutti</span>';
+  return s.map(function(k){return escapeHtml(SVC_NAMES[k]||k)}).join(', ');
+}
+
 function renderList(){
   var fe=(document.getElementById('fEmail').value||'').toLowerCase();
   var fk=document.getElementById('fKind').value;
@@ -181,7 +201,7 @@ function renderList(){
     return true;
   }).sort(function(a,b){return(b.created_at||0)-(a.created_at||0)});
   var tb=document.getElementById('tbody');
-  if(!rows.length){tb.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Nessun voucher</td></tr>';return}
+  if(!rows.length){tb.innerHTML='<tr><td colspan="10"style="text-align:center;color:var(--muted);padding:20px">Nessun voucher</td></tr>';return}
   tb.innerHTML=rows.map(function(v){
     var st=statusOf(v);var k=v.kind||'refund';
     var rem=(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:(v.amount_eur||0));
@@ -199,6 +219,7 @@ function renderList(){
       '<td>'+fmtTs(v.created_at)+'</td>'+
       '<td>'+fmtTs(v.expires_at)+'</td>'+
       '<td><span class="badge '+st+'">'+st+'</span></td>'+
+      '<td style="font-size:.8em">'+servicesLabel(v.services)+'</td>'+
       '<td style="max-width:240px;font-size:.8em;color:var(--muted)">'+escapeHtml(v.note||'')+'</td>'+
       '<td>'+btn+'</td>'+
     '</tr>';
@@ -215,8 +236,10 @@ async function createVoucher(){
   var orderId=document.getElementById('cOrderId').value.trim();
   if(!email||!amount||amount<=0){msg('createMsg','Email e importo > 0 obbligatori','err');return}
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){msg('createMsg','Indirizzo email non valido','err');return}
+  var services=Array.prototype.map.call(document.querySelectorAll('#cServices input:checked'),function(c){return c.value});
+  if(!services.length){msg('createMsg','Selezionare almeno un servizio','err');return}
   try{
-    var j=await api('/admin/api/vouchers',{method:'POST',body:{email:email,amount_eur:amount,days:days,kind:kind,note:note,job_id:jobId,order_id:orderId}});
+    var j=await api('/admin/api/vouchers',{method:'POST',body:{email:email,amount_eur:amount,days:days,kind:kind,note:note,job_id:jobId,order_id:orderId,services:services}});
     var origin=j.origin_job_id?(' - collegato al job '+escapeHtml(j.origin_job_id)):(kind==='refund'?' - <b>nessun job collegato</b>':'');
     msg('createMsg','Creato <code>'+j.code+'</code> per '+escapeHtml(email)+' ('+j.amount_eur.toFixed(2)+' EUR)'+origin,'ok');
     document.getElementById('cEmail').value='';document.getElementById('cAmount').value='';document.getElementById('cNote').value='';
