@@ -146,11 +146,40 @@ JOBS_ARCHIVE_MIGRATION = [
 ]
 
 
+# Archivio dell'app: libri archiviati dalla libreria dello smartphone. Ogni
+# riga e' un file caricato dall'app sotto `user_archive/<account_id>/` (`r2_key`,
+# pesa `size_bytes` sulla quota anche mentre e' `pending`, cioe' prenotato)
+# oppure un collegamento a un job gia' nell'archivio dell'account (`job_id`,
+# peso zero: i byte li conta gia' il job). Logica in `user_archive`.
+ARCHIVE_ITEMS_MIGRATION = [
+    """CREATE TABLE IF NOT EXISTS archive_items (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES accounts(id),
+        fingerprint TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending',
+        filename TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        author TEXT NOT NULL DEFAULT '',
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        r2_key TEXT NOT NULL DEFAULT '',
+        job_id TEXT NOT NULL DEFAULT '',
+        link_token TEXT NOT NULL DEFAULT '',
+        link_kind TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_archive_items_fp ON archive_items(account_id, fingerprint)",
+    "CREATE INDEX IF NOT EXISTS ix_archive_items_job ON archive_items(job_id)",
+]
+
+
 def init_schema():
     db.migrate("accounts_v1", SCHEMA)
     db.migrate("account_jobs_plan_v1", JOBS_PLAN_MIGRATION)
     db.migrate("account_jobs_hidden_v1", JOBS_HIDDEN_MIGRATION)
     db.migrate("account_jobs_archive_v1", JOBS_ARCHIVE_MIGRATION)
+    db.migrate("archive_items_v1", ARCHIVE_ITEMS_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -522,7 +551,9 @@ def hide_job(account_id, job_id, now=None):
     concluse: un job "running" sta ancora lavorando. Ritorna "ok",
     "not_found" o "running". File e link di download non vengono toccati,
     salvo l'archivio: un job archiviato esce dall'archivio (libera quota) e
-    da li' segue la retention ordinaria, cioe' di norma sparisce subito."""
+    da li' segue la retention ordinaria, cioe' di norma sparisce subito. Fa
+    eccezione il job a cui e' collegato un libro dell'archivio dell'app: resta
+    archiviato (vedi _JOB_IN_ARCHIVE) finche' il collegamento esiste."""
     if not enabled():
         return "not_found"
     with db.tx() as c:
@@ -534,8 +565,14 @@ def hide_job(account_id, job_id, now=None):
             return "not_found"
         if row["status"] == "running":
             return "running"
-        c.execute("UPDATE account_jobs SET hidden_at=?, archived_at=NULL, archived_bytes=0 "
-                  "WHERE job_id=?", (int(_now(now)), str(job_id)))
+        linked = c.execute("SELECT 1 FROM archive_items WHERE job_id=? AND account_id=? LIMIT 1",
+                           (str(job_id), account_id)).fetchone() is not None
+        if linked:
+            c.execute("UPDATE account_jobs SET hidden_at=? WHERE job_id=?",
+                      (int(_now(now)), str(job_id)))
+        else:
+            c.execute("UPDATE account_jobs SET hidden_at=?, archived_at=NULL, archived_bytes=0 "
+                      "WHERE job_id=?", (int(_now(now)), str(job_id)))
     _archive_cache_clear()
     return "ok"
 
@@ -756,6 +793,12 @@ ARCHIVE_RETENTION_SEC = 100 * 365 * 86400
 _ARCHIVE_CACHE_TTL_SEC = 60
 
 _archive_cache = {"at": 0.0, "ids": frozenset()}
+
+# Job (alias `j`) che sta nell'archivio: archiviato e visibile nell'area
+# personale, oppure nascosto ma collegato a un libro dell'archivio dell'app.
+_JOB_IN_ARCHIVE = (
+    "j.archived_at IS NOT NULL AND (j.hidden_at IS NULL OR EXISTS ("
+    "SELECT 1 FROM archive_items i WHERE i.job_id=j.job_id AND i.account_id=j.account_id))")
 _archive_cache_lock = threading.Lock()
 
 
@@ -822,7 +865,7 @@ def archived_job_ids(now=None):
     with db.tx() as c:
         rows = c.execute(
             "SELECT j.job_id FROM account_jobs j JOIN accounts a ON a.id=j.account_id "
-            "WHERE j.archived_at IS NOT NULL AND j.hidden_at IS NULL AND " + cond,
+            "WHERE " + _JOB_IN_ARCHIVE + " AND " + cond,
             tuple(args)).fetchall()
     ids = frozenset(r["job_id"] for r in rows)
     if now is None:
@@ -843,26 +886,67 @@ def archive_protects(job_id):
 
 
 def archive_usage(account_id):
-    """(byte archiviati, job archiviati) dell'account."""
+    """(byte archiviati, job archiviati) dell'account. I byte comprendono i
+    libri caricati dall'app, anche quelli con l'upload ancora in corso: la
+    quota e' unica per job e app."""
     if not enabled():
         return 0, 0
     with db.tx() as c:
         r = c.execute(
-            "SELECT COALESCE(SUM(archived_bytes),0) AS b, COUNT(*) AS n FROM account_jobs "
-            "WHERE account_id=? AND archived_at IS NOT NULL AND hidden_at IS NULL",
+            "SELECT COALESCE(SUM(j.archived_bytes),0) AS b, COUNT(*) AS n FROM account_jobs j "
+            "WHERE j.account_id=? AND " + _JOB_IN_ARCHIVE,
             (account_id,)).fetchone()
-    return int(r["b"]), int(r["n"])
+        up = c.execute(
+            "SELECT COALESCE(SUM(size_bytes),0) FROM archive_items "
+            "WHERE account_id=? AND job_id=''", (account_id,)).fetchone()[0]
+    return int(r["b"]) + int(up), int(r["n"])
 
 
-def archive_status(account):
-    """Riepilogo per l'area personale, o None senza abbonamento ne' archivio."""
+def archive_items_count(account_id):
+    """Libri dell'app nell'archivio (upload completati e collegamenti)."""
+    if not enabled():
+        return 0
+    with db.tx() as c:
+        return int(c.execute("SELECT COUNT(*) FROM archive_items WHERE account_id=? "
+                             "AND state='ready'", (account_id,)).fetchone()[0])
+
+
+def archive_grace_until(account):
+    """Epoch di fine grazia di un abbonamento revocato, None se non revocato."""
+    if not account or (account.get("plan") or PLAN_FREE) in ARCHIVE_PLANS:
+        return None
+    until = account.get("plan_until")
+    if until is None:
+        return None
+    return int(until) + archive_grace_days() * 86400
+
+
+def archive_state(account, now=None):
+    """"active" (abbonamento in corso), "grace" (revocato, archivio ancora
+    protetto fino ad archive_grace_until) o "none"."""
+    if not account:
+        return "none"
+    if (account.get("plan") or PLAN_FREE) in ARCHIVE_PLANS:
+        return "active"
+    until = archive_grace_until(account)
+    return "grace" if until is not None and until > _now(now) else "none"
+
+
+def archive_status(account, now=None):
+    """Riepilogo per l'area personale e per l'app, o None senza abbonamento
+    ne' archivio. `state`/`grace_until` dicono all'app se avvisare l'utente
+    che i libri solo-cloud stanno per essere cancellati."""
     if not account:
         return None
     used, n = archive_usage(account["id"])
+    items = archive_items_count(account["id"])
     plan = account.get("plan") or PLAN_FREE
-    if plan not in ARCHIVE_PLANS and not n:
+    if plan not in ARCHIVE_PLANS and not n and not items:
         return None
-    return {"plan": plan, "quota_bytes": archive_quota_bytes(plan), "used_bytes": used, "jobs": n}
+    state = archive_state(account, now)
+    return {"plan": plan, "quota_bytes": archive_quota_bytes(plan), "used_bytes": used, "jobs": n,
+            "items": items, "state": state,
+            "grace_until": archive_grace_until(account) if state == "grace" else None}
 
 
 def archive_candidates():
@@ -946,9 +1030,11 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         "(SELECT COUNT(*) FROM account_jobs j WHERE j.account_id=a.id) AS jobs, "
         "(SELECT COALESCE(SUM(j.paid_eur),0) FROM account_jobs j WHERE j.account_id=a.id) AS paid_eur, "
         "(SELECT COALESCE(SUM(j.archived_bytes),0) FROM account_jobs j WHERE j.account_id=a.id "
-        " AND j.archived_at IS NOT NULL AND j.hidden_at IS NULL) AS archive_bytes, "
+        " AND " + _JOB_IN_ARCHIVE + ") + "
+        "(SELECT COALESCE(SUM(i.size_bytes),0) FROM archive_items i WHERE i.account_id=a.id "
+        " AND i.job_id='') AS archive_bytes, "
         "(SELECT COUNT(*) FROM account_jobs j WHERE j.account_id=a.id "
-        " AND j.archived_at IS NOT NULL AND j.hidden_at IS NULL) AS archive_jobs "
+        " AND " + _JOB_IN_ARCHIVE + ") AS archive_jobs "
         "FROM accounts a " + sql_where +
         " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
     )

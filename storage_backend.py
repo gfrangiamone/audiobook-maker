@@ -45,7 +45,7 @@ def is_enabled():
 
 # Radici che delete_prefix non cancella mai per intero (vedi l'incidente
 # del 12/09/2026 sulla cartella delle voci).
-_PROTECTED_ROOTS = frozenset({"user_voices", "voices", "accounts", "logs"})
+_PROTECTED_ROOTS = frozenset({"user_voices", "voices", "accounts", "logs", "user_archive"})
 
 
 def _full_key(key):

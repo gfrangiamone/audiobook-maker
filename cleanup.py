@@ -35,6 +35,7 @@ import pending_jobs
 import storage_backend
 import storage_tiering
 import token_store as _tkstore
+import user_archive
 import voice_clone
 import voxcpm_tts
 import retry_util as _retry
@@ -153,7 +154,9 @@ CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 # data/logs): file mensili + activity.db, mai una job dir. In piu' qualunque
 # ABM_ACTIVITY_LOG_DIR che cada dentro il data dir e' riservata col suo nome,
 # qualunque esso sia (vedi _reserved_data_dir_names).
-_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices", "accounts", "logs"})
+# "user_archive" e' il prefisso cold dei libri archiviati dall'app (user_archive.ROOT).
+_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices", "accounts", "logs",
+                                 "user_archive"})
 
 
 def _reserved_data_dir_names():
@@ -1422,6 +1425,10 @@ def _cleanup_loop():
             _archive_sweep(now)
         except Exception as e:
             print(f"[archive] sweep error (non-fatal): {e}")
+        try:
+            user_archive.sweep(now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[user_archive] sweep error (non-fatal): {e}")
         try:
             archived = accounts.archived_job_ids()
         except Exception as e:  # noqa: BLE001

@@ -117,7 +117,8 @@ def test_archive_status_and_admin_list(acct_env):
     _done_job(acct, "j1")
     accounts.mark_archived("j1", 3 * GIB)
     st = accounts.archive_status(accounts.get(acct["id"]))
-    assert st == {"plan": "archive_50", "quota_bytes": 50 * GIB, "used_bytes": 3 * GIB, "jobs": 1}
+    assert st == {"plan": "archive_50", "quota_bytes": 50 * GIB, "used_bytes": 3 * GIB, "jobs": 1,
+                  "items": 0, "state": "active", "grace_until": None}
     out = accounts.admin_list(now=T0 + 60)
     r = out["records"][0]
     assert r["plan"] == "archive_50"

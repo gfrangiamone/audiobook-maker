@@ -4,7 +4,9 @@
 Blueprint `account`: `/api/auth/{request,verify,logout,logout_all,
 logout_device,me}`, `/auth/<token>` (magic link con anti-CSRF), `/account`
 (pagina), `/api/account/jobs` (elenco con download e stato riconciliato),
-`/api/account/jobs/delete`, `/api/account/voucher_suggest`, `/api/account/delete_request`,
+`/api/account/jobs/delete`, `/api/account/archive{,/create,/finalize,/delete,
+/download}` (archivio dell'app, logica in `user_archive`),
+`/api/account/voucher_suggest`, `/api/account/delete_request`,
 `/api/account/delete_confirm`; con i cookie di sessione e CSRF, l'invio
 dei codici, la cancellazione dell'account, le righe dei job e le voci
 dell'utente. Spostato pari pari da `audiobook_app`; lo stato vive in
@@ -30,7 +32,9 @@ import payment
 import pending_jobs
 import routes_mobile
 import routes_voice_clone
+import storage_backend
 import token_store as _tkstore
+import user_archive
 import voice_clone
 from client_identity import EMAIL_RE as _ACCT_EMAIL_RE
 
@@ -728,6 +732,145 @@ def api_account_job_delete():
         return _acct_err("job_running", "Job still in progress", 409)
     _acct_log("ACCOUNT_JOB_DELETE", acct["email"], job_id)
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- archivio app
+
+def _acct_required():
+    """(account, None) o (None, risposta d'errore) per le route dell'archivio."""
+    gate = _acct_gate()
+    if gate:
+        return None, gate
+    acct = _current_account()
+    if not acct:
+        return None, _acct_err("unauthorized", "Sign in required", 401)
+    return acct, None
+
+
+def _archive_job_candidates(acct, job_id):
+    """[(path, link_kind, token)] dei file del job dell'account con cui un
+    libro dell'app puo' coincidere: l'm4b, o l'mp3 quando il token non ha uno
+    zip (/dl/<token>/download servirebbe lo zip)."""
+    if not job_id or accounts.job_owner(job_id) != acct["id"]:
+        return []
+    out = []
+    for tok, info in _download_tokens_index().get(job_id) or []:
+        if info.get("output_m4b"):
+            out.append((info["output_m4b"], "m4b", tok))
+        if info.get("output_file") and not info.get("output_zip"):
+            out.append((info["output_file"], "download", tok))
+    return out
+
+
+@bp.route("/api/account/archive", methods=["GET"])
+def api_account_archive():
+    acct, err = _acct_required()
+    if err:
+        return err
+    return jsonify({"archive": _account_archive_for(acct),
+                    "items": [user_archive.public(i) for i in user_archive.list_items(acct["id"])]})
+
+
+@bp.route("/api/account/archive/create", methods=["POST"])
+def api_account_archive_create():
+    """Archivia un libro dell'app: collegamento se e' gia' nell'archivio,
+    altrimenti presigned PUT (quota prenotata) da chiudere con finalize."""
+    acct, err = _acct_required()
+    if err:
+        return err
+    allowed, retry = _ip_rl_check("archive_create", client_ip(), 30, 60)
+    if not allowed:
+        return _acct_err("rate_limited", "Too many requests", 429, retry_after=retry)
+    data = request.get_json(silent=True) or {}
+    job_id = str(data.get("job_id") or "").strip()
+    try:
+        status, res = user_archive.create(
+            acct, fingerprint=data.get("fingerprint"), size=data.get("size_bytes"),
+            filename=data.get("filename"), title=data.get("title"), author=data.get("author"),
+            duration_ms=data.get("duration_ms") or 0,
+            job_candidates=_archive_job_candidates(acct, job_id))
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING archive create: {e}", flush=True)
+        return _acct_err("storage_error", "Archive unavailable", 503)
+    if status == "linked":
+        _acct_log("ACCOUNT_ARCHIVE_LINK", acct["email"], res["id"])
+        return jsonify({"mode": "linked", "item": user_archive.public(res)})
+    if status == "upload":
+        return jsonify({"mode": "upload", "item": user_archive.public(res["item"]),
+                        "upload_url": res["upload_url"]})
+    if status == "quota":
+        return _acct_err("archive_quota_exceeded", "Archive quota exceeded", 409, **res)
+    if status == "inactive":
+        return _acct_err("archive_inactive", "No active archive subscription", 403)
+    if status == "too_large":
+        return _acct_err("too_large", "File too large", 413,
+                         max_bytes=user_archive.max_item_bytes())
+    if status == "unavailable":
+        return _acct_err("upload_unavailable", "Archive unavailable", 503)
+    return _acct_err("bad_request", "fingerprint, size_bytes and filename required", 400)
+
+
+@bp.route("/api/account/archive/finalize", methods=["POST"])
+def api_account_archive_finalize():
+    acct, err = _acct_required()
+    if err:
+        return err
+    item_id = str((request.get_json(silent=True) or {}).get("item_id") or "").strip()
+    if not item_id:
+        return _acct_err("bad_request", "item_id required", 400)
+    status, item = user_archive.finalize(acct, item_id)
+    if status == "ready":
+        _acct_log("ACCOUNT_ARCHIVE_UPLOAD", acct["email"], item_id)
+        return jsonify({"ok": True, "item": user_archive.public(item)})
+    codes = {"not_found": 404, "not_uploaded": 400, "size_mismatch": 400, "storage_error": 502}
+    return _acct_err(status, "Archive finalize failed", codes.get(status, 400))
+
+
+@bp.route("/api/account/archive/delete", methods=["POST"])
+def api_account_archive_delete():
+    acct, err = _acct_required()
+    if err:
+        return err
+    item_id = str((request.get_json(silent=True) or {}).get("item_id") or "").strip()
+    if not item_id:
+        return _acct_err("bad_request", "item_id required", 400)
+    res = user_archive.delete(acct, item_id)
+    if res == "not_found":
+        return _acct_err("not_found", "Item not found", 404)
+    if res != "ok":
+        return _acct_err("storage_error", "Archive delete failed", 502)
+    _acct_log("ACCOUNT_ARCHIVE_DELETE", acct["email"], item_id)
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/account/archive/download", methods=["GET"])
+def api_account_archive_download():
+    """URL da cui l'app scarica un libro dell'archivio: presigned GET per i
+    file caricati, link /dl del job per i collegamenti. Anche in grazia:
+    serve proprio a riportare i libri sul telefono prima della cancellazione."""
+    acct, err = _acct_required()
+    if err:
+        return err
+    item = user_archive.get_item(acct["id"], (request.args.get("id") or "").strip())
+    if item is None or item["state"] != "ready":
+        return _acct_err("not_found", "Item not found", 404)
+    out = {"filename": user_archive.download_name(item), "size_bytes": int(item["size_bytes"])}
+    if item["r2_key"]:
+        try:
+            out["url"] = storage_backend.presigned_get_url(item["r2_key"],
+                                                           download_name=out["filename"])
+        except Exception as e:  # noqa: BLE001
+            print(f"WARNING archive presign get: {e}", flush=True)
+            return _acct_err("storage_error", "Archive unavailable", 502)
+        return jsonify(out)
+    token = item["link_token"]
+    if not isinstance(_tkstore.download_tokens.get(token), dict):
+        cands = [c for c in _archive_job_candidates(acct, item["job_id"]) if c[1] == item["link_kind"]]
+        token = cands[-1][2] if cands else ""
+    if not token:
+        return _acct_err("gone", "Archived file no longer available", 410)
+    out["url"] = f"{(_base_url() or '').rstrip('/')}/dl/{token}/{item['link_kind']}"
+    return jsonify(out)
 
 
 @bp.route("/api/account/delete_request", methods=["POST"])
