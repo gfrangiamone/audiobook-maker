@@ -221,10 +221,12 @@ _TRASH_SVG = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 
 def _job_delete_dialog(t):
     """Conferma dell'eliminazione di un job che ha ancora link vivi: il file
-    non sparisce, resta scaricabile dall'email. Senza link si elimina subito."""
+    non sparisce, resta scaricabile dall'email. Senza link si elimina subito.
+    Job archiviato: il secondo paragrafo avverte che esce dall'archivio."""
     return (
         f"<dialog id=\"acctJobDelDlg\"><h2>{_e(t['job_delete_title'])}</h2>"
-        f"<p>{_e(t['job_delete_p'])}</p>"
+        f"<p id=\"acctJobDelP\">{_e(t['job_delete_p'])}</p>"
+        f"<p id=\"acctJobDelPArch\" hidden>{_e(t['job_delete_archived_p'])}</p>"
         f"<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"acctJobDelConfirm\">"
         f"{_e(t['job_delete'])}</button>"
         f"<button type=\"button\" class=\"primary\" data-close autofocus>{_e(t['cancel_btn'])}</button></div></dialog>"
@@ -280,7 +282,9 @@ _HISTORY_JS = (
     ".then(function(r){if(r.ok||r.status===404){var tr=b.closest('tr');if(tr)tr.remove();}else{b.disabled=false;}})"
     ".catch(function(){b.disabled=false;});}"
     "document.querySelectorAll('[data-del]').forEach(function(b){b.addEventListener('click',function(){"
-    "if(b.getAttribute('data-dl')==='1'){jb=b;openDlg(jd);}else{delJob(b);}});});"
+    "var dl=b.getAttribute('data-dl');if(dl==='1'||dl==='2'){jb=b;var ar=dl==='2';"
+    "document.getElementById('acctJobDelP').hidden=ar;document.getElementById('acctJobDelPArch').hidden=!ar;"
+    "openDlg(jd);}else{delJob(b);}});});"
     "if(jc)jc.onclick=function(){closeDlg(jd);if(jb)delJob(jb);jb=null;};"
     "var live=document.querySelectorAll('[data-job]');"
     "var ids=[];live.forEach(function(el){ids.push(el.getAttribute('data-job'));});"
@@ -301,9 +305,23 @@ _HISTORY_JS = (
 )
 
 
+def _archive_line(t, archive):
+    """Riga dell'abbonamento di archivio sotto l'intestazione, o "" senza."""
+    if not archive:
+        return ""
+    gib = 1024 ** 3
+    used = f"{archive['used_bytes'] / gib:.2f} GB"
+    if archive.get("quota_bytes"):
+        txt = (t["archive_line"].replace("{used}", used)
+               .replace("{quota}", f"{archive['quota_bytes'] // gib} GB"))
+    else:
+        txt = t["archive_line_ended"].replace("{used}", used)
+    return f"<p class=\"meta\">{_e(txt)}</p>"
+
+
 def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None,
                    now=None, sessions=None, current_sid="", tab="books", link_lang="",
-                   new_voice_url=""):
+                   new_voice_url="", archive=None):
     """Area personale: intestazione con il bottone «I tuoi dispositivi», tab
     audiolibri / voci campionate, azioni in fondo e i due popup (dispositivi,
     conferma cancellazione). `sessions` come da `accounts.list_sessions`,
@@ -320,6 +338,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         f"<div class=\"signed\"><p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong></p>"
         f"<button type=\"button\" class=\"small\" id=\"acctDevices\">{_e(t['devices_btn'])}"
         f"<span class=\"cnt\">{n_sess}</span></button></div>",
+        _archive_line(t, archive),
         "<nav class=\"tabs\" role=\"tablist\">"
         f"<button type=\"button\" role=\"tab\" data-tab=\"books\" aria-selected=\"{'true' if tab == 'books' else 'false'}\">"
         f"{_e(t['tab_books'])}</button>"
@@ -338,10 +357,14 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             status = r.get("status") or "running"
             kind = r.get("kind") or "generate"
             dls = r.get("downloads") or []
+            archived = any(d.get("archived") for d in dls)
             if dls:
                 cell = "".join(
                     f"<a href=\"{_e(d['url'])}\">{_e(t.get('dl_' + d['kind'], d['kind']))}</a>" for d in dls)
-                cell += f" <span class=\"badge\">{_e(_expiry_label(t, min(d['expires_at'] for d in dls), now))}</span>"
+                if archived:
+                    cell += f" <span class=\"badge done\">{_e(t['dl_archived'])}</span>"
+                else:
+                    cell += f" <span class=\"badge\">{_e(_expiry_label(t, min(d['expires_at'] for d in dls), now))}</span>"
             elif status == "done":
                 cell = f"<span class=\"badge expired\">{_e(t['dl_expired'])}</span>"
             else:
@@ -379,7 +402,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             act = ""
             if status != "running":
                 act = (f"<button type=\"button\" class=\"del\" data-del=\"{_e(job_id)}\" "
-                       f"data-dl=\"{'1' if dls else '0'}\" title=\"{_e(t['job_delete'])}\" "
+                       f"data-dl=\"{'2' if archived else ('1' if dls else '0')}\" title=\"{_e(t['job_delete'])}\" "
                        f"aria-label=\"{_e(t['job_delete'])}\">{_TRASH_SVG}</button>")
             parts.append(
                 f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td class=\"bk\">{book}</td>"

@@ -530,6 +530,8 @@ def _account_downloads_for(row, now=None, index=None):
         return []
     base = (_base_url() or "").rstrip("/")
     exp = int(expires_at)
+    # Job nell'archivio dell'abbonato: il link non scade (expires_at lontano).
+    arch = accounts.archive_protects(job_id)
     out = [{"kind": "page", "url": f"{base}/dl/{token}", "expires_at": exp}]
     dl_type = info.get("download_type") or "audio"
     # File assenti su entrambi i tier -> nessun pulsante per quel formato
@@ -544,6 +546,9 @@ def _account_downloads_for(row, now=None, index=None):
     elif info.get("output_m4b"):
         if routes_mobile._file_available(info.get("output_m4b") or ""):
             out.append({"kind": "m4b", "url": f"{base}/dl/{token}/m4b", "expires_at": exp})
+    if arch:
+        for d in out:
+            d["archived"] = True
     return out
 
 
@@ -626,6 +631,15 @@ def _account_voices_for(acct):
         return []
 
 
+def _account_archive_for(acct):
+    """Riepilogo dell'abbonamento di archivio (best-effort: None su errore)."""
+    try:
+        return accounts.archive_status(acct)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING archive_status: {e}", flush=True)
+        return None
+
+
 @bp.route("/account", methods=["GET"])
 def account_page_view():
     if not accounts.enabled() or not _smtp_available():
@@ -661,7 +675,7 @@ def account_page_view():
         t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
         total=total, voices_count=len(voices), voices=voices,
         sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab,
-        link_lang=link_lang, new_voice_url=new_voice_url))
+        link_lang=link_lang, new_voice_url=new_voice_url, archive=_account_archive_for(acct)))
 
 
 @bp.route("/api/account/jobs", methods=["GET"])
@@ -688,7 +702,8 @@ def api_account_jobs():
         "engine": r.get("engine") or "", "model": r.get("model") or "",
         "downloads": r["downloads"],
     } for r in rows]
-    return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE})
+    return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE,
+                    "archive": _account_archive_for(acct)})
 
 
 @bp.route("/api/account/jobs/delete", methods=["POST"])

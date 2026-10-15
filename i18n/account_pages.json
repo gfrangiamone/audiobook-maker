@@ -82,7 +82,11 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "dl_archived": "archived",
+    "archive_line": "Archive subscription: {used} of {quota} used. Archived books never expire.",
+    "archive_line_ended": "Archive subscription ended: {used} still kept for a limited time.",
+    "job_delete_archived_p": "This book is in your archive. Removing it from the list also removes it from the archive: the files will be deleted shortly and will no longer be downloadable."
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -167,7 +171,11 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "dl_archived": "in archivio",
+    "archive_line": "Abbonamento archivio: {used} usati su {quota}. I libri in archivio non scadono.",
+    "archive_line_ended": "Abbonamento archivio terminato: {used} ancora conservati per un periodo limitato.",
+    "job_delete_archived_p": "Questo libro è nel tuo archivio. Eliminandolo dall'elenco esce anche dall'archivio: i file verranno cancellati a breve e non saranno più scaricabili."
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -252,7 +260,11 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "dl_archived": "archivé",
+    "archive_line": "Abonnement archive : {used} utilisés sur {quota}. Les livres archivés n'expirent pas.",
+    "archive_line_ended": "Abonnement archive terminé : {used} encore conservés pour une durée limitée.",
+    "job_delete_archived_p": "Ce livre est dans votre archive. Le retirer de la liste le retire aussi de l'archive : les fichiers seront bientôt supprimés et ne pourront plus être téléchargés."
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -337,7 +349,11 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "dl_archived": "archivado",
+    "archive_line": "Suscripción de archivo: {used} usados de {quota}. Los libros archivados no caducan.",
+    "archive_line_ended": "Suscripción de archivo finalizada: {used} conservados todavía por un tiempo limitado.",
+    "job_delete_archived_p": "Este libro está en tu archivo. Si lo eliminas de la lista también sale del archivo: los archivos se borrarán en breve y ya no se podrán descargar."
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -422,7 +438,11 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "dl_archived": "archiviert",
+    "archive_line": "Archiv-Abo: {used} von {quota} belegt. Archivierte Bücher laufen nicht ab.",
+    "archive_line_ended": "Archiv-Abo beendet: {used} werden noch für begrenzte Zeit aufbewahrt.",
+    "job_delete_archived_p": "Dieses Buch ist in deinem Archiv. Wenn du es aus der Liste entfernst, wird es auch aus dem Archiv entfernt: Die Dateien werden in Kürze gelöscht und können nicht mehr heruntergeladen werden."
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -507,7 +527,11 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "dl_archived": "已归档",
+    "archive_line": "归档订阅：已使用 {used}，共 {quota}。归档的图书不会过期。",
+    "archive_line_ended": "归档订阅已结束：{used} 仍会保留一段有限时间。",
+    "job_delete_archived_p": "这本书在你的归档中。从列表中删除也会将其移出归档：文件将很快被删除，且无法再下载。"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -592,6 +616,10 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)"
+    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "dl_archived": "संग्रहीत",
+    "archive_line": "आर्काइव सदस्यता: {quota} में से {used} उपयोग किए गए। आर्काइव की गई किताबें समाप्त नहीं होतीं।",
+    "archive_line_ended": "आर्काइव सदस्यता समाप्त: {used} अभी सीमित समय के लिए रखे गए हैं।",
+    "job_delete_archived_p": "यह किताब आपके आर्काइव में है। इसे सूची से हटाने पर यह आर्काइव से भी हट जाएगी: फ़ाइलें जल्द ही हटा दी जाएँगी और फिर डाउनलोड नहीं की जा सकेंगी।"
   }
 }

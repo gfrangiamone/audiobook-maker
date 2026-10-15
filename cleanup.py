@@ -472,6 +472,11 @@ def _delete_cold_for_job(job_id):
         # backup degli account.
         print(f"[cleanup] Cold delete rifiutato sul prefisso riservato {job_id}/")
         return
+    if accounts.archive_protects(job_id):
+        # Ultima difesa: nessun ramo di cleanup deve arrivare qui per un job
+        # archiviato, ma il cold e' l'unica copia che resta all'abbonato.
+        print(f"[cleanup] Cold delete rifiutato: job {job_id} nell'archivio di un abbonato")
+        return
     try:
         storage_backend.delete_prefix(f"{job_id}/")
         print(f"[cleanup] Cold objects removed for job {job_id}")
@@ -830,6 +835,94 @@ def _reconcile_unused_capture_for_job(job_id, reason=""):
         _notify()
 
 
+# Abbonamento di archivio: un job concluso di un abbonato entra nell'archivio
+# (accounts.mark_archived) se ci sta nella quota. Il giro e' leggero (pochi
+# abbonati, candidati solo fra i job conclusi non ancora archiviati) ma misura
+# le dimensioni anche su cold: si fa ogni ARCHIVE_SWEEP_INTERVAL_SEC, e un job
+# oltre quota si rivaluta solo dopo ARCHIVE_OVER_QUOTA_RETRY_SEC.
+ARCHIVE_SWEEP_INTERVAL_SEC = 300
+ARCHIVE_OVER_QUOTA_RETRY_SEC = 3600
+_archive_sweep_state = {"at": 0.0}
+_archive_over_quota = {}
+
+
+def _job_archive_bytes(job_id):
+    """Byte degli output del job (file offloadable sotto output*/), locali o
+    gia' evacuati su cold. 0 se non resta nulla da archiviare."""
+    sizes = {}
+    jdir = _upload_dir() / job_id
+    try:
+        for od in jdir.iterdir():
+            if not od.is_dir() or not (od.name == "output" or od.name.startswith("output_")):
+                continue
+            for f in od.rglob("*"):
+                if f.is_file() and storage_tiering.is_offloadable(f.name):
+                    key = storage_tiering.key_for_path(str(f)) or str(f)
+                    sizes[key] = f.stat().st_size
+    except OSError:
+        pass
+    if storage_backend.is_enabled():
+        for key in storage_backend.list_prefix(f"{job_id}/"):
+            parts = key.split("/")
+            if key in sizes or len(parts) < 3 or not storage_tiering.is_offloadable(key):
+                continue
+            if not (parts[1] == "output" or parts[1].startswith("output_")):
+                continue
+            sizes[key] = storage_backend.object_size(key) or 0
+    return sum(sizes.values())
+
+
+def _archive_sweep(now, force=False):
+    """Fa entrare nell'archivio i job conclusi degli abbonati che stanno nella
+    quota. Solo job con un download token ancora vivo: i file di un job gia'
+    scaduto non ci sono piu'. Ritorna il numero di job archiviati."""
+    if not force and now - _archive_sweep_state["at"] < ARCHIVE_SWEEP_INTERVAL_SEC:
+        return 0
+    _archive_sweep_state["at"] = now
+    if not accounts.enabled():
+        return 0
+    used = {}
+    added = 0
+    for c in accounts.archive_candidates():
+        jid, aid = c["job_id"], c["account_id"]
+        if now - _archive_over_quota.get(jid, 0) < ARCHIVE_OVER_QUOTA_RETRY_SEC:
+            continue
+        if not _tkstore.has_active_download_tokens(jid, now):
+            continue
+        nbytes = _job_archive_bytes(jid)
+        if nbytes <= 0:
+            continue
+        if aid not in used:
+            used[aid] = accounts.archive_usage(aid)[0]
+        quota = accounts.archive_quota_bytes(c["plan"])
+        if used[aid] + nbytes > quota:
+            _archive_over_quota[jid] = now
+            print(f"[archive] {jid} oltre quota ({used[aid] + nbytes}B > {quota}B, "
+                  f"piano {c['plan']}): retention ordinaria")
+            continue
+        if accounts.mark_archived(jid, nbytes, now):
+            used[aid] += nbytes
+            added += 1
+            _archive_over_quota.pop(jid, None)
+            print(f"[archive] {jid} archiviato ({nbytes}B, piano {c['plan']})")
+    for jid in [j for j, t in _archive_over_quota.items() if now - t > 2 * ARCHIVE_OVER_QUOTA_RETRY_SEC]:
+        _archive_over_quota.pop(jid, None)
+    return added
+
+
+def _archived_release_due(job, now):
+    """True quando un job archiviato puo' uscire dalla RAM: la sua retention
+    ordinaria, contata dalla consegna, e' passata."""
+    done_at = (job.get("email_sent_at") or job.get("completed_at")
+               or job.get("opt_completed_at") or job.get("translated_at"))
+    if job.get("status") not in ("done", "partial", "optimized", "translated") or not done_at:
+        return False
+    try:
+        return now - float(done_at) > _effective_retention_for_job(job)
+    except (TypeError, ValueError):
+        return False
+
+
 def _cleanup_job(job_id, reason=""):
     """Remove all files for a job and delete the job entry.
     NOTA: nessun gate marker qui — questo path viene invocato solo dal branch
@@ -880,6 +973,10 @@ def _cleanup_job(job_id, reason=""):
         # G4: NON distruggere locale+cold finché il marker email protegge la dir
         # o esiste un download token ancora valido. Evita che una transizione
         # anomala a error/cancel cancelli un job già consegnato via email.
+        if accounts.archive_protects(job_id):
+            print(f"[cleanup] {job_id} entry removed but dir+cold preserved "
+                  f"(archivio abbonato) — {reason}")
+            return
         if _email_marker_protects(work_dir, now) or _tkstore.has_active_download_tokens(job_id, now):
             print(f"[cleanup] {job_id} entry removed but dir+cold preserved "
                   f"(email marker/token still valid) — {reason}")
@@ -1321,10 +1418,27 @@ def _cleanup_loop():
         # misses peers' tokens and the orphan-dir branch wipes their job dirs.
         _tkstore.merge_tokens_from_disk()
 
+        try:
+            _archive_sweep(now)
+        except Exception as e:
+            print(f"[archive] sweep error (non-fatal): {e}")
+        try:
+            archived = accounts.archived_job_ids()
+        except Exception as e:  # noqa: BLE001
+            print(f"[archive] elenco non leggibile (non-fatal): {e}")
+            archived = frozenset()
+
         with _jobs_lock:
             to_remove = []
             for jid, job in list(_jobs().items()):
                 status = job.get("status", "")
+                if jid in archived and _archived_release_due(job, now):
+                    # Il token di un job archiviato non scade mai: senza questo
+                    # ramo il job resterebbe in RAM per sempre. Esce dalla
+                    # memoria alla retention ordinaria; dir e cold restano
+                    # (_cleanup_job li preserva).
+                    to_remove.append((jid, "archived: released from memory"))
+                    continue
                 # Un job e' "emailato" se l'utente ha registrato l'email OPPURE
                 # se una notifica e' comunque partita (path fallback post-COMPLETE
                 # che imposta email_sent_at senza email_registered). Senza questo

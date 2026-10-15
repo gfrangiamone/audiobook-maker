@@ -69,5 +69,5 @@ def test_no_inline_guard_left():
     import routes_admin_audit, routes_admin_logs, routes_admin_vouchers, routes_admin_jobs, routes_admin_community
     both = src + "".join(inspect.getsource(m) for m in (routes_admin_audit, routes_admin_logs, routes_admin_vouchers,
                                                         routes_admin_jobs, routes_admin_community))
-    assert len(re.findall(r"^@admin_required(\(as_json=False\))?$", both, flags=re.M)) == 32   # 0 app + 12 + 2 + 3 + 6 + 9
+    assert len(re.findall(r"^@admin_required(\(as_json=False\))?$", both, flags=re.M)) == 33   # 0 app + 13 + 2 + 3 + 6 + 9
     assert "@admin_required(4" not in src                          # nessuna forma storica residua

@@ -785,7 +785,10 @@ def _effective_retention_for_job(job):
 def _effective_retention_for_token_info(info):
     """Retention con protezione no-download per token PREMIUM/Gemini.
     Se il token e' is_gemini e nessun /dl/<token>/* ha mai servito il file
-    (downloaded_at vuoto), raddoppia la retention base."""
+    (downloaded_at vuoto), raddoppia la retention base. Job nell'archivio di
+    un abbonato: non scade (accounts.ARCHIVE_RETENTION_SEC)."""
+    if isinstance(info, dict) and accounts.archive_protects(info.get("job_id")):
+        return accounts.ARCHIVE_RETENTION_SEC
     base = _retention_for_token_info(info)
     if isinstance(info, dict) and info.get("is_gemini") and not info.get("downloaded_at"):
         return base * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER

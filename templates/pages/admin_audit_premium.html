@@ -422,6 +422,7 @@
       <div class="agg-box"><div class="agg-label" title="Registrazione avviata ma nessun accesso completato.">Mai entrati</div><div class="agg-value" id="accAggNever">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Cancellazione self-service: email sostituita da un segnaposto, storico rimosso.">Cancellati</div><div class="agg-value" id="accAggDeleted">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Registrazioni negli ultimi 30 giorni.">Nuovi 30 gg</div><div class="agg-value" id="accAggNew">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Account vivi con un abbonamento di archivio.">Abbonati archivio</div><div class="agg-value" id="accAggSub">-</div></div>
     </div>
   </div>
   <div class="panel">
@@ -429,7 +430,8 @@
     <table>
       <thead><tr>
         <th title="Data della prima registrazione">Registrato</th>
-        <th>Email</th><th>Lingua</th><th>Piano</th>
+        <th>Email</th><th>Lingua</th>
+        <th title="Abbonamento di archivio: i job conclusi entrano nell'archivio (file conservati su cold, senza scadenza) finche' ci stanno nella quota. Revocandolo, l'archivio resta protetto per ABM_ARCHIVE_GRACE_DAYS (30 gg) e poi segue la retention ordinaria.">Abbonamento / archivio</th>
         <th title="Ultimo accesso completato (magic link o codice)">Ultimo accesso</th>
         <th title="Ultima attivita' vista su una sessione">Ultima attivita'</th>
         <th title="Sessioni non scadute ne' revocate">Sessioni</th>
@@ -1290,6 +1292,46 @@
     "never":   ["badge-warn", "Mai entrato"],
     "deleted": ["badge-err", "Cancellato"],
   };
+  const ACC_PLAN_LABEL = {
+    "free": "Nessun abbonamento",
+    "archive_10": "10 GB di archivio",
+    "archive_20": "20 GB di archivio",
+    "archive_50": "50 GB di archivio",
+  };
+  let ACC_PLANS = Object.keys(ACC_PLAN_LABEL);
+  function accGb(b){ return (Number(b||0)/1073741824).toFixed(2)+" GB"; }
+  function accPlanCell(r){
+    const cur = r.plan||"free";
+    let h;
+    if (r.deleted_at) {
+      h = esc(ACC_PLAN_LABEL[cur]||cur);
+    } else {
+      h = `<select data-acc-plan="${esc(r.id)}" data-cur="${esc(cur)}">` + ACC_PLANS.map(p =>
+        `<option value="${esc(p)}"${p===cur?" selected":""}>${esc(ACC_PLAN_LABEL[p]||p)}</option>`).join("") + `</select>`;
+    }
+    const used = Number(r.archive_bytes||0), quota = Number(r.archive_quota_bytes||0);
+    if (quota || used) {
+      const over = quota && used > quota ? ' class="delta-negative"' : "";
+      h += `<br><small${over}>${accGb(used)}${quota?" / "+accGb(quota):""} &middot; ${Number(r.archive_jobs||0)} job</small>`;
+    }
+    if (cur === "free" && r.plan_until) h += `<br><small>revocato il ${accDate(r.plan_until)}</small>`;
+    return h;
+  }
+  async function accSetPlan(sel){
+    const id = sel.dataset.accPlan, cur = sel.dataset.cur, plan = sel.value;
+    const msg = plan === "free"
+      ? "Revocare l'abbonamento? L'archivio resta protetto per il periodo di grazia, poi i file seguono la retention ordinaria e vengono cancellati."
+      : `Attribuire "${ACC_PLAN_LABEL[plan]||plan}" a questo account?`;
+    if (!confirm(msg)) { sel.value = cur; return; }
+    sel.disabled = true;
+    try {
+      const r = await fetch("/admin/api/accounts/plan", {method:"POST",
+        headers:{"X-Admin-Token":ADMIN_TOKEN, "Content-Type":"application/json"},
+        body: JSON.stringify({account_id:id, plan:plan})});
+      if (!r.ok) { alert("Errore: "+r.status+" "+await r.text()); sel.value = cur; return; }
+      accFetch();
+    } finally { sel.disabled = false; }
+  }
   function accDate(ts){
     if (!ts) return "-";
     const d = new Date(Number(ts)*1000);
@@ -1315,6 +1357,8 @@
     $("accAggNever").textContent = a.never_logged ?? 0;
     $("accAggDeleted").textContent = a.deleted ?? 0;
     $("accAggNew").textContent = a.last30 ?? 0;
+    $("accAggSub").textContent = a.subscribed ?? 0;
+    if (Array.isArray(d.plans) && d.plans.length) ACC_PLANS = d.plans;
     accRender(d.records||[], d.count||0);
   }
   function accRender(recs, total){
@@ -1324,7 +1368,7 @@
       const [bcls,blab] = ACC_STATE_BADGE[r.state]||["badge-muted", r.state||"?"];
       // Cancellato: l'indirizzo non esiste piu' nel DB, resta solo l'id.
       const mail = r.email ? esc(r.email) : '<span style="color:var(--muted)">(rimossa)</span>';
-      const plan = esc(r.plan||"free") + (r.plan_until ? `<br><small>fino al ${accDate(r.plan_until)}</small>` : "");
+      const plan = accPlanCell(r);
       const del = r.deleted_at
         ? `<span class="delta-negative">${accDate(r.deleted_at)}</span>` : "-";
       return `<tr>
@@ -1343,6 +1387,9 @@
     }).join("") + auditTruncNote(recs.length, total, 11);
   }
   $("accRefreshBtn").addEventListener("click", accFetch);
+  $("accRecordsBody").addEventListener("change", (e)=>{
+    if (e.target.matches("select[data-acc-plan]")) accSetPlan(e.target);
+  });
   $("accQuery").addEventListener("keydown", (e)=>{ if (e.key==="Enter") accFetch(); });
 
   // ===================== Tab switching =====================

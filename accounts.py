@@ -12,6 +12,7 @@ from client_identity import email_hash as _ci_email_hash, norm_email as _norm
 from fileio import load_json
 from env_utils import env_int as _env_int, env_str
 import secrets
+import threading
 import time
 
 import db
@@ -136,10 +137,20 @@ JOBS_HIDDEN_MIGRATION = [
 ]
 
 
+# Abbonamento di archivio: job conservati su cold storage oltre la retention.
+# `archived_at` dice che il job e' entrato nell'archivio dell'account,
+# `archived_bytes` quanto pesa sulla quota (misurato all'ingresso).
+JOBS_ARCHIVE_MIGRATION = [
+    "ALTER TABLE account_jobs ADD COLUMN archived_at INTEGER",
+    "ALTER TABLE account_jobs ADD COLUMN archived_bytes INTEGER NOT NULL DEFAULT 0",
+]
+
+
 def init_schema():
     db.migrate("accounts_v1", SCHEMA)
     db.migrate("account_jobs_plan_v1", JOBS_PLAN_MIGRATION)
     db.migrate("account_jobs_hidden_v1", JOBS_HIDDEN_MIGRATION)
+    db.migrate("account_jobs_archive_v1", JOBS_ARCHIVE_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -509,7 +520,9 @@ def settle_running(job_id, status):
 def hide_job(account_id, job_id, now=None):
     """Toglie un job dall'area personale dell'account. Solo righe proprie e
     concluse: un job "running" sta ancora lavorando. Ritorna "ok",
-    "not_found" o "running". File e link di download non vengono toccati."""
+    "not_found" o "running". File e link di download non vengono toccati,
+    salvo l'archivio: un job archiviato esce dall'archivio (libera quota) e
+    da li' segue la retention ordinaria, cioe' di norma sparisce subito."""
     if not enabled():
         return "not_found"
     with db.tx() as c:
@@ -521,9 +534,10 @@ def hide_job(account_id, job_id, now=None):
             return "not_found"
         if row["status"] == "running":
             return "running"
-        c.execute("UPDATE account_jobs SET hidden_at=? WHERE job_id=?",
-                  (int(_now(now)), str(job_id)))
-        return "ok"
+        c.execute("UPDATE account_jobs SET hidden_at=?, archived_at=NULL, archived_bytes=0 "
+                  "WHERE job_id=?", (int(_now(now)), str(job_id)))
+    _archive_cache_clear()
+    return "ok"
 
 
 def set_download_token(job_id, token):
@@ -696,6 +710,9 @@ def delete_account(account_id, now=None):
     # adopt_history). Best-effort: una voce non scollegata non annulla una
     # cancellazione gia' committata.
     _unlink_voices(email)
+    # Storico cancellato = archivio cancellato: i file tornano alla retention
+    # ordinaria e il cleanup li rimuove.
+    _archive_cache_clear()
     return True
 
 
@@ -723,6 +740,159 @@ def purge_expired(now=None):
             (now - 30 * 86400, now - 30 * 86400),
         ).rowcount
     return {"jobs": jobs, "codes": codes, "sessions": sessions}
+
+
+# ---------------------------------------------------------------- archivio
+
+# Abbonamenti di archivio attribuiti dall'admin: piano -> quota in GiB. Un job
+# concluso di un account abbonato entra nell'archivio finche' la quota lo
+# consente; da quel momento file locali e cold non scadono piu' (la copia
+# locale lascia comunque il posto a quella cold alla fine della finestra calda).
+PLAN_FREE = "free"
+ARCHIVE_PLANS = {"archive_10": 10, "archive_20": 20, "archive_50": 50}
+GIB = 1024 ** 3
+# Retention "infinita" restituita per i token di un job archiviato.
+ARCHIVE_RETENTION_SEC = 100 * 365 * 86400
+_ARCHIVE_CACHE_TTL_SEC = 60
+
+_archive_cache = {"at": 0.0, "ids": frozenset()}
+_archive_cache_lock = threading.Lock()
+
+
+def archive_grace_days():
+    """Giorni in cui un archivio resta protetto dopo la revoca dell'abbonamento
+    (rete di sicurezza contro un cambio di piano sbagliato dalla console)."""
+    return max(0, _env_int("ABM_ARCHIVE_GRACE_DAYS", 30))
+
+
+def archive_quota_bytes(plan):
+    return ARCHIVE_PLANS.get(plan or "", 0) * GIB
+
+
+def _archive_cache_clear():
+    with _archive_cache_lock:
+        _archive_cache["at"] = 0.0
+
+
+def set_plan(account_id, plan, now=None):
+    """Attribuisce (o revoca, con PLAN_FREE) l'abbonamento di archivio.
+
+    Revoca: `plan_until` = adesso, e l'archivio resta protetto per
+    archive_grace_days(); un piano piu' piccolo non toglie nulla di gia'
+    archiviato, blocca solo i nuovi ingressi oltre quota. Ritorna l'account
+    aggiornato, None se inesistente o cancellato; ValueError su piano ignoto."""
+    plan = (plan or "").strip().lower()
+    if plan != PLAN_FREE and plan not in ARCHIVE_PLANS:
+        raise ValueError(f"piano sconosciuto: {plan!r}")
+    if not enabled():
+        return None
+    now = _now(now)
+    with db.tx() as c:
+        row = c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+        if row is None or row["deleted_at"] is not None:
+            return None
+        if plan in ARCHIVE_PLANS:
+            c.execute("UPDATE accounts SET plan=?, plan_until=NULL WHERE id=?", (plan, account_id))
+        elif row["plan"] != PLAN_FREE:
+            c.execute("UPDATE accounts SET plan=?, plan_until=? WHERE id=?",
+                      (PLAN_FREE, now, account_id))
+        row = c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    _archive_cache_clear()
+    return _row(row)
+
+
+def _archive_active_where(now):
+    """Condizione SQL (alias `a`) di un account il cui archivio e' protetto:
+    abbonamento in corso o revocato da meno di archive_grace_days()."""
+    return ("a.deleted_at IS NULL AND (a.plan<>'free' OR "
+            "(a.plan_until IS NOT NULL AND a.plan_until>?))",
+            [now - archive_grace_days() * 86400])
+
+
+def archived_job_ids(now=None):
+    """Job archiviati e protetti, con cache di _ARCHIVE_CACHE_TTL_SEC: la
+    chiama la retention di ogni token, piu' volte al minuto."""
+    if not enabled():
+        return frozenset()
+    t = time.time()
+    with _archive_cache_lock:
+        if now is None and t - _archive_cache["at"] < _ARCHIVE_CACHE_TTL_SEC:
+            return _archive_cache["ids"]
+    cond, args = _archive_active_where(_now(now))
+    with db.tx() as c:
+        rows = c.execute(
+            "SELECT j.job_id FROM account_jobs j JOIN accounts a ON a.id=j.account_id "
+            "WHERE j.archived_at IS NOT NULL AND j.hidden_at IS NULL AND " + cond,
+            tuple(args)).fetchall()
+    ids = frozenset(r["job_id"] for r in rows)
+    if now is None:
+        with _archive_cache_lock:
+            _archive_cache.update(at=t, ids=ids)
+    return ids
+
+
+def archive_protects(job_id):
+    """True se i file del job non devono scadere ne' essere cancellati."""
+    if not job_id:
+        return False
+    try:
+        return str(job_id) in archived_job_ids()
+    except Exception as e:  # noqa: BLE001  DB illeggibile: nel dubbio si protegge
+        _log(f"WARNING accounts: archivio non leggibile ({e}), job {job_id} protetto")
+        return True
+
+
+def archive_usage(account_id):
+    """(byte archiviati, job archiviati) dell'account."""
+    if not enabled():
+        return 0, 0
+    with db.tx() as c:
+        r = c.execute(
+            "SELECT COALESCE(SUM(archived_bytes),0) AS b, COUNT(*) AS n FROM account_jobs "
+            "WHERE account_id=? AND archived_at IS NOT NULL AND hidden_at IS NULL",
+            (account_id,)).fetchone()
+    return int(r["b"]), int(r["n"])
+
+
+def archive_status(account):
+    """Riepilogo per l'area personale, o None senza abbonamento ne' archivio."""
+    if not account:
+        return None
+    used, n = archive_usage(account["id"])
+    plan = account.get("plan") or PLAN_FREE
+    if plan not in ARCHIVE_PLANS and not n:
+        return None
+    return {"plan": plan, "quota_bytes": archive_quota_bytes(plan), "used_bytes": used, "jobs": n}
+
+
+def archive_candidates():
+    """Job conclusi, visibili e non ancora archiviati degli account con un
+    abbonamento in corso (non in grazia: dopo la revoca non entra piu' nulla).
+    Dal piu' recente: con la quota stretta vince il lavoro nuovo."""
+    if not enabled():
+        return []
+    placeholders = ",".join("?" * len(ARCHIVE_PLANS))
+    with db.tx() as c:
+        rows = c.execute(
+            "SELECT j.job_id, j.account_id, a.plan FROM account_jobs j "
+            "JOIN accounts a ON a.id=j.account_id "
+            f"WHERE a.deleted_at IS NULL AND a.plan IN ({placeholders}) "
+            "AND j.status='done' AND j.archived_at IS NULL AND j.hidden_at IS NULL "
+            "ORDER BY j.created_at DESC, j.job_id DESC",
+            tuple(ARCHIVE_PLANS)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_archived(job_id, nbytes, now=None):
+    if not enabled():
+        return False
+    with db.tx() as c:
+        cur = c.execute(
+            "UPDATE account_jobs SET archived_at=?, archived_bytes=? "
+            "WHERE job_id=? AND archived_at IS NULL",
+            (_now(now), max(0, int(nbytes or 0)), str(job_id)))
+    _archive_cache_clear()
+    return cur.rowcount > 0
 
 
 def admin_list(state="all", q="", date_from=None, date_to=None,
@@ -774,7 +944,11 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         " AND s.revoked_at IS NULL AND s.expires_at>?) AS sessions_active, "
         "(SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.account_id=a.id) AS last_seen_at, "
         "(SELECT COUNT(*) FROM account_jobs j WHERE j.account_id=a.id) AS jobs, "
-        "(SELECT COALESCE(SUM(j.paid_eur),0) FROM account_jobs j WHERE j.account_id=a.id) AS paid_eur "
+        "(SELECT COALESCE(SUM(j.paid_eur),0) FROM account_jobs j WHERE j.account_id=a.id) AS paid_eur, "
+        "(SELECT COALESCE(SUM(j.archived_bytes),0) FROM account_jobs j WHERE j.account_id=a.id "
+        " AND j.archived_at IS NOT NULL AND j.hidden_at IS NULL) AS archive_bytes, "
+        "(SELECT COUNT(*) FROM account_jobs j WHERE j.account_id=a.id "
+        " AND j.archived_at IS NOT NULL AND j.hidden_at IS NULL) AS archive_jobs "
         "FROM accounts a " + sql_where +
         " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
     )
@@ -796,6 +970,9 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         last30 = c.execute(
             "SELECT COUNT(*) FROM accounts WHERE created_at>=?", (now - 30 * 86400,)
         ).fetchone()[0]
+        subscribed = c.execute(
+            "SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL AND plan<>'free'"
+        ).fetchone()[0]
 
     recs = []
     for r in rows:
@@ -814,17 +991,20 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         else:
             d["state"] = "active"
         d["paid_eur"] = round(float(d.get("paid_eur") or 0), 2)
+        d["archive_quota_bytes"] = archive_quota_bytes(d.get("plan"))
         d.pop("email_hash", None)
         recs.append(d)
     return {
         "records": recs,
         "count": int(total),
+        "plans": [PLAN_FREE] + list(ARCHIVE_PLANS),
         "aggregates": {
             "total": int(tot_all),
             "deleted": int(tot_del),
             "never_logged": int(tot_never),
             "with_session": int(tot_online),
             "last30": int(last30),
+            "subscribed": int(subscribed),
             "filtered": int(total),
         },
     }
