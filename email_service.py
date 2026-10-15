@@ -926,14 +926,46 @@ def send_voice_clone_refunded(email, lang, *, amount_eur, method, reason, vouche
                     amount=f"{amount:.2f}")
 
 
-def _send_voucher_notification_email(code, email, amount_eur, valid_days, created_at):
+# Servizi di un voucher ristretto (payment.VOUCHER_SERVICES) come li vede
+# l'utente: i modelli TTS con le etichette del selettore modello della SPA.
+_VOUCHER_SERVICE_LABELS = {
+    "llm": "AI text optimisation",
+    "translate": "AI book translation",
+    "voxcpm": "Audiobook Maker TTS voices (VoxCPM2)",
+    "flash31": "PREMIUM voices, Gemini 3.1 TTS model",
+    "flash38": "PREMIUM voices, Gemini 3.8 (PREMIUM+) model",
+    "speechify": "PREMIUM voices, Simba 3.2 model",
+    "voice_clone": "Voice cloning (your own sampled voice)",
+}
+_VOUCHER_TTS_SERVICES = ("voxcpm", "flash31", "flash38", "speechify")
+
+
+def _voucher_services_html(services):
+    """Frase + elenco dei servizi coperti. None = voucher valido per tutto."""
+    if services is None:
+        return ("  <p>You can use it for any premium service on audiobook-maker.com"
+                " (premium voices, AI text optimisation or AI translations).</p>")
+    items = "".join(f"<li>{_esc_html(_VOUCHER_SERVICE_LABELS.get(s, s))}</li>"
+                    for s in services)
+    note = ""
+    if "llm" not in services and any(s in _VOUCHER_TTS_SERVICES for s in services):
+        note = ("  <p style=\"font-size:.9em;color:#555\">When you use it for one of these"
+                " voices, it also covers the AI text optimisation of the same book.</p>\n")
+    return (f"  <p>It is valid for the following premium services on audiobook-maker.com:</p>\n"
+            f"  <ul>{items}</ul>\n{note}")
+
+
+def _send_voucher_notification_email(code, email, amount_eur, valid_days, created_at,
+                                      services=None):
     """Notifica al destinatario un voucher creato dall'admin.
 
     Testo sempre in inglese (destinatari internazionali). Include codice,
-    valore, giorni di validita' e data di generazione. Ritorna True su invio ok.
+    valore, servizi coperti, giorni di validita' e data di generazione.
+    Ritorna True su invio ok.
 
     created_at: epoch seconds della creazione voucher.
     valid_days: numero di giorni di validita' dalla data di generazione.
+    services: elenco del voucher (campo "services"); None = tutti i servizi.
     """
     if not (email and _smtp_available()):
         return False
@@ -949,8 +981,9 @@ def _send_voucher_notification_email(code, email, amount_eur, valid_days, create
     code_safe = _sanitize_header(code, max_len=64)
     subject = f"Your Audiobook Maker voucher — EUR {amount_eur:.2f}"
     html_body = _layout.layout(f"""  <h2 style="color:#2c3e50">&#x1F381; Your voucher</h2>
-  <p>Here is your voucher worth <strong>EUR {amount_eur:.2f}</strong>, which you can use for premium services on audiobook-maker.com (premium voices, AI text optimisation or AI translations):</p>
+  <p>Here is your voucher worth <strong>EUR {amount_eur:.2f}</strong>:</p>
   {_layout.voucher_box(code_safe, f"{amount_eur:.2f}", value_label="Value")}
+{_voucher_services_html(services)}
   <p>Please use it within <strong>{days_int} days</strong> from <strong>{gen_date}</strong>.</p>
   <p>Thank you for your support!</p>""", BASE_URL, extra_style=";color:#333")
     return _send_email(email, subject, html_body)

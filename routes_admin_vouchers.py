@@ -240,7 +240,7 @@ def admin_api_voucher_notify(code):
     else:
         valid_days = VOUCHER_EXPIRY_DAYS
     ok = email_service._send_voucher_notification_email(
-        code, email, amount_eur, valid_days, created_at
+        code, email, amount_eur, valid_days, created_at, services=v.get("services")
     )
     if not ok:
         return jsonify({"error": "send failed"}), 502

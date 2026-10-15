@@ -148,6 +148,38 @@ def test_account_voucher_suggest(client, monkeypatch):
     assert r.get_json() == {"voucher": None}
 
 
+def test_notification_email_lists_services(monkeypatch):
+    import email_service as es
+    sent = []
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, **k: sent.append(html) or True)
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    assert es._send_voucher_notification_email("V-1", "u@x.it", 5.0, 30, 0,
+                                               services=["voxcpm", "flash31"])
+    assert es._send_voucher_notification_email("V-2", "u@x.it", 5.0, 30, 0,
+                                               services=["llm", "voxcpm"])
+    assert es._send_voucher_notification_email("V-3", "u@x.it", 5.0, 30, 0)
+    assert payment.VOUCHER_SERVICES == tuple(es._VOUCHER_SERVICE_LABELS)
+    assert "<li>Audiobook Maker TTS voices (VoxCPM2)</li>" in sent[0]
+    assert "<li>PREMIUM voices, Gemini 3.1 TTS model</li>" in sent[0]
+    assert "AI text optimisation of the same book" in sent[0]
+    assert "<li>AI text optimisation</li>" in sent[1] and "of the same book" not in sent[1]
+    assert "any premium service" in sent[2] and "<ul>" not in sent[2]
+
+
+def test_admin_notify_passes_services(client, monkeypatch):
+    import email_service as es
+    h = _admin(monkeypatch)
+    got = {}
+    import routes_admin_vouchers
+    monkeypatch.setattr(routes_admin_vouchers, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "_send_voucher_notification_email",
+                        lambda *a, **k: got.update(k) or True)
+    code = _voucher(services=["speechify"])
+    r = client.post(f"/admin/api/vouchers/{code}/notify", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert got["services"] == ["speechify"]
+
+
 def _admin(monkeypatch):
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-svc")
     monkeypatch.setattr(audiobook_app, "_admin_auth_ok", lambda provided: True)
