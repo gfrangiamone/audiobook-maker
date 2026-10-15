@@ -1755,7 +1755,12 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 # Il worker guasto si sta spegnendo: va lasciato uscire
                 # prima di rimettere il capitolo in coda (vedi
                 # `dead_engine_pause_sec`).
-                riposa(dead_engine_pause_sec())
+                pausa = dead_engine_pause_sec()
+                _LOG.warning(
+                    "capitolo %s: motore compromesso (job %s), pausa di "
+                    "%.0f s prima di risottometterlo", capitolo, e.job_id,
+                    pausa)
+                riposa(pausa)
         else:
             if "failed_indices" not in out:
                 # Assente e' un worker che non rispetta il protocollo, non un

@@ -1184,15 +1184,19 @@ def test_senza_campioni_coerenti_niente_minuto():
     assert "inizio_s" not in dett[0]
 
 
-def test_motore_compromesso_aspetta_che_il_worker_esca(tmp_path, monkeypatch):
+def test_motore_compromesso_aspetta_che_il_worker_esca(tmp_path, monkeypatch,
+                                                      caplog):
     # 13/10/2026: il capitolo rimandato subito finiva al worker guasto, ancora
     # nella sua grazia di spegnimento, e tornava respinto piu' volte di fila.
     pause = []
     finto = FintoRunJob(
         voxcpm_tts.VoxcpmMotoreCompromesso("engine_dead OOM", "jM"),
         esito_ok())
-    sintetizza(finto, tmp_path, monkeypatch, sleep=pause.append)
+    with caplog.at_level("WARNING", logger="voxcpm_tts"):
+        sintetizza(finto, tmp_path, monkeypatch, sleep=pause.append)
     assert pause == [15.0]
+    assert any("cap.pcm: motore compromesso (job jM), pausa di 15 s" in r.getMessage()
+               for r in caplog.records)
     monkeypatch.setenv("ABM_VOXCPM_DEAD_ENGINE_PAUSE_SEC", "30")
     assert voxcpm_tts.dead_engine_pause_sec() == 30.0
 
