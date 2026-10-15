@@ -720,6 +720,11 @@ def is_chapter_marker_line(text: str) -> bool:
     text = text.strip()
     if len(text) >= 80 or len(text.split()) > 12:
         return False
+    # Riga che finisce con virgola o punto e virgola: frase di corpo andata a
+    # capo dopo un rimando ("…companion discussion to / Chapter 18. Just as
+    # good people stay for good reasons,"), non un titolo.
+    if text.endswith((",", ";")):
+        return False
     m = CHAPTER_DIVIDER_RE.match(text)
     if not m:
         return False

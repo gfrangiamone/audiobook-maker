@@ -114,6 +114,34 @@ PAGE_NUMBER_RE = re.compile(r"^\s*[-—–]?\s*\d{1,4}\s*[-—–]?\s*$")
 # Pattern per header/footer ripetuti (rilevati statisticamente)
 MIN_REPEAT_FOR_HEADER = 3  # minimo ripetizioni per considerare una riga header/footer
 
+# Testatine e piè di pagina riconosciuti come prime/ultime righe della pagina,
+# non per fascia fissa: un libro 6x9 impaginato su un foglio Letter ha il piè
+# di pagina a 3/4 dell'altezza, fuori dall'8% (ticket 2026-10-15: piè di pagina
+# alternati "Fallen Shepherd: A LifeCare Guide" / "… Page 22" letti ad alta
+# voce e finiti nei titoli). Per non scambiare per testatina un titolo che apre
+# piu' pagine ("Chapter N") la riga deve stare su una quota minima di pagine.
+_EDGE_ROWS = 2                    # righe esaminate in cima e in fondo
+_RUNNING_MIN_PAGE_SHARE = 0.3     # quota minima di pagine campionate
+_RUNNING_SAMPLE_PAGES = 40
+
+# Nomi tipici della pagina indice (multilingua): prima riga dell'indice
+# visuale e titolo del capitolo che apre la catena di voci d'indice.
+TOC_PAGE_TITLES = {
+    "indice", "indice generale", "indice dei contenuti",
+    "sommario", "table of contents", "contents", "toc",
+    "table des matières", "sommaire",
+    "índice", "índice general", "contenido",
+    "inhaltsverzeichnis", "inhalt",
+    "目录",
+}
+
+# Rimando di pagina di una voce d'indice: "Titolo – Page 49", "Titolo ..... 49".
+_TOC_PAGE_REF = (r"(?:[-–—]\s*(?:page|pag\.?|pagina|p\.|seite|s\.|página|pág\.?)\s*\d{1,4}"
+                 r"|(?:\.\s?){3,}\s*\d{1,4}|…+\s*\d{1,4})")
+_TOC_ENTRY_LINE_RE = re.compile(_TOC_PAGE_REF + r"\s*$", re.IGNORECASE)
+_TOC_PAGE_REF_RE = re.compile(_TOC_PAGE_REF + r"\b", re.IGNORECASE)
+_TOC_MAX_WORDS_PER_REF = 40       # densita' minima di rimandi per dirsi indice
+
 # Copertura minima di testo per accettare una strategia di riconoscimento titoli
 # (outline, heading font-size, indice visuale). Se una di queste strategie cattura
 # meno di questa frazione del testo complessivo estratto dal documento — cioè
@@ -161,14 +189,72 @@ def _detect_body_font_size(doc: fitz.Document, sample_pages: int = 10) -> float:
     return size_counter.most_common(1)[0][0]
 
 
-def _detect_repeated_headers_footers(doc: fitz.Document, sample_pages: int = 20) -> set:
+def _running_key(text: str) -> str:
+    """Chiave di confronto di testatine e piè di pagina: cifre → N, spazi compressi."""
+    return re.sub(r"\s+", " ", re.sub(r"\d+", "N", text)).strip()
+
+
+def _text_blocks(page: fitz.Page) -> list:
+    """Blocchi di testo della pagina in ordine di lettura (alto → basso)."""
+    blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+    text_blocks = [b for b in blocks if b["type"] == 0]
+    text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+    return text_blocks
+
+
+def _edge_rows(text_blocks: list) -> list:
+    """Prime e ultime `_EDGE_ROWS` righe visive non vuote della pagina, come
+    (y1, testo). Le righe di blocchi diversi sulla stessa linea di base si
+    fondono da sinistra a destra: titolo corrente e "Page 22" stanno spesso
+    in due blocchi affiancati."""
+    pieces = []
+    for block in text_blocks:
+        for vl in _visual_lines(block.get("lines", [])):
+            text = _vline_text(vl)
+            if text:
+                pieces.append((vl["bbox"][3], vl["bbox"][0], text))
+    pieces.sort()
+    rows = []
+    for y1, x0, text in pieces:
+        if rows and abs(rows[-1][0] - y1) < 2:
+            rows[-1][1].append((x0, text))
+        else:
+            rows.append((y1, [(x0, text)]))
+    rows = [(y1, " ".join(t for _, t in sorted(parts))) for y1, parts in rows]
+    if len(rows) <= 2 * _EDGE_ROWS:
+        return rows
+    return rows[:_EDGE_ROWS] + rows[-_EDGE_ROWS:]
+
+
+def _running_row_ys(text_blocks: list, repeated_headers: set) -> list:
+    """Linee di base (y1) delle righe di bordo pagina che sono testatine o piè
+    di pagina ripetuti: le righe visive su quelle quote si scartano."""
+    if not repeated_headers:
+        return []
+    return [y1 for y1, text in _edge_rows(text_blocks)
+            if _running_key(text) in repeated_headers]
+
+
+def _on_running_row(bbox, running_ys: list) -> bool:
+    return any(abs(bbox[3] - y) < 2 for y in running_ys)
+
+
+def _detect_repeated_headers_footers(doc: fitz.Document,
+                                     sample_pages: int = _RUNNING_SAMPLE_PAGES) -> set:
     """Rileva testi che si ripetono identici in cima/fondo di molte pagine.
 
-    Restituisce un set di stringhe normalizzate da escludere.
+    Due segnali: blocchi corti nella fascia di margine (`HEADER_MARGIN_RATIO`)
+    ripetuti su `MIN_REPEAT_FOR_HEADER` pagine, oppure prime/ultime righe della
+    pagina ripetute su almeno `_RUNNING_MIN_PAGE_SHARE` delle pagine campionate
+    (piè di pagina fuori fascia, alternati fra pari e dispari).
+
+    Restituisce un set di chiavi `_running_key` da escludere.
     """
     header_candidates = Counter()
     footer_candidates = Counter()
+    edge_candidates = Counter()
     pages_to_check = min(len(doc), sample_pages)
+    pages_with_text = 0
 
     for page_num in range(pages_to_check):
         page = doc[page_num]
@@ -176,10 +262,8 @@ def _detect_repeated_headers_footers(doc: fitz.Document, sample_pages: int = 20)
         header_y = page_height * HEADER_MARGIN_RATIO
         footer_y = page_height * (1 - FOOTER_MARGIN_RATIO)
 
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-        for block in blocks:
-            if block["type"] != 0:
-                continue
+        text_blocks = _text_blocks(page)
+        for block in text_blocks:
             bbox = block["bbox"]  # (x0, y0, x1, y1)
             text = ""
             for line in block.get("lines", []):
@@ -190,7 +274,7 @@ def _detect_repeated_headers_footers(doc: fitz.Document, sample_pages: int = 20)
                 continue
 
             # Normalizza per confronto
-            normalized = re.sub(r"\d+", "N", text).strip()
+            normalized = _running_key(text)
             if len(normalized) < 3:
                 continue
 
@@ -199,6 +283,13 @@ def _detect_repeated_headers_footers(doc: fitz.Document, sample_pages: int = 20)
             elif bbox[3] > footer_y:
                 footer_candidates[normalized] += 1
 
+        rows = _edge_rows(text_blocks)
+        if rows:
+            pages_with_text += 1
+        edge_keys = {_running_key(t) for _, t in rows
+                     if len(t) <= 150 and not _line_is_chapter_marker(t)}
+        edge_candidates.update(k for k in edge_keys if len(k) >= 3)
+
     # Stringhe che compaiono in almeno MIN_REPEAT_FOR_HEADER pagine
     repeated = set()
     for text, count in header_candidates.items():
@@ -206,6 +297,10 @@ def _detect_repeated_headers_footers(doc: fitz.Document, sample_pages: int = 20)
             repeated.add(text)
     for text, count in footer_candidates.items():
         if count >= MIN_REPEAT_FOR_HEADER:
+            repeated.add(text)
+    edge_min = max(MIN_REPEAT_FOR_HEADER, pages_with_text * _RUNNING_MIN_PAGE_SHARE)
+    for text, count in edge_candidates.items():
+        if count >= edge_min:
             repeated.add(text)
 
     return repeated
@@ -381,14 +476,11 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
     footer_y = page_height * (1 - FOOTER_MARGIN_RATIO)
     small_threshold = body_font_size * SMALL_TEXT_RATIO
 
-    blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-
-    # Ordina i blocchi per posizione verticale (top-to-bottom reading order)
-    text_blocks = [b for b in blocks if b["type"] == 0]
-    text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+    text_blocks = _text_blocks(page)
 
     paragraphs = []
     column = _page_text_column(text_blocks)
+    running_ys = _running_row_ys(text_blocks, repeated_headers)
 
     for block in text_blocks:
         bbox = block["bbox"]
@@ -399,6 +491,8 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
         vlines = _visual_lines(block.get("lines", []))
         geo = _block_geometry_breaks(vlines, column)
         for li, line in enumerate(vlines):
+            if _on_running_row(line["bbox"], running_ys):
+                continue
             line_parts = []
             for span in line.get("spans", []):
                 text = span.get("text", "")
@@ -432,8 +526,7 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
             continue
 
         # ── Filtro: header/footer ripetuti ──
-        normalized = re.sub(r"\d+", "N", block_text).strip()
-        if normalized in repeated_headers:
+        if _running_key(block_text) in repeated_headers:
             continue
 
         # ── Filtro: posizione header/footer con testo corto ──
@@ -670,11 +763,9 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
     pending_brk = None
 
     for page_num in range(len(doc)):
-        page = doc[page_num]
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-        text_blocks = [b for b in blocks if b["type"] == 0]
-        text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+        text_blocks = _text_blocks(doc[page_num])
         column = _page_text_column(text_blocks)
+        running_ys = _running_row_ys(text_blocks, repeated_headers)
 
         for block in text_blocks:
             if pending_brk is None:
@@ -682,6 +773,9 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
             vlines = _visual_lines(block.get("lines", []))
             geo = _block_geometry_breaks(vlines, column)
             for li, line in enumerate(vlines):
+                # Testatine e piè di pagina: né titolo né testo.
+                if _on_running_row(line["bbox"], running_ys):
+                    continue
                 line_parts = []
                 max_size = 0
                 bold_spans = 0
@@ -738,7 +832,10 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
         )
         # Pattern testuale: cattura i marcatori anche a dimensione-corpo.
         by_pattern = _line_is_chapter_marker(line_text)
-        lines_seq.append((by_size or by_bold or by_pattern, line_text))
+        # Una voce d'indice ("Dedication – Page 6") e' in grassetto come il
+        # titolo che rimanda, ma non apre un capitolo.
+        is_heading = (by_size or by_bold or by_pattern) and not _TOC_ENTRY_LINE_RE.search(line_text)
+        lines_seq.append((is_heading, line_text))
     breaks_seq = line_breaks
 
     if not any(is_h for is_h, _ in lines_seq):
@@ -832,15 +929,7 @@ def _detect_chapters_from_visual_toc(doc: fitz.Document, body_font_size: float,
 
     Restituisce lista di (title, text) tuple.
     """
-    # Nomi tipici per la pagina indice (multilingua)
-    toc_page_titles = {
-        "indice", "indice generale", "indice dei contenuti",
-        "sommario", "table of contents", "contents", "toc",
-        "table des matières", "sommaire",
-        "índice", "índice general", "contenido",
-        "inhaltsverzeichnis", "inhalt",
-        "目录",
-    }
+    toc_page_titles = TOC_PAGE_TITLES
 
     # Cerca la pagina Indice nelle prime 15 pagine
     toc_page_idx = -1
@@ -977,13 +1066,48 @@ def _detect_chapters_from_visual_toc(doc: fitz.Document, body_font_size: float,
 # ENTRY POINT PRINCIPALE
 # ═══════════════════════════════════════════════════════════════════
 
+def _looks_like_toc_text(text: str) -> bool:
+    """True se il testo e' fatto di voci d'indice ("5. Titolo – Page 49 …"):
+    almeno due rimandi di pagina e non piu' di `_TOC_MAX_WORDS_PER_REF` parole
+    per rimando (le voci possono avere una riga di descrizione)."""
+    refs = len(_TOC_PAGE_REF_RE.findall(text or ""))
+    return refs >= 2 and len(text.split()) <= refs * _TOC_MAX_WORDS_PER_REF
+
+
+def _is_too_short(text: str) -> bool:
+    """Stesse soglie di lunghezza di `is_content_chapter`."""
+    clean = (text or "").strip()
+    return len(clean) < 100 or len(clean.split()) < 30
+
+
+def _join_sections(*parts: str) -> str:
+    return "\n\n".join(p.strip() for p in parts if p and p.strip())
+
+
 def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
     """Pulisce e filtra i capitoli grezzi, restituendo una lista di Chapter.
 
-    Applica pulizia PDF, pulizia TTS e filtra le sezioni non-contenuto.
+    Applica pulizia PDF, pulizia TTS e filtra le sezioni non-contenuto, con
+    due correzioni (ticket 2026-10-15):
+      - un indice spezzato dai titoli di parte ("Part II: The Fall") lascia
+        capitoli fatti solo di voci d'indice: si scartano finche' seguono
+        l'indice scartato;
+      - una sezione di corpo troppo corta per `is_content_chapter` non sparisce:
+        se il titolo e' un marcatore di capitolo ("Chapter 23: …" col solo
+        sottotitolo) apre il capitolo successivo, che ne prende il titolo;
+        altrimenti (paragrafo isolato sotto una riga in grassetto) si accoda,
+        col suo titolo, al capitolo precedente.
     """
     chapters = []
     chapter_index = 0
+    after_toc = False
+    carry = None  # (titolo, testo) di una sezione corta che apre la successiva
+
+    def append_to_prev(*parts):
+        prev = chapters[-1]
+        prev.text = _join_sections(prev.text, *parts)
+        prev.__post_init__()  # word_count/char_count dal testo nuovo
+
     for title, raw_text in raw_chapters:
         # Pulizia specifica PDF
         cleaned = _clean_pdf_text(raw_text)
@@ -991,9 +1115,35 @@ def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
         # Pulizia generica TTS (condivisa con epub_to_tts)
         cleaned = clean_text_for_tts(cleaned)
 
+        toc_like = _looks_like_toc_text(raw_text)
+        dropped_toc = after_toc and toc_like
+        after_toc = False
+
         # Filtro contenuto
-        if _is_non_content_section(title, cleaned):
+        if dropped_toc or _is_non_content_section(title, cleaned):
+            if toc_like or title.strip().lower() in TOC_PAGE_TITLES:
+                after_toc = True
+            elif (_is_too_short(cleaned) and cleaned.strip()
+                  and not _title_is_non_content(title)):
+                if carry:
+                    carry = (carry[0], _join_sections(carry[1], title, cleaned))
+                elif _line_is_chapter_marker(title):
+                    carry = (title.strip(), cleaned)
+                elif chapters:
+                    append_to_prev(title, cleaned)
+                # senza capitolo precedente e' frontespizio: si scarta
+                continue
+            if carry and chapters:
+                append_to_prev(*carry)
+            carry = None
             continue
+
+        if carry:
+            # La sezione corta apre questo capitolo: suo il titolo, il titolo
+            # di questo diventa la prima riga del testo.
+            cleaned = _join_sections(carry[1], title if carry[0] else "", cleaned)
+            title = carry[0] or title
+            carry = None
 
         chapter_index += 1
         # Fallback per capitoli senza titolo (es. testo che precede il primo
@@ -1006,6 +1156,9 @@ def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
             source_file=os.path.basename(pdf_path),
         )
         chapters.append(chapter)
+
+    if carry and chapters:
+        append_to_prev(*carry)
 
     return chapters
 
