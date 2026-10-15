@@ -495,9 +495,27 @@ if gemini_tts is not None:
                 probe_in = max(0, int(nxt - time.time()))
         except Exception:
             probe_in = None
+        # Backend caduto e ripiego, per non nominare Cloudflare/Vertex su un
+        # trip OpenRouter -> Gemini API (job 8db7VnSUuZTMnsMJPm_Byg). Il
+        # primario si legge dal prefisso della causa (`cf_*` / `or_*`, fissato
+        # da gemini_tts al trip); il ripiego dallo stato appena persistito.
+        primary, fallback = "cloudflare", "vertex"
+        try:
+            if str(reason).startswith("or_"):
+                primary = "openrouter"
+            elif not str(reason).startswith("cf_"):
+                primary = gemini_tts.configured_primary_backend(model_key)
+            fallback = tts_backend_state.state(model_key).get("active") or fallback
+        except Exception as e:
+            print(f"[admin] switch {model_key}: backend non ricostruibili "
+                  f"per l'email ({type(e).__name__}), uso i default")
+        if primary != "cloudflare":
+            # Il ledger locale e' il credito Cloudflare: su un trip di un
+            # altro backend il residuo non spiega la causa e la confonde.
+            credit = None
         email_service.admin_notify_tts_backend_switch(
             model_key, reason, detail, job_id, credit_left_usd=credit,
-            probe_first_sec=probe_in)
+            probe_first_sec=probe_in, primary=primary, fallback=fallback)
         # epoch=time.time() rende la chiave di dedup sempre nuova: a
         # differenza degli eventi di download (spam da prefetch, dedup
         # voluto), ogni switch di backend e' un fatto distinto anche a
@@ -535,15 +553,24 @@ if gemini_tts is not None:
         # Vertex, e un rientro annunciato il giorno dopo lo farebbe
         # intervenire a mano su un guasto gia' passato.
         credit = None
+        # La sonda gira solo su un primario sorvegliato (Cloudflare o
+        # OpenRouter), quindi la configurazione dice su quale si e' rientrati.
+        # Il ripiego non e' piu' leggibile: reset() l'ha gia' azzerato.
         try:
-            if (tts_backend_state.credit_check_enabled()
+            primary = gemini_tts.configured_primary_backend(model_key)
+        except Exception:
+            primary = "cloudflare"
+        try:
+            if (primary == "cloudflare"
+                    and tts_backend_state.credit_check_enabled()
                     and tts_backend_state.credit_balance_usd() > 0):
                 credit = tts_backend_state.credit_left_usd()
         except Exception:
             credit = None
         email_service.admin_notify_tts_backend_return(
             model_key, probe_attempts=probe_attempts,
-            down_seconds=down_seconds, credit_left_usd=credit)
+            down_seconds=down_seconds, credit_left_usd=credit,
+            primary=primary, fallback=None)
         # epoch=time.time() per la stessa ragione dello switch: ogni rientro
         # e' un fatto distinto e non va soffocato dal dedup su
         # (session_id, operation), proprio nel caso - failover ripetuti sullo

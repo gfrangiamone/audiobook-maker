@@ -187,3 +187,41 @@ def test_wired_notifier_still_reports_credit_when_the_check_is_on(
     _registered_notifier("flash31", "cf_backend_down", "d", "job-k")
 
     assert sent[0][1]["credit_left_usd"] == pytest.approx(12.0)
+
+
+def test_wired_notifier_names_openrouter_and_the_real_fallback(
+        monkeypatch, _registered_notifier):
+    """Job 8db7VnSUuZTMnsMJPm_Byg (15/10/2026): trip OpenRouter di flash38,
+    ripiego Gemini API. L'email diceva Cloudflare -> Vertex e allegava il
+    residuo del credito Cloudflare, estraneo alla causa."""
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
+    monkeypatch.setattr(tts_backend_state, "credit_left_usd", lambda: 31.19)
+    monkeypatch.setattr(tts_backend_state, "state",
+                        lambda mk: {"active": "apikey", "tripped_at": "x"})
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    _registered_notifier("flash38", "or_consecutive_failures", "d", "job-or")
+
+    kw = sent[0][1]
+    assert kw["primary"] == "openrouter" and kw["fallback"] == "apikey"
+    assert kw["credit_left_usd"] is None
+
+
+def test_wired_return_notifier_names_the_configured_primary(monkeypatch):
+    monkeypatch.setenv("ABM_GEMINI_BACKEND_FLASH38", "openrouter")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
+    monkeypatch.setattr(tts_backend_state, "credit_left_usd", lambda: 31.19)
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_return",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    audiobook_app._on_tts_backend_return("flash38", 0, 900.0)
+
+    kw = sent[0][1]
+    assert kw["primary"] == "openrouter"
+    assert kw["credit_left_usd"] is None

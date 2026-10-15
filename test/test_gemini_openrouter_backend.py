@@ -178,6 +178,39 @@ def test_consecutive_openrouter_failures_trip_too(tmp_path, monkeypatch):
     assert st.state("flash38")["trip_reason"] == "or_consecutive_failures"
 
 
+def test_openrouter_moderation_rejects_the_chunk_without_tripping(tmp_path, monkeypatch):
+    # Job 8db7VnSUuZTMnsMJPm_Byg (15/10/2026): tre 400 di moderazione sullo
+    # stesso chunk facevano scattare il breaker e spostavano flash38 su API key.
+    import gemini_transport as gt
+
+    class _R:
+        status_code = 400
+        headers = {"Content-Type": "application/json"}
+        text = ""
+        content = b""
+
+        def json(self):
+            return {"error": {"message": "Provider blocked this request through "
+                              "content moderation (provider finish reason: "
+                              "PROHIBITED_CONTENT)", "code": 400}}
+
+    monkeypatch.setenv("ABM_GEMINI_BACKEND_FLASH38", "openrouter")
+    monkeypatch.setenv("ABM_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "g")
+    monkeypatch.setenv("ABM_CF_TRIP_FAILURES", "1")
+    calls = []
+    monkeypatch.setattr(gt.requests, "post",
+                        lambda *a, **kw: calls.append(kw) or _R())
+    monkeypatch.setattr(gemini_tts, "_vertex_transport_call",
+                        lambda **kw: pytest.fail("nessun ripiego per un rifiuto"))
+    with pytest.raises(gemini_tts.GeminiEmptyResponse) as ei:
+        _synth(tmp_path)
+    assert ei.value.retryable is False
+    assert len(calls) == 1
+    assert not st.is_tripped("flash38")
+    assert st.state("flash38").get("consecutive_failures", 0) == 0
+
+
 def test_openrouter_tokens_are_derived_from_the_audio(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_BACKEND_FLASH38", "openrouter")
     monkeypatch.setenv("ABM_OPENROUTER_API_KEY", "k")

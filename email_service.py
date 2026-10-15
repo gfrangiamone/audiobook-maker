@@ -1185,10 +1185,32 @@ def admin_notify_margin_anomaly(job_id, kind, provider, book_title="",
         print(f"[admin] Failed to send margin alert for {key}: {e}")
 
 
+_TTS_BACKEND_LABELS = {
+    "cloudflare": "Cloudflare",
+    "openrouter": "OpenRouter",
+    "vertex": "Vertex",
+    "apikey": "Gemini API",
+}
+
+
+def _tts_backend_label(backend, default):
+    """Nome leggibile di un backend TTS per le email admin.
+
+    Le email di switch e rientro nominavano sempre Cloudflare e Vertex anche
+    per flash38, che va da OpenRouter a Gemini API (job 8db7VnSUuZTMnsMJPm_Byg,
+    15/10/2026): chi legge di notte deve sapere quale credito controllare.
+    """
+    return _TTS_BACKEND_LABELS.get(str(backend or "").lower(), default)
+
+
 def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
                                     credit_left_usd=None,
-                                    probe_first_sec=None):
-    """Notifica IMMEDIATA all'admin: il backend TTS e' passato a Vertex.
+                                    probe_first_sec=None,
+                                    primary="cloudflare", fallback="vertex"):
+    """Notifica IMMEDIATA all'admin: il backend TTS e' passato al ripiego.
+
+    `primary` e' il backend caduto (Cloudflare o OpenRouter), `fallback`
+    quello su cui il modello prosegue (Vertex, OpenRouter o Gemini API).
 
     Non passa dal digest di fine giornata: il margine in failover (Vertex)
     e' quasi nullo rispetto a quello su Cloudflare, quindi ogni ora di
@@ -1216,17 +1238,28 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
     reason_label_safe = _esc_html(_sanitize_header(reason_label, max_len=120))
     detail_safe = _esc_html(_sanitize_header(detail or "", max_len=300))
     job_safe = _esc_html(_sanitize_header(job_id or "", max_len=120))
+    p_name = _tts_backend_label(primary, "Cloudflare")
+    f_name = _tts_backend_label(fallback, "Vertex")
     subject = _sanitize_header(
-        f"[ABM-ADMIN] TTS {model_key}: switch automatico a Vertex "
+        f"[ABM-ADMIN] TTS {model_key}: switch automatico a {f_name} "
         f"({reason_label})", max_len=200)
 
     # In USD: e' la valuta in cui Cloudflare denomina il credito AI
     # Gateway, quindi la cifra qui e quella sulla dashboard del fornitore si
     # confrontano a occhio. Un importo in euro costringerebbe chi legge di
     # notte a rifare il cambio a mente prima di decidere se ricaricare.
+    # Solo per Cloudflare: e' l'unico backend con un ledger locale del credito.
+    # Su un trip OpenRouter il residuo Cloudflare non c'entra con la causa.
+    is_cf = p_name == "Cloudflare"
     credit_row = ""
-    if credit_left_usd is not None:
+    if credit_left_usd is not None and is_cf:
         credit_row = _layout.kv("Credito residuo (stima)", f"{credit_left_usd:.2f} USD")
+    if is_cf:
+        credit_hint = ("ricarica e riallinea <code>ABM_CF_CREDIT_BALANCE_USD</code>, "
+                       "oppure riattiva subito Cloudflare")
+    else:
+        credit_hint = (f"ricarica dalla dashboard di {p_name}, oppure riattiva "
+                       f"subito {p_name}")
 
     # `probe_first_sec` assente significa "nessuna sonda armata": rientro
     # automatico spento per configurazione, oppure causa di trip non
@@ -1239,15 +1272,14 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
         probe_par = (
             "<p><strong>Il rientro si tenta da solo.</strong> Una sonda in "
             "background - poche parole di sintesi, nessun utente collegato - "
-            f"riprova Cloudflare fra {_esc_html(probe_label)}, poi a "
+            f"riprova {p_name} fra {_esc_html(probe_label)}, poi a "
             "intervalli doppi a ogni fallimento fino a un tetto; al primo "
-            "esito buono il modello torna su Cloudflare e ricevi una seconda "
+            f"esito buono il modello torna su {p_name} e ricevi una seconda "
             "email. Nessun job viene mai usato per provare: un audiolibro "
             "rimandato su un backend ancora guasto costerebbe l'intera "
             "generazione, la sonda costa una richiesta rifiutata.</p>"
             "<p>Se la causa e' il credito esaurito la sonda non basta: "
-            "ricarica e riallinea <code>ABM_CF_CREDIT_BALANCE_USD</code>, "
-            "oppure riattiva subito Cloudflare dal pannello "
+            f"{credit_hint} dal pannello "
             "<em>Backend TTS</em> della console admin senza aspettare il "
             "prossimo appuntamento.</p>")
     else:
@@ -1255,11 +1287,11 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
         probe_par = (
             "<p><strong>Il rientro e' manuale.</strong> Per questo trip non "
             "e' stata armata alcuna sonda: risolta la causa (di norma: "
-            "ricaricare il credito Cloudflare), riattiva Cloudflare dal "
+            f"ricaricare il credito {p_name}), riattiva {p_name} dal "
             "pannello <em>Backend TTS</em> della console admin.</p>")
 
-    html_body = _layout.admin_panel("TTS: passaggio automatico a Vertex", "#c0392b", f"""        <p>Il modello <strong>{model_safe}</strong> non viene piu' servito da
-           Cloudflare. I job in corso proseguono su Vertex dal chunk
+    html_body = _layout.admin_panel(f"TTS: passaggio automatico a {f_name}", "#c0392b", f"""        <p>Il modello <strong>{model_safe}</strong> non viene piu' servito da
+           {p_name}. I job in corso proseguono su {f_name} dal chunk
            corrente, senza interruzione e senza differenza udibile.</p>
         <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
           <tr><td><strong>Causa</strong></td><td>{reason_label_safe}</td></tr>
@@ -1269,8 +1301,8 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
           {probe_row}
         </table>
         <p style="background:#fff4e5;padding:10px;border-left:4px solid #d97706;margin-top:14px">
-          <strong>Perche' e' urgente:</strong> su Vertex il margine scende
-          quasi al pareggio, mentre su Cloudflare resta ampio. Il servizio
+          <strong>Perche' e' urgente:</strong> su {f_name} il costo per job
+          e' piu' alto e il margine scende rispetto a {p_name}. Il servizio
           continua a funzionare, ma ogni ora in questo stato e' margine
           perso su ogni job servito.</p>
         {probe_par}""")
@@ -1308,8 +1340,10 @@ def _fmt_durata_it(secondi):
 
 
 def admin_notify_tts_backend_return(model_key, probe_attempts=0,
-                                    down_seconds=None, credit_left_usd=None):
-    """Notifica all'admin: il modello e' RIENTRATO su Cloudflare da solo.
+                                    down_seconds=None, credit_left_usd=None,
+                                    primary="cloudflare", fallback="vertex"):
+    """Notifica all'admin: il modello e' RIENTRATO da solo sul primario
+    (`primary`: Cloudflare o OpenRouter).
 
     Gemella speculare di `admin_notify_tts_backend_switch`, tenuta separata
     per la stessa ragione per cui lo e' il pre-allarme sul credito: dice il
@@ -1332,8 +1366,12 @@ def admin_notify_tts_backend_return(model_key, probe_attempts=0,
         return
 
     model_safe = _esc_html(_sanitize_header(model_key or "", max_len=80))
+    p_name = _tts_backend_label(primary, "Cloudflare")
+    f_label = _tts_backend_label(fallback, "")
+    f_where = f"su {f_label}" if f_label else "sul ripiego"
+    is_cf = p_name == "Cloudflare"
     subject = _sanitize_header(
-        f"[ABM-ADMIN] TTS {model_key}: rientro automatico su Cloudflare",
+        f"[ABM-ADMIN] TTS {model_key}: rientro automatico su {p_name}",
         max_len=200)
 
     try:
@@ -1347,13 +1385,22 @@ def admin_notify_tts_backend_return(model_key, probe_attempts=0,
     durata = _fmt_durata_it(down_seconds)
     durata_row = _layout.kv("Durata del failover", _esc_html(durata)) if durata else ""
     credit_row = ""
-    if credit_left_usd is not None:
+    if credit_left_usd is not None and is_cf:
         credit_row = _layout.kv("Credito residuo (stima)", f"{credit_left_usd:.2f} USD")
+    credit_par = ""
+    if is_cf:
+        credit_par = """
+        <p>Se il failover era dovuto al credito esaurito, il rientro
+           significa che la ricarica e' andata a buon fine: controlla che
+           <code>ABM_CF_CREDIT_BALANCE_USD</code> sia riallineato e che il
+           ledger sia stato azzerato dal pannello <em>Backend TTS</em>,
+           altrimenti il residuo stimato resta sbagliato per il ciclo
+           successivo.</p>"""
 
-    html_body = _layout.admin_panel("TTS: rientro automatico su Cloudflare", "#1e8449", f"""        <p>Il modello <strong>{model_safe}</strong> e' tornato su Cloudflare:
+    html_body = _layout.admin_panel(f"TTS: rientro automatico su {p_name}", "#1e8449", f"""        <p>Il modello <strong>{model_safe}</strong> e' tornato su {p_name}:
            una sonda di rientro ha ottenuto audio valido e il breaker e'
            stato riarmato. I job che partono da ora usano di nuovo
-           Cloudflare; quelli gia' in corso finiscono su Vertex, dove sono
+           {p_name}; quelli gia' in corso finiscono {f_where}, dove sono
            cominciati.</p>
         <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
           <tr><td><strong>Sonde fallite prima del rientro</strong></td><td>{tentativi}</td></tr>
@@ -1361,15 +1408,9 @@ def admin_notify_tts_backend_return(model_key, probe_attempts=0,
           {credit_row}
         </table>
         <p style="background:#eafaf1;padding:10px;border-left:4px solid #1e8449;margin-top:14px">
-          Il margine torna quello pieno di Cloudflare. Non serve alcun
+          Il margine torna quello pieno di {p_name}. Non serve alcun
           intervento: questa email chiude il failover annunciato dall'email
-          di switch.</p>
-        <p>Se il failover era dovuto al credito esaurito, il rientro
-           significa che la ricarica e' andata a buon fine: controlla che
-           <code>ABM_CF_CREDIT_BALANCE_USD</code> sia riallineato e che il
-           ledger sia stato azzerato dal pannello <em>Backend TTS</em>,
-           altrimenti il residuo stimato resta sbagliato per il ciclo
-           successivo.</p>""")
+          di switch.</p>{credit_par}""")
 
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)

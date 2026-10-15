@@ -99,3 +99,27 @@ def test_a_send_failure_does_not_propagate(monkeypatch):
     monkeypatch.setattr(email_service, "_send_email", _boom)
     # Il failover e' gia' avvenuto: un guasto SMTP non deve fermare il job.
     email_service.admin_notify_tts_backend_switch("flash31", "r", "d", "j")
+
+
+def test_openrouter_trip_names_the_real_backends_and_no_cf_credit(_sent):
+    # Job 8db7VnSUuZTMnsMJPm_Byg: flash38 cade da OpenRouter su Gemini API.
+    email_service.admin_notify_tts_backend_switch(
+        "flash38", "or_consecutive_failures", "d", "j", credit_left_usd=31.19,
+        probe_first_sec=900, primary="openrouter", fallback="apikey")
+    subject, html = _sent[0][1], _sent[0][2]
+    assert "Gemini API" in subject and "Vertex" not in subject
+    assert "OpenRouter" in html and "Gemini API" in html
+    assert "Cloudflare" not in html and "Vertex" not in html
+    assert "ABM_CF_CREDIT_BALANCE_USD" not in html
+    assert "31.19" not in html
+
+
+def test_openrouter_return_names_openrouter(_sent):
+    email_service.admin_notify_tts_backend_return(
+        "flash38", probe_attempts=0, down_seconds=900, credit_left_usd=31.19,
+        primary="openrouter", fallback=None)
+    subject, html = _sent[0][1], _sent[0][2]
+    assert "OpenRouter" in subject
+    assert "Cloudflare" not in html and "Vertex" not in html
+    assert "sul ripiego" in html
+    assert "ABM_CF_CREDIT_BALANCE_USD" not in html

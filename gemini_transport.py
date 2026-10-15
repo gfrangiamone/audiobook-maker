@@ -333,6 +333,13 @@ _OR_FATAL_MARKS = ("does not exist", "not a valid model", "is not a text-to-spee
 # messaggio: riprovabile (3 tentativi, poi il fallback di chunk), mai fatale
 # e mai un trip. La voce e' comunque validata a monte (parse_voice_id).
 _OR_PROVIDER_400_MARK = "Provider returned"
+# Rifiuto di moderazione del provider (job 8db7VnSUuZTMnsMJPm_Byg, 15/10/2026:
+# "Provider blocked this request through content moderation (provider finish
+# reason: PROHIBITED_CONTENT)"). E' un difetto del testo, non del backend:
+# come il 422/2017 di Cloudflare non va ritentato e non deve contare nel
+# breaker, altrimenti un solo chunk esplicito sposta il modello sul ripiego.
+_OR_CONTENT_REJECTED_MARKS = ("content moderation", "PROHIBITED_CONTENT",
+                              "SAFETY", "BLOCKLIST")
 
 
 def _or_error_message(body, text):
@@ -422,6 +429,12 @@ def _interpret_openrouter_response(resp):
             f"endpoint o modello OpenRouter inesistente: {message}",
             kind="fatal", http_status=status)
     if status == 400:
+        # Prima del ramo "Provider returned": la moderazione puo' arrivare
+        # anche con quel prefisso, e resta comunque un rifiuto del contenuto.
+        if any(m in message for m in _OR_CONTENT_REJECTED_MARKS):
+            raise TransportError(
+                f"contenuto rifiutato da OpenRouter: {message}",
+                kind="content_rejected", http_status=status)
         if _OR_PROVIDER_400_MARK in message:
             raise TransportError(
                 f"il provider dietro OpenRouter ha rifiutato la richiesta: {message}",

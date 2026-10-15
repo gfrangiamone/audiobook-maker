@@ -83,6 +83,19 @@ def test_opaque_provider_400_is_retryable_never_fatal():
     assert ei.value.kind == "retryable"
 
 
+@pytest.mark.parametrize("message", [
+    "Provider blocked this request through content moderation "
+    "(provider finish reason: PROHIBITED_CONTENT)",
+    "Provider returned 400: finish reason SAFETY",
+])
+def test_moderation_400_is_content_rejected(message):
+    # Job 8db7VnSUuZTMnsMJPm_Byg: classificato retryable, contava nel breaker
+    # e al terzo rifiuto dello stesso chunk spostava flash38 sul ripiego.
+    with pytest.raises(TransportError) as ei:
+        _interpret_openrouter_response(_err(400, message))
+    assert ei.value.kind == "content_rejected" and ei.value.http_status == 400
+
+
 def test_unknown_model_400_is_fatal():
     with pytest.raises(TransportError) as ei:
         _interpret_openrouter_response(_err(400, "Model google/x does not exist"))
