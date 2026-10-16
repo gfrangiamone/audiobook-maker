@@ -1370,11 +1370,26 @@ def vat_percent():
     return max(0.0, _f("ABM_GEMINI_VAT_PERCENT", 22.0))
 
 
+def or_vat_percent():
+    """IVA/sales tax sull'acquisto del credito OpenRouter, in percentuale.
+
+    Dal 16/10/2026 OpenRouter (Stripe Tax) addebita una tassa sulla ricarica,
+    calcolata su credito + commissione: dalla ricevuta, `tassa / (credito +
+    service fee) x 100` (100 $ + 5,50 $ di fee -> 5,28 $ = 5,0%). Default 0:
+    il valore va preso dalla fattura, non indovinato.
+    """
+    return max(0.0, _f("ABM_OR_CREDIT_VAT_PERCENT", 0.0))
+
+
 def _vat_factor(backend):
     """Moltiplicatore IVA del backend. None = backend non risolto: si assume
-    un backend Google (caso peggiore per il costo)."""
+    un backend Google (caso peggiore per il costo). OpenRouter ha la sua
+    aliquota (tassa sulla ricarica, applicata sopra la commissione); Cloudflare
+    nessuna."""
     if backend is None or backend in _VAT_BACKENDS:
         return 1.0 + vat_percent() / 100.0
+    if backend == "openrouter":
+        return 1.0 + or_vat_percent() / 100.0
     return 1.0
 
 

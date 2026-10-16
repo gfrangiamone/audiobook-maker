@@ -326,3 +326,39 @@ def test_a_successful_probe_returns_flash38_to_openrouter(monkeypatch):
     assert seen["model_id"] == "google/gemini-3.8-flash-tts"
     assert not st.is_tripped("flash38")
     assert gemini_tts._resolve_backend("flash38") == "openrouter"
+
+
+# --- tassa sulla ricarica OpenRouter (dal 16/10/2026) -----------------------------
+
+def test_openrouter_vat_defaults_to_zero(monkeypatch):
+    monkeypatch.delenv("ABM_OR_CREDIT_VAT_PERCENT", raising=False)
+    bd = gemini_tts.actual_cost_breakdown(0, 1_000_000, "flash38", "openrouter")
+    assert bd["vat_eur"] == 0.0
+
+
+def test_openrouter_vat_applies_on_top_of_the_topup_fee(monkeypatch):
+    # Ricevuta del 16/10/2026: 100 $ di credito + 5,50 $ di fee + 5,28 $ di
+    # tassa = 110,78 $. Con fee 5,5% e tassa 5,0% (su credito + fee) il costo
+    # per dollaro di credito speso torna esattamente.
+    monkeypatch.setenv("ABM_OR_CREDIT_TOPUP_FEE", "0.055")
+    monkeypatch.setenv("ABM_OR_CREDIT_VAT_PERCENT", "5")
+    assert gemini_tts.actual_rates("flash38", "openrouter")[1] ==         pytest.approx(9.00 * 1.055 * 1.05)
+    assert 100 * 1.055 * 1.05 == pytest.approx(110.78, abs=0.01)
+    bd = gemini_tts.actual_cost_breakdown(0, 1_000_000, "flash38", "openrouter")
+    net = 9.00 * 1.055 * gemini_tts.USD_EUR_RATE
+    assert bd["net_eur"] == pytest.approx(net)
+    assert bd["vat_eur"] == pytest.approx(net * 0.05)
+
+
+def test_openrouter_vat_does_not_touch_google_or_cloudflare(monkeypatch):
+    monkeypatch.setenv("ABM_OR_CREDIT_VAT_PERCENT", "5")
+    monkeypatch.setenv("ABM_GEMINI_VAT_PERCENT", "22")
+    assert gemini_tts._vat_factor("apikey") == pytest.approx(1.22)
+    assert gemini_tts._vat_factor("cloudflare") == 1.0
+    assert gemini_tts._vat_factor("openrouter") == pytest.approx(1.05)
+
+
+def test_openrouter_vat_never_changes_the_user_price(monkeypatch):
+    p0 = gemini_tts.compute_user_price_eur(3600.0, "flash38")["list_price_eur"]
+    monkeypatch.setenv("ABM_OR_CREDIT_VAT_PERCENT", "22")
+    assert gemini_tts.compute_user_price_eur(3600.0, "flash38")["list_price_eur"] == p0
