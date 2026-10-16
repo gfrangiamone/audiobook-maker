@@ -6269,11 +6269,9 @@ def api_paypal_create_order():
     # gia' ottimizzati non vengono rilavorati e non vanno addebitati, altrimenti
     # la capture PayPal supererebbe il costo reale del job.
     already = set(job.get("optimized_chapters", []))
-    if selected_chapters:
-        total_chars = sum(ch.char_count for ch in info.chapters
-                          if ch.index in selected_chapters and ch.index not in already)
-    else:
-        total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
+    _charged = [ch for ch in info.chapters if ch.index not in already
+                and (not selected_chapters or ch.index in selected_chapters)]
+    total_chars = sum(ch.char_count for ch in _charged)
     # Floor minimo parametrico coerente con /api/optimize_estimate e /api/optimize:
     # l'importo addebitato non scende mai sotto ABM_LLM_MIN_COST_EUR quando si paga.
     # Unica fonte prezzo: payment.llm_price_eur.
@@ -6286,7 +6284,9 @@ def api_paypal_create_order():
     book_title = getattr(info, "title", "") or "Audiobook"
     description = f"AI text optimization  -  {book_title[:60]}"
     try:
-        order = _paypal_create_order(cost, description, custom_id=job_id)
+        order = _paypal_create_order(
+            cost, description, custom_id=job_id,
+            scope="opt|" + ",".join(str(ch.index) for ch in _charged))
     except Exception as e:
         print(f"[paypal] create_order failed: {e}")
         return jsonify({"error": f"PayPal error: {e}"}), 500
@@ -6990,6 +6990,9 @@ def api_paypal_create_order_gemini():
             amount_eur=server_total,
             description=description,
             custom_id=f"gemini:{job_id}",
+            # Perimetro dell'acquisto: distingue il ri-click (stessa firma,
+            # rifiutato alla capture) dall'acquisto di altri capitoli.
+            scope=_sig_order,
         )
     except Exception as e:
         print(f"[paypal] gemini create_order failed: {e}")

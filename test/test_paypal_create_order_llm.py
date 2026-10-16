@@ -48,8 +48,9 @@ def _create_order(client, job_id, selected=None):
     """Chiama l'endpoint con PayPal mockato; ritorna (status, body, cost_addebitato)."""
     captured = {}
 
-    def _fake_order(cost, description, custom_id=None):
+    def _fake_order(cost, description, custom_id=None, scope=""):
         captured["cost"] = cost
+        captured["scope"] = scope
         return {"id": "ORDER-TEST", "status": "CREATED", "purchase_units": []}
 
     body = {"job_id": job_id}

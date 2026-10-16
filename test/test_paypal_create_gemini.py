@@ -97,6 +97,10 @@ def test_create_order_success(client, jb):
     assert body["order_id"] == "ORDER123"
     assert body["amount"] == amount
     assert body["status"] == "CREATED"
+    # Perimetro dell'acquisto registrato col create: voce + capitoli, per il
+    # guard anti doppio-pagamento alla capture.
+    scope = mock.call_args.kwargs["scope"]
+    assert scope.startswith("gemini:flash31:Zephyr|0|")
 
 
 def test_llm_rate_respects_module_constant(client, jb, monkeypatch):

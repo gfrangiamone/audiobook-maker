@@ -916,8 +916,12 @@ def _paypal_get_access_token():
     return data["access_token"]
 
 
-def _paypal_create_order(amount_eur, description, custom_id=None):
-    """Create a PayPal Order. Returns dict with 'id' and 'status'."""
+def _paypal_create_order(amount_eur, description, custom_id=None, scope=""):
+    """Create a PayPal Order. Returns dict with 'id' and 'status'.
+
+    ``scope``: firma del perimetro acquistato (capitoli, voce, opzioni) che il
+    guard anti doppio-pagamento di ``capture_and_store_order`` confronta con i
+    capture gia' consumati dello stesso job."""
     import requests
     token = _paypal_get_access_token()
     if not token:
@@ -968,11 +972,12 @@ def _paypal_create_order(amount_eur, description, custom_id=None):
     resp = r.json()
     order_id = resp.get("id")
     if order_id:
-        _register_pending_order(order_id, amount_eur, purpose=(custom_id or ""))
+        _register_pending_order(order_id, amount_eur, purpose=(custom_id or ""),
+                                scope=scope)
     return resp
 
 
-def _register_pending_order(order_id, amount_requested_eur, purpose=""):
+def _register_pending_order(order_id, amount_requested_eur, purpose="", scope=""):
     """Registra un ordine PayPal appena creato per amount reconciliation alla
     cattura. Cleanup automatico delle voci stantie (oltre PENDING_ORDER_TTL_SEC).
     """
@@ -986,6 +991,7 @@ def _register_pending_order(order_id, amount_requested_eur, purpose=""):
             "amount_requested_eur": round(float(amount_requested_eur), 2),
             "created_at": now,
             "purpose": purpose,
+            "scope": scope or "",
         }
 
 
@@ -996,6 +1002,13 @@ def _get_pending_amount(order_id):
     with _pending_orders_lock:
         rec = _pending_orders.get(order_id)
         return float(rec["amount_requested_eur"]) if rec else None
+
+
+def _get_pending_scope(order_id):
+    """Perimetro registrato al create ("" se assente o ordine non tracciato)."""
+    with _pending_orders_lock:
+        rec = _pending_orders.get(order_id)
+        return (rec.get("scope") or "") if rec else ""
 
 
 def _consume_pending_order(order_id):
@@ -1325,6 +1338,29 @@ class UnfundedCaptureError(ValueError):
         self.capture_id = capture_id or ""
 
 
+def _same_paid_scope(paid, new_scope, new_amount, tolerance=0.01):
+    """True se il nuovo ordine (``new_scope``/``new_amount`` dal create) copre
+    lo STESSO perimetro del capture ``paid``: e' il ri-click da rifiutare.
+
+    Con entrambe le firme note decide la firma. Se una manca (capture
+    precedente all'introduzione della firma) decide l'importo: il ri-click ha
+    lo stesso importo, un perimetro di capitoli diverso quasi mai. Senza dati
+    per distinguere (pending perso al restart) resta True: nel dubbio si
+    rifiuta, l'ordine non catturato si auto-annulla in PayPal.
+    """
+    old_scope = paid.get("scope") or ""
+    if old_scope and new_scope:
+        return old_scope == new_scope
+    if new_amount is None:
+        return True
+    try:
+        old_amount = float(paid.get("amount_requested_eur",
+                                    paid.get("amount_eur", 0)) or 0)
+    except (TypeError, ValueError):
+        return True
+    return abs(old_amount - float(new_amount)) <= tolerance
+
+
 def capture_and_store_order(order_id: str, job_id: str = "",
                             amount_tolerance: float = 0.01):
     """Cattura un ordine PayPal in modo atomico con amount reconciliation.
@@ -1377,7 +1413,9 @@ def capture_and_store_order(order_id: str, job_id: str = "",
         #   - capture esistente NON consumato -> riusa quel token (il flusso
         #     prosegue col pagamento gia' incassato).
         #   - capture esistente gia' consumato -> job pagato/in corso ->
-        #     DuplicateJobCaptureError (il frontend mostra "gia' pagato").
+        #     DuplicateJobCaptureError (il frontend mostra "gia' pagato"),
+        #     salvo che il nuovo ordine copra un PERIMETRO diverso da ogni
+        #     capture consumato e non rimborsato (vedi _same_paid_scope).
         # Serializzato da _capture_lock: due capture concorrenti sullo stesso
         # job (order_id diversi) non possono superare entrambi il guard.
         if job_id:
@@ -1408,13 +1446,31 @@ def capture_and_store_order(order_id: str, job_id: str = "",
                     # da impedire (incidente K1Rpn-x0fmaylsjKYGdftg).
                     unrefunded = [o for o in consumed_oids
                                   if not has_refund_for_job(job_id, o)]
-                    if unrefunded:
+                    # Acquisto incrementale (incidente GEaj_Xkk_p018GNYasEmWQ,
+                    # 2026-10-16: pagato il capitolo 1, poi reset ai capitoli e
+                    # nuovo ordine per i capitoli 2-14): un ordine il cui
+                    # perimetro differisce da OGNI capture consumato e non
+                    # rimborsato non e' un ri-click ma un servizio nuovo.
+                    new_scope = _get_pending_scope(order_id)
+                    new_amount = _get_pending_amount(order_id)
+                    with _payments_lock:
+                        same = [o for o in unrefunded
+                                if _same_paid_scope(_payments.get(o) or {},
+                                                    new_scope, new_amount)]
+                    if same:
                         raise DuplicateJobCaptureError(
-                            f"job {job_id} already has a consumed capture ({eoid}); "
+                            f"job {job_id} already has a consumed capture "
+                            f"({','.join(same)}) for the same scope; "
                             f"refusing duplicate capture of order {order_id}")
-                    print(f"[paypal] job {job_id}: capture consumati "
-                          f"{','.join(consumed_oids)} tutti gia' rimborsati -> "
-                          f"capture di {order_id} consentita (ri-pagamento)")
+                    if unrefunded:
+                        print(f"[paypal] job {job_id}: ordine {order_id} su "
+                              f"perimetro diverso dai capture consumati "
+                              f"{','.join(unrefunded)} -> capture consentita "
+                              f"(acquisto incrementale)")
+                    else:
+                        print(f"[paypal] job {job_id}: capture consumati "
+                              f"{','.join(consumed_oids)} tutti gia' rimborsati -> "
+                              f"capture di {order_id} consentita (ri-pagamento)")
                 else:
                     print(f"[paypal] duplicate capture for job {job_id}: reusing "
                           f"already-captured order {eoid}, skipping capture "
@@ -1515,6 +1571,7 @@ def capture_and_store_order(order_id: str, job_id: str = "",
                 "used": False,
                 "used_at": None,
                 "capture_id": cap.get("id", ""),
+                "scope": _get_pending_scope(order_id),
             }
             if pending_reason:
                 rec["pending_reason"] = pending_reason

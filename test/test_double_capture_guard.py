@@ -28,7 +28,7 @@ def isolated_store(monkeypatch, tmp_path):
 
 
 def _capture(order_id, *, amount=26.17, email="buyer@x.it", job_id="job-1",
-             used=False, captured_at=None):
+             used=False, captured_at=None, scope=None):
     if captured_at is None:
         captured_at = time.time()
     payment._payments[order_id] = {
@@ -37,6 +37,8 @@ def _capture(order_id, *, amount=26.17, email="buyer@x.it", job_id="job-1",
         "job_id": job_id, "captured_at": captured_at, "used": used,
         "used_at": None, "capture_id": "CAP" + order_id,
     }
+    if scope is not None:
+        payment._payments[order_id]["scope"] = scope
 
 
 def _fake_captured(order_id, amount):
@@ -109,6 +111,108 @@ def test_same_order_idempotent_returns_order_id(isolated_store, monkeypatch):
     assert called["n"] == 0
     assert res["already_captured"] is True
     assert res["order_id"] == "ORD1"
+
+
+# ---------------- Layer A: ri-click vs acquisto incrementale ----------------
+# Incidente GEaj_Xkk_p018GNYasEmWQ (2026-10-16): pagato il capitolo 1, reset ai
+# capitoli, nuovo ordine per i capitoli 2-14 rifiutato come "gia' pagato".
+
+SCOPE_CH1 = "gemini:flash31:Zephyr|1|+0%|it|0"
+SCOPE_CH2_14 = "gemini:flash31:Zephyr|2,3,4,5,6,7,8,9,10,11,12,13,14|+0%|it|0"
+
+
+@pytest.fixture
+def pending(monkeypatch):
+    monkeypatch.setattr(payment, "_pending_orders", {})
+
+
+def _mock_capture_api(monkeypatch, amount):
+    called = {"n": 0}
+
+    def _cap(oid):
+        called["n"] += 1
+        return _fake_captured(oid, amount)
+    monkeypatch.setattr(payment, "_paypal_capture_order", _cap)
+    return called
+
+
+def test_reclick_same_scope_consumed_refused(isolated_store, pending, monkeypatch):
+    """Ri-click: secondo ordine con lo STESSO perimetro di un capture consumato
+    -> rifiutato senza chiamare la capture API."""
+    _capture("ORD1", job_id="jobG", used=True, amount=1.80, scope=SCOPE_CH1)
+    payment._register_pending_order("ORD2", 1.80, purpose="gemini:jobG",
+                                    scope=SCOPE_CH1)
+    called = _mock_capture_api(monkeypatch, 1.80)
+
+    with pytest.raises(payment.DuplicateJobCaptureError):
+        payment.capture_and_store_order("ORD2", job_id="jobG")
+    assert called["n"] == 0
+    assert "ORD2" not in payment._payments
+
+
+def test_incremental_scope_consumed_allowed(isolated_store, pending, monkeypatch):
+    """Acquisto incrementale: capitolo 1 pagato e consumato, nuovo ordine per i
+    capitoli 2-14 -> catturato e registrato col suo perimetro."""
+    _capture("ORD1", job_id="jobG", used=True, amount=1.80, scope=SCOPE_CH1)
+    payment._register_pending_order("ORD2", 21.40, purpose="gemini:jobG",
+                                    scope=SCOPE_CH2_14)
+    called = _mock_capture_api(monkeypatch, 21.40)
+
+    res = payment.capture_and_store_order("ORD2", job_id="jobG")
+    assert called["n"] == 1
+    assert res["already_captured"] is False
+    assert res["order_id"] == "ORD2"
+    assert payment._payments["ORD2"]["scope"] == SCOPE_CH2_14
+    # Un ri-click del pagamento incrementale resta rifiutato.
+    payment._register_pending_order("ORD3", 21.40, purpose="gemini:jobG",
+                                    scope=SCOPE_CH2_14)
+    payment._payments["ORD2"]["used"] = True
+    with pytest.raises(payment.DuplicateJobCaptureError):
+        payment.capture_and_store_order("ORD3", job_id="jobG")
+    assert called["n"] == 1
+
+
+def test_incremental_legacy_capture_without_scope_uses_amount(
+        isolated_store, pending, monkeypatch):
+    """Capture consumato senza firma (precedente al fix): decide l'importo.
+    Importo diverso -> perimetro diverso -> consentito; uguale -> rifiutato."""
+    _capture("ORD1", job_id="jobG", used=True, amount=1.80)
+    payment._register_pending_order("ORD_SAME", 1.80, purpose="gemini:jobG",
+                                    scope=SCOPE_CH1)
+    called = _mock_capture_api(monkeypatch, 21.40)
+    with pytest.raises(payment.DuplicateJobCaptureError):
+        payment.capture_and_store_order("ORD_SAME", job_id="jobG")
+    assert called["n"] == 0
+
+    payment._register_pending_order("ORD2", 21.40, purpose="gemini:jobG",
+                                    scope=SCOPE_CH2_14)
+    res = payment.capture_and_store_order("ORD2", job_id="jobG")
+    assert called["n"] == 1
+    assert res["order_id"] == "ORD2"
+
+
+def test_unknown_pending_scope_refused(isolated_store, pending, monkeypatch):
+    """Ordine senza pending (restart fra create e capture): nessun dato per
+    distinguere -> rifiutato, come prima del fix."""
+    _capture("ORD1", job_id="jobG", used=True, amount=1.80, scope=SCOPE_CH1)
+    called = _mock_capture_api(monkeypatch, 21.40)
+    with pytest.raises(payment.DuplicateJobCaptureError):
+        payment.capture_and_store_order("ORD2", job_id="jobG")
+    assert called["n"] == 0
+
+
+def test_incremental_blocked_if_any_consumed_same_scope(
+        isolated_store, pending, monkeypatch):
+    """Due capture consumati (cap. 1 e cap. 2-14): un ordine che ripete uno dei
+    due perimetri resta rifiutato."""
+    _capture("ORD1", job_id="jobG", used=True, amount=1.80, scope=SCOPE_CH1)
+    _capture("ORD2", job_id="jobG", used=True, amount=21.40, scope=SCOPE_CH2_14)
+    payment._register_pending_order("ORD3", 1.80, purpose="gemini:jobG",
+                                    scope=SCOPE_CH1)
+    called = _mock_capture_api(monkeypatch, 1.80)
+    with pytest.raises(payment.DuplicateJobCaptureError):
+        payment.capture_and_store_order("ORD3", job_id="jobG")
+    assert called["n"] == 0
 
 
 # ------------------------------- Layer B -----------------------------------
