@@ -1,5 +1,6 @@
 """Tests for /api/voices Gemini merge."""
 import os
+import threading
 import pytest
 import audiobook_app
 
@@ -19,6 +20,28 @@ def reset_voices_cache(monkeypatch):
     audiobook_app._invalidate_voices_cache()
     yield
     audiobook_app._invalidate_voices_cache()
+
+
+def test_build_partito_prima_dell_invalidazione_non_riscrive_la_cache(monkeypatch):
+    """Ogni reload dell'app (fresh_app) avvia un thread get_voices che scarica
+    le voci Edge dalla rete. Se finiva dopo l'invalidazione del fixture
+    scriveva in cache un catalogo costruito con lo stato del test precedente
+    (gate CI del 16/10/2026: 0 voci Gemini in test_get_voices_gemini_entry_shape)."""
+    partito, via = threading.Event(), threading.Event()
+
+    async def build_lento():
+        partito.set()
+        via.wait(5)
+        return {"stale": {"name": "stale", "voices": []}}
+
+    monkeypatch.setattr(audiobook_app, "_fetch_voices", build_lento)
+    t = threading.Thread(target=audiobook_app.get_voices, daemon=True)
+    t.start()
+    assert partito.wait(5)
+    audiobook_app._invalidate_voices_cache()
+    via.set()
+    t.join(5)
+    assert audiobook_app._voices_cache is None
 
 
 def test_get_voices_includes_gemini_when_module_present(monkeypatch):

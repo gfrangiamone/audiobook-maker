@@ -2434,6 +2434,10 @@ LOCALE_NAMES = {
 
 _voices_cache = None
 _voices_lock = threading.Lock()
+# Generazione della cache: cambia a ogni invalidazione. Un build partito prima
+# (thread di avvio, richiesta concorrente) non scrive il suo risultato, che
+# riflette lo stato precedente (kill switch, modelli, credenziali).
+_voices_gen = object()
 
 async def _fetch_voices():
     """Fetches and categorizes Edge TTS, Google TTS, and Gemini TTS voices."""
@@ -2551,6 +2555,7 @@ def get_voices():
             # riordino e' sul posto e costa quanto un sort di poche liste.
             voxcpm_ranking.ordina(_voices_cache)
             return _voices_cache
+        gen = _voices_gen
 
     import asyncio
     try:
@@ -2560,7 +2565,8 @@ def get_voices():
         loop.close()
         
         with _voices_lock:
-            _voices_cache = voices
+            if _voices_gen is gen:
+                _voices_cache = voices
         return voices
     except Exception as e:
         print(f"Error in get_voices: {e}")
@@ -2568,9 +2574,10 @@ def get_voices():
 
 def _invalidate_voices_cache():
     """Invalida la cache voci (ricarica al prossimo get_voices())."""
-    global _voices_cache
+    global _voices_cache, _voices_gen
     with _voices_lock:
         _voices_cache = None
+        _voices_gen = object()
 
 # ----------------------------------------------------------------------
 # PARSERS TXT/ABM: plain_parsers (F1b); i nomi restano attributi del modulo
