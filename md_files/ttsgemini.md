@@ -495,7 +495,7 @@ Commissioni PayPal e margine sono dentro la tariffa. Il costo provider (`actual_
 | `ABM_GEMINI_31FLASH_OR_{INPUT,OUTPUT}_USD_PER_MTOK` | `1.00` / `20.00` | Costo OpenRouter flash31 (listino Google, Vertex us-central1; + `ABM_OR_CREDIT_TOPUP_FEE` e `ABM_OR_CREDIT_VAT_PERCENT`) |
 | `ABM_GEMINI_38FLASH_OR_{INPUT,OUTPUT}_USD_PER_MTOK` | `0.50` / `9.00` | Costo OpenRouter flash38 (= promo Google 2026 passata a listino; + `ABM_OR_CREDIT_TOPUP_FEE` e `ABM_OR_CREDIT_VAT_PERCENT`) |
 | `ABM_OR_CREDIT_TOPUP_FEE` | `0.055` | Commissione sull'acquisto del credito OpenRouter (5,5% via Stripe, min 0,80 $), frazione |
-| `ABM_OR_CREDIT_VAT_PERCENT` | `0.0` | Tassa (IVA/sales tax) sulla ricarica OpenRouter, in percentuale di credito + commissione; dal 16/10/2026 non più nulla (ricevuta: 100 $ + 5,50 $ fee → 5,28 $ = `5.0`) |
+| `ABM_OR_CREDIT_VAT_PERCENT` | `5.0` | Tassa (IVA/sales tax) sulla ricarica OpenRouter, in percentuale di credito + commissione; dal 16/10/2026 non più nulla (ricevuta: 100 $ + 5,50 $ fee → 5,28 $ = `5.0`, da cui il default) |
 | `ABM_GEMINI_VAT_PERCENT` | `22.0` | IVA sul costo, solo backend `vertex`/`apikey` (vedi §11.1.2) |
 | `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` / `_PERCENT_FEE` | `0.34` / `3.4` | Solo audit admin (fee e margine netto) e Speechify: non entrano nel prezzo Gemini |
 
@@ -510,7 +510,7 @@ Le env di costo sono **al netto IVA** (listino Google puro, uguale su tutti i ba
 - `gemini_tts.vat_percent()` → `ABM_GEMINI_VAT_PERCENT`, default `22.0`.
 - `gemini_tts._vat_factor(backend)` → `1 + vat_percent/100` se `backend ∈ ("vertex", "apikey")` (Google Ireland Ltd fattura con IVA italiana su questi canali), altrimenti `1.0`. Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata).
 - **Mai applicata a `cloudflare`**: fatturazione extra-UE senza IVA italiana (confermato in fattura, ottobre 2026).
-- **`openrouter` ha un'aliquota propria**, `ABM_OR_CREDIT_VAT_PERCENT` (default `0.0`): la tassa che Stripe addebita sulla ricarica, calcolata su credito + commissione. Nulla fino al 15/10/2026, addebitata dal 16/10/2026. `_vat_factor("openrouter") = 1 + ABM_OR_CREDIT_VAT_PERCENT/100`, applicato sopra `_or_effective` (fee): costo per token = listino × (1 + fee) × (1 + tassa). In audit finisce in `vat_eur_actual` come l'IVA Google.
+- **`openrouter` ha un'aliquota propria**, `ABM_OR_CREDIT_VAT_PERCENT` (default `5.0`, dalla ricevuta del 16/10/2026): la tassa che Stripe addebita sulla ricarica, calcolata su credito + commissione. Nulla fino al 15/10/2026, addebitata dal 16/10/2026. `_vat_factor("openrouter") = 1 + ABM_OR_CREDIT_VAT_PERCENT/100`, applicato sopra `_or_effective` (fee): costo per token = listino × (1 + fee) × (1 + tassa). In audit finisce in `vat_eur_actual` come l'IVA Google.
 - `actual_rates(model_key, backend)` = tariffe nette × fattore IVA del backend **realmente usato** → è il numero con cui si riconcilia la spesa vera e si misura il margine reale.
 - Il prezzo all'utente non tocca mai l'IVA: è una tariffa fissa (§11).
 

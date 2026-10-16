@@ -1375,10 +1375,10 @@ def or_vat_percent():
 
     Dal 16/10/2026 OpenRouter (Stripe Tax) addebita una tassa sulla ricarica,
     calcolata su credito + commissione: dalla ricevuta, `tassa / (credito +
-    service fee) x 100` (100 $ + 5,50 $ di fee -> 5,28 $ = 5,0%). Default 0:
-    il valore va preso dalla fattura, non indovinato.
+    service fee) x 100` (100 $ + 5,50 $ di fee -> 5,28 $ = 5,0%, ricevuta del
+    16/10/2026, da cui il default). Da riallineare se la fattura cambia.
     """
-    return max(0.0, _f("ABM_OR_CREDIT_VAT_PERCENT", 0.0))
+    return max(0.0, _f("ABM_OR_CREDIT_VAT_PERCENT", 5.0))
 
 
 def _vat_factor(backend):

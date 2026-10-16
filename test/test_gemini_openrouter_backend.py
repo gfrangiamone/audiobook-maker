@@ -257,7 +257,8 @@ def test_openrouter_timeout_never_below_the_model_one(monkeypatch):
 
 # --- tariffe (contabilita') ------------------------------------------------------
 
-def test_openrouter_rates_carry_the_topup_fee_and_no_vat():
+def test_openrouter_rates_carry_the_topup_fee_and_no_vat(monkeypatch):
+    monkeypatch.setenv("ABM_OR_CREDIT_VAT_PERCENT", "0")
     assert gemini_tts.actual_rates("flash38", "openrouter") == \
         pytest.approx((0.50 * 1.055, 9.00 * 1.055))
     assert gemini_tts.actual_rates("flash31", "openrouter") == \
@@ -268,6 +269,7 @@ def test_openrouter_rates_carry_the_topup_fee_and_no_vat():
 
 
 def test_openrouter_fee_from_env(monkeypatch):
+    monkeypatch.setenv("ABM_OR_CREDIT_VAT_PERCENT", "0")
     monkeypatch.setenv("ABM_OR_CREDIT_TOPUP_FEE", "0.10")
     assert gemini_tts.actual_rates("flash38", "openrouter")[1] == pytest.approx(9.90)
 
@@ -330,8 +332,10 @@ def test_a_successful_probe_returns_flash38_to_openrouter(monkeypatch):
 
 # --- tassa sulla ricarica OpenRouter (dal 16/10/2026) -----------------------------
 
-def test_openrouter_vat_defaults_to_zero(monkeypatch):
+def test_openrouter_vat_defaults_to_the_16_10_2026_receipt(monkeypatch):
     monkeypatch.delenv("ABM_OR_CREDIT_VAT_PERCENT", raising=False)
+    assert gemini_tts.or_vat_percent() == 5.0
+    monkeypatch.setenv("ABM_OR_CREDIT_VAT_PERCENT", "0")
     bd = gemini_tts.actual_cost_breakdown(0, 1_000_000, "flash38", "openrouter")
     assert bd["vat_eur"] == 0.0
 
