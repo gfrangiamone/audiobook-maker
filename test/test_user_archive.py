@@ -32,6 +32,7 @@ class FakeR2:
         monkeypatch.setattr(storage_backend, "get_range",
                             lambda k, s, e: self.objects.get(k, b"")[s:e + 1])
         monkeypatch.setattr(storage_backend, "delete_object", self.delete)
+        monkeypatch.setattr(storage_backend, "object_exists", lambda k: k in self.objects)
 
     def delete(self, k):
         if self.fail_delete:
@@ -265,9 +266,13 @@ def test_active_status_shape(env):
 # ------------------------------------------------------------ route
 
 @pytest.fixture
-def client(env, monkeypatch):
+def client(env, monkeypatch, tmp_path):
     import audiobook_app
     import routes_account
+    # Il primo import della app apre il suo abm.db: si torna a quello del test.
+    db.close()
+    db.init(tmp_path)
+    accounts.init_schema()
     monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
     monkeypatch.setattr(audiobook_app, "_ip_rl_check", lambda *a, **k: (True, 0))
     acct = _login()
@@ -334,3 +339,66 @@ def test_route_download_of_linked_job(client, tmp_path, monkeypatch):
     assert r["mode"] == "linked" and r["item"]["source"] == "job"
     d = c.get(f"/api/account/archive/download?id={r['item']['id']}").get_json()
     assert d["url"].endswith("/dl/tok1/m4b")
+
+
+# ------------------------------------------------------------ condivisione
+
+def _ready_item(client_fixture, env):
+    c, holder, acct = client_fixture
+    holder["acct"] = acct
+    body = {"fingerprint": FP, "size_bytes": 100, "filename": "Libro.m4b", "title": "T"}
+    item_id = c.post("/api/account/archive/create", json=body).get_json()["item"]["id"]
+    env.objects[f"user_archive/{acct['id']}/{item_id}.m4b"] = b"x" * 100
+    c.post("/api/account/archive/finalize", json={"item_id": item_id})
+    return c, acct, item_id
+
+
+def test_archive_share_link_downloads_from_archive(client, env, monkeypatch):
+    import token_store
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
+    c, acct, item_id = _ready_item(client, env)
+    r = c.post("/api/account/archive/share", json={"item_id": item_id})
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["mode"] == "ready" and j["link"] and j["ttl_sec"] > 0
+    tok = j["share_token"]
+    info = token_store.share_tokens[tok]
+    assert info["kind"] == "archive" and info["archive_item_id"] == item_id
+    # Seconda richiesta: stessa share, nessun token nuovo.
+    assert c.post("/api/account/archive/share", json={"item_id": item_id}).get_json()["share_token"] == tok
+    claim = c.get(f"/api/share/claim/{tok}").get_json()
+    assert claim["download_url"].endswith(f"/s/{tok}/dl") and claim["filename"] == "Libro.m4b"
+    r = c.get(f"/s/{tok}/dl")
+    assert r.status_code == 302
+    assert r.headers["Location"] == f"https://r2/get/user_archive/{acct['id']}/{item_id}.m4b"
+    # Libro tolto dall'archivio: il link smette di funzionare.
+    c.post("/api/account/archive/delete", json={"item_id": item_id})
+    assert c.get(f"/s/{tok}/dl").status_code == 410
+
+
+def test_archive_share_requires_owner_and_ready_item(client, env, monkeypatch):
+    import token_store
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
+    c, holder, acct = client
+    assert c.post("/api/account/archive/share", json={"item_id": "x"}).status_code == 401
+    holder["acct"] = acct
+    pending = c.post("/api/account/archive/create",
+                     json={"fingerprint": FP, "size_bytes": 1, "filename": "a.m4b"}).get_json()
+    assert c.post("/api/account/archive/share",
+                  json={"item_id": pending["item"]["id"]}).status_code == 404
+    holder["acct"] = _login("o@b.it")
+    assert c.post("/api/account/archive/share",
+                  json={"item_id": pending["item"]["id"]}).status_code == 404
+
+
+def test_expired_archive_share_keeps_archive_file(env, monkeypatch):
+    import cleanup
+    import token_store
+    monkeypatch.setattr(token_store, "share_tokens", {"t": {
+        "kind": "archive", "archive_item_id": "i", "account_id": "a",
+        "s3_key": "user_archive/a/i.m4b", "created_at": 0, "ttl_sec": 1}})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
+    assert cleanup._cleanup_expired_shares(now=T0) == 1
+    assert env.deleted == [] and token_store.share_tokens == {}

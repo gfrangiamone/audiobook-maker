@@ -5,7 +5,7 @@ Blueprint `account`: `/api/auth/{request,verify,logout,logout_all,
 logout_device,me}`, `/auth/<token>` (magic link con anti-CSRF), `/account`
 (pagina), `/api/account/jobs` (elenco con download e stato riconciliato),
 `/api/account/jobs/delete`, `/api/account/archive{,/create,/finalize,/delete,
-/download}` (archivio dell'app, logica in `user_archive`),
+/download,/share}` (archivio dell'app, logica in `user_archive`),
 `/api/account/voucher_suggest`, `/api/account/delete_request`,
 `/api/account/delete_confirm`; con i cookie di sessione e CSRF, l'invio
 dei codici, la cancellazione dell'account, le righe dei job e le voci
@@ -841,6 +841,25 @@ def api_account_archive_delete():
         return _acct_err("storage_error", "Archive delete failed", 502)
     _acct_log("ACCOUNT_ARCHIVE_DELETE", acct["email"], item_id)
     return jsonify({"ok": True})
+
+
+@bp.route("/api/account/archive/share", methods=["POST"])
+def api_account_archive_share():
+    """Link di condivisione di un libro dell'archivio online: il destinatario
+    lo scarica dall'archivio, senza che il telefono lo riscarichi o lo
+    ricarichi. Stessa forma della share "ready" di /api/share/create."""
+    acct, err = _acct_required()
+    if err:
+        return err
+    item_id = str((request.get_json(silent=True) or {}).get("item_id") or "").strip()
+    item = user_archive.get_item(acct["id"], item_id) if item_id else None
+    if item is None or item["state"] != "ready":
+        return _acct_err("not_found", "Item not found", 404)
+    stok, info = routes_mobile.create_archive_share(acct["id"], item, _get_client_id() or "")
+    _acct_log("ACCOUNT_ARCHIVE_SHARE", acct["email"], item_id)
+    return jsonify({"mode": "ready", "share_token": stok,
+                    "link": routes_mobile._share_link_for(stok),
+                    "ttl_sec": info["ttl_sec"]})
 
 
 @bp.route("/api/account/archive/download", methods=["GET"])

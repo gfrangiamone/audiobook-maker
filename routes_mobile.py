@@ -26,6 +26,7 @@ import metrics_store
 import storage_backend
 import storage_tiering
 import token_store as _tkstore
+import user_archive
 from env_utils import env_int, env_str
 
 # Validita' (s) di un transfer token dalla creazione: dopo, il claim risponde
@@ -528,9 +529,59 @@ def _share_file_recoverable(info):
         if kind == "upload":
             return (storage_backend.is_enabled()
                     and storage_backend.object_exists(info.get("s3_key", "")))
+        if kind == "archive":
+            return _archive_share_target(info)[0] is not None
     except Exception:
         pass
     return False
+
+
+# ready: file di un job; upload: file caricato per la share (cancellato a
+# scadenza); archive: libro nell'archivio online dell'account, che a scadenza
+# perde solo il link (il file appartiene all'archivio).
+SHARE_KINDS = ("ready", "upload", "archive")
+
+
+def _archive_share_target(info):
+    """Dove sta il libro di una share `archive`: ("r2", chiave), ("ready",
+    download token del job collegato) o (None, None) se il libro non e' piu'
+    nell'archivio (eliminato, o archivio cancellato a fine grazia)."""
+    item = user_archive.get_item(info.get("account_id") or "",
+                                 info.get("archive_item_id") or "")
+    if not item or item.get("state") != "ready":
+        return None, None
+    if item.get("r2_key"):
+        return "r2", item["r2_key"]
+    if item.get("link_token"):
+        return "ready", item["link_token"]
+    return None, None
+
+
+def create_archive_share(account_id, item, cid, now=None):
+    """Share di un libro dell'archivio online (nessun upload, nessun file
+    nuovo). Riusa una share viva dello stesso libro. Ritorna (token, info)."""
+    now = now or time.time()
+    with _tkstore.share_lock:
+        for stok, info in list(_tkstore.share_tokens.items()):
+            if (isinstance(info, dict) and info.get("kind") == "archive"
+                    and info.get("account_id") == account_id
+                    and info.get("archive_item_id") == item["id"]
+                    and _share_alive(info, now)):
+                info["created_at"] = now
+                info["ttl_sec"] = _share_ttl_sec()
+                break
+        else:
+            stok = secrets.token_urlsafe(24)
+            info = {
+                "kind": "archive", "archive_item_id": item["id"],
+                "account_id": account_id, "client_id": cid, "created_at": now,
+                "ttl_sec": _share_ttl_sec(),
+                "filename": user_archive.download_name(item),
+                "fingerprint": item.get("fingerprint") or "",
+            }
+            _tkstore.share_tokens[stok] = info
+    _tkstore.save_share_tokens()
+    return stok, info
 
 
 def _find_reusable_share(cid, fingerprint, now=None):
@@ -544,7 +595,7 @@ def _find_reusable_share(cid, fingerprint, now=None):
         if (isinstance(info, dict)
                 and info.get("client_id") == cid
                 and info.get("fingerprint") == fingerprint
-                and info.get("kind") in ("ready", "upload")
+                and info.get("kind") in SHARE_KINDS
                 and _share_alive(info, now)
                 and _share_file_recoverable(info)):
             return stok, info
@@ -636,7 +687,7 @@ def api_share_claim(token):
     """Valida la share e ritorna l'URL di download share-scoped (/s/<token>/dl)
     che impone il TTL. 404 sconosciuta, 410 scaduta."""
     info = _tkstore.share_tokens.get(token)
-    if not isinstance(info, dict) or info.get("kind") not in ("ready", "upload"):
+    if not isinstance(info, dict) or info.get("kind") not in SHARE_KINDS:
         return jsonify({"error": "invalid", "error_code": "invalid"}), 404
     now = time.time()
     if not _share_alive(info, now):
@@ -656,13 +707,23 @@ def api_share_claim(token):
 @bp.route("/s/<token>/dl")
 def share_download(token):
     """Consegna il file della share validando il TTL. ready → file locale via
-    _send_file_throttled; upload → redirect alla presigned GET su R2."""
+    _send_file_throttled; upload → redirect alla presigned GET su R2;
+    archive → il libro nell'archivio online dell'account (R2 o job collegato)."""
     info = _tkstore.share_tokens.get(token)
     if (not isinstance(info, dict)
-            or info.get("kind") not in ("ready", "upload")
+            or info.get("kind") not in SHARE_KINDS
             or not _share_alive(info)):
         return ("Condivisione scaduta o inesistente", 410,
                 {"Content-Type": "text/plain; charset=utf-8"})
+    if info.get("kind") == "archive":
+        # Il libro si risolve a ogni download: una share "ready" (job
+        # collegato) o "upload" (file caricato dall'app) del momento.
+        mode, target = _archive_share_target(info)
+        if mode is None:
+            return ("File non più disponibile", 410,
+                    {"Content-Type": "text/plain; charset=utf-8"})
+        info = ({**info, "kind": "ready", "download_token": target} if mode == "ready"
+                else {**info, "kind": "upload", "s3_key": target})
     if info.get("kind") == "ready":
         path, dl_name = _resolve_ready_file(info.get("download_token", ""))
         if not path:
