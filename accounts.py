@@ -651,21 +651,39 @@ def attach_if_known(job_id, email, **fields):
         return True
 
 
-def list_jobs(account_id, page=1, per_page=50):
+# Righe che sono un audiolibro importabile dall'app: generazione m4b/mp3 (o
+# formato non registrato) e ottimizzazione con audiolibro (wizard combinato).
+_AUDIOBOOK_WHERE = (
+    "((kind='generate' AND LOWER(output_format) IN ('', 'm4b', 'mp3')) "
+    "OR (kind='optimize' AND LOWER(output_format) IN ('m4b', 'mp3')))")
+
+
+def list_jobs(account_id, page=1, per_page=50, q="", audio_only=False):
+    """Storico visibile dell'account, dal piu' recente. `q` filtra sul
+    titolo (sottostringa, maiuscole/minuscole indifferenti) su TUTTO lo
+    storico, non sulla pagina; `audio_only` tiene i soli audiolibri."""
     if not enabled():
         return [], 0
     page = max(1, int(page or 1))
     per_page = max(1, min(200, int(per_page or 50)))
+    where = ["account_id=?", "hidden_at IS NULL"]
+    args = [account_id]
+    q = (q or "").strip()[:100]
+    if q:
+        esc = q.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        where.append("book_title LIKE ? ESCAPE '!'")
+        args.append(f"%{esc}%")
+    if audio_only:
+        where.append(_AUDIOBOOK_WHERE)
+    cond = " AND ".join(where)
     with db.tx() as c:
-        total = c.execute(
-            "SELECT COUNT(*) FROM account_jobs WHERE account_id=? AND hidden_at IS NULL",
-            (account_id,),
-        ).fetchone()[0]
+        total = c.execute(f"SELECT COUNT(*) FROM account_jobs WHERE {cond}",
+                          tuple(args)).fetchone()[0]
         rows = c.execute(
-            "SELECT * FROM account_jobs WHERE account_id=? AND hidden_at IS NULL "
+            f"SELECT * FROM account_jobs WHERE {cond} "
             "ORDER BY created_at DESC, job_id DESC "
             "LIMIT ? OFFSET ?",
-            (account_id, per_page, (page - 1) * per_page),
+            tuple(args) + (per_page, (page - 1) * per_page),
         ).fetchall()
     return [dict(r) for r in rows], total
 

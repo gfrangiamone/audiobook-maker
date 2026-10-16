@@ -606,8 +606,9 @@ def _account_reconcile_running(rows, now):
             print(f"WARNING [{r.get('job_id')}] riconciliazione storico: {e}", flush=True)
 
 
-def _account_rows_for(acct, page):
-    rows, total = accounts.list_jobs(acct["id"], page=page, per_page=_ACCT_PER_PAGE)
+def _account_rows_for(acct, page, q="", audio_only=False):
+    rows, total = accounts.list_jobs(acct["id"], page=page, per_page=_ACCT_PER_PAGE,
+                                     q=q, audio_only=audio_only)
     _account_reconcile_running(rows, time.time())
     now = time.time()
     index = _download_tokens_index()
@@ -694,7 +695,10 @@ def api_account_jobs():
         page = max(1, int(request.args.get("p") or 1))
     except ValueError:
         page = 1
-    rows, total = _account_rows_for(acct, page)
+    # `q`: ricerca per titolo su tutto lo storico (non sulla pagina caricata);
+    # `audio=1`: solo audiolibri importabili (l'app non mostra altro).
+    rows, total = _account_rows_for(acct, page, q=request.args.get("q") or "",
+                                    audio_only=request.args.get("audio") == "1")
     # Ottimizzazione con audiolibro: per l'app e' un audiolibro ("generate",
     # importabile in libreria); `optimized` conserva il resto dell'informazione.
     jobs = [{
