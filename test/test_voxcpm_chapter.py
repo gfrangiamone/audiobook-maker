@@ -6,6 +6,7 @@ si arrende — senza rifare le prove del ponte HTTP, che sono nel Task 6.
 """
 import base64
 import os
+import threading
 
 import pytest
 import requests
@@ -855,16 +856,47 @@ class _RispostaGet:
 
 
 def _get_a_sequenza(monkeypatch, risposte):
-    """`requests.get` che consegna `risposte` una per chiamata e le conta."""
+    """`requests.get` che consegna `risposte` una per chiamata e le conta.
+
+    Il patch e' sul modulo `requests` di tutto il processo: un thread lasciato
+    vivo da un test precedente (reload di fresh_app, generazioni in
+    background) che chiama `requests.get` mentre il test gira non deve
+    consumare la sequenza. Una risposta sottratta cosi' ha fatto fallire
+    test_scarica_si_arrende_dopo_i_tentativi nella suite completa con
+    `pop from empty list` al decimo tentativo. Gli altri thread ricevono un
+    errore di connessione e restano fuori dal conteggio."""
     chiamate = []
     coda = list(risposte)
+    proprietario = threading.get_ident()
 
     def get(url, **kw):
+        if threading.get_ident() != proprietario:
+            raise requests.exceptions.ConnectionError("GET finta del test: thread estraneo")
         chiamate.append(url)
         return coda.pop(0)
 
     monkeypatch.setattr(voxcpm_tts.requests, "get", get)
     return chiamate
+
+
+def test_la_sequenza_finta_non_si_lascia_consumare_da_altri_thread(tmp_path, monkeypatch):
+    chiamate = _get_a_sequenza(monkeypatch, [_RispostaGet(b"abcd")])
+    esito = []
+
+    def estraneo():
+        try:
+            requests.get("https://altro.esempio/")
+        except requests.exceptions.ConnectionError as e:
+            esito.append(e)
+
+    t = threading.Thread(target=estraneo)
+    t.start()
+    t.join(5)
+    assert len(esito) == 1 and chiamate == []
+    dest = str(tmp_path / "cap.pcm")
+    voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
+    assert open(dest, "rb").read() == b"abcd"
+    assert len(chiamate) == 1
 
 
 def _http_error(codice):
