@@ -3,7 +3,9 @@
 `generate_chunk_mp3` (async): testo -> MP3 via edge-tts con retry/backoff
 (`_edge_tts_call`), timeout per chiamata (`ABM_EDGE_TTS_TIMEOUT`), rilevamento
 dell'output troncato dalla sola dimensione del file e silenzio esplicito quando
-tutti i tentativi falliscono. Ogni tentativo e ogni esito finale vanno a
+tutti i tentativi falliscono. Una voce Multilingual che non restituisce audio
+(NoAudioReceived) ripiega su una voce standard della stessa lingua prima del
+silenzio (`_fallback_voice`). Ogni tentativo e ogni esito finale vanno a
 `edge_health`, che allerta l'admin se il tasso di errore supera la soglia.
 Le voci Multilingual passano frase per frase
 (`tts_split._split_sentences_for_tts`) e i pezzi vengono concatenati.
@@ -15,10 +17,13 @@ lo sostituiscono continuano a vederlo), `text_reflow` (`_sanitize_tts_text`),
 import asyncio
 import os
 import tempfile
+import threading
+import time
 
 import edge_tts
 import edge_tts.communicate as _edge_communicate
 from edge_tts.constants import TRUSTED_CLIENT_TOKEN
+from edge_tts.exceptions import NoAudioReceived
 
 import edge_health
 import retry_util as _retry
@@ -131,8 +136,131 @@ def _edge_retry_wait(attempt, exc):
     return _retry.backoff(attempt, base=1.0)
 
 
+# --- Ripiego per le voci Multilingual che Microsoft non serve ----------------
+# 16/10/2026: pt-BR-ThalitaMultilingualNeural (3/3) e
+# de-DE-SeraphinaMultilingualNeural (2/3) rispondono NoAudioReceived anche a
+# richieste isolate, mentre le altre 26 voci provate da prod passano: il 2% dei
+# chunk finiva in silenzio. Esauriti i tentativi con NoAudioReceived su una voce
+# Multilingual, il testo si ritenta con una voce standard della stessa lingua
+# e dello stesso genere. La voce resta "rotta" per _EDGE_BROKEN_VOICE_SEC: le
+# frasi successive del libro vanno subito al ripiego, senza tre tentativi persi
+# ciascuna e senza alternare le due voci frase per frase.
+_EDGE_BROKEN_VOICE_SEC = 900
+# Catalogo voci fallito: non si riscarica prima di questi secondi.
+_EDGE_CATALOG_RETRY_SEC = 300
+
+_fallback_lock = threading.Lock()
+_broken_voices = {}             # voce Multilingual -> epoch fino a cui e' rotta
+_voice_catalog = None           # lista di dict di edge_tts.list_voices()
+_catalog_failed_at = 0.0
+
+
+async def _edge_voice_catalog():
+    """Catalogo voci edge-tts, scaricato una volta per processo ([] se non raggiungibile)."""
+    global _voice_catalog, _catalog_failed_at
+    with _fallback_lock:
+        if _voice_catalog is not None:
+            return _voice_catalog
+        if time.time() - _catalog_failed_at < _EDGE_CATALOG_RETRY_SEC:
+            return []
+    try:
+        voices = await asyncio.wait_for(edge_tts.list_voices(), timeout=EDGE_TTS_CHUNK_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 - senza catalogo niente ripiego: resta il silenzio
+        print(f"[tts] catalogo voci edge-tts non disponibile: {e}")
+        with _fallback_lock:
+            _catalog_failed_at = time.time()
+        return []
+    with _fallback_lock:
+        _voice_catalog = list(voices or [])
+        return _voice_catalog
+
+
+def _pick_standard_voice(voice, catalog):
+    """Voce standard (non Multilingual) per sostituire `voice`, o None.
+
+    Ordine: stesso nome senza "Multilingual" (en-US-AvaMultilingualNeural ->
+    en-US-AvaNeural), poi stessa locale e stesso genere, poi stessa locale."""
+    by_name = {v.get("ShortName"): v for v in catalog}
+    same = by_name.get(voice.replace("MultilingualNeural", "Neural"))
+    if same is not None and not tts_split._is_multilingual_voice(same["ShortName"]):
+        return same["ShortName"]
+    orig = by_name.get(voice) or {}
+    locale = orig.get("Locale") or "-".join(voice.split("-")[:2])
+    cands = sorted((v for v in catalog
+                    if v.get("Locale") == locale
+                    and not tts_split._is_multilingual_voice(v.get("ShortName"))),
+                   key=lambda v: v.get("ShortName") or "")
+    gender = orig.get("Gender")
+    for v in cands:
+        if v.get("Gender") == gender:
+            return v["ShortName"]
+    return cands[0]["ShortName"] if cands else None
+
+
+def _voice_is_broken(voice, now=None):
+    now = time.time() if now is None else now
+    with _fallback_lock:
+        return _broken_voices.get(voice, 0.0) > now
+
+
+def _mark_voice_broken(voice, now=None):
+    now = time.time() if now is None else now
+    with _fallback_lock:
+        _broken_voices[voice] = now + _EDGE_BROKEN_VOICE_SEC
+        for v in [v for v, until in _broken_voices.items() if until <= now]:
+            del _broken_voices[v]
+
+
+async def _fallback_voice(voice, last_error):
+    """Voce standard con cui ritentare dopo un fallimento, o None.
+
+    Solo per le voci Multilingual, e solo se la voce e' gia' segnata rotta o i
+    tentativi sono finiti con NoAudioReceived (un 403/429/timeout non dipende
+    dalla voce: cambiarla non servirebbe)."""
+    if not tts_split._is_multilingual_voice(voice):
+        return None
+    if not (isinstance(last_error, NoAudioReceived) or _voice_is_broken(voice)):
+        return None
+    return _pick_standard_voice(voice, await _edge_voice_catalog())
+
+
 async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
-    """Singola chiamata edge-tts con retry/backoff esponenziale.
+    """Chiamata edge-tts per un testo, con ripiego di voce e silenzio finale.
+
+    Prova `voice` con retry (`_edge_tts_attempts`); se e' una Multilingual che
+    Microsoft non serve (NoAudioReceived a ogni tentativo) ritenta con una voce
+    standard della stessa lingua (`_fallback_voice`). Una voce gia' segnata
+    rotta va subito al ripiego. Se fallisce anche quello, silenzio esplicito e
+    False. Ogni chiamata conta una volta in `edge_health.record_call`.
+    """
+    last_error = None
+    skip_original = _voice_is_broken(voice)
+    if not skip_original:
+        ok, last_error = await _edge_tts_attempts(text, voice, rate, output_path, max_retries)
+        if ok:
+            edge_health.record_call(True)
+            return True
+    fallback = await _fallback_voice(voice, last_error)
+    if fallback and not _voice_is_broken(voice):
+        print(f"[tts] voce {voice} senza audio: ripiego su {fallback} "
+              f"per {_EDGE_BROKEN_VOICE_SEC} s")
+        _mark_voice_broken(voice)
+    # voce segnata rotta ma catalogo irraggiungibile: si riprova la voce originale
+    target = fallback or (voice if skip_original else None)
+    if target:
+        ok, last_error = await _edge_tts_attempts(text, target, rate, output_path, max_retries)
+        if ok:
+            edge_health.record_call(True)
+            return True
+    print(f"[tts] WARNING: all {max_retries} attempts failed "
+          f"({len(text)} chars). Last: {last_error}")
+    edge_health.record_call(False)
+    _generate_silence_mp3(output_path, duration_sec=1)
+    return False
+
+
+async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
+    """Tentativi edge-tts con retry/backoff esponenziale: ritorna (ok, ultimo errore).
 
     Oltre alle eccezioni, tratta come fallimento anche un output MP3 TRONCATO:
     save() puo' ritornare senza errore mentre lo stream Azure si e' chiuso a
@@ -141,10 +269,10 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     zero (dimensione file vs lunghezza testo, vedi `_edge_output_looks_truncated`)
     quindi si applica anche alle micro-chiamate per frase del path Multilingual.
 
-    In caso di fallimento totale scrive un breve silenzio e ritorna False: cosi'
-    un troncamento persistente diventa un failed_chunk contato + silenzio
-    esplicito, non testo mancante nascosto (che passava inosservato con
-    failed_chunks=0 e job COMPLETE).
+    In caso di fallimento totale ritorna (False, errore) e `_edge_tts_call`
+    scrive il silenzio: cosi' un troncamento persistente diventa un failed_chunk
+    contato + silenzio esplicito, non testo mancante nascosto (che passava
+    inosservato con failed_chunks=0 e job COMPLETE).
     """
     snippet = text[:60].replace('\n', ' ')
 
@@ -182,19 +310,14 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
                   f"({len(text)} chars: \"{snippet}...\"): {e}")
 
     try:
-        ok = await _retry.retry_call_async(_once, attempts=max_retries, wait=_edge_retry_wait, on_retry=_log)
-        edge_health.record_call(True)
-        return ok
-    except Exception as e:      # noqa: BLE001 - esauriti i tentativi: silenzio esplicito
-        last_error = e if not isinstance(e, _EdgeTruncated) else str(e)
-        if not isinstance(e, _EdgeTruncated):
-            print(f"[tts] Attempt {max_retries}/{max_retries} failed "
-                  f"({len(text)} chars: \"{snippet}...\"): {e}")
-    print(f"[tts] WARNING: all {max_retries} attempts failed "
-          f"({len(text)} chars). Last: {last_error}")
-    edge_health.record_call(False)
-    _generate_silence_mp3(output_path, duration_sec=1)
-    return False
+        await _retry.retry_call_async(_once, attempts=max_retries, wait=_edge_retry_wait, on_retry=_log)
+        return True, None
+    except Exception as e:      # noqa: BLE001 - esauriti i tentativi: decide il chiamante
+        if isinstance(e, _EdgeTruncated):
+            return False, str(e)
+        print(f"[tts] Attempt {max_retries}/{max_retries} failed "
+              f"({len(text)} chars: \"{snippet}...\"): {e}")
+        return False, e
 
 
 async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
