@@ -174,12 +174,23 @@ ARCHIVE_ITEMS_MIGRATION = [
 ]
 
 
+# Impronta (stesso algoritmo dell'app) del file dell'audiolibro di un job,
+# calcolata una volta per download token: l'app la confronta con i file della
+# sua libreria per non elencare fra gli archiviati un libro che ha gia'.
+JOBS_LIBFP_MIGRATION = [
+    "ALTER TABLE account_jobs ADD COLUMN lib_fp TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE account_jobs ADD COLUMN lib_size INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE account_jobs ADD COLUMN lib_token TEXT NOT NULL DEFAULT ''",
+]
+
+
 def init_schema():
     db.migrate("accounts_v1", SCHEMA)
     db.migrate("account_jobs_plan_v1", JOBS_PLAN_MIGRATION)
     db.migrate("account_jobs_hidden_v1", JOBS_HIDDEN_MIGRATION)
     db.migrate("account_jobs_archive_v1", JOBS_ARCHIVE_MIGRATION)
     db.migrate("archive_items_v1", ARCHIVE_ITEMS_MIGRATION)
+    db.migrate("account_jobs_libfp_v1", JOBS_LIBFP_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -659,6 +670,16 @@ def list_jobs(account_id, page=1, per_page=50):
     return [dict(r) for r in rows], total
 
 
+def get_job(account_id, job_id):
+    """Riga di storico visibile del job dell'account, o None."""
+    if not enabled():
+        return None
+    with db.tx() as c:
+        r = c.execute("SELECT * FROM account_jobs WHERE job_id=? AND account_id=? "
+                      "AND hidden_at IS NULL", (str(job_id), account_id)).fetchone()
+    return _row(r)
+
+
 def adopt_history(account):
     """Adozione retroattiva: job pagati (_payments.json, email+job_id) e voci
     campionate con owner_email uguale. Idempotente: INSERT OR IGNORE sui job,
@@ -965,6 +986,28 @@ def archive_candidates():
             "ORDER BY j.created_at DESC, j.job_id DESC",
             tuple(ARCHIVE_PLANS)).fetchall()
     return [dict(r) for r in rows]
+
+
+def job_fingerprint(job_id, token):
+    """(impronta, byte) gia' calcolate per il file del job servito da
+    `token`, o None se mancano o si riferiscono a un altro token."""
+    if not enabled():
+        return None
+    with db.tx() as c:
+        r = c.execute("SELECT lib_fp, lib_size, lib_token FROM account_jobs WHERE job_id=?",
+                      (str(job_id),)).fetchone()
+    if r is None or not r["lib_fp"] or r["lib_token"] != token:
+        return None
+    return r["lib_fp"], int(r["lib_size"])
+
+
+def set_job_fingerprint(job_id, token, fp, size):
+    if not enabled():
+        return False
+    with db.tx() as c:
+        cur = c.execute("UPDATE account_jobs SET lib_fp=?, lib_size=?, lib_token=? WHERE job_id=?",
+                        (fp or "", max(0, int(size or 0)), token or "", str(job_id)))
+    return cur.rowcount > 0
 
 
 def mark_archived(job_id, nbytes, now=None):

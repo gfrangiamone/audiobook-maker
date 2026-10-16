@@ -762,6 +762,77 @@ def _archive_job_candidates(acct, job_id):
     return out
 
 
+def _live_job_file(acct, job_id, now=None):
+    """(path, link_kind, token, token_info) del file audiolibro del job
+    dell'account servito dal download token piu' recente ancora vivo, o None."""
+    now = now or time.time()
+    live = []
+    for path, kind, tok in _archive_job_candidates(acct, job_id):
+        ti = _tkstore.download_tokens.get(tok)
+        if not isinstance(ti, dict):
+            continue
+        try:
+            exp = float(ti.get("created_at") or 0) + float(_effective_retention_for_token_info(ti))
+        except Exception:  # noqa: BLE001  info corrotta: token non utilizzabile
+            continue
+        if exp > now:
+            live.append((path, kind, tok, ti))
+    if not live:
+        return None
+    return max(live, key=lambda x: float(x[3].get("created_at") or 0))
+
+
+def _job_is_audiobook(row):
+    kind = row.get("kind") or ""
+    fmt = (row.get("output_format") or "").strip().lower()
+    return ((kind == "generate" and fmt in ("", "m4b", "mp3"))
+            or account_page.is_optimize_with_audio(row))
+
+
+_ARCHIVE_JOBS_PAGES = 5   # x 200 righe: oltre, lo storico e' solo sul sito
+
+
+@bp.route("/api/account/archive/jobs", methods=["GET"])
+def api_account_archive_jobs():
+    """Audiolibri dell'area personale ancora scaricabili, con l'impronta del
+    file (stesso algoritmo dell'app, calcolata una volta per token): l'app
+    elenca fra gli archiviati quelli che non ha gia' in libreria."""
+    acct, err = _acct_required()
+    if err:
+        return err
+    now = time.time()
+    rows = []
+    for page in range(1, _ARCHIVE_JOBS_PAGES + 1):
+        chunk, total = accounts.list_jobs(acct["id"], page=page, per_page=200)
+        rows.extend(chunk)
+        if len(rows) >= total or not chunk:
+            break
+    out = []
+    for r in rows:
+        if r.get("status") != "done" or not _job_is_audiobook(r):
+            continue
+        live = _live_job_file(acct, r["job_id"], now)
+        if live is None:
+            continue
+        path, kind, tok, ti = live
+        cached = accounts.job_fingerprint(r["job_id"], tok)
+        if cached is None:
+            fp, size = user_archive.fingerprint_of(path)
+            if fp:
+                accounts.set_job_fingerprint(r["job_id"], tok, fp, size)
+                cached = (fp, size)
+        if cached is None:
+            continue
+        archived = accounts.archive_protects(r["job_id"])
+        exp = float(ti.get("created_at") or 0) + float(_effective_retention_for_token_info(ti))
+        out.append({"job_id": r["job_id"], "title": r.get("book_title") or "",
+                    "format": "mp3" if kind == "download" else "m4b",
+                    "fingerprint": cached[0], "size_bytes": cached[1],
+                    "archived": archived, "expires_at": None if archived else int(exp),
+                    "created_at": r.get("created_at")})
+    return jsonify({"jobs": out})
+
+
 @bp.route("/api/account/archive", methods=["GET"])
 def api_account_archive():
     acct, err = _acct_required()
@@ -845,13 +916,25 @@ def api_account_archive_delete():
 
 @bp.route("/api/account/archive/share", methods=["POST"])
 def api_account_archive_share():
-    """Link di condivisione di un libro dell'archivio online: il destinatario
-    lo scarica dall'archivio, senza che il telefono lo riscarichi o lo
-    ricarichi. Stessa forma della share "ready" di /api/share/create."""
+    """Link di condivisione di un libro dell'archivio online (`item_id`) o di
+    un audiolibro dell'area personale (`job_id`, file ancora sul server): il
+    destinatario lo scarica dal server, senza che il telefono lo riscarichi o
+    lo ricarichi. Stessa forma della share "ready" di /api/share/create."""
     acct, err = _acct_required()
     if err:
         return err
-    item_id = str((request.get_json(silent=True) or {}).get("item_id") or "").strip()
+    data = request.get_json(silent=True) or {}
+    job_id = str(data.get("job_id") or "").strip()
+    if job_id:
+        live = _live_job_file(acct, job_id)
+        if live is None:
+            return _acct_err("not_found", "Job not found", 404)
+        stok = routes_mobile.create_ready_share(live[2], _get_client_id() or "", "audiolibro.m4b")
+        _acct_log("ACCOUNT_JOB_SHARE", acct["email"], job_id)
+        return jsonify({"mode": "ready", "share_token": stok,
+                        "link": routes_mobile._share_link_for(stok),
+                        "ttl_sec": routes_mobile._share_ttl_sec()})
+    item_id = str(data.get("item_id") or "").strip()
     item = user_archive.get_item(acct["id"], item_id) if item_id else None
     if item is None or item["state"] != "ready":
         return _acct_err("not_found", "Item not found", 404)
@@ -870,6 +953,18 @@ def api_account_archive_download():
     acct, err = _acct_required()
     if err:
         return err
+    base = (_base_url() or "").rstrip("/")
+    job_id = (request.args.get("job_id") or "").strip()
+    if job_id:
+        live = _live_job_file(acct, job_id)
+        if live is None:
+            return _acct_err("gone", "Audiobook no longer available", 410)
+        path, kind, tok, _ti = live
+        ext = "mp3" if kind == "download" else "m4b"
+        title = (accounts.get_job(acct["id"], job_id) or {}).get("book_title") or job_id
+        cached = accounts.job_fingerprint(job_id, tok)
+        return jsonify({"url": f"{base}/dl/{tok}/{kind}", "filename": f"{title}.{ext}",
+                        "size_bytes": cached[1] if cached else 0})
     item = user_archive.get_item(acct["id"], (request.args.get("id") or "").strip())
     if item is None or item["state"] != "ready":
         return _acct_err("not_found", "Item not found", 404)

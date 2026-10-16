@@ -402,3 +402,50 @@ def test_expired_archive_share_keeps_archive_file(env, monkeypatch):
     monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     assert cleanup._cleanup_expired_shares(now=T0) == 1
     assert env.deleted == [] and token_store.share_tokens == {}
+
+
+# ------------------------------------------------------------ job dell'area personale
+
+def test_archive_jobs_listing_download_and_share(client, env, tmp_path, monkeypatch):
+    import time as _t
+    import token_store
+    c, holder, acct = client
+    holder["acct"] = acct
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
+    data = b"job-audio-bytes" * 30
+    path = _job_file(monkeypatch, tmp_path, "j1", data)
+    now = _t.time()
+    accounts.record_job(acct["id"], "j1", kind="generate", status="done", book_title="Libro J1",
+                        output_format="m4b")
+    accounts.record_job(acct["id"], "jr", kind="generate", status="running")
+    accounts.record_job(acct["id"], "jt", kind="translate", status="done")
+    monkeypatch.setitem(token_store.download_tokens, "tokJ1",
+                        {"job_id": "j1", "output_m4b": path, "created_at": now})
+    calls = []
+    real_fp = user_archive.fingerprint_of
+    monkeypatch.setattr(user_archive, "fingerprint_of", lambda p: calls.append(p) or real_fp(p))
+
+    jobs = c.get("/api/account/archive/jobs").get_json()["jobs"]
+    assert [j["job_id"] for j in jobs] == ["j1"]
+    j = jobs[0]
+    assert j["fingerprint"] == _dart_fp(data) and j["size_bytes"] == len(data)
+    assert j["title"] == "Libro J1" and j["format"] == "m4b"
+    assert j["archived"] is False and j["expires_at"] > now
+    # Impronta in cache: secondo elenco senza ricalcolo.
+    c.get("/api/account/archive/jobs")
+    assert len(calls) == 1
+
+    d = c.get("/api/account/archive/download?job_id=j1").get_json()
+    assert d["url"].endswith("/dl/tokJ1/m4b") and d["filename"] == "Libro J1.m4b"
+    assert c.get("/api/account/archive/download?job_id=nope").status_code == 410
+
+    s = c.post("/api/account/archive/share", json={"job_id": "j1"}).get_json()
+    info = token_store.share_tokens[s["share_token"]]
+    assert info["kind"] == "ready" and info["download_token"] == "tokJ1"
+    assert c.post("/api/account/archive/share", json={"job_id": "jt"}).status_code == 404
+
+    # Job di un altro account: invisibile.
+    holder["acct"] = _login("o@b.it")
+    assert c.get("/api/account/archive/jobs").get_json()["jobs"] == []
+    assert c.get("/api/account/archive/download?job_id=j1").status_code == 410

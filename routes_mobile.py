@@ -422,19 +422,7 @@ def api_share_create():
     if job_id:
         dltok = _tkstore.find_available_download_token(job_id, cid, now)
         if dltok:
-            stok = secrets.token_urlsafe(24)
-            # Nome download col titolo del libro (se risolvibile), così il
-            # destinatario salva con un nome sensato invece di "audiolibro.m4b".
-            _, ready_name = _resolve_ready_file(dltok)
-            with _tkstore.share_lock:
-                _tkstore.share_tokens[stok] = {
-                    "kind": "ready", "download_token": dltok,
-                    "client_id": cid, "created_at": now,
-                    "ttl_sec": _share_ttl_sec(),
-                    "filename": ready_name or filename,
-                    "fingerprint": fingerprint,
-                }
-            _tkstore.save_share_tokens()
+            stok = create_ready_share(dltok, cid, filename, fingerprint, now)
             return jsonify({"mode": "ready", "share_token": stok,
                             "link": _share_link_for(stok),
                             "ttl_sec": _share_ttl_sec()})
@@ -555,6 +543,26 @@ def _archive_share_target(info):
     if item.get("link_token"):
         return "ready", item["link_token"]
     return None, None
+
+
+def create_ready_share(dltok, cid, filename, fingerprint="", now=None):
+    """Share "ready" sul file di un job ancora scaricabile (download token
+    `dltok`): nessun upload. Ritorna il token della share."""
+    now = now or time.time()
+    stok = secrets.token_urlsafe(24)
+    # Nome download col titolo del libro (se risolvibile), così il
+    # destinatario salva con un nome sensato invece di "audiolibro.m4b".
+    _, ready_name = _resolve_ready_file(dltok)
+    with _tkstore.share_lock:
+        _tkstore.share_tokens[stok] = {
+            "kind": "ready", "download_token": dltok,
+            "client_id": cid, "created_at": now,
+            "ttl_sec": _share_ttl_sec(),
+            "filename": ready_name or filename,
+            "fingerprint": fingerprint,
+        }
+    _tkstore.save_share_tokens()
+    return stok
 
 
 def create_archive_share(account_id, item, cid, now=None):
