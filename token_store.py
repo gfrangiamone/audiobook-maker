@@ -127,6 +127,24 @@ def save_share_tokens():
 
 # --- download token (/dl/<token>) --------------------------------------------
 
+def tokens_by_job():
+    """Indice `job_id -> [(token, info)]` da uno snapshot di download_tokens
+    preso sotto tokens_lock: il dict e' mutato dai thread di generazione e dal
+    cleanup (scorrerlo senza snapshot e' un `dictionary changed size during
+    iteration`), e chi deve guardare molti job costruisce l'indice una volta
+    invece di una scansione lineare per job."""
+    with tokens_lock:
+        items = list(download_tokens.items())
+    idx = {}
+    for tok, ti in items:
+        if not isinstance(ti, dict):
+            continue
+        jid = ti.get("job_id")
+        if jid:
+            idx.setdefault(jid, []).append((tok, ti))
+    return idx
+
+
 def has_active_download_tokens(job_id, now=None):
     """True se esiste almeno un download token non scaduto per il job_id.
 

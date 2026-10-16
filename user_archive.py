@@ -5,16 +5,19 @@ utente con abbonamento di archivio.
 Un libro entra nell'archivio in due modi:
 - collegamento: e' gia' nell'archivio dell'account (stesso fingerprint di un
   libro gia' archiviato, o file di un job archiviato dell'account con lo
-  stesso contenuto) -> nessun upload, nessun byte in piu' sulla quota;
+  stesso contenuto, indicato dall'app o trovato per impronta) -> nessun
+  upload, nessun byte in piu' sulla quota;
 - upload: presigned PUT su `user_archive/<account_id>/<item_id>.<ext>`, la
   quota si prenota alla creazione e il libro e' `ready` solo dopo `finalize`
   (dimensione verificata su R2). L'app cancella la copia locale solo dopo.
 
 Dopo la revoca dell'abbonamento i libri restano scaricabili per
 accounts.archive_grace_days(), poi `sweep` li cancella da R2 e dal DB.
+`sweep` converte anche in collegamenti i libri caricati che duplicano un job
+archiviato dell'account, e toglie la copia da R2.
 
 Modulo di servizio: dipende da `db`, `accounts`, `storage_backend`,
-`storage_tiering` e dalla stdlib. Le route stanno in `routes_account`.
+`storage_tiering`, `token_store` e dalla stdlib. Le route stanno in `routes_account`.
 """
 import hashlib
 import os
@@ -27,6 +30,7 @@ import accounts
 import db
 import storage_backend
 import storage_tiering
+import token_store
 from env_utils import env_int
 
 ROOT = "user_archive"
@@ -197,16 +201,14 @@ def create(account, *, fingerprint, size, filename, title="", author="", duratio
         return "linked", existing
 
     if not existing:
-        archived = accounts.archived_job_ids(now)
-        for path, kind, token in job_candidates or ():
-            job_id = _job_of_token_path(path)
-            if kind not in LINK_KINDS or not job_id or job_id not in archived:
-                continue
-            if accounts.job_owner(job_id) != aid:
-                continue
-            fp, _sz = fingerprint_of(path)
-            if fp != fingerprint:
-                continue
+        link = _candidate_link(aid, fingerprint, job_candidates, now)
+        if link is None:
+            # L'app non sa (piu') da quale job viene il libro, per esempio dopo
+            # una reinstallazione: si cerca fra i job archiviati dell'account.
+            link = (archived_job_files(aid, now, compute=False).get(fingerprint)
+                    or archived_job_files(aid, now).get(fingerprint))
+        if link is not None:
+            job_id, kind, token = link
             try:
                 item = _insert(aid, {**meta, "state": "ready", "job_id": job_id,
                                      "link_token": token, "link_kind": kind}, now)
@@ -259,6 +261,69 @@ def _job_of_token_path(path):
     return key.split("/", 1)[0]
 
 
+def _candidate_link(aid, fingerprint, job_candidates, now):
+    """(job_id, link_kind, token) del primo file fra `job_candidates` che e'
+    di un job archiviato dell'account con lo stesso contenuto, o None."""
+    archived = accounts.archived_job_ids(now)
+    for path, kind, token in job_candidates or ():
+        job_id = _job_of_token_path(path)
+        if kind not in LINK_KINDS or not job_id or job_id not in archived:
+            continue
+        if accounts.job_owner(job_id) != aid:
+            continue
+        if fingerprint_of(path)[0] == fingerprint:
+            return job_id, kind, token
+    return None
+
+
+def job_files(token_entries):
+    """[(path, link_kind, token)] dei file audiolibro serviti dai download
+    token di un job (`token_entries`: [(token, info)], vedi
+    token_store.tokens_by_job): l'm4b, o l'mp3 quando il token non ha uno zip
+    (/dl/<token>/download servirebbe lo zip)."""
+    out = []
+    for tok, info in token_entries or ():
+        if info.get("output_m4b"):
+            out.append((info["output_m4b"], "m4b", tok))
+        if info.get("output_file") and not info.get("output_zip"):
+            out.append((info["output_file"], "download", tok))
+    return out
+
+
+def _token_created(info):
+    try:
+        return float(info.get("created_at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def archived_job_files(account_id, now=None, compute=True, index=None):
+    """{impronta: (job_id, link_kind, token)} dei file dei job dell'account
+    nell'archivio protetto. L'impronta viene da account_jobs.lib_fp se si
+    riferisce a un token ancora presente; altrimenti, con `compute`, si
+    calcola sul file del token piu' recente e si salva."""
+    index = token_store.tokens_by_job() if index is None else index
+    out = {}
+    for r in accounts.archived_job_fingerprints(account_id, now):
+        entries = index.get(r["job_id"]) or []
+        files = job_files(entries)
+        cached = [f for f in files if f[2] == r["lib_token"]] if r["lib_fp"] else []
+        if cached:
+            fp, (_path, kind, tok) = r["lib_fp"], cached[0]
+        elif compute and files:
+            created = {t: _token_created(i) for t, i in entries}
+            # max() tiene il primo a parita': l'm4b, come _live_job_file.
+            path, kind, tok = max(files, key=lambda f: created.get(f[2], 0.0))
+            fp, size = fingerprint_of(path)
+            if not fp:
+                continue
+            accounts.set_job_fingerprint(r["job_id"], tok, fp, size)
+        else:
+            continue
+        out.setdefault(fp, (r["job_id"], kind, tok))
+    return out
+
+
 def finalize(account, item_id, now=None):
     """Chiude l'upload di un libro. Esiti: ("ready", item), ("not_found",),
     ("not_uploaded",), ("size_mismatch",), ("storage_error",)."""
@@ -302,11 +367,13 @@ def delete(account, item_id):
 def _purge(item):
     """Copia R2 (se nostra) e poi la riga: se il delete su R2 fallisce la riga
     resta, cosi' il file non diventa un orfano invisibile."""
-    if item.get("r2_key"):
+    for key in (item.get("r2_key"), item.get("orphan_key")):
+        if not key:
+            continue
         try:
-            storage_backend.delete_object(item["r2_key"])
+            storage_backend.delete_object(key)
         except Exception as e:  # noqa: BLE001
-            print(f"[user_archive] delete {item['r2_key']} fallita: {e}", flush=True)
+            print(f"[user_archive] delete {key} fallita: {e}", flush=True)
             return False
     _delete_row(item["id"])
     return True
@@ -318,13 +385,59 @@ def download_name(item):
 
 # ---------------------------------------------------------------- sweep
 
+def _dedupe_uploads(t, out):
+    """Libri caricati dall'app che sono lo stesso file di un job archiviato
+    dello stesso account (l'app non sapeva da quale job venivano): diventano
+    collegamenti e la copia R2 si cancella. Prima la riga (la chiave passa in
+    `orphan_key`), poi il delete; se fallisce si riprova al giro dopo."""
+    with db.tx() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT * FROM archive_items WHERE state='ready' AND job_id='' AND r2_key<>'' "
+            "ORDER BY account_id").fetchall()]
+    index = token_store.tokens_by_job() if rows else {}
+    files = {}
+    for item in rows:
+        aid = item["account_id"]
+        if aid not in files:
+            files[aid] = archived_job_files(aid, t, index=index)
+        link = files[aid].get(item["fingerprint"])
+        if link is None:
+            continue
+        job_id, kind, token = link
+        with db.tx() as c:
+            cur = c.execute(
+                "UPDATE archive_items SET job_id=?, link_token=?, link_kind=?, r2_key='', "
+                "orphan_key=?, updated_at=? WHERE id=? AND r2_key=? AND job_id=''",
+                (job_id, token, kind, item["r2_key"], t, item["id"], item["r2_key"]))
+        if cur.rowcount:
+            out["linked"] += 1
+            print(f"[user_archive] {item['id']} ({aid}) collegato al job {job_id}, "
+                  f"{item['size_bytes']} byte da togliere da R2", flush=True)
+    if out["linked"]:
+        accounts._archive_cache_clear()
+    with db.tx() as c:
+        orphans = [dict(r) for r in c.execute(
+            "SELECT id, orphan_key FROM archive_items WHERE orphan_key<>''").fetchall()]
+    for r in orphans:
+        try:
+            storage_backend.delete_object(r["orphan_key"])
+        except Exception as e:  # noqa: BLE001  si riprova al prossimo sweep
+            print(f"[user_archive] delete {r['orphan_key']} fallita: {e}", flush=True)
+            out["errors"] += 1
+            continue
+        with db.tx() as c:
+            c.execute("UPDATE archive_items SET orphan_key='' WHERE id=? AND orphan_key=?",
+                      (r["id"], r["orphan_key"]))
+
+
 def sweep(now=None, force=False):
     """Pulizia periodica (dal loop di cleanup, al piu' ogni SWEEP_INTERVAL_SEC):
-    upload mai chiusi oltre PENDING_TTL_SEC e archivi di account cancellati o
-    con l'abbonamento revocato da oltre archive_grace_days(). Ritorna
-    {"pending": n, "expired": n, "errors": n}."""
+    upload mai chiusi oltre PENDING_TTL_SEC, archivi di account cancellati o
+    con l'abbonamento revocato da oltre archive_grace_days(), e libri caricati
+    che duplicano un job archiviato dell'account (vedi _dedupe_uploads).
+    Ritorna {"pending": n, "expired": n, "linked": n, "errors": n}."""
     t = _now(now)
-    out = {"pending": 0, "expired": 0, "errors": 0}
+    out = {"pending": 0, "expired": 0, "linked": 0, "errors": 0}
     if not force and t - _sweep_state["at"] < SWEEP_INTERVAL_SEC:
         return out
     _sweep_state["at"] = t
@@ -351,6 +464,7 @@ def sweep(now=None, force=False):
                 out[kind] += 1
             else:
                 out["errors"] += 1
-    if out["pending"] or out["expired"] or out["errors"]:
+    _dedupe_uploads(t, out)
+    if any(out.values()):
         print(f"[user_archive] sweep: {out}", flush=True)
     return out

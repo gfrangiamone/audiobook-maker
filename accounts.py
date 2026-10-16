@@ -184,6 +184,14 @@ JOBS_LIBFP_MIGRATION = [
 ]
 
 
+# Copia R2 di un libro caricato dall'app e poi convertito in collegamento a un
+# job archiviato con lo stesso contenuto: la riga si aggiorna prima, l'oggetto
+# si cancella dopo, e finche' il delete non riesce la chiave resta qui.
+ARCHIVE_ITEMS_ORPHAN_MIGRATION = [
+    "ALTER TABLE archive_items ADD COLUMN orphan_key TEXT NOT NULL DEFAULT ''",
+]
+
+
 def init_schema():
     db.migrate("accounts_v1", SCHEMA)
     db.migrate("account_jobs_plan_v1", JOBS_PLAN_MIGRATION)
@@ -191,6 +199,7 @@ def init_schema():
     db.migrate("account_jobs_archive_v1", JOBS_ARCHIVE_MIGRATION)
     db.migrate("archive_items_v1", ARCHIVE_ITEMS_MIGRATION)
     db.migrate("account_jobs_libfp_v1", JOBS_LIBFP_MIGRATION)
+    db.migrate("archive_items_orphan_v1", ARCHIVE_ITEMS_ORPHAN_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -1017,6 +1026,22 @@ def job_fingerprint(job_id, token):
     if r is None or not r["lib_fp"] or r["lib_token"] != token:
         return None
     return r["lib_fp"], int(r["lib_size"])
+
+
+def archived_job_fingerprints(account_id, now=None):
+    """[{job_id, lib_fp, lib_size, lib_token}] dei job dell'account
+    nell'archivio protetto (vedi archived_job_ids), dal piu' recente."""
+    if not enabled():
+        return []
+    cond, args = _archive_active_where(_now(now))
+    with db.tx() as c:
+        rows = c.execute(
+            "SELECT j.job_id, j.lib_fp, j.lib_size, j.lib_token FROM account_jobs j "
+            "JOIN accounts a ON a.id=j.account_id "
+            "WHERE j.account_id=? AND " + _JOB_IN_ARCHIVE + " AND " + cond +
+            " ORDER BY j.archived_at DESC, j.job_id",
+            (account_id, *args)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def set_job_fingerprint(job_id, token, fp, size):

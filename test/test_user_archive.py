@@ -205,6 +205,87 @@ def test_link_refuses_other_content_or_other_owner(env, tmp_path, monkeypatch):
     assert _create(other, fp=_dart_fp(b"zzz"), size=3, job_candidates=cands)[0] == "upload"
 
 
+def _job_with_token(monkeypatch, tmp, acct, job_id, data, tok, archived=True):
+    import token_store
+    path = _job_file(monkeypatch, tmp, job_id, data)
+    accounts.record_job(acct["id"], job_id, kind="generate", status="done")
+    if archived:
+        accounts.mark_archived(job_id, 5000)
+    monkeypatch.setitem(token_store.download_tokens, tok,
+                        {"job_id": job_id, "output_m4b": path, "created_at": T0})
+    return path
+
+
+def test_links_archived_job_by_fingerprint_without_job_id(env, tmp_path, monkeypatch):
+    acct = _login()
+    data = b"m4b-content" * 10
+    _job_with_token(monkeypatch, tmp_path, acct, "j1", data, "tok1")
+    calls = []
+    real_fp = user_archive.fingerprint_of
+    monkeypatch.setattr(user_archive, "fingerprint_of", lambda p: calls.append(p) or real_fp(p))
+    st, item = _create(acct, fp=_dart_fp(data), size=len(data))      # nessun job_candidates
+    assert st == "linked"
+    assert (item["job_id"], item["link_token"], item["link_kind"], item["r2_key"]) == \
+        ("j1", "tok1", "m4b", "")
+    assert accounts.archive_usage(acct["id"]) == (5000, 1)
+    assert accounts.job_fingerprint("j1", "tok1") == (_dart_fp(data), len(data))
+    # Impronta in cache: il secondo collegamento non rilegge il file.
+    assert user_archive.delete(acct, item["id"]) == "ok"
+    assert _create(acct, fp=_dart_fp(data), size=len(data))[0] == "linked"
+    assert len(calls) == 1
+    # Contenuto diverso: si carica.
+    assert _create(acct, fp=_dart_fp(b"altro"), size=5)[0] == "upload"
+
+
+def _uploaded(env, acct, data):
+    st, res = _create(acct, fp=_dart_fp(data), size=len(data))
+    assert st == "upload"
+    item = res["item"]
+    env.objects[item["r2_key"]] = data
+    assert user_archive.finalize(acct, item["id"])[0] == "ready"
+    return item
+
+
+def test_sweep_converts_duplicate_upload_into_link(env, tmp_path, monkeypatch):
+    acct = _login()
+    data = b"same-book" * 40
+    _job_with_token(monkeypatch, tmp_path, acct, "j1", data, "tok1", archived=False)
+    item = _uploaded(env, acct, data)
+    assert accounts.archive_usage(acct["id"])[0] == len(data)
+    accounts.mark_archived("j1", 5000)
+    assert accounts.archive_usage(acct["id"])[0] == 5000 + len(data)   # doppione
+    # R2 giu': la riga diventa comunque un collegamento, la chiave resta da cancellare.
+    env.fail_delete = True
+    out = user_archive.sweep(now=T0 + 10, force=True)
+    assert out["linked"] == 1 and out["errors"] == 1
+    row = user_archive.get_item(acct["id"], item["id"])
+    assert (row["job_id"], row["link_token"], row["link_kind"], row["r2_key"]) == \
+        ("j1", "tok1", "m4b", "")
+    assert row["orphan_key"] == item["r2_key"] and item["r2_key"] in env.objects
+    assert accounts.archive_usage(acct["id"]) == (5000, 1)
+    assert user_archive.public(row)["source"] == "job"
+    env.fail_delete = False
+    out = user_archive.sweep(now=T0 + 20, force=True)
+    assert out == {"pending": 0, "expired": 0, "linked": 0, "errors": 0}
+    assert env.deleted == [item["r2_key"]]
+    assert user_archive.get_item(acct["id"], item["id"])["orphan_key"] == ""
+    # Idempotente.
+    user_archive.sweep(now=T0 + 30, force=True)
+    assert env.deleted == [item["r2_key"]]
+
+
+def test_sweep_keeps_upload_without_own_archived_job(env, tmp_path, monkeypatch):
+    acct, other = _login(), _login("o@b.it")
+    data = b"same-book" * 40
+    _job_with_token(monkeypatch, tmp_path, acct, "j1", data, "tok1", archived=False)
+    _job_with_token(monkeypatch, tmp_path, other, "j2", data, "tok2")
+    item = _uploaded(env, acct, data)
+    out = user_archive.sweep(now=T0 + 10, force=True)
+    assert out["linked"] == 0 and env.deleted == []
+    row = user_archive.get_item(acct["id"], item["id"])
+    assert row["r2_key"] == item["r2_key"] and row["job_id"] == ""
+
+
 # ------------------------------------------------------------ delete/sweep/stato
 
 def test_delete_keeps_row_when_r2_fails(env):
@@ -253,7 +334,7 @@ def test_sweep_purges_deleted_accounts_and_is_rate_limited(env):
     accounts.delete_account(acct["id"], now=T0)
     assert user_archive.sweep(now=T0 + 1)["expired"] == 1
     assert user_archive.get_item(acct["id"], item["id"]) is None
-    assert user_archive.sweep(now=T0 + 2) == {"pending": 0, "expired": 0, "errors": 0}
+    assert user_archive.sweep(now=T0 + 2) == {"pending": 0, "expired": 0, "linked": 0, "errors": 0}
 
 
 def test_active_status_shape(env):

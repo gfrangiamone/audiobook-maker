@@ -487,25 +487,10 @@ _ACCT_PER_PAGE = 50
 
 
 def _download_tokens_index():
-    """Indice `job_id -> [(token, info)]` costruito UNA volta per richiesta da
-    uno snapshot di _tkstore.download_tokens preso sotto _tkstore.tokens_lock.
-
-    Due motivi, non uno: (a) _tkstore.download_tokens e' mutato dai thread di
-    generazione (creazione token a fine job) e dal cleanup, quindi scorrerlo
-    senza snapshot e' una `RuntimeError: dictionary changed size during
-    iteration` in attesa del momento giusto — lo stesso schema che uccise il
-    cleanup._cleanup_loop; (b) lo storico chiama _account_downloads_for per ogni riga
-    mostrata, e una scansione lineare per riga costa O(righe x token)."""
-    with _tkstore.tokens_lock:
-        items = list(_tkstore.download_tokens.items())
-    idx = {}
-    for tok, ti in items:
-        if not isinstance(ti, dict):
-            continue
-        jid = ti.get("job_id")
-        if jid:
-            idx.setdefault(jid, []).append((tok, ti))
-    return idx
+    """Indice `job_id -> [(token, info)]` costruito UNA volta per richiesta
+    (vedi _tkstore.tokens_by_job): lo storico chiama _account_downloads_for per
+    ogni riga mostrata, e una scansione lineare per riga costa O(righe x token)."""
+    return _tkstore.tokens_by_job()
 
 
 def _account_downloads_for(row, now=None, index=None):
@@ -753,17 +738,10 @@ def _acct_required():
 
 def _archive_job_candidates(acct, job_id):
     """[(path, link_kind, token)] dei file del job dell'account con cui un
-    libro dell'app puo' coincidere: l'm4b, o l'mp3 quando il token non ha uno
-    zip (/dl/<token>/download servirebbe lo zip)."""
+    libro dell'app puo' coincidere (vedi user_archive.job_files)."""
     if not job_id or accounts.job_owner(job_id) != acct["id"]:
         return []
-    out = []
-    for tok, info in _download_tokens_index().get(job_id) or []:
-        if info.get("output_m4b"):
-            out.append((info["output_m4b"], "m4b", tok))
-        if info.get("output_file") and not info.get("output_zip"):
-            out.append((info["output_file"], "download", tok))
-    return out
+    return user_archive.job_files(_download_tokens_index().get(job_id))
 
 
 def _live_job_file(acct, job_id, now=None):
