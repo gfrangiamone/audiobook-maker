@@ -581,7 +581,9 @@ def _sanitize_tts_text(text: str):
     clean = unicodedata.normalize('NFC', text).strip()
     if not clean:
         return None
-    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u00ad\u200b-\u200f\u2028-\u202f\ufeff\ufffe\uffff]', '', clean)
+    # U+FFFD: residuo di un'estrazione PDF fallita, nessun motore lo legge
+    # (pagine intere di soli U+FFFD fallivano su edge-tts a ogni tentativo).
+    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u00ad\u200b-\u200f\u2028-\u202f\ufeff\ufffd\ufffe\uffff]', '', clean)
     clean = re.sub(r'\n{3,}', '\n\n', clean)
     clean = re.sub(r' {3,}', ' ', clean)
     if not clean.strip():

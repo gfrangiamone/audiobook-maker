@@ -275,6 +275,12 @@ async def _fallback_voice(voice, last_error):
     return _pick_standard_replacement(voice, catalog)
 
 
+def _has_speakable(text):
+    """Almeno una lettera o cifra: "." o "· · ·" non producono audio e
+    fallirebbero a ogni tentativo (e segnerebbero rotta una voce sana)."""
+    return any(ch.isalnum() for ch in text)
+
+
 async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     """Chiamata edge-tts per un testo, con ripiego di voce e silenzio finale.
 
@@ -284,6 +290,9 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     rotta va subito al ripiego. Se fallisce anche quello, silenzio esplicito e
     False. Ogni chiamata conta una volta in `edge_health.record_call`.
     """
+    if not _has_speakable(text):
+        _generate_silence_mp3(output_path, duration_sec=1)
+        return True
     last_error = None
     skip_original = _voice_is_broken(voice)
     if not skip_original:
