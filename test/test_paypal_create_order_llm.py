@@ -14,6 +14,16 @@ from epub_to_tts import BookInfo, Chapter
 # ricaricano audiobook_app (vedi nota in test_paypal_create_gemini.py).
 
 
+@pytest.fixture(autouse=True)
+def _default_llm_pricing(monkeypatch):
+    # I casi sopra/sotto soglia sono tarati sui default (1.10 EUR/M, soglia
+    # 0.50, floor 1.0): un ABM_LLM_* esportato nella shell li ribalterebbe.
+    import payment
+    monkeypatch.setattr(payment, "LLM_RATE_EUR_PER_MCHAR", 1.10)
+    monkeypatch.setattr(payment, "LLM_FREE_THRESHOLD_EUR", 0.50)
+    monkeypatch.setattr(payment, "LLM_MIN_COST_EUR", 1.0)
+
+
 @pytest.fixture
 def client():
     audiobook_app.app.config["TESTING"] = True
