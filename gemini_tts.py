@@ -9,8 +9,10 @@ WAV, unwrapped by _extract_audio_pcm).
 Scope: synthesis + pricing + usage tracking + preview cap + availability.
 """
 
+import array
 import io
 import os
+import sys
 import pricing_common as _pricing
 import retry_util as _retry
 from i18n import norm_lang as _norm_lang
@@ -1149,6 +1151,69 @@ def _temperature():
     """Temperature passata al GenerateContentConfig. Default 0.75.
     Override: ABM_GEMINI_TEMPERATURE (float, accetta virgola decimale)."""
     return _f("ABM_GEMINI_TEMPERATURE", 0.75)
+
+
+def _silence_max_gap_sec():
+    """Tratto muto massimo (s) tollerato dentro un audio Gemini. Default 8.0.
+    Override: ABM_GEMINI_SILENCE_MAX_GAP_SEC; 0 disattiva lo scarto.
+
+    Nessuna pausa di lettura supera pochi secondi: un tratto piu' lungo e' il
+    difetto di flash38 a temperatura bassa (voce per ~1,5 s, poi silenzio
+    fino al limite di token), non una pausa."""
+    return _f("ABM_GEMINI_SILENCE_MAX_GAP_SEC", 8.0, floor=0.0)
+
+
+def _silence_min_voiced_ratio():
+    """Quota minima di audio udibile. Default 0.25.
+    Override: ABM_GEMINI_SILENCE_MIN_VOICED (0-1, accetta virgola)."""
+    return _f("ABM_GEMINI_SILENCE_MIN_VOICED", 0.25, floor=0.0, ceil=1.0)
+
+
+# Finestra da 100 ms udibile se il picco supera ~-30 dBFS: la voce letta sta
+# ben sopra, il fruscio di fondo del modello ben sotto.
+_SILENCE_WINDOW_SEC = 0.1
+_SILENCE_PEAK = 1000
+# Sotto questa durata il profilo non e' significativo (un titolo breve).
+_SILENCE_MIN_AUDIO_SEC = 3.0
+
+
+def silence_profile(pcm):
+    """(durata_s, quota_udibile, tratto_muto_max_s) di un PCM 16 bit mono."""
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    if sys.byteorder == "big":
+        samples.byteswap()
+    n = len(samples)
+    if not n:
+        return 0.0, 0.0, 0.0
+    win = int(AUDIO_SAMPLE_RATE * _SILENCE_WINDOW_SEC)
+    voiced = run = longest = windows = 0
+    for i in range(0, n, win):
+        part = samples[i:i + win]
+        windows += 1
+        if max(part) > _SILENCE_PEAK or -min(part) > _SILENCE_PEAK:
+            voiced += 1
+            run = 0
+        else:
+            run += 1
+            longest = max(longest, run)
+    return (n / float(AUDIO_SAMPLE_RATE), voiced / float(windows),
+            longest * _SILENCE_WINDOW_SEC)
+
+
+def mostly_silent_reason(pcm):
+    """Motivo dello scarto se l'audio e' (quasi) muto, altrimenti None."""
+    max_gap = _silence_max_gap_sec()
+    if max_gap <= 0:
+        return None
+    dur, voiced, gap = silence_profile(pcm)
+    if dur < _SILENCE_MIN_AUDIO_SEC:
+        return None
+    if gap >= max_gap:
+        return f"silent gap {gap:.1f}s in {dur:.1f}s of audio"
+    if voiced < _silence_min_voiced_ratio():
+        return f"only {voiced:.0%} audible in {dur:.1f}s of audio"
+    return None
 
 
 def inter_chunk_gap_ms():
@@ -3524,7 +3589,23 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                 # Spec §6: il contatore RPD e' quello del progetto Google. Una
                 # chiamata servita da Cloudflare non lo consuma.
                 _rpd_increment(model_key)
-            break
+            # Audio (quasi) muto con 200 OK: flash38 a temperatura bassa legge
+            # ~1,5 s e poi genera silenzio fino al limite di token. Consegnarlo
+            # sarebbe un buco muto mai contato; va trattato come risposta
+            # vuota, cosi' scattano retry e, esauriti, il ripiego del chunk.
+            # Fuori dal breaker Cloudflare: e' un difetto del modello, non del
+            # backend.
+            silent = mostly_silent_reason(pcm_data)
+            if silent is None:
+                break
+            last_err = f"mostly silent audio ({model_key}): {silent}"
+            print(f"[gemini-tts] EMPTY-RESPONSE: {last_err}")
+            if attempt >= max_attempts:
+                raise RuntimeError(
+                    f"Gemini TTS failed after {max_attempts} attempts: "
+                    f"{last_err}")
+            time.sleep(_retry.backoff(attempt, cap=30.0))
+            continue
         except TransportError as te:
             # Messaggio REDATTO dell'adapter: e' l'unico che finisce nei log e
             # nei messaggi delle eccezioni. L'eccezione grezza del provider

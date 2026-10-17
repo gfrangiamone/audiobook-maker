@@ -131,6 +131,14 @@ def _no_edge_alert(monkeypatch):
     monkeypatch.setenv("ABM_EDGE_ALERT", "0")
 
 
+@pytest.fixture(autouse=True)
+def _no_gemini_silence_check(monkeypatch):
+    """I trasporti finti rispondono con PCM di zeri: muto per definizione.
+    Lo scarto dell'audio muto e' spento qui e riacceso da chi lo prova
+    (test_gemini_silence_check.py)."""
+    monkeypatch.setenv("ABM_GEMINI_SILENCE_MAX_GAP_SEC", "0")
+
+
 @pytest.fixture
 def reset_backend_cache():
     """Reset cache backend Gemini tra test (module-level state)."""
