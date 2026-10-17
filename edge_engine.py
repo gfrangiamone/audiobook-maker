@@ -3,9 +3,10 @@
 `generate_chunk_mp3` (async): testo -> MP3 via edge-tts con retry/backoff
 (`_edge_tts_call`), timeout per chiamata (`ABM_EDGE_TTS_TIMEOUT`), rilevamento
 dell'output troncato dalla sola dimensione del file e silenzio esplicito quando
-tutti i tentativi falliscono. Una voce Multilingual che non restituisce audio
-(NoAudioReceived) ripiega su una voce standard della stessa lingua prima del
-silenzio (`_fallback_voice`). Ogni tentativo e ogni esito finale vanno a
+tutti i tentativi falliscono. NoAudioReceived ha piu' tentativi degli altri
+errori; poi una voce Multilingual ripiega su una standard della stessa lingua,
+una standard su una voce della stessa locale, prima del silenzio
+(`_fallback_voice`). Ogni tentativo e ogni esito finale vanno a
 `edge_health`, che allerta l'admin se il tasso di errore supera la soglia.
 Le voci Multilingual passano frase per frase
 (`tts_split._split_sentences_for_tts`) e i pezzi vengono concatenati.
@@ -129,10 +130,20 @@ class _EdgeTruncated(Exception):
 # 1-2 s non basta a farlo rientrare.
 _EDGE_429_WAIT = 3.0
 
+# 16/10/2026: NoAudioReceived intermittente lato Microsoft su intere lingue
+# (cs-CZ 1-5 risposte su 10, ru-RU a tratti, en-US ~10%), con voci standard:
+# tre tentativi a 1-2 s di distanza lasciavano in silenzio centinaia di chunk
+# all'ora. Su NoAudioReceived i tentativi salgono a _EDGE_NOAUDIO_ATTEMPTS,
+# con attesa esponenziale fino a _EDGE_NOAUDIO_WAIT_CAP secondi.
+_EDGE_NOAUDIO_ATTEMPTS = 6
+_EDGE_NOAUDIO_WAIT_CAP = 8.0
+
 
 def _edge_retry_wait(attempt, exc):
     if getattr(exc, "status", None) == 429:
         return _EDGE_429_WAIT * (attempt + 1)
+    if isinstance(exc, NoAudioReceived):
+        return _retry.backoff(attempt, base=1.0, cap=_EDGE_NOAUDIO_WAIT_CAP)
     return _retry.backoff(attempt, base=1.0)
 
 
@@ -145,6 +156,13 @@ def _edge_retry_wait(attempt, exc):
 # e dello stesso genere. La voce resta "rotta" per _EDGE_BROKEN_VOICE_SEC: le
 # frasi successive del libro vanno subito al ripiego, senza tre tentativi persi
 # ciascuna e senza alternare le due voci frase per frase.
+# Stesso giorno, verso opposto: le voci standard cs-CZ e ru-RU senza audio per
+# gran parte delle richieste, mentre le Multilingual leggevano lo stesso testo
+# ceco 6/6. Una voce standard rotta ripiega prima sulla stessa locale.
+# 15-17/10/2026, 263.618 chunk edge: il 98% dei silenzi in 9 voci (en-US-Emma
+# 18,6%, sk-SK-Lukas 34,7%, ru-RU-Dmitry 5,8%, cs-CZ-Vlasta 18%), mentre le
+# sorelle della stessa locale erano a 0 (Viktoria 0/1008, Svetlana 0/4663):
+# niente legame con lunghezza dei chunk o ritmo delle richieste.
 _EDGE_BROKEN_VOICE_SEC = 900
 # Catalogo voci fallito: non si riscarica prima di questi secondi.
 _EDGE_CATALOG_RETRY_SEC = 300
@@ -197,6 +215,37 @@ def _pick_standard_voice(voice, catalog):
     return cands[0]["ShortName"] if cands else None
 
 
+def _pick_standard_replacement(voice, catalog):
+    """Voce non segnata rotta per sostituire la standard `voice`, o None.
+
+    Ordine: stessa locale (Multilingual o standard), poi Multilingual della
+    stessa lingua, poi Multilingual en-US, poi qualunque Multilingual. Dentro
+    la stessa locale prima lo stesso genere, e a parita' la Multilingual. Una
+    standard sana della stessa locale batte una Multilingual di un'altra: la
+    Multilingual deve indovinare la lingua, la madrelingua no (sk, cs, ru, el
+    non hanno Multilingual)."""
+    by_name = {v.get("ShortName"): v for v in catalog}
+    orig = by_name.get(voice) or {}
+    locale = orig.get("Locale") or "-".join(voice.split("-")[:2])
+    lang = locale.split("-")[0]
+    gender = orig.get("Gender")
+
+    def _rank(v):
+        loc = v.get("Locale") or ""
+        group = (0 if loc == locale else 1 if loc.split("-")[0] == lang
+                 else 2 if loc == "en-US" else 3)
+        return (group, v.get("Gender") != gender,
+                not tts_split._is_multilingual_voice(v.get("ShortName")),
+                v.get("ShortName") or "")
+
+    cands = [v for v in catalog
+             if v.get("ShortName") != voice
+             and not _voice_is_broken(v.get("ShortName"))
+             and (tts_split._is_multilingual_voice(v.get("ShortName"))
+                  or v.get("Locale") == locale)]
+    return min(cands, key=_rank)["ShortName"] if cands else None
+
+
 def _voice_is_broken(voice, now=None):
     now = time.time() if now is None else now
     with _fallback_lock:
@@ -212,24 +261,26 @@ def _mark_voice_broken(voice, now=None):
 
 
 async def _fallback_voice(voice, last_error):
-    """Voce standard con cui ritentare dopo un fallimento, o None.
+    """Voce con cui ritentare dopo un fallimento, o None.
 
-    Solo per le voci Multilingual, e solo se la voce e' gia' segnata rotta o i
-    tentativi sono finiti con NoAudioReceived (un 403/429/timeout non dipende
-    dalla voce: cambiarla non servirebbe)."""
-    if not tts_split._is_multilingual_voice(voice):
-        return None
+    Multilingual -> standard della stessa lingua, standard -> stessa locale
+    (`_pick_standard_replacement`). Solo se la voce e' gia' segnata rotta o
+    i tentativi sono finiti con NoAudioReceived (un 403/429/timeout non
+    dipende dalla voce: cambiarla non servirebbe)."""
     if not (isinstance(last_error, NoAudioReceived) or _voice_is_broken(voice)):
         return None
-    return _pick_standard_voice(voice, await _edge_voice_catalog())
+    catalog = await _edge_voice_catalog()
+    if tts_split._is_multilingual_voice(voice):
+        return _pick_standard_voice(voice, catalog)
+    return _pick_standard_replacement(voice, catalog)
 
 
 async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     """Chiamata edge-tts per un testo, con ripiego di voce e silenzio finale.
 
-    Prova `voice` con retry (`_edge_tts_attempts`); se e' una Multilingual che
-    Microsoft non serve (NoAudioReceived a ogni tentativo) ritenta con una voce
-    standard della stessa lingua (`_fallback_voice`). Una voce gia' segnata
+    Prova `voice` con retry (`_edge_tts_attempts`); se Microsoft non la serve
+    (NoAudioReceived a ogni tentativo) ritenta con la voce di ripiego
+    (`_fallback_voice`: Multilingual <-> standard). Una voce gia' segnata
     rotta va subito al ripiego. Se fallisce anche quello, silenzio esplicito e
     False. Ogni chiamata conta una volta in `edge_health.record_call`.
     """
@@ -304,18 +355,31 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
         edge_health.record_attempt()
         return ok
 
+    # NoAudioReceived ha tentativi in piu' (vedi _EDGE_NOAUDIO_ATTEMPTS); gli
+    # altri errori si fermano a max_retries.
+    attempts = max(max_retries, _EDGE_NOAUDIO_ATTEMPTS)
+    done = [0]
+
+    async def _counted(attempt):
+        done[0] = attempt + 1
+        return await _once(attempt)
+
+    def _retryable(e):
+        return isinstance(e, NoAudioReceived) or done[0] < max_retries
+
     def _log(attempt, e, _wait):
         if not isinstance(e, _EdgeTruncated):
-            print(f"[tts] Attempt {attempt+1}/{max_retries} failed "
+            print(f"[tts] Attempt {attempt+1}/{attempts} failed "
                   f"({len(text)} chars: \"{snippet}...\"): {e}")
 
     try:
-        await _retry.retry_call_async(_once, attempts=max_retries, wait=_edge_retry_wait, on_retry=_log)
+        await _retry.retry_call_async(_counted, attempts=attempts, is_retryable=_retryable,
+                                      wait=_edge_retry_wait, on_retry=_log)
         return True, None
     except Exception as e:      # noqa: BLE001 - esauriti i tentativi: decide il chiamante
         if isinstance(e, _EdgeTruncated):
             return False, str(e)
-        print(f"[tts] Attempt {max_retries}/{max_retries} failed "
+        print(f"[tts] Attempt {done[0]}/{attempts} failed "
               f"({len(text)} chars: \"{snippet}...\"): {e}")
         return False, e
 
@@ -333,8 +397,12 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
         _generate_silence_mp3(output_path, duration_sec=1)
         return
 
-    # Percorso "split-per-frase" solo per voci Multilingual
-    if tts_split._is_multilingual_voice(voice):
+    # Percorso "split-per-frase" per le voci Multilingual, anche quando lo e'
+    # solo il ripiego di una voce standard rotta (`_fallback_voice`)
+    speaking = voice
+    if not tts_split._is_multilingual_voice(voice) and _voice_is_broken(voice):
+        speaking = await _fallback_voice(voice, None) or voice
+    if tts_split._is_multilingual_voice(speaking):
         sentences = tts_split._split_sentences_for_tts(clean)
         if len(sentences) >= 2:
             tmpdir = tempfile.mkdtemp(prefix="abmtts_")
