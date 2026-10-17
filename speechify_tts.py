@@ -9,13 +9,11 @@ Anti-import-circolare: nessun import di audiobook_app. Le costanti condivise
 """
 
 import base64
-import contextlib as _contextlib
 import io
 from env_utils import env_bool as _b, env_float as _f, env_int as _i, env_str
-import threading
-import time
 import pricing_common as _pricing
 import retry_util as _retry
+from slot_gate import SlotGate
 import wave
 
 # Interruttore per modello (ABM_SIMBA32_ENABLE, default abilitato).
@@ -28,16 +26,12 @@ from voice_utils import is_speechify_voice as _is_speechify_voice, parse_rate_pc
 # l'invariante `active <= max_concurrency()` vale su tutti i job/client del
 # processo. max_concurrency() e' riletto a ogni acquire (reload runtime).
 
-_gate_lock = threading.Condition()
-_gate_active = 0
+_gate = SlotGate(lambda: max_concurrency())
 
 
 def _reset_gate_for_test():
     """Reset dello stato del gate (solo test)."""
-    global _gate_active
-    with _gate_lock:
-        _gate_active = 0
-        _gate_lock.notify_all()
+    _gate.reset()
 
 
 def acquire_slot(timeout=None):
@@ -46,50 +40,25 @@ def acquire_slot(timeout=None):
     Returns True se acquisito, False su timeout. timeout=None => attesa
     indefinita (admission gating trasparente).
     """
-    global _gate_active
-    deadline = None if timeout is None else (time.monotonic() + timeout)
-    with _gate_lock:
-        while _gate_active >= max_concurrency():
-            if deadline is None:
-                _gate_lock.wait()
-            else:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return False
-                _gate_lock.wait(timeout=remaining)
-        _gate_active += 1
-        return True
+    return _gate.acquire(timeout=timeout)
 
 
 def release_slot():
     """Rilascia un permesso globale e sveglia un eventuale waiter."""
-    global _gate_active
-    with _gate_lock:
-        if _gate_active > 0:
-            _gate_active -= 1
-        _gate_lock.notify()
+    _gate.release()
 
 
 def active_slots():
-    with _gate_lock:
-        return _gate_active
+    return _gate.active()
 
 
 def free_slots():
-    with _gate_lock:
-        return max(0, max_concurrency() - _gate_active)
+    return _gate.free()
 
 
-@_contextlib.contextmanager
 def slot(timeout=None):
     """Context manager: acquisisce uno slot per la durata del blocco."""
-    ok = acquire_slot(timeout=timeout)
-    if not ok:
-        raise TimeoutError("Speechify concurrency slot not available")
-    try:
-        yield
-    finally:
-        release_slot()
+    return _gate.slot(timeout=timeout, what="Speechify concurrency slot")
 
 
 MODEL_ID = "simba-3.2"

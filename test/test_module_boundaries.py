@@ -31,7 +31,7 @@ LEAVES = {
     "client_identity", "ratelimit", "content_store", "i18n", "page_brand", "seo_ld", "email_layout",
     "jsonl_audit", "llm_client", "gcp_auth", "retry_util", "monthly_ledger", "pricing_common",
     "token_store", "routes_tokens", "ffmpeg_tools", "cover_utils", "podcast_rss", "book_model", "plain_parsers",
-    "edge_health",
+    "edge_health", "slot_gate",
 }
 
 # Moduli di servizio che non devono importare generation_engine (§2.1).

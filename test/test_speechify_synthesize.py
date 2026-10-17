@@ -1,5 +1,6 @@
 import base64
 import io
+import time
 import wave
 import pytest
 import speechify_tts
@@ -125,7 +126,7 @@ def test_synthesize_uses_stream_endpoint_when_enabled(monkeypatch, tmp_path):
 def test_synthesize_retries_on_429(monkeypatch, tmp_path):
     monkeypatch.setenv("ABM_SPEECHIFY_API_KEY", "sk_test")
     speechify_tts._reset_gate_for_test()
-    monkeypatch.setattr(speechify_tts.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
     wav = _make_wav_bytes()
     ok = _Resp(200, {"audio_data": base64.b64encode(wav).decode(),
                      "billable_characters_count": 1})

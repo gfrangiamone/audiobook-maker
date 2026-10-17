@@ -13,7 +13,8 @@ Le voci Multilingual passano frase per frase
 
 Dipende da `tts_split` (solo splitting, chiamato qualificato cosi' i test che
 lo sostituiscono continuano a vederlo), `text_reflow` (`_sanitize_tts_text`),
-`audio_utils` (silenzio e concat MP3), `retry_util`, `edge_tts`.
+`audio_utils` (silenzio e concat MP3), `retry_util`, `slot_gate` (tetto delle
+chiamate in volo, `ABM_EDGE_MAX_INFLIGHT`), `edge_tts`.
 """
 import asyncio
 import os
@@ -28,6 +29,7 @@ from edge_tts.exceptions import NoAudioReceived
 
 import edge_health
 import retry_util as _retry
+from slot_gate import SlotGate
 import tts_split
 from audio_utils import _concatenate_mp3, _generate_silence_mp3
 from env_utils import env_int, env_str
@@ -66,6 +68,43 @@ _edge_communicate.WSS_URL = _edge_wss_url(env_str("ABM_EDGE_TTS_ENDPOINT"))
 # thread del job senza errori (incidente 2026-06-11). Il timeout trasforma
 # l'hang in TimeoutError, gestito dal retry/fallback di _edge_tts_call.
 EDGE_TTS_CHUNK_TIMEOUT = env_int("ABM_EDGE_TTS_TIMEOUT", 120)
+
+# Tetto alle chiamate edge-tts in volo su tutto il processo. edge-tts e' un
+# servizio non ufficiale e tutte le richieste partono da un IP: il tetto tiene
+# il carico verso Microsoft prevedibile anche se crescono gli utenti, al costo
+# di job gratuiti piu' lenti quando e' pieno. Ogni job chiama in sequenza,
+# quindi le chiamate in volo sono i job edge attivi: 1-17/10/2026 mediana 27,
+# p99 49, massimo 64 (stima per eccesso). 0 = nessun tetto. Riletto a ogni
+# chiamata. Ogni _EDGE_INFLIGHT_REPORT_SEC il log riporta picco e attese.
+def edge_max_inflight():
+    return env_int("ABM_EDGE_MAX_INFLIGHT", 64, floor=0)
+
+
+_edge_gate = SlotGate(edge_max_inflight)
+_EDGE_INFLIGHT_REPORT_SEC = 600
+_EDGE_GATE_POLL_SEC = 0.05
+_edge_report_lock = threading.Lock()
+_edge_report_at = [time.monotonic()]
+
+
+async def _edge_slot_acquire():
+    """Prende un permesso del tetto senza bloccare il loop del job."""
+    while not _edge_gate.acquire(timeout=0):
+        await asyncio.sleep(_EDGE_GATE_POLL_SEC)
+
+
+def _edge_slot_release():
+    _edge_gate.release()
+    now = time.monotonic()
+    with _edge_report_lock:
+        if now - _edge_report_at[0] < _EDGE_INFLIGHT_REPORT_SEC:
+            return
+        _edge_report_at[0] = now
+    peak, waits, wait_sec = _edge_gate.take_stats()
+    cap = edge_max_inflight()
+    print(f"[edge] in volo: picco {peak}/{cap or 'nessun tetto'} negli ultimi "
+          f"{_EDGE_INFLIGHT_REPORT_SEC // 60} min, {waits} attese "
+          f"({wait_sec:.0f} s in tutto)")
 
 # --- Sanity-check output edge-tts (anti-troncamento silenzioso) --------------
 # edge-tts/Azure a volte chiude lo stream WebSocket a meta' e communicate.save()
@@ -338,9 +377,15 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
 
     async def _synth(attempt):
         communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-        await asyncio.wait_for(
-            communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
-        )
+        # Il permesso copre la sola connessione: le pause fra i tentativi
+        # non tengono occupato il tetto.
+        await _edge_slot_acquire()
+        try:
+            await asyncio.wait_for(
+                communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
+            )
+        finally:
+            _edge_slot_release()
         if _edge_output_looks_truncated(output_path, text, rate):
             try:
                 size = os.path.getsize(output_path)
