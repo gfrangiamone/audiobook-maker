@@ -116,6 +116,11 @@ def test_toc_entry_line_is_not_a_heading():
     assert P._TOC_ENTRY_LINE_RE.search("Dedication – Page 6")
     assert P._TOC_ENTRY_LINE_RE.search("Introduzione ........ 12")
     assert not P._TOC_ENTRY_LINE_RE.search("Chapter 4: The Page Turner")
+    # Guide fatte a mano in Word (ticket 2026-10-16).
+    assert P._TOC_ENTRY_LINE_RE.search("1-Dedication.. Page 15")
+    assert P._TOC_ENTRY_LINE_RE.search("Introduction……………………..Page 9")
+    assert P._TOC_ENTRY_LINE_RE.search("Prologue .. pg 3")
+    assert not P._TOC_ENTRY_LINE_RE.search("She turned to the last page 15")
 
 
 def test_looks_like_toc_text():
@@ -138,6 +143,53 @@ def test_toc_chain_is_dropped_until_real_content():
         ("Chapter 2", _body(2)),
     ])
     assert [c.title for c in chapters] == ["Chapter 1", "Chapter 2"]
+
+
+def test_untitled_toc_before_first_chapter_is_dropped():
+    # Ticket 2026-10-16: "TABLE of CONTENTS (pg 1)" non riconosciuto come
+    # titolo, la sezione prende il frontespizio come titolo.
+    entries = " ".join(f"{k}-Memory number {k}.. Page {k * 7}" for k in range(1, 30))
+    chapters = _build([
+        ("The Sum of One A Collection of Snippets", "TABLE of CONTENTS (pg 1)\n\n" + entries),
+        ("The Sum of One", "TABLE of CONTENTS (pg 2)\n\n" + entries),
+        ("Introduction", _body(1)),
+        ("2-First Glimpses", _body(2)),
+    ])
+    assert [c.title for c in chapters] == ["Introduction", "2-First Glimpses"]
+
+
+def _word_toc_book(tmp_path):
+    """Indice con guide a mano ("Titolo.. Page N") e intestazione in corpo
+    testo sotto il frontespizio; niente outline."""
+    doc = fitz.open()
+    toc = [("The Sum of One", 18, "hebo"), ("A Collection of Snippets from Life", 12, "helv"),
+           ("TABLE of CONTENTS (pg 1)", 12, "helv")]
+    toc += [(f"{k}-Memory number {k}.. Page {k * 2 + 3}", 12, "helv") for k in range(1, 16)]
+    pages = [toc,
+             [("Introduction", 18, "hebo"), (_body(1), 12, "helv")],
+             [(_body(2), 12, "helv")],
+             [("1-Memory number 1", 18, "hebo"), (_body(3), 12, "helv")],
+             [(_body(4), 12, "helv")]]
+    for items in pages:
+        page = doc.new_page(width=612, height=792)
+        y = 70
+        for text, size, font in items:
+            if text.startswith("TABLE") or ".. Page" in text:
+                page.insert_text((150, y), text, fontsize=size, fontname=font)
+                y += size * 1.5
+            else:
+                y = _write_lines(page, y, text, size, font)
+    path = tmp_path / "word_toc.pdf"
+    doc.save(str(path))
+    doc.close()
+    return str(path)
+
+
+def test_word_style_toc_is_not_read(tmp_path):
+    info = P.parse_pdf(_word_toc_book(tmp_path))
+    assert info.chapters[0].title == "Introduction"
+    for c in info.chapters:
+        assert ".. Page" not in c.text and "TABLE of CONTENTS" not in c.text, c.title
 
 
 def test_toc_like_text_without_toc_before_is_left_to_content_filter():

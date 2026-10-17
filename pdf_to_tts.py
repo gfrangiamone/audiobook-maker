@@ -135,9 +135,11 @@ TOC_PAGE_TITLES = {
     "目录",
 }
 
-# Rimando di pagina di una voce d'indice: "Titolo – Page 49", "Titolo ..... 49".
-_TOC_PAGE_REF = (r"(?:[-–—]\s*(?:page|pag\.?|pagina|p\.|seite|s\.|página|pág\.?)\s*\d{1,4}"
-                 r"|(?:\.\s?){3,}\s*\d{1,4}|…+\s*\d{1,4})")
+# Rimando di pagina di una voce d'indice: "Titolo – Page 49", "Titolo ..... 49",
+# e le guide fatte a mano in Word: "Titolo.. Page 15", "Titolo……..Page 9".
+_TOC_PAGE_REF = (r"(?:(?:[-–—]|\.{2,}|…+)[\s.…]*"
+                 r"(?:page|pg\.?|pag\.?|pagina|p\.|seite|s\.|página|pág\.?)\s*\d{1,4}"
+                 r"|(?:\.\s?){3,}\s*\d{1,4}|…+[\s.]*\d{1,4})")
 _TOC_ENTRY_LINE_RE = re.compile(_TOC_PAGE_REF + r"\s*$", re.IGNORECASE)
 _TOC_PAGE_REF_RE = re.compile(_TOC_PAGE_REF + r"\b", re.IGNORECASE)
 _TOC_MAX_WORDS_PER_REF = 40       # densita' minima di rimandi per dirsi indice
@@ -1097,6 +1099,9 @@ def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
         sottotitolo) apre il capitolo successivo, che ne prende il titolo;
         altrimenti (paragrafo isolato sotto una riga in grassetto) si accoda,
         col suo titolo, al capitolo precedente.
+    Ticket 2026-10-16: una sezione fatta di voci d'indice prima di qualunque
+    capitolo tenuto e' indice anche se il suo titolo non lo dice (la riga
+    "TABLE of CONTENTS (pg 1)" finita nel testo, il frontespizio come titolo).
     """
     chapters = []
     chapter_index = 0
@@ -1116,7 +1121,7 @@ def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
         cleaned = clean_text_for_tts(cleaned)
 
         toc_like = _looks_like_toc_text(raw_text)
-        dropped_toc = after_toc and toc_like
+        dropped_toc = toc_like and (after_toc or not chapters)
         after_toc = False
 
         # Filtro contenuto
