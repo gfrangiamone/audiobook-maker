@@ -1276,7 +1276,9 @@ def _check_job_owner(job_id):
     fa polling di /api/job_status/<job_id> per mostrare la % delle conversioni in corso.
     """
     if job_id not in jobs:
-        return None, jsonify({"error": "Job not found"}), 404
+        # error_code: la SPA distingue il job sparito (restart, pulizia) da un
+        # errore di pagamento e chiede di ricaricare il file.
+        return None, jsonify({"error": "Job not found", "error_code": "job_not_found"}), 404
     job = jobs[job_id]
     owner = job.get("client_id", "")
     if owner:
@@ -6603,7 +6605,7 @@ def api_combined_estimate():
     with _jobs_lock:
         job = jobs.get(job_id)
     if not job:
-        return jsonify({"error": "job not found"}), 404
+        return jsonify({"error": "job not found", "error_code": "job_not_found"}), 404
     info = job.get("info")
     if info is None or not getattr(info, "chapters", None):
         return jsonify({"error": "no chapters"}), 400

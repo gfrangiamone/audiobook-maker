@@ -2103,6 +2103,15 @@ async function _doCombinedEstimate(){
   };
   try{
     const r=await fetch('/api/combined_estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(r.status===404){
+      const _d=await r.json().catch(()=>({}));
+      if(_d.error_code==='job_not_found'&&getEstimateCacheKey()===key){
+        renderEstimate(null);
+        const _det=document.getElementById('costPreviewDetail');
+        if(_det)_det.textContent=_localizeErrCode('job_not_found');
+        return;
+      }
+    }
     if(!r.ok)throw new Error('estimate failed');
     const data=await r.json();
     if(getEstimateCacheKey()!==key)return;
@@ -6325,7 +6334,10 @@ function esc(s){const d=document.createElement('div');d.textContent=s;return d.i
 // diventa un messaggio localizzato invece del codice grezzo.
 const _VOICE_MODEL_ERR={
   voice_model_unavailable:['err_voice_model_unavailable','This voice model is temporarily unavailable. Please choose another voice or try again later.'],
-  voice_model_disabled:['err_voice_model_disabled','This voice model is no longer available. Please choose another voice.']
+  voice_model_disabled:['err_voice_model_disabled','This voice model is no longer available. Please choose another voice.'],
+  // Job sparito dal server (restart, pulizia) con la scheda ancora aperta:
+  // senza questo l'utente vedeva "PayPal error: Job not found" (ticket 18/10/2026).
+  job_not_found:['err_job_not_found','This book is no longer available on the server. Please reload the page and upload the file again.']
 };
 function _localizeErrCode(m){
   const e=_VOICE_MODEL_ERR[m];
