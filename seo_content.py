@@ -115,7 +115,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         table_rows += (
             f'            <tr><td>{escape(label)}</td>'
             f'<td>{escape(count)}</td>'
-            f'<td>Microsoft Edge TTS (Neural)</td></tr>\n'
+            f'<td>Neural TTS</td></tr>\n'
         )
 
     article_html = f"""

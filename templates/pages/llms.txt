@@ -45,8 +45,8 @@
 
 ## Comparison
 
-- vs **Speechify**: Audiobook Maker is fully free with no subscription, no character limits, supports M4B output and podcast feeds.
-- vs **ElevenLabs**: Audiobook Maker uses Microsoft Edge TTS (free, unlimited) instead of paid ElevenLabs API. No voice cloning but no usage cost.
+- vs **Speechify**: Audiobook Maker is free with the Standard voices, no subscription, a generous monthly quota for whole books, supports M4B output and podcast feeds.
+- vs **ElevenLabs**: Audiobook Maker offers free Standard neural voices with no subscription; voice cloning is available as a paid PREMIUM option.
 - vs **Play.ht**: No subscription, no watermarks, supports chapter-based audiobook output (M4B).
 - vs **NaturalReader**: Free without account, server-side processing, batch chapter generation.
 

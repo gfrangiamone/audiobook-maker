@@ -1,12 +1,12 @@
 {
  "it": {
-  "direct_answer": "Audiobook Maker è un convertitore gratuito da EPUB e PDF a audiolibro MP3 e M4B con oltre 400 voci AI neurali in decine di lingue (tecnologia Microsoft Edge TTS). Non richiede registrazione, non ha limiti di utilizzo e funziona interamente nel browser.",
+  "direct_answer": "Audiobook Maker è un convertitore gratuito da EPUB e PDF a audiolibro MP3 e M4B con oltre 400 voci AI neurali in decine di lingue. Non richiede registrazione, offre una quota mensile gratuita generosa e funziona interamente nel browser.",
   "key_takeaways": {
    "title": "Punti Chiave",
    "items": [
-    "✅ <strong>Gratis al 100%</strong> — Nessuna registrazione, nessun limite",
+    "✅ <strong>Gratis</strong> — Nessuna registrazione, quota mensile generosa",
     "✅ <strong>Formato M4B</strong> — Supporto per audiolibri universali con capitoli incorporati",
-    "✅ <strong>400+ voci neurali AI</strong> — Microsoft Edge TTS di alta qualità",
+    "✅ <strong>400+ voci neurali AI</strong> — sintesi vocale neurale di alta qualità",
     "✅ <strong>50+ lingue</strong> — Italiano, Inglese, Francese, Spagnolo, Tedesco, Cinese e altre",
     "✅ <strong>Nessuna installazione</strong> — Funziona direttamente nel browser",
     "✅ <strong>Podcast RSS</strong> — Genera feed per ascoltare capitoli nella tua app preferita",
@@ -14,7 +14,7 @@
    ]
   },
   "heading": "Converti i tuoi Ebook EPUB e PDF in Audiolibri MP3 e M4B — Gratis Online",
-  "text": "Audiobook Maker è un convertitore online gratuito che trasforma i tuoi ebook EPUB e PDF in audiolibri MP3 e M4B utilizzando voci AI naturali con tecnologia neural text-to-speech (Microsoft Edge TTS). Carica il tuo libro in formato EPUB o PDF, scegli tra oltre 50 voci di sintesi vocale disponibili in italiano, inglese, francese, spagnolo, tedesco e cinese, e scarica il tuo audiolibro pronto per l'ascolto. Non è necessaria alcuna installazione né registrazione: il convertitore funziona direttamente dal browser. A differenza di servizi come Speechify o Play.ht, Audiobook Maker è completamente gratuito, senza limiti e senza pubblicità.",
+  "text": "Audiobook Maker è un convertitore online gratuito che trasforma i tuoi ebook EPUB e PDF in audiolibri MP3 e M4B utilizzando voci AI naturali con tecnologia neural text-to-speech. Carica il tuo libro in formato EPUB o PDF, scegli tra oltre 50 voci di sintesi vocale disponibili in italiano, inglese, francese, spagnolo, tedesco e cinese, e scarica il tuo audiolibro pronto per l'ascolto. Non è necessaria alcuna installazione né registrazione: il convertitore funziona direttamente dal browser. A differenza di servizi come Speechify o Play.ht, Audiobook Maker è gratuito con le voci Standard, entro una quota mensile generosa, e senza pubblicità.",
   "audience_heading": "A chi è rivolto",
   "audience": "Ideale per pendolari che vogliono ascoltare libri durante il tragitto, studenti che preferiscono l'apprendimento uditivo, persone ipovedenti e lettori con difficoltà di lettura come la dislessia. Perfetto anche per chi vuole semplicemente rilassarsi ascoltando i propri libri preferiti.",
   "table_heading": "Lingue e Voci Disponibili",
@@ -33,7 +33,7 @@
   "faqs": [
    [
     "Come convertire un EPUB o un PDF in audiolibro gratis?",
-    "Carica il tuo file EPUB o PDF su Audiobook Maker, seleziona una voce AI neurale tra le oltre 400 disponibili e la lingua desiderata, poi clicca su Converti. Il convertitore text-to-speech gratuito estrae automaticamente il testo dal libro — preservando la struttura del documento e la suddivisione in capitoli — e genera un audiolibro in formato MP3 o M4B con capitoli incorporati, pronto per essere scaricato e ascoltato su qualsiasi dispositivo (smartphone, tablet o lettore MP3). Non è richiesta alcuna registrazione e non ci sono limiti di utilizzo."
+    "Carica il tuo file EPUB o PDF su Audiobook Maker, seleziona una voce AI neurale tra le oltre 400 disponibili e la lingua desiderata, poi clicca su Converti. Il convertitore text-to-speech gratuito estrae automaticamente il testo dal libro — preservando la struttura del documento e la suddivisione in capitoli — e genera un audiolibro in formato MP3 o M4B con capitoli incorporati, pronto per essere scaricato e ascoltato su qualsiasi dispositivo (smartphone, tablet o lettore MP3). Non è richiesta alcuna registrazione e la quota mensile gratuita basta per molti libri."
    ],
    [
     "Cosa sono le Voci PREMIUM?",
@@ -53,11 +53,11 @@
    ],
    [
     "Quante voci AI sono disponibili e in quali lingue?",
-    "Audiobook Maker offre oltre 400 voci neurali AI di alta qualità basate su Microsoft Edge TTS, con supporto per decine di lingue tra cui italiano, inglese, francese, spagnolo, tedesco, cinese, portoghese, russo, giapponese, coreano, arabo, hindi e molte altre. L'interfaccia dell'app è disponibile in 6 lingue, ma il motore di sintesi vocale supporta tutte le lingue offerte dalla libreria Edge TTS. Ogni lingua dispone di voci maschili e femminili con diversi stili di narrazione."
+    "Audiobook Maker offre oltre 400 voci neurali AI di alta qualità, con supporto per decine di lingue tra cui italiano, inglese, francese, spagnolo, tedesco, cinese, portoghese, russo, giapponese, coreano, arabo, hindi e molte altre. L'interfaccia dell'app è disponibile in 6 lingue, ma il motore di sintesi vocale supporta oltre 50 lingue. Ogni lingua dispone di voci maschili e femminili con diversi stili di narrazione."
    ],
    [
     "Le voci AI sono naturali?",
-    "Sì, il convertitore utilizza voci neurali TTS di alta qualità basate su Microsoft Edge TTS, con sintesi vocale AI avanzata che produce voci naturali, fluide e piacevoli da ascoltare. A differenza delle vecchie voci robotiche, le voci neuronali catturano prosodia, intonazione e ritmo, offrendo un'esperienza di ascolto professionale comparabile a una narrazione umana. Puoi ascoltare un'anteprima gratuita prima di avviare la conversione completa."
+    "Sì, il convertitore utilizza voci neurali TTS di alta qualità, con sintesi vocale AI avanzata che produce voci naturali, fluide e piacevoli da ascoltare. A differenza delle vecchie voci robotiche, le voci neuronali catturano prosodia, intonazione e ritmo, offrendo un'esperienza di ascolto professionale comparabile a una narrazione umana. Puoi ascoltare un'anteprima gratuita prima di avviare la conversione completa."
    ],
    [
     "Devo installare qualcosa?",
@@ -65,11 +65,11 @@
    ],
    [
     "Il servizio è davvero gratuito?",
-    "Sì, Audiobook Maker è completamente gratuito e senza limiti di utilizzo. Non richiede registrazione, non chiede carta di credito e non inserisce pubblicità nei file audio generati. Il progetto open source è sostenuto da donazioni volontarie della community. Tutte le funzioni principali, inclusa la conversione text-to-speech e la generazione M4B, sono disponibili gratuitamente per tutti gli utenti."
+    "Sì, la conversione con le voci Standard è gratuita, entro una quota mensile generosa che basta per molti libri. Non richiede registrazione, non chiede carta di credito e non inserisce pubblicità nei file audio generati. Il progetto open source è sostenuto da donazioni volontarie della community. Tutte le funzioni principali, inclusa la conversione text-to-speech e la generazione M4B, sono disponibili gratuitamente per tutti gli utenti."
    ],
    [
     "Audiobook Maker è un'alternativa gratuita a Speechify?",
-    "Sì. A differenza di Speechify che richiede un abbonamento a pagamento, Audiobook Maker è 100% gratuito, non richiede registrazione e offre centinaia di voci AI neurali in decine di lingue senza alcun limite di utilizzo. Puoi trovare un confronto dettagliato con strumenti simili su AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
+    "Sì. A differenza di Speechify che richiede un abbonamento a pagamento, Audiobook Maker è gratuito con le voci Standard, non richiede registrazione e offre centinaia di voci AI neurali in decine di lingue, con una quota mensile gratuita generosa. Puoi trovare un confronto dettagliato con strumenti simili su AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
    [
     "Quali strumenti posso usare per ascoltare un audiolibro generato da Audiobook Maker?",
@@ -94,13 +94,13 @@
   "share_label": "Condividi"
  },
  "en": {
-  "direct_answer": "Audiobook Maker is a free, no-signup EPUB and PDF to MP3/M4B audiobook converter with 400+ neural AI voices in dozens of languages (Microsoft Edge TTS). It runs entirely in your browser with no usage limits.",
+  "direct_answer": "Audiobook Maker is a free, no-signup EPUB and PDF to MP3/M4B audiobook converter with 400+ neural AI voices in dozens of languages. It runs entirely in your browser, with a generous free monthly quota.",
   "key_takeaways": {
    "title": "Quick Summary",
    "items": [
-    "✅ <strong>100% Free</strong> — No signup, no limits",
+    "✅ <strong>Free</strong> — No signup, generous monthly quota",
     "✅ <strong>M4B Format</strong> — Universal audiobook support with embedded chapters",
-    "✅ <strong>400+ neural AI voices</strong> — High-quality Microsoft Edge TTS",
+    "✅ <strong>400+ neural AI voices</strong> — High-quality neural speech synthesis",
     "✅ <strong>50+ languages</strong> — English, Italian, French, Spanish, German, Chinese and more",
     "✅ <strong>No installation</strong> — Works directly in your browser",
     "✅ <strong>Podcast RSS</strong> — Generate feed to listen in your favorite app",
@@ -108,7 +108,7 @@
    ]
   },
   "heading": "Convert Your EPUB and PDF Ebooks to MP3 and M4B Audiobooks — Free Online",
-  "text": "Audiobook Maker is a free online converter that transforms your EPUB and PDF ebooks into MP3 and M4B audiobooks using natural AI voices powered by neural text-to-speech technology (Microsoft Edge TTS). Upload your book in EPUB or PDF format, choose from 50+ AI voices available in English, Italian, French, Spanish, German, and Chinese, and download your audiobook ready to listen. No installation or signup required — the converter works directly in your browser. Unlike paid alternatives like Speechify or Play.ht, Audiobook Maker is completely free with no usage limits and no ads.",
+  "text": "Audiobook Maker is a free online converter that transforms your EPUB and PDF ebooks into MP3 and M4B audiobooks using natural AI voices powered by neural text-to-speech technology. Upload your book in EPUB or PDF format, choose from 50+ AI voices available in English, Italian, French, Spanish, German, and Chinese, and download your audiobook ready to listen. No installation or signup required — the converter works directly in your browser. Unlike paid alternatives like Speechify or Play.ht, Audiobook Maker is free with the Standard voices, within a generous monthly quota, and has no ads.",
   "audience_heading": "Who Is It For",
   "audience": "Ideal for commuters who want to listen to books during travel, students who prefer auditory learning, visually impaired readers, and people with reading difficulties like dyslexia. Also perfect for anyone who simply wants to enjoy their favorite books hands-free.",
   "table_heading": "Available Languages and Voices",
@@ -127,7 +127,7 @@
   "faqs": [
    [
     "How to convert an EPUB or PDF to audiobook for free?",
-    "Upload your EPUB or PDF file to Audiobook Maker, select a neural AI voice from our collection of over 400 options and your desired language, then click Convert. The free text-to-speech converter automatically extracts the book text — preserving the document structure and chapter divisions — and generates an audiobook in MP3 or M4B format with embedded chapters, ready to download and listen on any device (smartphone, tablet, or MP3 player). No signup or credit card is required, and there are no usage limits."
+    "Upload your EPUB or PDF file to Audiobook Maker, select a neural AI voice from our collection of over 400 options and your desired language, then click Convert. The free text-to-speech converter automatically extracts the book text — preserving the document structure and chapter divisions — and generates an audiobook in MP3 or M4B format with embedded chapters, ready to download and listen on any device (smartphone, tablet, or MP3 player). No signup or credit card is required, and the free monthly quota covers many books."
    ],
    [
     "What are PREMIUM Voices?",
@@ -147,11 +147,11 @@
    ],
    [
     "How many AI voices are available and in which languages?",
-    "Audiobook Maker offers 400+ high-quality neural AI voices powered by Microsoft Edge TTS, supporting dozens of languages including English, Italian, French, Spanish, German, Chinese, Portuguese, Russian, Japanese, Korean, Arabic, Hindi, and many more. The app interface is available in 6 languages, but the text-to-speech engine supports all languages offered by the Edge TTS library. Each language includes male and female voices with different narration styles."
+    "Audiobook Maker offers 400+ high-quality neural AI voices, supporting dozens of languages including English, Italian, French, Spanish, German, Chinese, Portuguese, Russian, Japanese, Korean, Arabic, Hindi, and many more. The app interface is available in 6 languages, but the text-to-speech engine supports more than 50 languages. Each language includes male and female voices with different narration styles."
    ],
    [
     "Are the AI voices natural-sounding?",
-    "Yes, the converter uses high-quality neural TTS voices powered by Microsoft Edge TTS, with advanced AI voice synthesis that produces natural, fluid, and pleasant voices. Unlike old robotic voices, neural voices capture prosody, intonation, and rhythm, delivering a professional listening experience comparable to human narration. You can listen to a free preview before starting the full conversion."
+    "Yes, the converter uses high-quality neural TTS voices, with advanced AI voice synthesis that produces natural, fluid, and pleasant voices. Unlike old robotic voices, neural voices capture prosody, intonation, and rhythm, delivering a professional listening experience comparable to human narration. You can listen to a free preview before starting the full conversion."
    ],
    [
     "Do I need to install anything?",
@@ -159,11 +159,11 @@
    ],
    [
     "Is the service really free?",
-    "Yes, Audiobook Maker is completely free with no usage limits. No registration is required, no credit card is asked for, and no advertisements are inserted into generated audio files. The open-source project is supported by voluntary community donations. All core features, including text-to-speech conversion and M4B generation, are available free of charge to all users."
+    "Yes, conversion with the Standard voices is free, within a generous monthly quota that covers many books. No registration is required, no credit card is asked for, and no advertisements are inserted into generated audio files. The open-source project is supported by voluntary community donations. All core features, including text-to-speech conversion and M4B generation, are available free of charge to all users."
    ],
    [
     "Is Audiobook Maker a free alternative to Speechify?",
-    "Yes. Unlike Speechify which requires a paid subscription, Audiobook Maker is 100% free, requires no signup, and offers hundreds of neural AI voices in dozens of languages with no usage limits whatsoever. You can find a detailed comparison with similar tools on AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
+    "Yes. Unlike Speechify which requires a paid subscription, Audiobook Maker is free with the Standard voices, requires no signup, and offers hundreds of neural AI voices in dozens of languages, with a generous free monthly quota. You can find a detailed comparison with similar tools on AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
    [
     "What tools can I use to listen to an audiobook generated by Audiobook Maker?",
@@ -188,13 +188,13 @@
   "share_label": "Share"
  },
  "fr": {
-  "direct_answer": "Audiobook Maker est un convertisseur gratuit d'EPUB et PDF en livres audio MP3 et M4B avec plus de 400 voix IA neuronales dans des dizaines de langues (Microsoft Edge TTS). Sans inscription, sans limites, directement dans votre navigateur.",
+  "direct_answer": "Audiobook Maker est un convertisseur gratuit d'EPUB et PDF en livres audio MP3 et M4B avec plus de 400 voix IA neuronales dans des dizaines de langues. Sans inscription, avec un quota mensuel gratuit généreux, directement dans votre navigateur.",
   "key_takeaways": {
    "title": "Points Clés",
    "items": [
-    "✅ <strong>100% Gratuit</strong> — Sans inscription, sans limites",
+    "✅ <strong>Gratuit</strong> — Sans inscription, quota mensuel généreux",
     "✅ <strong>Format M4B</strong> — Support des livres audio universels avec chapitres intégrés",
-    "✅ <strong>400+ voix IA neuronales</strong> — Microsoft Edge TTS de haute qualité",
+    "✅ <strong>400+ voix IA neuronales</strong> — synthèse vocale neuronale de haute qualité",
     "✅ <strong>50+ langues</strong> — Français, Anglais, Italien, Espagnol, Allemand, Chinois et plus",
     "✅ <strong>Sans installation</strong> — Fonctionne directement dans votre navigateur",
     "✅ <strong>Podcast RSS</strong> — Générez un flux pour écouter dans votre app préférée",
@@ -202,7 +202,7 @@
    ]
   },
   "heading": "Convertissez vos Ebooks EPUB et PDF en Livres Audio MP3 et M4B — Gratuit en Ligne",
-  "text": "Audiobook Maker est un convertisseur en ligne gratuit qui transforme vos ebooks EPUB et PDF en livres audio MP3 et M4B en utilisant des voix IA naturelles (technologie neuronale Microsoft Edge TTS). Téléchargez votre livre au format EPUB ou PDF, choisissez parmi plus de 50 voix de synthèse vocale disponibles en français, anglais, italien, espagnol, allemand et chinois, et téléchargez votre livre audio prêt à écouter. Aucune installation ni inscription nécessaire. Contrairement à Speechify ou Play.ht, Audiobook Maker est entièrement gratuit, sans limites et sans publicité.",
+  "text": "Audiobook Maker est un convertisseur en ligne gratuit qui transforme vos ebooks EPUB et PDF en livres audio MP3 et M4B en utilisant des voix IA naturelles (technologie de synthèse vocale neuronale). Téléchargez votre livre au format EPUB ou PDF, choisissez parmi plus de 50 voix de synthèse vocale disponibles en français, anglais, italien, espagnol, allemand et chinois, et téléchargez votre livre audio prêt à écouter. Aucune installation ni inscription nécessaire. Contrairement à Speechify ou Play.ht, Audiobook Maker est gratuit avec les voix Standard, dans la limite d'un quota mensuel généreux, et sans publicité.",
   "audience_heading": "À qui s'adresse cet outil",
   "audience": "Idéal pour les pendulaires qui veulent écouter des livres en déplacement, les étudiants qui préfèrent l'apprentissage auditif, les malvoyants et les personnes ayant des difficultés de lecture comme la dyslexie. Parfait aussi pour quiconque souhaite profiter de ses livres préférés en mains libres.",
   "table_heading": "Langues et Voix Disponibles",
@@ -221,7 +221,7 @@
   "faqs": [
    [
     "Comment convertir un EPUB ou un PDF en livre audio gratuitement ?",
-    "Téléchargez votre fichier EPUB ou PDF sur Audiobook Maker, sélectionnez une voix IA neuronale parmi plus de 400 options et la langue souhaitée, puis cliquez sur Convertir. Le convertisseur text-to-speech gratuit extrait automatiquement le texte du livre — en préservant la structure du document et la division en chapitres — et génère un livre audio en format MP3 ou M4B avec chapitres intégrés, prêt à être téléchargé et écouté sur n'importe quel appareil (smartphone, tablette ou lecteur MP3). Aucune inscription requise et aucune limite d'utilisation."
+    "Téléchargez votre fichier EPUB ou PDF sur Audiobook Maker, sélectionnez une voix IA neuronale parmi plus de 400 options et la langue souhaitée, puis cliquez sur Convertir. Le convertisseur text-to-speech gratuit extrait automatiquement le texte du livre — en préservant la structure du document et la division en chapitres — et génère un livre audio en format MP3 ou M4B avec chapitres intégrés, prêt à être téléchargé et écouté sur n'importe quel appareil (smartphone, tablette ou lecteur MP3). Aucune inscription requise, avec un quota mensuel gratuit généreux."
    ],
    [
     "Que sont les Voix PREMIUM ?",
@@ -241,11 +241,11 @@
    ],
    [
     "Combien de voix IA sont disponibles et dans quelles langues ?",
-    "Audiobook Maker propose plus de 400 voix IA neuronales de haute qualité basées sur Microsoft Edge TTS, avec prise en charge de dizaines de langues dont le français, l'anglais, l'italien, l'espagnol, l'allemand, le chinois, le portugais, le russe, le japonais, le coréen, l'arabe, le hindi et bien d'autres. L'interface de l'application est disponible en 6 langues, mais le moteur de synthèse vocale prend en charge toutes les langues offertes par la bibliothèque Edge TTS."
+    "Audiobook Maker propose plus de 400 voix IA neuronales de haute qualité, avec prise en charge de dizaines de langues dont le français, l'anglais, l'italien, l'espagnol, l'allemand, le chinois, le portugais, le russe, le japonais, le coréen, l'arabe, le hindi et bien d'autres. L'interface de l'application est disponible en 6 langues, mais le moteur de synthèse vocale prend en charge plus de 50 langues."
    ],
    [
     "Les voix IA sont-elles naturelles ?",
-    "Oui, le convertisseur utilise des voix neuronales TTS de haute qualité basées sur Microsoft Edge TTS, avec une synthèse vocale IA avancée qui produit des voix naturelles, fluides et agréables. Contrairement aux anciennes voix robotiques, les voix neuronales capturent la prosodie, l'intonation et le rythme, offrant une expérience d'écoute professionnelle comparable à une narration humaine. Vous pouvez écouter un aperçu gratuit avant de lancer la conversion complète."
+    "Oui, le convertisseur utilise des voix neuronales TTS de haute qualité, avec une synthèse vocale IA avancée qui produit des voix naturelles, fluides et agréables. Contrairement aux anciennes voix robotiques, les voix neuronales capturent la prosodie, l'intonation et le rythme, offrant une expérience d'écoute professionnelle comparable à une narration humaine. Vous pouvez écouter un aperçu gratuit avant de lancer la conversion complète."
    ],
    [
     "Dois-je installer quelque chose ?",
@@ -253,11 +253,11 @@
    ],
    [
     "Le service est-il vraiment gratuit ?",
-    "Oui, Audiobook Maker est entièrement gratuit et sans limites d'utilisation. Pas d'inscription requise, pas de carte de crédit demandée et pas de publicité dans les fichiers audio générés. Le projet open source est soutenu par des dons volontaires de la communauté. Toutes les fonctions principales, y compris la conversion text-to-speech et la génération M4B, sont disponibles gratuitement pour tous les utilisateurs."
+    "Oui, la conversion avec les voix Standard est gratuite, dans la limite d'un quota mensuel généreux qui suffit pour de nombreux livres. Pas d'inscription requise, pas de carte de crédit demandée et pas de publicité dans les fichiers audio générés. Le projet open source est soutenu par des dons volontaires de la communauté. Toutes les fonctions principales, y compris la conversion text-to-speech et la génération M4B, sont disponibles gratuitement pour tous les utilisateurs."
    ],
    [
     "Audiobook Maker est-il une alternative gratuite à Speechify ?",
-    "Oui. Contrairement à Speechify qui nécessite un abonnement payant, Audiobook Maker est 100 % gratuit, ne nécessite pas d'inscription et propose des centaines de voix IA neuronales dans des dizaines de langues sans aucune limite d'utilisation. Vous pouvez trouver une comparaison détaillée avec des outils similaires sur AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
+    "Oui. Contrairement à Speechify qui nécessite un abonnement payant, Audiobook Maker est gratuit avec les voix Standard, ne nécessite pas d'inscription et propose des centaines de voix IA neuronales dans des dizaines de langues, avec un quota mensuel gratuit généreux. Vous pouvez trouver une comparaison détaillée avec des outils similaires sur AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
    [
     "Quels outils utiliser pour écouter un livre audio généré par Audiobook Maker ?",
@@ -282,13 +282,13 @@
   "share_label": "Partager"
  },
  "es": {
-  "direct_answer": "Audiobook Maker es un convertidor gratuito de EPUB y PDF a audiolibro MP3 y M4B con más de 400 voces IA neuronales en decenas de idiomas (Microsoft Edge TTS). Sin registro, sin límites, directamente en tu navegador.",
+  "direct_answer": "Audiobook Maker es un convertidor gratuito de EPUB y PDF a audiolibro MP3 y M4B con más de 400 voces IA neuronales en decenas de idiomas. Sin registro, con una cuota mensual gratuita amplia, directamente en tu navegador.",
   "key_takeaways": {
    "title": "Puntos Clave",
    "items": [
-    "✅ <strong>100% Gratis</strong> — Sin registro, sin límites",
+    "✅ <strong>Gratis</strong> — Sin registro, cuota mensual amplia",
     "✅ <strong>Formato M4B</strong> — Soporte de audiolibros universales con capítulos integrados",
-    "✅ <strong>400+ voces IA neuronales</strong> — Microsoft Edge TTS de alta calidad",
+    "✅ <strong>400+ voces IA neuronales</strong> — síntesis de voz neuronal de alta calidad",
     "✅ <strong>50+ idiomas</strong> — Español, Inglés, Italiano, Francés, Alemán, Chino y más",
     "✅ <strong>Sin instalación</strong> — Funciona directamente en tu navegador",
     "✅ <strong>Podcast RSS</strong> — Genera feed para escuchar en tu app favorita",
@@ -296,7 +296,7 @@
    ]
   },
   "heading": "Convierte tus Ebooks EPUB y PDF en Audiolibros MP3 y M4B — Gratis Online",
-  "text": "Audiobook Maker es un convertidor en línea gratuito que transforma tus ebooks EPUB y PDF en audiolibros MP3 y M4B utilizando voces IA naturales (tecnología neuronal Microsoft Edge TTS). Sube tu libro en formato EPUB o PDF, elige entre más de 50 voces de síntesis de voz disponibles en español, inglés, italiano, francés, alemán y chino, y descarga tu audiolibro listo para escuchar. No necesitas instalar nada ni registrarte. A diferencia de Speechify o Play.ht, Audiobook Maker es completamente gratuito, sin límites y sin publicidad.",
+  "text": "Audiobook Maker es un convertidor en línea gratuito que transforma tus ebooks EPUB y PDF en audiolibros MP3 y M4B utilizando voces IA naturales (tecnología de síntesis de voz neuronal). Sube tu libro en formato EPUB o PDF, elige entre más de 50 voces de síntesis de voz disponibles en español, inglés, italiano, francés, alemán y chino, y descarga tu audiolibro listo para escuchar. No necesitas instalar nada ni registrarte. A diferencia de Speechify o Play.ht, Audiobook Maker es gratuito con las voces Estándar, dentro de una cuota mensual amplia, y sin publicidad.",
   "audience_heading": "A quién está dirigido",
   "audience": "Ideal para viajeros que quieren escuchar libros durante el trayecto, estudiantes que prefieren el aprendizaje auditivo, personas con discapacidad visual y lectores con dificultades como la dislexia. Perfecto también para cualquiera que quiera disfrutar de sus libros favoritos sin usar las manos.",
   "table_heading": "Idiomas y Voces Disponibles",
@@ -315,7 +315,7 @@
   "faqs": [
    [
     "¿Cómo convertir un EPUB o un PDF a audiolibro gratis?",
-    "Sube tu archivo EPUB o PDF a Audiobook Maker, selecciona una voz IA neuronal de entre más de 400 opciones y el idioma deseado, luego haz clic en Convertir. El convertidor text-to-speech gratuito extrae automáticamente el texto del libro — preservando la estructura del documento y la división en capítulos — y genera un audiolibro en formato MP3 o M4B con capítulos integrados, listo para descargar y escuchar en cualquier dispositivo (smartphone, tablet o reproductor MP3). No se requiere registro y no hay límites de uso."
+    "Sube tu archivo EPUB o PDF a Audiobook Maker, selecciona una voz IA neuronal de entre más de 400 opciones y el idioma deseado, luego haz clic en Convertir. El convertidor text-to-speech gratuito extrae automáticamente el texto del libro — preservando la estructura del documento y la división en capítulos — y genera un audiolibro en formato MP3 o M4B con capítulos integrados, listo para descargar y escuchar en cualquier dispositivo (smartphone, tablet o reproductor MP3). No se requiere registro y hay una cuota mensual gratuita amplia."
    ],
    [
     "¿Qué son las Voces PREMIUM?",
@@ -335,11 +335,11 @@
    ],
    [
     "¿Cuántas voces IA hay disponibles y en qué idiomas?",
-    "Audiobook Maker ofrece más de 400 voces IA neuronales de alta calidad basadas en Microsoft Edge TTS, con soporte para decenas de idiomas incluyendo español, inglés, italiano, francés, alemán, chino, portugués, ruso, japonés, coreano, árabe, hindi y muchos más. La interfaz de la app está disponible en 6 idiomas, pero el motor de síntesis de voz soporta todos los idiomas ofrecidos por la librería Edge TTS."
+    "Audiobook Maker ofrece más de 400 voces IA neuronales de alta calidad, con soporte para decenas de idiomas incluyendo español, inglés, italiano, francés, alemán, chino, portugués, ruso, japonés, coreano, árabe, hindi y muchos más. La interfaz de la app está disponible en 6 idiomas, pero el motor de síntesis de voz soporta más de 50 idiomas."
    ],
    [
     "¿Las voces IA suenan naturales?",
-    "Sí, el convertidor utiliza voces neuronales TTS de alta calidad basadas en Microsoft Edge TTS, con síntesis de voz IA avanzada que produce voces naturales, fluidas y agradables. A diferencia de las antiguas voces robóticas, las voces neuronales capturan prosodia, entonación y ritmo, ofreciendo una experiencia de escucha profesional comparable a una narración humana. Puedes escuchar una vista previa gratuita antes de iniciar la conversión completa."
+    "Sí, el convertidor utiliza voces neuronales TTS de alta calidad, con síntesis de voz IA avanzada que produce voces naturales, fluidas y agradables. A diferencia de las antiguas voces robóticas, las voces neuronales capturan prosodia, entonación y ritmo, ofreciendo una experiencia de escucha profesional comparable a una narración humana. Puedes escuchar una vista previa gratuita antes de iniciar la conversión completa."
    ],
    [
     "¿Necesito instalar algo?",
@@ -347,11 +347,11 @@
    ],
    [
     "¿El servicio es realmente gratuito?",
-    "Sí, Audiobook Maker es completamente gratuito y sin límites de uso. No se requiere registro, no se pide tarjeta de crédito y no hay publicidad en los archivos de audio generados. El proyecto de código abierto se sostiene con donaciones voluntarias de la comunidad. Todas las funcciones principales, incluida la conversión text-to-speech y la generación M4B, están disponibles gratuitamente para todos los usuarios."
+    "Sí, la conversión con las voces Estándar es gratuita, dentro de una cuota mensual amplia que alcanza para muchos libros. No se requiere registro, no se pide tarjeta de crédito y no hay publicidad en los archivos de audio generados. El proyecto de código abierto se sostiene con donaciones voluntarias de la comunidad. Todas las funcciones principales, incluida la conversión text-to-speech y la generación M4B, están disponibles gratuitamente para todos los usuarios."
    ],
    [
     "¿Es Audiobook Maker una alternativa gratuita a Speechify?",
-    "Sí. A diferencia de Speechify, que requiere una suscripción de pago, Audiobook Maker es 100 % gratuito, no requiere registro y ofrece cientos de voces IA neuronales en decenas de idiomas sin ningún límite de uso. Puedes encontrar una comparación detallada con herramientas similares en AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
+    "Sí. A diferencia de Speechify, que requiere una suscripción de pago, Audiobook Maker es gratuito con las voces Estándar, no requiere registro y ofrece cientos de voces IA neuronales en decenas de idiomas, con una cuota mensual gratuita amplia. Puedes encontrar una comparación detallada con herramientas similares en AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
    [
     "¿Qué herramientas puedo usar para escuchar un audiolibro generado por Audiobook Maker?",
@@ -376,21 +376,21 @@
   "share_label": "Compartir"
  },
  "de": {
-  "direct_answer": "Audiobook Maker ist ein kostenloser EPUB- und PDF-zu-MP3/M4B-Hörbuch-Konverter mit über 400 neuronalen KI-Stimmen in Dutzenden von Sprachen (Microsoft Edge TTS). Ohne Registrierung, ohne Limits, direkt im Browser.",
+  "direct_answer": "Audiobook Maker ist ein kostenloser EPUB- und PDF-zu-MP3/M4B-Hörbuch-Konverter mit über 400 neuronalen KI-Stimmen in Dutzenden von Sprachen. Ohne Registrierung, mit großzügigem kostenlosem Monatskontingent, direkt im Browser.",
   "key_takeaways": {
    "title": "Kurzübersicht",
    "items": [
-    "✅ <strong>100% Kostenlos</strong> — Keine Anmeldung, keine Limits",
+    "✅ <strong>Kostenlos</strong> — Keine Anmeldung, großzügiges Monatskontingent",
     "✅ <strong>M4B-Format</strong> — Universelle Hörbuch-Unterstützung mit eingebetteten Kapiteln",
-    "✅ <strong>400+ neuronale KI-Stimmen</strong> — Microsoft Edge TTS hoher Qualität",
+    "✅ <strong>400+ neuronale KI-Stimmen</strong> — hochwertige neuronale Sprachsynthese",
     "✅ <strong>50+ Sprachen</strong> — Deutsch, Englisch, Italienisch, Französisch, Spanisch, Chinesisch und mehr",
     "✅ <strong>Keine Installation</strong> — Funktioniert direkt in Ihrem Browser",
     "✅ <strong>Podcast RSS</strong> — Feed generieren für Ihre Lieblings-App",
     "✅ <strong>Open source</strong> — Transparentes Projekt mit AGPL-3.0 Lizenz"
    ]
   },
-  "heading": "Konvertieren Sie Ihre EPUB- und PDF-E-Books in MP3- und M4B-Hörbücher — Kostenlos Online",
-  "text": "Audiobook Maker ist ein kostenloser Online-Konverter, der Ihre EPUB- und PDF-E-Books in MP3- und M4B-Hörbücher umwandelt — mit natürlichen KI-Stimmen (neuronale Microsoft Edge TTS-Technologie). Laden Sie Ihr Buch im EPUB- oder PDF-Format hoch, wählen Sie aus über 50 Sprachsynthese-Stimmen auf Deutsch, Englisch, Italienisch, Französisch, Spanisch und Chinesisch, und laden Sie Ihr fertiges Hörbuch herunter. Keine Installation und keine Registrierung erforderlich. Im Gegensatz zu Speechify oder Play.ht ist Audiobook Maker komplett kostenlos, ohne Limits und ohne Werbung.",
+  "heading": "Hörbuch mit KI erstellen: EPUB und PDF kostenlos in MP3 und M4B umwandeln",
+  "text": "Audiobook Maker ist ein kostenloser Online-Konverter, der Ihre EPUB- und PDF-E-Books in MP3- und M4B-Hörbücher umwandelt — mit natürlichen KI-Stimmen (neuronale Sprachsynthese). Laden Sie Ihr Buch im EPUB- oder PDF-Format hoch, wählen Sie aus über 50 Sprachsynthese-Stimmen auf Deutsch, Englisch, Italienisch, Französisch, Spanisch und Chinesisch, und laden Sie Ihr fertiges Hörbuch herunter. Keine Installation und keine Registrierung erforderlich. Im Gegensatz zu Speechify oder Play.ht ist Audiobook Maker mit den Standard-Stimmen kostenlos, im Rahmen eines großzügigen Monatskontingents, und ohne Werbung.",
   "audience_heading": "Für wen ist es gedacht",
   "audience": "Ideal für Pendler, die unterwegs Bücher hören möchten, Studenten, die auditives Lernen bevorzugen, Sehbehinderte und Menschen mit Leseschwierigkeiten wie Legasthenie. Auch perfekt für alle, die ihre Lieblingsbücher einfach freihändig genießen möchten.",
   "table_heading": "Verfügbare Sprachen und Stimmen",
@@ -409,7 +409,7 @@
   "faqs": [
    [
     "Wie wandelt man ein EPUB oder PDF kostenlos in ein Hörbuch um?",
-    "Laden Sie Ihre EPUB- oder PDF-Datei auf Audiobook Maker hoch, wählen Sie eine neuronale KI-Stimme aus über 400 Optionen und die gewünschte Sprache, dann klicken Sie auf Konvertieren. Der kostenlose Text-to-Speech-Konverter extrahiert automatisch den Text aus dem Buch — unter Beibehaltung der Dokumentenstruktur und der Kapitelaufteilung — und erstellt ein Hörbuch im MP3- oder M4B-Format mit eingebetteten Kapiteln, bereit zum Herunterladen und Anhören auf jedem Gerät (Smartphone, Tablet oder MP3-Player). Keine Registrierung nötig und keine Nutzungsbeschränkungen."
+    "Laden Sie Ihre EPUB- oder PDF-Datei auf Audiobook Maker hoch, wählen Sie eine neuronale KI-Stimme aus über 400 Optionen und die gewünschte Sprache, dann klicken Sie auf Konvertieren. Der kostenlose Text-to-Speech-Konverter extrahiert automatisch den Text aus dem Buch — unter Beibehaltung der Dokumentenstruktur und der Kapitelaufteilung — und erstellt ein Hörbuch im MP3- oder M4B-Format mit eingebetteten Kapiteln, bereit zum Herunterladen und Anhören auf jedem Gerät (Smartphone, Tablet oder MP3-Player). Keine Registrierung nötig, mit großzügigem kostenlosem Monatskontingent."
    ],
    [
     "Was sind PREMIUM-Stimmen?",
@@ -429,11 +429,11 @@
    ],
    [
     "Wie viele KI-Stimmen sind verfügbar und in welchen Sprachen?",
-    "Audiobook Maker bietet über 400 hochwertige neuronale KI-Stimmen basierend auf Microsoft Edge TTS, mit Unterstützung für Dutzende von Sprachen darunter Deutsch, Englisch, Italienisch, Französisch, Spanisch, Chinesisch, Portugiesisch, Russisch, Japanisch, Koreanisch, Arabisch, Hindi und viele mehr. Die App-Oberfläche ist in 6 Sprachen verfügbar, aber die Sprachsynthese-Engine unterstützt alle Sprachen der Edge TTS-Bibliothek."
+    "Audiobook Maker bietet über 400 hochwertige neuronale KI-Stimmen, mit Unterstützung für Dutzende von Sprachen darunter Deutsch, Englisch, Italienisch, Französisch, Spanisch, Chinesisch, Portugiesisch, Russisch, Japanisch, Koreanisch, Arabisch, Hindi und viele mehr. Die App-Oberfläche ist in 6 Sprachen verfügbar, aber die Sprachsynthese-Engine unterstützt über 50 Sprachen."
    ],
    [
     "Klingen die KI-Stimmen natürlich?",
-    "Ja, der Konverter nutzt hochwertige neuronale TTS-Stimmen basierend auf Microsoft Edge TTS, mit fortschrittlicher KI-Sprachsynthese, die natürliche, flüssige und angenehme Stimmen erzeugt. Im Gegensatz zu alten roboterhaften Stimmen erfassen neuronale Stimmen Prosodie, Intonation und Rhythmus, und bieten ein professionelles Hörerlebnis vergleichbar mit menschlicher Erzählung. Sie können vor der vollständigen Konvertierung eine kostenlose Vorschau anhören."
+    "Ja, der Konverter nutzt hochwertige neuronale TTS-Stimmen, mit fortschrittlicher KI-Sprachsynthese, die natürliche, flüssige und angenehme Stimmen erzeugt. Im Gegensatz zu alten roboterhaften Stimmen erfassen neuronale Stimmen Prosodie, Intonation und Rhythmus, und bieten ein professionelles Hörerlebnis vergleichbar mit menschlicher Erzählung. Sie können vor der vollständigen Konvertierung eine kostenlose Vorschau anhören."
    ],
    [
     "Muss ich etwas installieren?",
@@ -441,11 +441,11 @@
    ],
    [
     "Ist der Dienst wirklich kostenlos?",
-    "Ja, Audiobook Maker ist völlig kostenlos und ohne Nutzungsbeschränkungen. Keine Registrierung erforderlich, keine Kreditkarte nötig und keine Werbung in den erzeugten Audiodateien. Das Open-Source-Projekt wird durch freiwillige Community-Spenden unterstützt. Alle Kernfunktionen, einschließlich Text-to-Speech-Konvertierung und M4B-Erzeugung, sind für alle Nutzer kostenlos verfügbar."
+    "Ja, mit den Standard-Stimmen ist Audiobook Maker kostenlos, im Rahmen eines großzügigen Monatskontingents, das für viele Bücher reicht. Keine Registrierung erforderlich, keine Kreditkarte nötig und keine Werbung in den erzeugten Audiodateien. Das Open-Source-Projekt wird durch freiwillige Community-Spenden unterstützt. Alle Kernfunktionen, einschließlich Text-to-Speech-Konvertierung und M4B-Erzeugung, sind für alle Nutzer kostenlos verfügbar."
    ],
    [
     "Ist Audiobook Maker eine kostenlose Alternative zu Speechify?",
-    "Ja. Im Gegensatz zu Speechify, das ein kostenpflichtiges Abonnement erfordert, ist Audiobook Maker 100 % kostenlos, benötigt keine Registrierung und bietet Hunderte neuronale KI-Stimmen in Dutzenden von Sprachen ohne jegliche Nutzungsbegrenzung. Einen detaillierten Vergleich mit ähnlichen Tools finden Sie auf AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
+    "Ja. Im Gegensatz zu Speechify, das ein kostenpflichtiges Abonnement erfordert, ist Audiobook Maker mit den Standard-Stimmen kostenlos, benötigt keine Registrierung und bietet Hunderte neuronale KI-Stimmen in Dutzenden von Sprachen, mit großzügigem kostenlosem Monatskontingent. Einen detaillierten Vergleich mit ähnlichen Tools finden Sie auf AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
    [
     "Welche Tools kann ich verwenden, um ein von Audiobook Maker erstelltes Hörbuch zu hören?",
@@ -470,13 +470,13 @@
   "share_label": "Teilen"
  },
  "zh": {
-  "direct_answer": "Audiobook Maker是一款免费的EPUB和PDF转MP3及M4B有声书转换器，拥有超过400种神经网络AI语音，支持数十种语言（Microsoft Edge TTS）。无需注册，无使用限制，直接在浏览器中运行。",
+  "direct_answer": "Audiobook Maker是一款免费的EPUB和PDF转MP3及M4B有声书转换器，拥有超过400种神经网络AI语音，支持数十种语言。无需注册，每月有充足的免费额度，直接在浏览器中运行。",
   "key_takeaways": {
    "title": "快速总结",
    "items": [
-    "✅ <strong>100% 免费</strong> — 无需注册，无使用限制",
+    "✅ <strong>免费</strong> — 无需注册，每月免费额度充足",
     "✅ <strong>M4B 格式</strong> — 支持带嵌入章节的通用有声书格式",
-    "✅ <strong>400+ 神经网络AI语音</strong> — 高质量 Microsoft Edge TTS",
+    "✅ <strong>400+ 神经网络AI语音</strong> — 高质量神经网络语音合成",
     "✅ <strong>50+ 语言</strong> — 中文、英语、意大利语、法语、西班牙语、德语等",
     "✅ <strong>无需安装</strong> — 直接在浏览器中运行",
     "✅ <strong>播客 RSS</strong> — 生成订阅源在您喜爱的应用中收听",
@@ -484,7 +484,7 @@
    ]
   },
   "heading": "免费在线将EPUB和PDF电子书转换为MP3及M4B有声书",
-  "text": "Audiobook Maker是一款免费在线转换器，利用神经网络AI文字转语音技术（Microsoft Edge TTS），将您的EPUB和PDF电子书转换为MP3及M4B有声书。上传EPUB或PDF格式的书籍，从中文、英语、意大利语、法语、西班牙语和德语中选择超过50种AI语音，然后下载即可收听的有声书。无需安装任何软件或注册。与Speechify或Play.ht不同，Audiobook Maker完全免费，无使用限制，无广告。",
+  "text": "Audiobook Maker是一款免费在线转换器，利用神经网络AI文字转语音技术，将您的EPUB和PDF电子书转换为MP3及M4B有声书。上传EPUB或PDF格式的书籍，从中文、英语、意大利语、法语、西班牙语和德语中选择超过50种AI语音，然后下载即可收听的有声书。无需安装任何软件或注册。与Speechify或Play.ht不同，Audiobook Maker使用标准语音免费，每月有充足的免费额度，且无广告。",
   "audience_heading": "适用人群",
   "audience": "非常适合想在通勤途中听书的上班族、偏好听觉学习的学生、视力障碍者以及有阅读困难（如读写困难症）的人群。也适合任何想要解放双手享受阅读的人。",
   "table_heading": "可用语言和语音",
@@ -503,7 +503,7 @@
   "faqs": [
    [
     "如何免费将EPUB或PDF转换为有声书？",
-    "将EPUB或PDF文件上传到Audiobook Maker，从400多种神经网络AI语音中选择合适的声音和语言，然后点击转换。免费文字转语音转换器会自动提取书中文本——保留文档结构和章节划分——并生成带有嵌入式章节的MP3或M4B格式有声书，可随时下载并在任何设备（智能手机、平板电脑或MP3播放器）上收听。无需注册，也没有使用限制。"
+    "将EPUB或PDF文件上传到Audiobook Maker，从400多种神经网络AI语音中选择合适的声音和语言，然后点击转换。免费文字转语音转换器会自动提取书中文本——保留文档结构和章节划分——并生成带有嵌入式章节的MP3或M4B格式有声书，可随时下载并在任何设备（智能手机、平板电脑或MP3播放器）上收听。无需注册，每月有充足的免费额度。"
    ],
    [
     "什么是 PREMIUM 语音？",
@@ -523,11 +523,11 @@
    ],
    [
     "有多少种AI语音可用？支持哪些语言？",
-    "Audiobook Maker提供超过400种高质量神经网络AI语音（基于Microsoft Edge TTS），支持数十种语言，包括中文、英语、意大利语、法语、西班牙语、德语、葡萄牙语、俄语、日语、韩语、阿拉伯语、印地语等。应用界面提供6种语言，但语音合成引擎支持Edge TTS库提供的所有语言。"
+    "Audiobook Maker提供超过400种高质量神经网络AI语音，支持数十种语言，包括中文、英语、意大利语、法语、西班牙语、德语、葡萄牙语、俄语、日语、韩语、阿拉伯语、印地语等。应用界面提供6种语言，但语音合成引擎支持50多种语言。"
    ],
    [
     "AI语音听起来自然吗？",
-    "是的，转换器使用基于 Microsoft Edge TTS 的高质量神经网络 TTS 语音，结合先进的 AI 语音合成技术，能够产生自然、流畅且悦耳的声音。与旧式机械语音不同，神经网络语音能够捕捉语调、韵律和节奏，提供可与真人朗读相媲美的专业听觉体验。您可以在开始完整转换前免费试听预览。"
+    "是的，转换器使用高质量神经网络 TTS 语音，结合先进的 AI 语音合成技术，能够产生自然、流畅且悦耳的声音。与旧式机械语音不同，神经网络语音能够捕捉语调、韵律和节奏，提供可与真人朗读相媲美的专业听觉体验。您可以在开始完整转换前免费试听预览。"
    ],
    [
     "需要安装什么吗？",
@@ -535,11 +535,11 @@
    ],
    [
     "服务真的免费吗？",
-    "是的，Audiobook Maker 完全免费，没有使用限制。无需注册，无需信用卡，生成的音频文件中也没有任何广告。这个开源项目由社区自愿捐赠支持。所有核心功能，包括文字转语音转换和 M4B 生成，均对所有用户免费开放。"
+    "是的，使用标准语音时 Audiobook Maker 免费，每月有充足的免费额度，足够转换许多本书。无需注册，无需信用卡，生成的音频文件中也没有任何广告。这个开源项目由社区自愿捐赠支持。所有核心功能，包括文字转语音转换和 M4B 生成，均对所有用户免费开放。"
    ],
    [
     "Audiobook Maker 是 Speechify 的免费替代品吗？",
-    "是的。与 Speechify 需要付费订阅不同，Audiobook Maker 100% 免费，无需注册，并提供数十种语言的数百种神经网络 AI 语音，没有任何使用限制。您可以在 AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/) 上找到与类似工具的详细对比。"
+    "是的。与 Speechify 需要付费订阅不同，Audiobook Maker 使用标准语音免费，无需注册，并提供数十种语言的数百种神经网络 AI 语音，每月有充足的免费额度。您可以在 AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/) 上找到与类似工具的详细对比。"
    ],
    [
     "可以用什么工具收听Audiobook Maker生成的有声书？",
@@ -564,13 +564,13 @@
   "share_label": "分享"
  },
  "hi": {
-  "direct_answer": "Audiobook Maker एक मुफ़्त EPUB और PDF से MP3 तथा M4B ऑडियोबुक कनवर्टर है, जिसमें दर्जनों भाषाओं में 400 से अधिक न्यूरल AI आवाज़ें (Microsoft Edge TTS) उपलब्ध हैं. कोई पंजीकरण नहीं, कोई उपयोग सीमा नहीं, सीधे ब्राउज़र में चलता है.",
+  "direct_answer": "Audiobook Maker एक मुफ़्त EPUB और PDF से MP3 तथा M4B ऑडियोबुक कनवर्टर है, जिसमें दर्जनों भाषाओं में 400 से अधिक न्यूरल AI आवाज़ें उपलब्ध हैं. कोई पंजीकरण नहीं, उदार मुफ़्त मासिक सीमा, सीधे ब्राउज़र में चलता है.",
   "key_takeaways": {
    "title": "त्वरित सारांश",
    "items": [
-    "✅ <strong>100% मुफ़्त</strong> — कोई पंजीकरण नहीं, कोई उपयोग सीमा नहीं",
+    "✅ <strong>मुफ़्त</strong> — कोई पंजीकरण नहीं, उदार मासिक सीमा",
     "✅ <strong>M4B प्रारूप</strong> — एम्बेडेड अध्यायों के साथ सार्वभौमिक ऑडियोबुक प्रारूप",
-    "✅ <strong>400+ न्यूरल AI आवाज़ें</strong> — उच्च-गुणवत्ता Microsoft Edge TTS",
+    "✅ <strong>400+ न्यूरल AI आवाज़ें</strong> — उच्च-गुणवत्ता न्यूरल वॉइस सिंथेसिस",
     "✅ <strong>50+ भाषाएँ</strong> — हिंदी, अंग्रेज़ी, इतालवी, फ़्रांसीसी, स्पेनिश, जर्मन और कई और",
     "✅ <strong>कोई इंस्टॉलेशन नहीं</strong> — सीधे ब्राउज़र में चलता है",
     "✅ <strong>पॉडकास्ट RSS</strong> — अपने पसंदीदा ऐप में सुनने के लिए फ़ीड जनरेट करें",
@@ -578,7 +578,7 @@
    ]
   },
   "heading": "EPUB और PDF ईबुक्स को मुफ़्त में ऑनलाइन MP3 तथा M4B ऑडियोबुक में बदलें",
-  "text": "Audiobook Maker एक मुफ़्त ऑनलाइन कनवर्टर है जो न्यूरल AI टेक्स्ट-टू-स्पीच (Microsoft Edge TTS) का उपयोग करके आपकी EPUB और PDF ईबुक्स को MP3 तथा M4B ऑडियोबुक में बदल देता है. EPUB या PDF प्रारूप में अपनी पुस्तक अपलोड करें, हिंदी, अंग्रेज़ी, इतालवी, फ़्रांसीसी, स्पेनिश और जर्मन सहित 50 से अधिक AI आवाज़ों में से चुनें, और सुनने के लिए तैयार ऑडियोबुक डाउनलोड करें. कोई सॉफ़्टवेयर इंस्टॉल करने या पंजीकरण करने की आवश्यकता नहीं. Speechify या Play.ht के विपरीत, Audiobook Maker पूरी तरह से मुफ़्त है, बिना उपयोग सीमा और बिना विज्ञापन के.",
+  "text": "Audiobook Maker एक मुफ़्त ऑनलाइन कनवर्टर है जो न्यूरल AI टेक्स्ट-टू-स्पीच का उपयोग करके आपकी EPUB और PDF ईबुक्स को MP3 तथा M4B ऑडियोबुक में बदल देता है. EPUB या PDF प्रारूप में अपनी पुस्तक अपलोड करें, हिंदी, अंग्रेज़ी, इतालवी, फ़्रांसीसी, स्पेनिश और जर्मन सहित 50 से अधिक AI आवाज़ों में से चुनें, और सुनने के लिए तैयार ऑडियोबुक डाउनलोड करें. कोई सॉफ़्टवेयर इंस्टॉल करने या पंजीकरण करने की आवश्यकता नहीं. Speechify या Play.ht के विपरीत, Audiobook Maker Standard आवाज़ों के साथ एक उदार मासिक सीमा के भीतर मुफ़्त है, और बिना विज्ञापन के.",
   "audience_heading": "यह किसके लिए है",
   "audience": "उन कामकाजी पेशेवरों के लिए आदर्श जो आने-जाने के दौरान पुस्तकें सुनना चाहते हैं, ऐसे छात्र जो श्रवण शिक्षण को प्राथमिकता देते हैं, दृष्टिबाधित व्यक्तियों के लिए और डिस्लेक्सिया जैसी पढ़ने की कठिनाइयों वाले लोगों के लिए. किसी के लिए भी उपयुक्त जो अपने हाथों को मुक्त रखते हुए पढ़ने का आनंद लेना चाहता है.",
   "table_heading": "उपलब्ध भाषाएँ और आवाज़ें",
@@ -597,7 +597,7 @@
   "faqs": [
    [
     "EPUB या PDF को मुफ़्त में ऑडियोबुक में कैसे बदलें?",
-    "Audiobook Maker पर अपनी EPUB या PDF फ़ाइल अपलोड करें, 400 से अधिक न्यूरल AI आवाज़ों में से सही आवाज़ और भाषा चुनें, और कनवर्ट पर क्लिक करें. मुफ़्त टेक्स्ट-टू-स्पीच कनवर्टर पुस्तक का पाठ स्वचालित रूप से निकालता है — दस्तावेज़ संरचना और अध्याय विभाजन को संरक्षित करते हुए — और एम्बेडेड अध्यायों के साथ MP3 या M4B प्रारूप में ऑडियोबुक जनरेट करता है, जो डाउनलोड और किसी भी डिवाइस (स्मार्टफ़ोन, टैबलेट या MP3 प्लेयर) पर सुनने के लिए तैयार है. कोई पंजीकरण नहीं, कोई उपयोग सीमा नहीं."
+    "Audiobook Maker पर अपनी EPUB या PDF फ़ाइल अपलोड करें, 400 से अधिक न्यूरल AI आवाज़ों में से सही आवाज़ और भाषा चुनें, और कनवर्ट पर क्लिक करें. मुफ़्त टेक्स्ट-टू-स्पीच कनवर्टर पुस्तक का पाठ स्वचालित रूप से निकालता है — दस्तावेज़ संरचना और अध्याय विभाजन को संरक्षित करते हुए — और एम्बेडेड अध्यायों के साथ MP3 या M4B प्रारूप में ऑडियोबुक जनरेट करता है, जो डाउनलोड और किसी भी डिवाइस (स्मार्टफ़ोन, टैबलेट या MP3 प्लेयर) पर सुनने के लिए तैयार है. कोई पंजीकरण नहीं, और मुफ़्त मासिक सीमा कई किताबों के लिए काफ़ी है."
    ],
    [
     "प्रीमियम आवाज़ें क्या हैं?",
@@ -617,11 +617,11 @@
    ],
    [
     "कितनी AI आवाज़ें उपलब्ध हैं और कौन सी भाषाएँ समर्थित हैं?",
-    "Audiobook Maker 400 से अधिक उच्च-गुणवत्ता वाली न्यूरल AI आवाज़ें प्रदान करता है (Microsoft Edge TTS पर आधारित), जो हिंदी, अंग्रेज़ी, इतालवी, फ़्रांसीसी, स्पेनिश, जर्मन, पुर्तगाली, रूसी, जापानी, कोरियाई, अरबी, चीनी और कई अन्य सहित दर्जनों भाषाओं का समर्थन करती हैं. एप्लिकेशन इंटरफ़ेस 7 भाषाओं में उपलब्ध है, लेकिन वॉइस सिंथेसिस इंजन Edge TTS लाइब्रेरी द्वारा प्रदान की गई सभी भाषाओं का समर्थन करता है."
+    "Audiobook Maker 400 से अधिक उच्च-गुणवत्ता वाली न्यूरल AI आवाज़ें प्रदान करता है, जो हिंदी, अंग्रेज़ी, इतालवी, फ़्रांसीसी, स्पेनिश, जर्मन, पुर्तगाली, रूसी, जापानी, कोरियाई, अरबी, चीनी और कई अन्य सहित दर्जनों भाषाओं का समर्थन करती हैं. एप्लिकेशन इंटरफ़ेस 7 भाषाओं में उपलब्ध है, लेकिन वॉइस सिंथेसिस इंजन 50 से अधिक भाषाओं का समर्थन करता है."
    ],
    [
     "क्या AI आवाज़ें प्राकृतिक लगती हैं?",
-    "हाँ, कनवर्टर Microsoft Edge TTS पर आधारित उच्च-गुणवत्ता वाली न्यूरल TTS आवाज़ों का उपयोग करता है, जो उन्नत AI वॉइस सिंथेसिस तकनीक के साथ मिलकर प्राकृतिक, धाराप्रवाह और सुखद ध्वनि उत्पन्न करती हैं. पुरानी यांत्रिक आवाज़ों के विपरीत, न्यूरल आवाज़ें स्वर, छंद और लय को पकड़ती हैं, जो मानव कथन के समान पेशेवर श्रवण अनुभव प्रदान करती हैं. आप पूर्ण रूपांतरण शुरू करने से पहले मुफ़्त पूर्वावलोकन सुन सकते हैं."
+    "हाँ, कनवर्टर उच्च-गुणवत्ता वाली न्यूरल TTS आवाज़ों का उपयोग करता है, जो उन्नत AI वॉइस सिंथेसिस तकनीक के साथ मिलकर प्राकृतिक, धाराप्रवाह और सुखद ध्वनि उत्पन्न करती हैं. पुरानी यांत्रिक आवाज़ों के विपरीत, न्यूरल आवाज़ें स्वर, छंद और लय को पकड़ती हैं, जो मानव कथन के समान पेशेवर श्रवण अनुभव प्रदान करती हैं. आप पूर्ण रूपांतरण शुरू करने से पहले मुफ़्त पूर्वावलोकन सुन सकते हैं."
    ],
    [
     "क्या मुझे कुछ इंस्टॉल करने की आवश्यकता है?",
@@ -629,11 +629,11 @@
    ],
    [
     "क्या सेवा वास्तव में मुफ़्त है?",
-    "हाँ, Audiobook Maker पूरी तरह से मुफ़्त है, बिना उपयोग सीमा के. कोई पंजीकरण आवश्यक नहीं, कोई क्रेडिट कार्ड नहीं, और जनरेट की गई ऑडियो फ़ाइलों में कोई विज्ञापन नहीं. यह ओपन सोर्स परियोजना सामुदायिक स्वैच्छिक दान द्वारा समर्थित है. टेक्स्ट-टू-स्पीच रूपांतरण और M4B जनरेशन सहित सभी मुख्य सुविधाएँ सभी उपयोगकर्ताओं के लिए मुफ़्त रूप से उपलब्ध हैं."
+    "हाँ, Standard आवाज़ों के साथ Audiobook Maker एक उदार मासिक सीमा के भीतर मुफ़्त है, जो कई किताबों के लिए काफ़ी है. कोई पंजीकरण आवश्यक नहीं, कोई क्रेडिट कार्ड नहीं, और जनरेट की गई ऑडियो फ़ाइलों में कोई विज्ञापन नहीं. यह ओपन सोर्स परियोजना सामुदायिक स्वैच्छिक दान द्वारा समर्थित है. टेक्स्ट-टू-स्पीच रूपांतरण और M4B जनरेशन सहित सभी मुख्य सुविधाएँ सभी उपयोगकर्ताओं के लिए मुफ़्त रूप से उपलब्ध हैं."
    ],
    [
     "क्या Audiobook Maker Speechify का मुफ़्त विकल्प है?",
-    "हाँ. Speechify के विपरीत जिसे भुगतान सदस्यता की आवश्यकता होती है, Audiobook Maker 100% मुफ़्त है, बिना पंजीकरण के, और दर्जनों भाषाओं में सैकड़ों न्यूरल AI आवाज़ें प्रदान करता है, बिना किसी उपयोग सीमा के. आप समान उपकरणों के साथ विस्तृत तुलना AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/) पर पा सकते हैं."
+    "हाँ. Speechify के विपरीत जिसे भुगतान सदस्यता की आवश्यकता होती है, Audiobook Maker Standard आवाज़ों के साथ मुफ़्त है, बिना पंजीकरण के, और दर्जनों भाषाओं में सैकड़ों न्यूरल AI आवाज़ें प्रदान करता है, एक उदार मासिक सीमा के साथ. आप समान उपकरणों के साथ विस्तृत तुलना AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/) पर पा सकते हैं."
    ],
    [
     "Audiobook Maker द्वारा जनरेट की गई ऑडियोबुक्स को मैं कैसे सुन सकता हूँ?",

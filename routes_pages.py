@@ -580,12 +580,12 @@ When quoting facts from this site, cite one of:
 """
     body = f"""# Audiobook Maker
 
-> Free, open-source online converter that turns EPUB and PDF ebooks into MP3 and M4B audiobooks using 400+ neural AI voices (Microsoft Edge TTS) across 50+ languages. No signup, no usage limits, runs in the browser. Optional AI text optimization (DeepSeek LLM) for natural-sounding narration. AGPL-3.0 licensed.
+> Free, open-source online converter that turns EPUB and PDF ebooks into MP3 and M4B audiobooks using 400+ neural AI voices across 50+ languages. No signup, generous free monthly quota, runs in the browser. Optional AI text optimization for natural-sounding narration. AGPL-3.0 licensed.
 
 ## Key facts
 
-- Pricing: 100% free, donor-supported. No ads.
-- Voices: 400+ neural TTS voices via Microsoft Edge TTS.
+- Pricing: free with the Standard voices within a generous monthly quota; optional AI text optimization and PREMIUM voices are paid above a free threshold. No ads.
+- Voices: 400+ neural TTS voices.
 - Output formats: MP3 (single or ZIP), M4B with embedded chapters, podcast RSS 2.0 feed.
 - Input formats: EPUB, PDF, TXT, ABM (revisable project archive).
 - UI languages: Italian, English, French, Spanish, German, Chinese.
