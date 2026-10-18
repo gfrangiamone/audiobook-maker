@@ -29,8 +29,8 @@ ld:"Audiobook Maker",
 features:["Conversión de EPUB a audiolibro MP3/M4B (con capítulos)","Conversión de PDF a audiolibro MP3/M4B (con capítulos)","Más de 400 voces neuronales de IA (Microsoft Edge TTS)","Más de 50 idiomas compatibles","Selección de capítulos y vista previa","Generación de feed RSS de Podcast","Notificación por correo electrónico para conversiones largas","No se requiere registro","Sin límites de uso","Funciona en el navegador"]
 },
 de:{
-title:"EPUB/PDF zu Hörbuch Kostenlos MP3/M4B | Audiobook Maker",
-desc:"Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3- und M4B-Hörbücher (mit eingebetteten Kapiteln) mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr professionelles Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
+title:"PDF & EPUB kostenlos in Hörbuch umwandeln | Audiobook Maker",
+desc:"PDF und E-Books kostenlos vorlesen lassen: Datei hochladen, natürliche Stimme wählen, Hörbuch als MP3 oder M4B mit Kapiteln laden. Ohne Installation.",
 kw:"epub zu hörbuch konverter, pdf zu hörbuch, m4b mit kapiteln erstellen, hörbuch erstellen kostenlos, text to speech deutsch, sprachsynthese buch, ebook in audio umwandeln, hörbuch für legasthenie, barrierefreies hörbuch, elevenlabs alternative kostenlos, podcast rss generator, audiobook maker",
 ld:"Audiobook Maker",
 features:["EPUB-zu-MP3/M4B-Hörbuch-Konvertierung (mit Kapiteln)","PDF-zu-MP3/M4B-Hörbuch-Konvertierung (mit Kapiteln)","400+ neuronale KI-Stimmen (Microsoft Edge TTS)","50+ unterstützte Sprachen","Kapitelauswahl und Vorschau","Podcast RSS-Feed Generierung","E-Mail-Benachrichtigung bei langen Konvertierungen","Keine Registrierung erforderlich","Keine Nutzungsbeschränkungen","Browser-basierte Verarbeitung"]

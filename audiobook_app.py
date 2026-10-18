@@ -8478,10 +8478,10 @@ _SEO_DATA = {
         "crumb":   "Convertidor online",
     },
     "de": {
-        "title":   "EPUB/PDF zu Hörbuch Gratis MP3/M4B | Audiobook Maker",
+        "title":   "PDF & EPUB kostenlos in Hörbuch umwandeln | Audiobook Maker",
         "tagline": "Kostenloser EPUB- & PDF-zu-Hörbuch-Konverter",
         "subtitle":"Konvertieren Sie EPUBs und PDFs in Hörbücher mit neuronalen Stimmen",
-        "desc":    "Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3- und M4B-Hörbücher (mit eingebetteten Kapiteln) mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr professionelles Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
+        "desc":    "PDF und E-Books kostenlos vorlesen lassen: Datei hochladen, natürliche Stimme wählen, Hörbuch als MP3 oder M4B mit Kapiteln laden. Ohne Installation.",
         "kw":      "epub zu hörbuch konverter, pdf zu hörbuch, m4b mit kapiteln erstellen, hörbuch erstellen kostenlos, text to speech deutsch, sprachsynthese buch, ebook in audio umwandeln, hörbuch für legasthenie, barrierefreies hörbuch, elevenlabs alternative kostenlos, podcast rss generator, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB- und PDF-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",

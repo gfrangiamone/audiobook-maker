@@ -65,7 +65,8 @@ for _gl, _gd in (("en", _GUIDE_BODY_EN), ("it", _GUIDE_BODY_IT), ("fr", _GUIDE_B
                  ("es", _GUIDE_BODY_ES), ("de", _GUIDE_BODY_DE), ("zh", _GUIDE_BODY_ZH)):
     _gd[_gvc.GUIDE_ID] = _gvc.body(_gl)
 # Hindi: solo le guide tradotte, le altre ricadono su EN.
-_GUIDE_BODY_HI = {_gvc.GUIDE_ID: _gvc.body("hi")}
+_GUIDE_BODY_HI = _guide_bodies("hi")
+_GUIDE_BODY_HI[_gvc.GUIDE_ID] = _gvc.body("hi")
 
 # Missing languages fall back to EN.
 _GUIDE_BODY = {"it": _GUIDE_BODY_IT, "fr": _GUIDE_BODY_FR, "es": _GUIDE_BODY_ES, "de": _GUIDE_BODY_DE, "zh": _GUIDE_BODY_ZH,
@@ -84,6 +85,7 @@ _GUIDE_PUBLISHED = {
     "text-to-speech-audiobook": "2024-11-10",
     "podcast": "2025-01-20",
     "gemini-tts": "2026-06-09",
+    "pdf-to-audiobook": "2026-10-18",
     _gvc.GUIDE_ID: _gvc.PUBLISHED,
 }
 
@@ -93,6 +95,7 @@ _GUIDE_SECTION = {
     "text-to-speech-audiobook": "Text-to-Speech",
     "podcast": "Podcast Publishing",
     "gemini-tts": "Text-to-Speech",
+    "pdf-to-audiobook": "Tutorials",
     _gvc.GUIDE_ID: _gvc.SECTION,
 }
 

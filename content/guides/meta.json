@@ -262,5 +262,49 @@
    "kw": "निजी पॉडकास्ट ऑडियोबुक, मुफ़्त पॉडकास्ट rss फ़ीड, ऑडियोबुक को पॉडकास्ट के रूप में होस्ट करें, netlify पॉडकास्ट होस्टिंग, ऑडियोबुक से पॉडकास्ट, मुफ़्त पॉडकास्ट होस्टिंग, apple podcasts निजी फ़ीड",
    "h1": "अपनी ऑडियोबुक को निजी पॉडकास्ट के रूप में कैसे प्रकाशित करें (मुफ़्त)"
   }
+ },
+ "pdf-to-audiobook": {
+  "en": {
+   "title": "PDF to Audiobook: Convert PDF to MP3 or M4B Free | Audiobook Maker",
+   "desc": "Turn any PDF into an audiobook for free: upload it, pick a natural AI voice, download MP3 or M4B with chapters. Headers, page numbers and footnotes are removed.",
+   "kw": "pdf to audiobook, convert pdf to audiobook, pdf to mp3, pdf to m4b, read pdf aloud, pdf text to speech, pdf to audio free, listen to pdf",
+   "h1": "How to Convert a PDF to an Audiobook for Free"
+  },
+  "it": {
+   "title": "Da PDF ad Audiolibro: Convertire PDF in MP3 o M4B Gratis | Audiobook Maker",
+   "desc": "Trasforma un PDF in audiolibro gratis: caricalo, scegli una voce naturale e scarica MP3 o M4B con capitoli. Intestazioni, numeri di pagina e note vengono tolti.",
+   "kw": "pdf in audiolibro, convertire pdf in audio, pdf in mp3, leggere pdf ad alta voce, sintesi vocale pdf, ascoltare pdf, pdf audiolibro gratis",
+   "h1": "Come Trasformare un PDF in Audiolibro Gratis"
+  },
+  "fr": {
+   "title": "PDF en Livre Audio : Convertir un PDF en MP3 ou M4B Gratuit | Audiobook Maker",
+   "desc": "Transformez un PDF en livre audio gratuitement : envoyez-le, choisissez une voix naturelle, téléchargez MP3 ou M4B avec chapitres. En-têtes et numéros de page retirés.",
+   "kw": "pdf en livre audio, convertir pdf en audio, pdf en mp3, lire un pdf à voix haute, synthèse vocale pdf, écouter un pdf, pdf audio gratuit",
+   "h1": "Comment Transformer un PDF en Livre Audio Gratuitement"
+  },
+  "es": {
+   "title": "PDF a Audiolibro: Convertir PDF a MP3 o M4B Gratis | Audiobook Maker",
+   "desc": "Convierte un PDF en audiolibro gratis: súbelo, elige una voz natural y descarga MP3 o M4B con capítulos. Se eliminan encabezados, números de página y notas.",
+   "kw": "pdf a audiolibro, convertir pdf a audio, pdf a mp3, leer pdf en voz alta, texto a voz pdf, escuchar pdf, pdf a audio gratis",
+   "h1": "Cómo Convertir un PDF en Audiolibro Gratis"
+  },
+  "de": {
+   "title": "PDF vorlesen lassen & in Hörbuch umwandeln – kostenlos | Audiobook Maker",
+   "desc": "PDF kostenlos vorlesen lassen: hochladen, natürliche deutsche Stimme wählen, MP3 oder M4B mit Kapiteln laden. Kopfzeilen, Seitenzahlen und Fußnoten fallen weg.",
+   "kw": "pdf vorlesen lassen, pdf in hörbuch umwandeln, pdf in mp3 umwandeln, pdf vorlesen kostenlos, pdf in audio umwandeln, pdf anhören, text vorlesen lassen, skript vorlesen lassen",
+   "h1": "PDF vorlesen lassen: So wird aus jedem PDF ein Hörbuch"
+  },
+  "zh": {
+   "title": "PDF 转有声书：免费将 PDF 转为 MP3 或 M4B | Audiobook Maker",
+   "desc": "免费把 PDF 转成有声书：上传文件，选择自然的语音，下载带章节的 MP3 或 M4B。自动去除页眉、页码和脚注。",
+   "kw": "pdf转有声书, pdf转音频, pdf转mp3, pdf朗读, pdf文字转语音, 听pdf, 免费pdf转语音",
+   "h1": "如何免费把 PDF 转成有声书"
+  },
+  "hi": {
+   "title": "PDF से ऑडियोबुक: PDF को मुफ़्त में MP3 या M4B में बदलें | Audiobook Maker",
+   "desc": "PDF को मुफ़्त में ऑडियोबुक बनाएँ: अपलोड करें, स्वाभाविक आवाज़ चुनें और अध्यायों के साथ MP3 या M4B डाउनलोड करें। हेडर, पेज नंबर और फ़ुटनोट हटाए जाते हैं।",
+   "kw": "pdf से ऑडियोबुक, pdf को ऑडियो में बदलें, pdf to mp3, pdf पढ़कर सुनाएँ, pdf टेक्स्ट टू स्पीच, pdf to audiobook hindi",
+   "h1": "PDF को मुफ़्त में ऑडियोबुक में कैसे बदलें"
+  }
  }
 }
