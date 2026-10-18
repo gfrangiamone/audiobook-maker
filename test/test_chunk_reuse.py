@@ -168,3 +168,32 @@ def test_voxcpm_senza_plan_non_riusa_niente(tmp_path):
     chunk_reuse.write_manifest(tmp_path, fp)
     assert chunk_reuse.reusable_indices(
         tmp_path, fp, len(VOXCPM_PLAN), "pcm") == set()
+
+
+def test_failed_chunks_not_reused(tmp_path):
+    # Il file di un chunk fallito e' il silenzio di ripiego: non vuoto ma da
+    # non riusare (incidente 12/10/2026, capitoli muti dopo i restart).
+    _write_chunks(tmp_path, 5, ext="mp3")
+    fp = _fp(voice="en-US-AndrewMultilingualNeural", engine="edge")
+    chunk_reuse.write_manifest(tmp_path, fp)
+    chunk_reuse.mark_failed(tmp_path, 1)
+    chunk_reuse.mark_failed(tmp_path, 2)
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 6, "mp3") == {0, 3}
+    chunk_reuse.clear_failed(tmp_path, 2)
+    assert chunk_reuse.read_failed(tmp_path) == {1}
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 6, "mp3") == {0, 2, 3}
+
+
+def test_failed_list_survives_same_fingerprint_reset_on_change(tmp_path):
+    fp = _fp()
+    chunk_reuse.write_manifest(tmp_path, fp)
+    chunk_reuse.mark_failed(tmp_path, 3)
+    chunk_reuse.write_manifest(tmp_path, fp)  # restart, stesso piano
+    assert chunk_reuse.read_failed(tmp_path) == {3}
+    chunk_reuse.write_manifest(tmp_path, _fp(rate="+10%"))  # piano diverso
+    assert chunk_reuse.read_failed(tmp_path) == set()
+
+
+def test_read_failed_ignores_garbage(tmp_path):
+    (tmp_path / chunk_reuse.FAILED_NAME).write_text('{"x": 1}', encoding="utf-8")
+    assert chunk_reuse.read_failed(tmp_path) == set()

@@ -1897,6 +1897,44 @@ def _email_html_body(t, dl_url, details_html=None, podcast_section=None):
     """
 
 
+def _partial_email_texts(book_title, failed_ratio):
+    """i18n dell'avviso di consegna parziale: oltre la soglia PARTIAL una parte
+    del testo e' rimasta muta (silenzio di ripiego). Sostituisce il "completata
+    con successo" del corpo e aggiunge un riquadro di avviso."""
+    title_html = _htmlesc.escape(str(book_title or ""))
+    pct = max(1, round(float(failed_ratio or 0) * 100))
+    return {
+        "it": {
+            "body": f"La generazione di <strong>{title_html}</strong> &egrave; terminata, ma non tutto l'audio &egrave; stato prodotto.",
+            "notice": f"&#x26A0;&#xFE0F; Circa il {pct}% del testo non &egrave; stato convertito in voce per un problema temporaneo del servizio: in quei punti l'audio &egrave; muto. Ti consigliamo di generare di nuovo il libro.",
+        },
+        "en": {
+            "body": f"The generation of <strong>{title_html}</strong> has finished, but not all of the audio could be produced.",
+            "notice": f"&#x26A0;&#xFE0F; About {pct}% of the text could not be converted to speech because of a temporary service problem: in those passages the audio is silent. We recommend generating the book again.",
+        },
+        "fr": {
+            "body": f"La g&eacute;n&eacute;ration de <strong>{title_html}</strong> est termin&eacute;e, mais tout l'audio n'a pas pu &ecirc;tre produit.",
+            "notice": f"&#x26A0;&#xFE0F; Environ {pct} % du texte n'a pas pu &ecirc;tre converti en voix &agrave; cause d'un probl&egrave;me temporaire du service : &agrave; ces endroits, l'audio est muet. Nous vous conseillons de g&eacute;n&eacute;rer &agrave; nouveau le livre.",
+        },
+        "es": {
+            "body": f"La generaci&oacute;n de <strong>{title_html}</strong> ha terminado, pero no se ha podido producir todo el audio.",
+            "notice": f"&#x26A0;&#xFE0F; Alrededor del {pct}% del texto no se ha podido convertir en voz por un problema temporal del servicio: en esos pasajes el audio est&aacute; en silencio. Te recomendamos generar el libro de nuevo.",
+        },
+        "de": {
+            "body": f"Die Erstellung von <strong>{title_html}</strong> ist abgeschlossen, aber nicht das gesamte Audio konnte erzeugt werden.",
+            "notice": f"&#x26A0;&#xFE0F; Etwa {pct} % des Textes konnten wegen eines vor&uuml;bergehenden Dienstproblems nicht in Sprache umgewandelt werden: An diesen Stellen ist das Audio stumm. Wir empfehlen, das Buch erneut zu erstellen.",
+        },
+        "pt": {
+            "body": f"A gera&ccedil;&atilde;o de <strong>{title_html}</strong> terminou, mas nem todo o &aacute;udio p&ocirc;de ser produzido.",
+            "notice": f"&#x26A0;&#xFE0F; Cerca de {pct}% do texto n&atilde;o p&ocirc;de ser convertido em voz devido a um problema tempor&aacute;rio do servi&ccedil;o: nesses trechos o &aacute;udio est&aacute; em sil&ecirc;ncio. Recomendamos gerar o livro novamente.",
+        },
+        "zh": {
+            "body": f"<strong>{title_html}</strong> 的生成已结束，但部分音频未能生成。",
+            "notice": f"&#x26A0;&#xFE0F; 由于服务临时出现问题，约 {pct}% 的文本未能转换为语音：这些段落的音频为静音。建议您重新生成本书。",
+        },
+    }
+
+
 def _completion_email_texts(book_title, retention_h):
     """i18n email di completamento generazione (audio/podcast)."""
     # Il titolo viene dai metadati del file caricato: nell'HTML va escapato,
@@ -2142,6 +2180,15 @@ def _send_completion_email(job_id):
 
     subject = t["subject"]
     details_html = _email_generation_details(job, lang)
+    if job.get("status") == "partial":
+        # Oltre la soglia PARTIAL il file ha tratti muti: niente "completata
+        # con successo", e l'avviso sta sopra il bottone di download.
+        _pt = _i18n_pick(_partial_email_texts(book_title, job.get("failed_chunks_ratio")),
+                         lang, merge=False)
+        t["body"] = _pt["body"]
+        details_html = (f'<p style="margin:16px 0;padding:12px 16px;background:#fff7ed;'
+                        f'border-left:4px solid #d97706;border-radius:4px">{_pt["notice"]}</p>'
+                        + details_html)
     html_body = _email_html_body(t, dl_url, details_html=details_html,
                                  podcast_section=podcast_section)
     success = email_service._send_email(email, subject, html_body)
@@ -5906,6 +5953,13 @@ def _early_abort_params():
     return ratio, max(1, min_chunks)
 
 
+def _failed_chunk_retry_params():
+    """(round, pausa_s) del ripasso dei chunk falliti a fine sintesi.
+    0 round = ripasso spento. La pausa del round k e' k * pausa_s."""
+    return (max(0, _env_int("ABM_FAILED_CHUNK_RETRY_ROUNDS", 2)),
+            max(0.0, _env_float("ABM_FAILED_CHUNK_RETRY_PAUSE_SEC", 30.0)))
+
+
 # Writer di audit per motore premium: un posto solo invece di una scala
 # if/elif in ogni punto di uscita (completato, tutti i chunk falliti, nessun
 # output, annullato, eccezione).
@@ -7106,11 +7160,29 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       f"({pct:.0f}%), failed_chunks={failed_chunks}, "
                       f"elapsed={time.time()-start_time:.0f}s")
 
+        # Chunk falliti di questo run (file = silenzio di ripiego) e quelli
+        # segnati da un tentativo precedente: questi ultimi non sono stati
+        # riusati e, se ora riescono, il segno va tolto.
+        _failed_idx = set()
+        _prev_failed = chunk_reuse.read_failed(work_dir)
+
+        def _note_chunk_outcome(i, result):
+            """Esito di un chunk appena sintetizzato, per entrambi i rami."""
+            if result is False:
+                _count_failure_and_maybe_abort(i)
+            elif i in _prev_failed:
+                _prev_failed.discard(i)
+                chunk_reuse.clear_failed(work_dir, i)
+
         def _count_failure_and_maybe_abort(i):
             """Conta un chunk fallito e, su Gemini, ferma la generazione quando la
-            quota di fallimenti sul campione supera la soglia (early-abort)."""
+            quota di fallimenti sul campione supera la soglia (early-abort).
+            Il chunk resta segnato su disco: un recovery non deve riusarne il
+            silenzio di ripiego come audio buono."""
             nonlocal failed_chunks
             failed_chunks += 1
+            _failed_idx.add(i)
+            chunk_reuse.mark_failed(work_dir, i)
             if use_gemini and _ea_ratio <= 1.0:
                 _proc = i + 1
                 if _proc >= _ea_min and (failed_chunks / _proc) > _ea_ratio:
@@ -7118,6 +7190,52 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                           f"({failed_chunks/_proc:.1%}) > {_ea_ratio:.0%} su campione "
                           f">= {_ea_min} -> stop generazione e refund.")
                     raise _GeminiQualityAbort(failed_chunks, _proc)
+
+        def _retry_failed_chunks():
+            """Ripassa i chunk falliti prima dell'assembly, in round distanziati
+            da pause crescenti: un blackout breve del provider (12/10/2026, 403
+            di edge per due ore) non deve lasciare buchi di silenzio nel libro
+            se il servizio torna mentre il job e' ancora in corso. Ritorna
+            `{indice: part_path}` dei chunk recuperati, con `failed_chunks` e
+            il segno su disco gia' aggiornati. VoxCPM (per capitolo) e Speechify
+            (pre-sintesi parallela) hanno i loro ritentativi e restano fuori."""
+            nonlocal failed_chunks
+            recovered = {}
+            if use_voxcpm or use_speechify or not _failed_idx:
+                return recovered
+            rounds, pause = _failed_chunk_retry_params()
+            for rnd in range(1, rounds + 1):
+                pending = sorted(_failed_idx)
+                if not pending:
+                    break
+                print(f"[{job_id}] Retry failed chunks: round {rnd}/{rounds}, "
+                      f"{len(pending)} chunk, pausa {pause * rnd:.0f}s")
+                job["progress_message"] = f"Retrying {len(pending)} failed chunks..."
+                until = time.time() + pause * rnd
+                while time.time() < until:
+                    if _check_cancelled():
+                        raise _CancelledError("Job cancelled")
+                    time.sleep(min(1.0, max(0.0, until - time.time())))
+                for i in pending:
+                    if _check_cancelled():
+                        raise _CancelledError("Job cancelled")
+                    result, part_path = _synthesize_chunk(i, plan[i])
+                    if result is False:
+                        continue
+                    _failed_idx.discard(i)
+                    failed_chunks -= 1
+                    chunk_reuse.clear_failed(work_dir, i)
+                    recovered[i] = part_path
+            print(f"[{job_id}] Retry failed chunks: {len(recovered)} recuperati, "
+                  f"{len(_failed_idx)} ancora falliti")
+            return recovered
+
+        def _part_duration_ms(part_path):
+            """Durata in ms del file di un chunk (PCM dalla dimensione)."""
+            if use_pcm and os.path.exists(part_path):
+                return int(pcm_size_to_seconds(os.path.getsize(part_path),
+                                               sample_rate=_pcm_sr) * 1000)
+            return _get_audio_duration_ms(part_path)
 
         if single_file:
             all_parts = []
@@ -7129,6 +7247,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 silence_ms = _get_audio_duration_ms(silence_path) if os.path.exists(silence_path) else 0
             prev_chapter_idx = -1
             failed_chunks = 0
+            # Per il ripasso dei falliti: capitolo M4B e durata di ogni chunk.
+            _chunk_ms = {}
             # Gap inter-chunk (Premium quality Gemini): pcm_concat inserira` un
             # silenzio di gap_ms_inter ms PRIMA di ogni elemento di all_parts
             # tranne il primo. Per mantenere allineati i marker M4B aggiorniamo
@@ -7191,8 +7311,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 result, part_path = _synthesize_chunk(i, block)
                 _carry_tick(i)
-                if result is False:
-                    _count_failure_and_maybe_abort(i)
+                _note_chunk_outcome(i, result)
                 # Bump per il gap che verra` inserito PRIMA di questo part_path
                 # (Premium Gemini): aggiorna i timing M4B per il capitolo corrente.
                 if gap_ms_inter and all_parts:
@@ -7211,18 +7330,27 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                           f"failed={failed_chunks}")
 
                 # Aggiorna timing per capitolo M4B
-                if use_pcm and os.path.exists(part_path):
-                    size_bytes = os.path.getsize(part_path)
-                    duration = int(pcm_size_to_seconds(size_bytes, sample_rate=_pcm_sr) * 1000)
-                else:
-                    duration = _get_audio_duration_ms(part_path)
+                duration = _part_duration_ms(part_path)
                 if m4b_chapters:
                     m4b_chapters[-1]["end"] += duration
+                _chunk_ms[i] = (len(m4b_chapters) - 1, duration)
                 current_ms += duration
 
                 job["processed_chars"] += block["chars"]
                 if os.path.exists(part_path):
                     job["bytes_generated"] += os.path.getsize(part_path)
+
+            # Un chunk recuperato cambia durata: il suo capitolo si allunga e
+            # quelli successivi si spostano dello stesso delta.
+            for _ri, _rpath in _retry_failed_chunks().items():
+                _pos, _old_ms = _chunk_ms[_ri]
+                _delta = _part_duration_ms(_rpath) - _old_ms
+                if _pos >= 0:
+                    m4b_chapters[_pos]["end"] += _delta
+                    for _c in m4b_chapters[_pos + 1:]:
+                        _c["start"] += _delta
+                        _c["end"] += _delta
+                current_ms += _delta
 
             if m4b_chapters:
                 m4b_chapters[-1]["end"] = current_ms
@@ -7415,10 +7543,32 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             failed_chunks = 0
             chapter_by_idx = {ch.index: ch for ch in info.chapters}
             output_num_by_idx = {ch.index: pos + 1 for pos, ch in enumerate(info.chapters)}
+            # Capitoli con chunk falliti: le parti restano su disco fino al
+            # ripasso dei falliti, che poi ricodifica il capitolo.
+            _kept_chapters = {}
+
+            def _encode_chapter(ch_idx, parts, mp3_path):
+                ch = chapter_by_idx[ch_idx]
+                if use_pcm:
+                    if not pcm_to_mp3(parts, mp3_path, gap_ms=gap_ms_inter, sample_rate=_pcm_sr,
+                                      extra_tags=gen_tags):
+                        # Capitolo non codificabile (o troncato): lo ZIP
+                        # risulterebbe incompleto senza che nulla lo segnali.
+                        raise _AssemblyError(
+                            f"chapter {output_num_by_idx.get(ch_idx, ch_idx)} "
+                            f"({ch.title!r}) encode failed")
+                else:
+                    _concatenate_mp3(parts, mp3_path, extra_tags=gen_tags)
+
+            def _remove_parts(parts):
+                for p in parts:
+                    if os.path.exists(p) and p != silence_path:
+                        os.remove(p)
 
             def _flush_chapter(ch_idx, parts, *, reset_attempts):
                 """Chiude il capitolo `ch_idx`: concatena/encoda le parti in un MP3
-                numerato, aggiorna i capitoli M4B e cancella le parti. Con
+                numerato, aggiorna i capitoli M4B e cancella le parti (non quelle
+                di un capitolo con chunk falliti, che servono al ripasso). Con
                 `reset_attempts`, al primo capitolo scritto di un job recuperato
                 azzera i tentativi (progresso reale, anti-burn del cap)."""
                 nonlocal current_ms
@@ -7426,22 +7576,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 safe_title = _safe_filename(ch.title)[:50] or f"ch_{ch_idx}"
                 out_num = output_num_by_idx.get(ch_idx, ch_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
-                if use_pcm:
-                    if not pcm_to_mp3(parts, mp3_path, gap_ms=gap_ms_inter, sample_rate=_pcm_sr,
-                                      extra_tags=gen_tags):
-                        # Capitolo non codificabile (o troncato): lo ZIP
-                        # risulterebbe incompleto senza che nulla lo segnali.
-                        raise _AssemblyError(
-                            f"chapter {out_num} ({ch.title!r}) encode failed")
-                else:
-                    _concatenate_mp3(parts, mp3_path, extra_tags=gen_tags)
+                _encode_chapter(ch_idx, parts, mp3_path)
                 mp3_files.append(mp3_path)
                 duration = _get_audio_duration_ms(mp3_path)
                 m4b_chapters.append({"title": ch.title, "start": current_ms, "end": current_ms + duration})
                 current_ms += duration
-                for p in parts:
-                    if os.path.exists(p) and p != silence_path:
-                        os.remove(p)
+                if any(plan[j]["chapter_index"] == ch_idx for j in _failed_idx):
+                    _kept_chapters[ch_idx] = (list(parts), mp3_path)
+                else:
+                    _remove_parts(parts)
                 if reset_attempts and job.get("recovered") and not job.get("_attempts_reset"):
                     job["_attempts_reset"] = True
                     try:
@@ -7465,8 +7608,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 result, part_path = _synthesize_chunk(i, block)
                 _carry_tick(i)
-                if result is False:
-                    _count_failure_and_maybe_abort(i)
+                _note_chunk_outcome(i, result)
                 current_chapter_parts.append(part_path)
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
@@ -7483,6 +7625,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
             if current_chapter_parts and current_chapter_idx >= 0:
                 _flush_chapter(current_chapter_idx, current_chapter_parts, reset_attempts=False)
+
+            # Ripasso dei falliti: i capitoli con chunk recuperati si
+            # ricodificano e i marker M4B si ricalcolano dalle durate reali.
+            _rifatti = {plan[j]["chapter_index"] for j in _retry_failed_chunks()}
+            for _ci, (_parts, _mp3) in _kept_chapters.items():
+                if _ci in _rifatti:
+                    _encode_chapter(_ci, _parts, _mp3)
+                _remove_parts(_parts)
+            if _rifatti:
+                current_ms = 0
+                for _c, _mp3 in zip(m4b_chapters, mp3_files):
+                    _d = _get_audio_duration_ms(_mp3)
+                    _c["start"], _c["end"] = current_ms, current_ms + _d
+                    current_ms += _d
 
             # Coda di ammissione: da qui parte la parte CPU-bound del ramo
             # multi-file (deflate dello ZIP + concat + encode M4B). Gli encode
@@ -7617,7 +7773,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # quindi una glob non-ricorsiva sul livello di work_dir non li tocca.
         try:
             for _pattern in ("chunk_*", "prompt*.txt", "*.filelist.txt",
-                             chunk_reuse.MANIFEST_NAME):
+                             chunk_reuse.MANIFEST_NAME, chunk_reuse.FAILED_NAME):
                 for _leftover in work_dir.glob(_pattern):
                     if _leftover.is_file():
                         try:

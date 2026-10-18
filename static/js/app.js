@@ -5132,7 +5132,13 @@ function listenProgress(){
           warn.textContent=t('m4b_warn_mp3');const _praHost=document.getElementById('pra');if(_praHost)_praHost.appendChild(warn);
         }
         if(d.failed_chunks>0){
-          _legacyTxt('pMsg',t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)','#d97706');
+          _legacyTxt('pMsg',t('done_msg')+' ('+t('chunks_skipped').replace('{n}',d.failed_chunks)+')','#d97706');
+        }
+        if(d.status==='partial'){
+          // Oltre soglia: tratti muti nel file consegnato, l'utente deve saperlo.
+          const pct=Math.max(1,Math.round((d.failed_chunks_ratio||0)*100));
+          const warn=document.createElement('div');warn.className='al al-warn';warn.style.marginTop='10px';
+          warn.textContent=t('partial_silent_warn').replace('{pct}',pct);const _praHost=document.getElementById('pra');if(_praHost)_praHost.appendChild(warn);
         }
         _legacyTxt('xEta','-');
 

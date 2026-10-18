@@ -20,11 +20,20 @@ import hashlib
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from env_utils import env_int
 from fileio import load_json, write_json_safe
 
 MANIFEST_NAME = ".chunks_manifest.json"
+
+# Elenco dei chunk falliti del run corrente. Sul fallimento il file del chunk
+# contiene il silenzio di ripiego: non vuoto, quindi indistinguibile da un
+# chunk buono per la sola regola della dimensione. Il 12/10/2026 i restart di
+# un job edge in pieno blackout hanno riusato ~180 chunk muti come audio
+# sintetizzato, e il libro e' stato consegnato con 27 capitoli muti.
+FAILED_NAME = ".chunks_failed.json"
+_failed_lock = threading.Lock()
 
 # Versione dello schema: un bump invalida tutti i manifest esistenti (utile se
 # cambia il modo in cui i chunk vengono scritti su disco).
@@ -83,8 +92,49 @@ def read_manifest(work_dir):
 
 
 def write_manifest(work_dir, fp: dict) -> bool:
-    """Scrive il manifest (tmp+rename). Non solleva: il riuso e' best-effort."""
+    """Scrive il manifest (tmp+rename). Non solleva: il riuso e' best-effort.
+    Se l'impronta cambia, l'elenco dei falliti del piano precedente non vale
+    piu' (gli indici sono posizionali) e viene rimosso."""
+    if read_manifest(work_dir) != fp:
+        try:
+            os.remove(failed_path(work_dir))
+        except OSError:
+            pass
     return write_json_safe(manifest_path(work_dir), fp, indent=2)
+
+
+def failed_path(work_dir) -> str:
+    return os.path.join(str(work_dir), FAILED_NAME)
+
+
+def read_failed(work_dir) -> set:
+    """Indici dei chunk il cui file e' il silenzio di ripiego di un fallimento."""
+    data = load_json(failed_path(work_dir), None, expect=list)
+    if not isinstance(data, list):
+        return set()
+    return {i for i in data if isinstance(i, int)}
+
+
+def _update_failed(work_dir, i, add: bool) -> bool:
+    with _failed_lock:
+        failed = read_failed(work_dir)
+        if (i in failed) == add:
+            return True
+        if add:
+            failed.add(i)
+        else:
+            failed.discard(i)
+        return write_json_safe(failed_path(work_dir), sorted(failed))
+
+
+def mark_failed(work_dir, i) -> bool:
+    """Segna il chunk `i` come fallito: il riuso non lo prendera' mai per buono."""
+    return _update_failed(work_dir, i, True)
+
+
+def clear_failed(work_dir, i) -> bool:
+    """Toglie il segno al chunk `i`, risintetizzato con successo."""
+    return _update_failed(work_dir, i, False)
 
 
 def matches(work_dir, fp: dict) -> bool:
@@ -99,7 +149,8 @@ def reusable_indices(work_dir, fp: dict, total_chunks: int, ext: str,
     Per gemini/edge/google (per-chunk): un chunk e' riusabile se (a) il
     manifest coincide con l'impronta corrente, (b) il file esiste, non e'
     vuoto e — per il PCM 16 bit — ha dimensione pari, (c) non e' quello di
-    indice massimo fra i presenti. La condizione (c) scarta l'ULTIMO file
+    indice massimo fra i presenti, (d) non e' segnato fra i falliti
+    (`FAILED_NAME`: il file e' il silenzio di ripiego). La condizione (c) scarta l'ULTIMO file
     scritto, l'unico che al momento del crash poteva essere troncato a meta'
     senza che si possa rilevarlo: costa una risintesi sola. I chunk vengono
     scritti in ordine crescente, quindi un eventuale buco nella sequenza
@@ -126,10 +177,13 @@ def reusable_indices(work_dir, fp: dict, total_chunks: int, ext: str,
     if not present:
         return set()
     last_written = max(present)
+    failed = read_failed(work_dir)
     out = set()
     for i, size in present.items():
         if i == last_written:
             continue  # possibile troncamento al crash -> risintetizza
+        if i in failed:
+            continue  # silenzio di ripiego, non audio
         if ext == "pcm" and size % 2 != 0:
             continue  # PCM 16-bit: dimensione dispari = scrittura incompleta
         out.add(i)
