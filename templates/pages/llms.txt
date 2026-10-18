@@ -30,7 +30,7 @@
 - [Text-to-Speech for Audiobooks](__P0__/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
 - [Publish Audiobook as Podcast](__P0__/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
 - [Gemini TTS Guide](__P0__/guide/gemini-tts/): All Gemini TTS voices, supported languages, and prompting guide for the PREMIUM neural voices.
-- [Where to Find Free Ebooks](__P0__/guide/free-ebooks/): The best sites to download free public-domain and open-license ebooks, and how to turn them into audiobooks.
+- [Where to Find Free Ebooks](__P0__/guide/free-ebooks/): The best sites to download free public-domain and open-license ebooks, and how to turn them into audiobooks. Each language version lists native-language sources (e.g. Liber Liber for Italian, Gallica and Wikisource for French, Biblioteca Virtual Miguel de Cervantes for Spanish, Projekt Gutenberg-DE and Zeno.org for German, Chinese Wikisource and ctext.org for Chinese, Hindi Wikisource and Hindi Samay for Hindi).
 - [Create an Audiobook in Your Own Voice](__P0__/guide/voice-cloning-audiobook/): How to clone your voice from a 25-second sample, approve two test clips and narrate any EPUB, PDF or TXT with it; sharing with other devices, refund voucher, privacy.
 - [Frequently Asked Questions](__P0__/faq/en/): Comprehensive FAQ covering conversion, formats, voices, AI optimization, and PREMIUM voice options.
 

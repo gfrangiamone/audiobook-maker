@@ -34,7 +34,8 @@ def test_modules_load_the_files_and_keep_their_api():
     assert "voice-cloning-audiobook" in gc._GUIDE_META and "voice-cloning-audiobook" in gc._GUIDE_BODY_EN
     assert gc._GUIDE_BODY_EN["podcast"].startswith("<") or "<" in gc._GUIDE_BODY_EN["podcast"][:200]
     assert gc._GUIDE_BODY_HI == {"voice-cloning-audiobook": gvc.body("hi"),
-                                 "pdf-to-audiobook": cs.content_text("guides", "pdf-to-audiobook", "hi.html")}
+                                 "pdf-to-audiobook": cs.content_text("guides", "pdf-to-audiobook", "hi.html"),
+                                 "free-ebooks": cs.content_text("guides", "free-ebooks", "hi.html")}
     assert sc._CONTENT["en"]["heading"] and len(sc._VOICE_TABLE) == 8
     for _lc, labels, count in sc._VOICE_TABLE:      # la forma (codice, etichette, conteggio) resta
         assert isinstance(labels, dict) and isinstance(count, (int, str))
