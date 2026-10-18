@@ -1197,6 +1197,18 @@ def revoke_voucher(code, reason="") -> bool:
     return True
 
 
+def record_voucher_notification(code, email) -> bool:
+    """Console admin: annota l'invio dell'email col codice (`notified`:
+    lista di `{at, email}`). False se il codice non esiste."""
+    with _vouchers_lock:
+        v = _vouchers.get(code)
+        if not v:
+            return False
+        v.setdefault("notified", []).append({"at": time.time(), "email": email})
+        _save_vouchers()
+    return True
+
+
 def _paypal_error_details(r):
     """Estrae (issue, name, description, debug_id) da una risposta PayPal 4xx/5xx.
 

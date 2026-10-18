@@ -48,3 +48,28 @@ def test_guard_and_logging_resolve_on_the_app(monkeypatch, tmp_path):
                headers={"X-Admin-Token": "tok-seam"})
     assert r.status_code in (200, 201), r.get_data(as_text=True)
     assert logged and logged[-1].startswith("ADMIN_VOUCHER")
+
+
+def test_notify_is_recorded_on_the_voucher(monkeypatch):
+    """L'email inviata dal bottone resta annotata sulla riga (`notified`)."""
+    audiobook_app.app.config["TESTING"] = True
+    c = audiobook_app.app.test_client()
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-seam")
+    monkeypatch.setattr(audiobook_app, "_admin_auth_ok", lambda provided: True)
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app, "client_ip", lambda: "9.9.9.9")
+    monkeypatch.setattr(payment, "_vouchers", {"GIFT-AAAA-BBBB-CCCC": {
+        "email": "v@x.it", "amount_eur": 5.0, "created_at": 1.0, "expires_at": 2e9}})
+    monkeypatch.setattr(payment, "_save_vouchers", lambda: None)
+    monkeypatch.setattr(rv, "_smtp_available", lambda: True)
+    monkeypatch.setattr(rv.email_service, "_send_voucher_notification_email", lambda *a, **k: True)
+    h = {"X-Admin-Token": "tok-seam"}
+    rows = c.get("/admin/api/vouchers", headers=h).get_json()["vouchers"]
+    assert rows[0]["notified"] == []
+    assert c.post("/admin/api/vouchers/GIFT-AAAA-BBBB-CCCC/notify", headers=h).status_code == 200
+    rows = c.get("/admin/api/vouchers", headers=h).get_json()["vouchers"]
+    assert [n["email"] for n in rows[0]["notified"]] == ["v@x.it"]
+    # Invio fallito: nessuna annotazione.
+    monkeypatch.setattr(rv.email_service, "_send_voucher_notification_email", lambda *a, **k: False)
+    assert c.post("/admin/api/vouchers/GIFT-AAAA-BBBB-CCCC/notify", headers=h).status_code == 502
+    assert len(payment.voucher_info("GIFT-AAAA-BBBB-CCCC")["notified"]) == 1

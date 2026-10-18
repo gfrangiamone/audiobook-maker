@@ -116,6 +116,8 @@ def admin_api_vouchers():
                 "revoked": bool(v.get("revoked")),
                 # None = tutti i servizi (rimborsi automatici, voucher legacy).
                 "services": v.get("services"),
+                # Email col codice inviate dal bottone della console.
+                "notified": v.get("notified", []),
             })
         return jsonify({"vouchers": items, "count": len(items)})
 
@@ -244,6 +246,7 @@ def admin_api_voucher_notify(code):
     )
     if not ok:
         return jsonify({"error": "send failed"}), 502
+    payment.record_voucher_notification(code, email)
     _log_activity("", "", "ADMIN_VOUCHER_NOTIFY", "", client_ip(), code[:8] + "...", email)
     print(f"[admin] voucher notification email sent: {payment.mask_code(code)} -> {email}")
     return jsonify({"ok": True, "code": code, "email": email})

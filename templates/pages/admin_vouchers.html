@@ -38,6 +38,13 @@
   .badge.USED{background:rgba(148,163,184,.2);color:var(--muted)}
   .badge.EXPIRED{background:rgba(239,68,68,.2);color:var(--err)}
   .btn-sm{padding:4px 10px;font-size:.8rem}
+  /* Colonna azioni: larghezza minima = bottoni, mai schiacciata (Firefox
+     restringeva la cella sotto la larghezza dei bottoni e li tagliava). */
+  td.acts{width:1%;white-space:nowrap}
+  td.acts .acts-box{display:flex;flex-direction:column;align-items:stretch;gap:4px}
+  td.acts button{white-space:nowrap}
+  td.mail{word-break:break-all;min-width:140px}
+  .sent{font-size:.72rem;color:var(--ok);white-space:nowrap;cursor:help}
   .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end}
   .toolbar > div{flex:1;min-width:150px}
   #tokenGate{max-width:420px;margin:80px auto}
@@ -209,19 +216,26 @@ function renderList(){
     var balCell='<strong>'+rem.toFixed(2)+'</strong> / '+tot.toFixed(2);
     if(v.uses&&v.uses.length){balCell+=' <span style="color:var(--muted);font-size:.8em">('+v.uses.length+' us'+(v.uses.length===1?'o':'i')+')</span>';}
     var revBtn=(rem<0.01)?'':('<button class="danger btn-sm" onclick="revokeVoucher(\''+v.code+'\')">Revoca</button>');
-    var mailBtn=(v.email)?('<button class="secondary btn-sm" style="margin-right:6px" onclick="notifyVoucher(\''+v.code+'\')" title="Invia email al destinatario">&#x2709; Email</button>'):'';
-    var btn=mailBtn+revBtn;
+    var sent=v.notified||[];
+    var mailBtn=(v.email)?('<button class="secondary btn-sm" onclick="notifyVoucher(\''+v.code+'\')" title="Invia email al destinatario">&#x2709; '+(sent.length?'Reinvia':'Email')+'</button>'):'';
+    var sentInfo='';
+    if(sent.length){
+      var last=sent[sent.length-1];
+      var all=sent.map(function(n){return fmtTs(n.at)+' → '+(n.email||'')}).join('\n');
+      sentInfo='<span class="sent" title="'+escapeHtml(all)+'">&#x2714; inviata '+fmtTs(last.at)+(sent.length>1?' (×'+sent.length+')':'')+'</span>';
+    }
+    var btn='<div class="acts-box">'+mailBtn+revBtn+sentInfo+'</div>';
     return '<tr>'+
       '<td><code>'+escapeHtml(v.code)+'</code></td>'+
       '<td><span class="badge '+k+'">'+k+'</span></td>'+
       '<td>'+balCell+'</td>'+
-      '<td>'+escapeHtml(v.email||'')+'</td>'+
+      '<td class="mail">'+escapeHtml(v.email||'')+'</td>'+
       '<td>'+fmtTs(v.created_at)+'</td>'+
       '<td>'+fmtTs(v.expires_at)+'</td>'+
       '<td><span class="badge '+st+'">'+st+'</span></td>'+
       '<td style="font-size:.8em">'+servicesLabel(v.services)+'</td>'+
       '<td style="max-width:240px;font-size:.8em;color:var(--muted)">'+escapeHtml(v.note||'')+'</td>'+
-      '<td>'+btn+'</td>'+
+      '<td class="acts">'+btn+'</td>'+
     '</tr>';
   }).join('');
 }
@@ -256,6 +270,7 @@ async function notifyVoucher(code){
   try{
     var j=await api('/admin/api/vouchers/'+encodeURIComponent(code)+'/notify',{method:'POST',body:{}});
     msg('listMsg','Email inviata a '+escapeHtml(j.email||em),'ok');
+    await loadList();
   }catch(e){msg('listMsg','Errore invio email: '+e.message,'err')}
 }
 
