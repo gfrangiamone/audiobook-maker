@@ -19,16 +19,17 @@
 
 <section>
 <h2>Best Voices for EPUB to Audiobook Conversion</h2>
-<p>Audiobook Maker uses <strong>Microsoft Edge neural TTS</strong> (the same engine behind Azure Cognitive Services). These are the most natural-sounding free voices available:</p>
+<p>Audiobook Maker uses neural text-to-speech voices that read whole sentences with natural intonation. Some of the best free voices:</p>
 <ul>
-<li><strong>English (US)</strong>: Aria, Jenny, Guy, Davis, Jane — warm, expressive narration</li>
+<li><strong>English (US)</strong>: Ava, Andrew, Emma, Aria, Jenny, Guy — warm, expressive narration</li>
 <li><strong>English (UK)</strong>: Sonia, Ryan, Libby — excellent for British literature</li>
+<li><strong>English (India)</strong>: Neerja, Prabhat — clear Indian English</li>
 <li><strong>Italian</strong>: Isabella, Diego, Elsa — natural Italian narration</li>
 <li><strong>French</strong>: Denise, Henri — clear French pronunciation</li>
 <li><strong>German</strong>: Katja, Conrad — crisp German speech</li>
 <li><strong>Spanish</strong>: Elvira, Alvaro — fluent Spanish narration</li>
-<li><strong>Chinese</strong>: Xiaoxiao, Yunyang — natural Mandarin speech</li>
 </ul>
+<p>Compare engines and voice quality in the <a href="/guide/text-to-speech-audiobook/">text-to-speech for audiobooks guide</a>.</p>
 </section>
 
 <section>
@@ -41,6 +42,7 @@
 <h2>Tips for the Best EPUB to Audiobook Experience</h2>
 <ul>
 <li><strong>Remove DRM first</strong>: Commercial ebooks from Kindle, Apple Books, or Kobo often have DRM protection. You'll need to remove it before conversion (for personal use only, where legally permitted).</li>
+<li><strong>Start with a free EPUB</strong>: Thousands of public domain classics are free and legal to download. See <a href="/guide/free-ebooks/">where to find free ebooks</a>.</li>
 <li><strong>Clean the text</strong>: Some EPUBs have formatting artifacts (page numbers, headers, footnotes). Audiobook Maker's optional AI text optimization can clean these up automatically.</li>
 <li><strong>Preview before full generation</strong>: Always generate the free preview first to check voice quality and pacing.</li>
 <li><strong>Use the chapter selector</strong>: Skip front matter (TOC, preface) and back matter (index, ads) for a cleaner listening experience.</li>
@@ -51,10 +53,10 @@
 <section>
 <h2>Frequently Asked Questions</h2>
 <details><summary>Is it really free to convert EPUB to audiobook?</summary>
-<p>Yes. Audiobook Maker is open-source software (AGPL-3.0). TTS conversion uses Microsoft Edge TTS which is free with no usage limits. The optional AI text optimization (DeepSeek LLM) has a small cost above a free threshold.</p>
+<p>Yes. Conversion with the Standard voices is free, with no account and no installation, within a generous monthly quota that covers many books. Audiobook Maker is open-source software (AGPL-3.0). The optional AI text optimization has a small cost above a free threshold.</p>
 </details>
 <details><summary>Can I convert Kindle books to audiobooks?</summary>
-<p>Kindle books use Amazon's proprietary AZW/KFX format with DRM. You'll need to remove the DRM and convert to EPUB first using a tool like Calibre, then upload the EPUB to Audiobook Maker.</p>
+<p>Kindle books use Amazon's proprietary AZW/KFX format with DRM. You'll need to remove the DRM and convert to EPUB first using a tool like <a href="https://calibre-ebook.com" target="_blank" rel="noopener">Calibre</a>, then upload the EPUB to Audiobook Maker.</p>
 </details>
 <details><summary>How long does EPUB to audiobook conversion take?</summary>
 <p>Approximately 2-3 minutes per chapter (varies by chapter length and server load). A typical 300-page book (~20 chapters) takes about 40-60 minutes. You'll receive an email notification when it's done.</p>
@@ -64,5 +66,8 @@
 </details>
 <details><summary>Does Audiobook Maker work on mobile?</summary>
 <p>Yes. The web app works in any modern browser on desktop, tablet, or phone. However, for large EPUB files, a desktop browser is recommended for faster upload and processing.</p>
+</details>
+<details><summary>Can I convert a PDF instead of an EPUB?</summary>
+<p>Yes. PDFs are supported too: running headers, page numbers and footnotes are removed and chapters are detected automatically. See the guide <a href="/guide/pdf-to-audiobook/">how to convert a PDF to an audiobook</a>.</p>
 </details>
 </section>

@@ -19,16 +19,17 @@
 
 <section>
 <h2>EPUB转有声书的最佳语音</h2>
-<p>Audiobook Maker使用<strong>Microsoft Edge神经TTS</strong>（与Azure认知服务相同的引擎）。以下是可用的最自然免费语音：</p>
+<p>Audiobook Maker 使用神经网络语音合成，能以自然的语调朗读整句话。以下是部分最佳免费语音：</p>
 <ul>
-<li><strong>英语（美国）</strong>：Aria, Jenny, Guy, Davis, Jane — 温暖富有表现力的朗读</li>
+<li><strong>普通话（中国大陆）</strong>：晓晓, 晓伊, 云希, 云扬, 云健 — 自然的普通话朗读</li>
+<li><strong>粤语（香港）</strong>：HiuGaai, HiuMaan, WanLung — 地道的粤语发音</li>
+<li><strong>台湾国语</strong>：HsiaoChen, HsiaoYu, YunJhe — 台湾口音的国语</li>
+<li><strong>英语（美国）</strong>：Ava, Andrew, Aria, Jenny, Guy — 温暖富有表现力的朗读</li>
 <li><strong>英语（英国）</strong>：Sonia, Ryan, Libby — 非常适合英国文学</li>
-<li><strong>意大利语</strong>：Isabella, Diego, Elsa — 自然的意大利语朗读</li>
 <li><strong>法语</strong>：Denise, Henri — 清晰的法语发音</li>
 <li><strong>德语</strong>：Katja, Conrad — 清晰的德语语音</li>
-<li><strong>西班牙语</strong>：Elvira, Alvaro — 流畅的西班牙语朗读</li>
-<li><strong>中文</strong>：晓晓, 云扬 — 自然的普通话语音</li>
 </ul>
+<p>想比较语音引擎和音质，请阅读<a href="/guide/text-to-speech-audiobook/zh/">有声书语音合成指南</a>。</p>
 </section>
 
 <section>
@@ -41,6 +42,7 @@
 <h2>最佳EPUB转有声书体验的技巧</h2>
 <ul>
 <li><strong>首先移除DRM</strong>：来自Kindle、Apple Books或Kobo的商业电子书通常有DRM保护。在转换前需要将其移除（仅限个人使用，在法律允许的情况下）。</li>
+<li><strong>从免费 EPUB 开始</strong>：数千部公共领域经典作品可以免费合法下载。参见<a href="/guide/free-ebooks/zh/">免费电子书下载网站</a>，包括中文资源。</li>
 <li><strong>清理文本</strong>：某些EPUB包含格式残余（页码、页眉、脚注）。Audiobook Maker可选AI文本优化可以自动清理这些。</li>
 <li><strong>在完整生成前预览</strong>：始终先生成免费预览以检查语音质量和节奏。</li>
 <li><strong>使用章节选择器</strong>：跳过前言（目录、序言）和后记（索引、广告）以获得更清晰的收听体验。</li>
@@ -51,10 +53,10 @@
 <section>
 <h2>常见问题</h2>
 <details><summary>将EPUB转换为有声书真的免费吗？</summary>
-<p>是的。Audiobook Maker是开源软件（AGPL-3.0）。TTS转换使用Microsoft Edge TTS，完全免费且无使用限制。可选的AI文本优化（DeepSeek LLM）在超出免费阈值后有少量费用。</p>
+<p>是的。使用标准语音转换是免费的，无需账号，也无需安装，每月有充足的免费额度，足够转换许多本书。Audiobook Maker 是开源软件（AGPL-3.0）。可选的 AI 文本优化在超出免费额度后收取少量费用。</p>
 </details>
 <details><summary>我可以将Kindle书籍转换为有声书吗？</summary>
-<p>Kindle书籍使用Amazon专有的AZW/KFX格式并带有DRM。您需要先使用Calibre等工具移除DRM并转换为EPUB，然后将EPUB上传到Audiobook Maker。</p>
+<p>Kindle书籍使用Amazon专有的AZW/KFX格式并带有DRM。您需要先使用<a href="https://calibre-ebook.com" target="_blank" rel="noopener">Calibre</a>等工具移除DRM并转换为EPUB，然后将EPUB上传到Audiobook Maker。</p>
 </details>
 <details><summary>EPUB转有声书需要多长时间？</summary>
 <p>每章约2-3分钟（根据章节长度和服务器负载有所不同）。一本典型的300页书（约20章）大约需要40-60分钟。完成后您将收到邮件通知。</p>
@@ -64,5 +66,8 @@
 </details>
 <details><summary>Audiobook Maker可以在手机上使用吗？</summary>
 <p>可以。该网络应用可在任何现代浏览器中运行，支持桌面、平板或手机。但对于大型EPUB文件，建议使用桌面浏览器以获得更快的上传和处理速度。</p>
+</details>
+<details><summary>可以转换 PDF 而不是 EPUB 吗？</summary>
+<p>可以。同样支持 PDF：会自动删除重复的页眉、页码和脚注，并识别章节。参见 <a href="/guide/pdf-to-audiobook/zh/">PDF 转有声书指南</a>。</p>
 </details>
 </section>

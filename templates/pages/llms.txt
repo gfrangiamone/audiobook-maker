@@ -24,7 +24,7 @@
 
 ## Guides
 
-- [How to Convert EPUB to Audiobook](__P0__/guide/epub-to-audiobook/): Step-by-step EPUB-to-audiobook conversion tutorial.
+- [How to Convert EPUB to Audiobook](__P0__/guide/epub-to-audiobook/): Step-by-step EPUB-to-audiobook conversion tutorial, with the best free voices for each language (regional variants included), MP3 vs M4B, Kindle/DRM and PDF notes. Available in English, Italian, French, Spanish, German, Chinese and Hindi.
 - [How to Convert a PDF to an Audiobook](__P0__/guide/pdf-to-audiobook/): PDF to MP3/M4B for free: what is cleaned before narration (running headers, page numbers, footnotes, line-break hyphenation), how chapters are detected (bookmarks, headings, table of contents), scanned PDFs and OCR. Native German version at __P0__/guide/pdf-to-audiobook/de/ ("PDF vorlesen lassen").
 - [M4B Format Guide](__P0__/guide/m4b-format/): What M4B is, M4B vs MP3, creating M4B with embedded chapters.
 - [Text-to-Speech for Audiobooks](__P0__/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
