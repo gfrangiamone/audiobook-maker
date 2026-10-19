@@ -570,7 +570,7 @@ def fingerprint(ym):
 
 
 def delivered_ids(months=3):
-    """job_id con COMPLETE / OPT_COMPLETE negli ultimi `months` mesi.
+    """job_id con COMPLETE / OPT_COMPLETE / TR_COMPLETE negli ultimi `months` mesi.
 
     E' la sola traccia persistente di "consegnato": il dict jobs e' in RAM e
     al boot e' vuoto. Cache di 5 minuti."""
@@ -579,7 +579,7 @@ def delivered_ids(months=3):
         cached = _delivered_cache["value"]
         if cached is not None and now < _delivered_cache["expires"]:
             return cached
-    complete, opt = set(), set()
+    complete, opt, tr = set(), set(), set()
     d = datetime.now()
     y, m = d.year, d.month
     for _ in range(max(1, int(months))):
@@ -588,10 +588,12 @@ def delivered_ids(months=3):
                 complete.add(row.job_id)
             elif row.op == "OPT_COMPLETE":
                 opt.add(row.job_id)
+            elif row.op == "TR_COMPLETE":
+                tr.add(row.job_id)
         m -= 1
         if m == 0:
             y, m = y - 1, 12
-    value = {"complete": complete, "opt_complete": opt}
+    value = {"complete": complete, "opt_complete": opt, "tr_complete": tr}
     with _delivered_lock:
         _delivered_cache["value"] = value
         _delivered_cache["expires"] = time.time() + _DELIVERED_TTL

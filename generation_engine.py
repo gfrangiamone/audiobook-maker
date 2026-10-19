@@ -3593,11 +3593,13 @@ def run_optimization(job_id, selected_chapters=None):
 # ---------------------------------------------------------------------------
 # run_translation — background thread traduzione LLM
 # ---------------------------------------------------------------------------
-# NOTA DESIGN (volutamente NON registrato in pending_jobs): il recovery al boot
-# non puo' riprendere una traduzione a meta' (nessun snapshot per-chunk) e
-# riavviarla rischierebbe di ri-eseguire job gia' rimborsati (classe incidente
-# B1). Quindi la traduzione non e' recuperabile: un crash a meta' la lascia in
-# error/refund e l'utente la rilancia manualmente.
+# NOTA DESIGN: il recovery al boot non puo' riprendere una traduzione a meta'
+# (nessun snapshot per-chunk) e riavviarla rischierebbe di ri-eseguire job gia'
+# rimborsati (classe incidente B1). Quindi la traduzione non e' recuperabile.
+# Un errore nel thread passa dall'except (refund + mark_failed); un restart
+# invece uccide il thread senza except: per questo /api/translate registra un
+# descrittore di fase "translate" quando c'e' un pagamento, e il recovery lo
+# chiude con rimborso senza rilanciarlo (incidente ikTsMP5GoVKELM3hgU5_1A).
 
 def run_translation(job_id):
     """Background thread: traduce i capitoli selezionati via LLM e scrive
@@ -3842,6 +3844,12 @@ def run_translation(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       f"{source}>{target}" + (" +AI" if optimize else ""),
                       job.get("browser_lang", ""))
+        # Chiude il descrittore di recupero della traduzione pagata (solo se e'
+        # ancora di fase translate: non toccare quello di una generazione).
+        try:
+            pending_jobs.finalize_phase(job_id, "translate")
+        except Exception as _e:
+            _log(f"pending_jobs.finalize_phase (translate) failed (non-fatal): {_e}")
 
         # Offload cold (best-effort, come per gli output audio).
         # Il marker .generation_complete va scritto PRIMA dello spawn: il writer

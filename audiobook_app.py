@@ -5981,7 +5981,8 @@ def api_register_email():
 
     # Registra il descrittore di recupero: da qui il job è batch (email registrata).
     # ECCEZIONE (F1): i job di traduzione (download_type='translated') NON vanno
-    # registrati. run_translation è per design NON recuperabile (vedi nota in
+    # registrati qui (il descrittore di fase "translate", solo rimborso, lo
+    # scrive /api/translate). run_translation è per design NON recuperabile (vedi nota in
     # generation_engine.run_translation: nessuno snapshot per-chunk, riavvio
     # rischia di ri-eseguire job già rimborsati). Un descrittore qui verrebbe
     # salvato con phase='generate' e voice='' (job di traduzione, voce mai
@@ -8203,6 +8204,24 @@ def api_translate():
         "optimize": optimize, "selected_chapters": selected,
     }
     job["last_poll"] = time.time()
+
+    # Descrittore di recupero per la traduzione pagata: un restart uccide il
+    # thread senza passare dal suo except (niente refund) e il pagamento e'
+    # gia' used=True (il safety-net dei capture orfani non lo vede). Il recovery
+    # NON la rilancia: la chiude con rimborso (recovery._orphan_fallback).
+    # Incidente ikTsMP5GoVKELM3hgU5_1A (18/10/2026, deploy a traduzione in corso).
+    _tr_paid = float(job.get("payment_amount_eur") or 0)
+    if job.get("payment_token") and _tr_paid > 0:
+        try:
+            _desc = _build_job_descriptor(job, "translate")
+            _desc["payment"] = {"token": job["payment_token"],
+                                "method": job.get("payment_type", ""),
+                                "total_eur": 0.0, "llm_eur": _tr_paid}
+            _desc["notify_download_type"] = "translated"
+            pending_jobs.register(job_id, "translate", _desc)
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.register (translate) failed "
+                  f"(non-fatal): {_e}", flush=True)
 
     thread = threading.Thread(target=run_translation, args=(job_id,),
                               daemon=True)

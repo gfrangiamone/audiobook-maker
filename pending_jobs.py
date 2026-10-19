@@ -71,6 +71,15 @@ def finalize(job_id: str) -> None:
     _require().delete(job_id)
 
 
+def finalize_phase(job_id: str, phase: str) -> None:
+    """Come finalize, ma solo se il descrittore e' della fase indicata: chi
+    chiude una fase non deve cancellare il descrittore scritto da un'altra."""
+    s = _require()
+    rec = s.get(job_id)
+    if rec is not None and rec.get("phase") == phase:
+        s.delete(job_id)
+
+
 def mark_failed(job_id: str) -> None:
     _require().update(job_id, {"state": "failed"})
 

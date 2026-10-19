@@ -24,6 +24,7 @@ import email_service
 import free_quota
 import gemini_tts
 import i18n as _i18n
+import payment
 import pending_jobs
 import tts_engines
 import voice_clone
@@ -389,6 +390,9 @@ def _reenqueue_orphan(job_id, rec):
 def _send_interrupted_email(rec, refund_code=None):
     """Notifica all'utente che l'elaborazione è stata interrotta e non recuperabile.
     Riusa il template di rimborso job fallito esistente."""
+    if rec.get("phase") == "translate":
+        _send_translate_refund_email(rec, refund_code)
+        return
     email = rec.get("notify_email", "")
     if not email or not _smtp_available():
         return
@@ -405,10 +409,28 @@ def _send_interrupted_email(rec, refund_code=None):
         print(f"[{rec.get('id')}] interrupted email failed (non-fatal): {e}")
 
 
+def _send_translate_refund_email(rec, refund_code):
+    """Traduzione interrotta: stessa email del refund di run_translation, solo
+    per il PayPal (voucher nuovo con codice); il voucher si riaccredita in
+    silenzio, come nel path di errore del thread."""
+    if not refund_code:
+        return
+    v = payment.voucher_info(refund_code) or {}
+    email = v.get("email", "")
+    try:
+        email_service._send_voucher_email(
+            refund_code, email, float(v.get("amount_eur", 0) or 0),
+            rec.get("original_filename", ""), kind="translation",
+            lang=rec.get("notify_lang") or rec.get("browser_lang") or "en")
+    except Exception as e:
+        print(f"[{rec.get('id')}] translate refund email failed (non-fatal): {e}")
+
+
 def _orphan_job_delivered(job_id, rec):
     """True se l'activity log dimostra che questo job è stato portato a termine.
-    Per la fase 'optimize' basta OPT_COMPLETE; per 'generate' serve COMPLETE
-    (un OPT_COMPLETE senza COMPLETE significa audio mai prodotto)."""
+    Per la fase 'optimize' basta OPT_COMPLETE, per 'translate' TR_COMPLETE; per
+    'generate' serve COMPLETE (un OPT_COMPLETE senza COMPLETE significa audio
+    mai prodotto)."""
     try:
         idx = activity_log.delivered_ids()
     except Exception as e:
@@ -416,6 +438,8 @@ def _orphan_job_delivered(job_id, rec):
         return False
     if job_id in idx["complete"]:
         return True
+    if rec.get("phase") == "translate":
+        return job_id in idx.get("tr_complete", ())
     return rec.get("phase") == "optimize" and job_id in idx["opt_complete"]
 
 
@@ -473,6 +497,12 @@ def _recover_orphan_jobs():
             already_live = job_id in _jobs()
         if already_live:
             print(f"[recover] {job_id}: gia' vivo in memoria — skip (no duplicato)")
+            continue
+        if rec.get("phase") == "translate":
+            # Traduzione interrotta dal restart: non si rilancia (vedi nota su
+            # generation_engine.run_translation), si chiude subito con rimborso.
+            print(f"[recover] {job_id}: traduzione interrotta dal restart -> rimborso")
+            _orphan_fallback(job_id, rec)
             continue
         try:
             attempts = pending_jobs.mark_running_bump(job_id)  # persiste PRIMA del run
