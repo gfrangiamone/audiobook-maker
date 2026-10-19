@@ -222,7 +222,9 @@ def api_my_jobs():
             "formats": {
                 "m4b": bool(tinfo.get("output_m4b")),
                 "zip": bool(tinfo.get("output_zip")),
-                "mp3": bool(tinfo.get("output_file")),
+                # Lo zip non si importa in libreria: l'app salverebbe lo zip
+                # con estensione .mp3 e riprodurrebbe silenzio.
+                "mp3": _tkstore.serves_single_mp3(tinfo),
                 "abm": bool(tinfo.get("optimized_abm_path")),
             },
         })
@@ -765,6 +767,8 @@ def api_transfer_qr(job_id):
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
         return err, sc
+    if not _tkstore.app_transfer_supported(job.get("output_format")):
+        return jsonify({"qr": "", "token": "", "unsupported": True})
     payload, tok = _transfer_payload_for(job_id)
     return jsonify({"qr": _qr_data_uri(payload), "token": tok})
 

@@ -49,3 +49,17 @@ def test_my_jobs_empty_for_unknown_client():
     c.set_cookie("abm_cid", "nobody-seam")
     r = c.get("/api/my_jobs")
     assert r.status_code == 200 and r.get_json()["jobs"] == []
+
+
+@pytest.mark.parametrize("fmt,offered", [("zip", False), ("zip_rss", False), ("m4b", True), ("mp3", True)])
+def test_transfer_qr_not_offered_for_zip(monkeypatch, fmt, offered):
+    # L'app importa solo m4b/mp3: per gli zip niente QR, o l'utente si
+    # ritrova in libreria un archivio che non suona.
+    monkeypatch.setattr(audiobook_app, "_check_job_owner",
+                        lambda jid: ({"output_format": fmt}, None, 200))
+    monkeypatch.setattr(audiobook_app, "_transfer_payload_for", lambda jid: ("https://x/t/TOK", "TOK"))
+    monkeypatch.setattr(audiobook_app, "_qr_data_uri", lambda p: "data:image/png;base64,QR")
+    audiobook_app.app.config["TESTING"] = True
+    d = audiobook_app.app.test_client().get("/api/transfer_qr/J").get_json()
+    assert bool(d["qr"]) is offered
+    assert d.get("unsupported", False) is (not offered)

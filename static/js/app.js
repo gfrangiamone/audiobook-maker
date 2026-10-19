@@ -515,6 +515,9 @@ function onOutputChange(){
   singleFile=(outputFormat==='m4b'||outputFormat==='mp3');
   const podcastUrlGroup=document.getElementById('podcastUrlGroup');
   if(podcastUrlGroup)podcastUrlGroup.style.display=(outputFormat==='zip_rss')?'':'none';
+  // L'app non importa gli ZIP: avviso prima dell'avvio, non dopo.
+  const zipAppHint=document.getElementById('zipAppHint');
+  if(zipAppHint)zipAppHint.style.display=(outputFormat==='zip'||outputFormat==='zip_rss')?'':'none';
   const podcastUrlInput=document.getElementById('podcastUrlInput');
   if(podcastUrlInput){
     podcastBaseUrl=podcastUrlInput.value.trim();
@@ -4900,6 +4903,8 @@ async function _showTransferQr(jobId, imgId, boxId, _attempt){
   }
   let d;
   try{ d = await r.json(); }catch(e){ _retry(e); return; }
+  // Formato che l'app non importa (zip): nessun bottone, scelta voluta.
+  if(d && d.unsupported) return;
   if(!d || !d.qr){
     // Risposta valida ma senza QR: problema lato server (es. libreria qrcode
     // assente). Ritentare non serve, ma lasciarne traccia in console si'.

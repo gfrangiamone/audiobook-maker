@@ -285,7 +285,7 @@ def job_files(token_entries):
     for tok, info in token_entries or ():
         if info.get("output_m4b"):
             out.append((info["output_m4b"], "m4b", tok))
-        if info.get("output_file") and not info.get("output_zip"):
+        if token_store.serves_single_mp3(info):
             out.append((info["output_file"], "download", tok))
     return out
 

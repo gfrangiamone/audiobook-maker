@@ -247,6 +247,38 @@ def test_my_jobs_completed_from_token(client, my_jobs_env):
     assert j["expires_at"] > now
 
 
+def test_my_jobs_zip_not_exposed_as_mp3(client, my_jobs_env):
+    # Job zip: output_file resta il primo capitolo, ma /dl/<token>/download
+    # serve lo zip. Esposto come mp3, l'app salvava lo zip come .mp3 muto.
+    token_store.download_tokens["TOKZIP"] = {
+        "job_id": "mjzip",
+        "client_id": "mobile-cid-12345",
+        "created_at": time.time() - 60,
+        "book_title": "Libro a capitoli",
+        "output_format": "zip",
+        "output_file": "/x/output_1/01_Capitolo.mp3",
+        "output_zip": "/x/output_1/Libro.zip",
+        "is_gemini": False,
+    }
+    j = client.get("/api/my_jobs", headers=HDR).get_json()["jobs"][0]
+    assert j["formats"]["zip"] is True
+    assert j["formats"]["mp3"] is False
+
+
+def test_my_jobs_single_mp3_exposed(client, my_jobs_env):
+    token_store.download_tokens["TOKMP3"] = {
+        "job_id": "mjmp3",
+        "client_id": "mobile-cid-12345",
+        "created_at": time.time() - 60,
+        "output_format": "mp3",
+        "output_file": "/x/output_1/Libro.mp3",
+        "is_gemini": False,
+    }
+    j = client.get("/api/my_jobs", headers=HDR).get_json()["jobs"][0]
+    assert j["formats"]["mp3"] is True
+    assert j["formats"]["zip"] is False
+
+
 def test_my_jobs_expired_token_hidden(client, my_jobs_env):
     token_store.download_tokens["TOKOLD"] = {
         "job_id": "mjold",

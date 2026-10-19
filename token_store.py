@@ -180,6 +180,19 @@ def find_available_download_token(job_id, cid, now=None):
     return None
 
 
+def serves_single_mp3(token_info):
+    """True se /dl/<token>/download serve un mp3 unico. Con uno zip nello
+    snapshot serve lo zip: nei job zip `output_file` resta il primo capitolo
+    (gia' cancellato dalla pulizia dello zip) e non va esposto come mp3."""
+    return bool(token_info.get("output_file")) and not token_info.get("output_zip")
+
+
+def app_transfer_supported(output_format):
+    """L'app importa in libreria solo audiolibri m4b/mp3: i job zip/zip_rss
+    (un mp3 per capitolo dentro un archivio) non si trasferiscono."""
+    return (output_format or "").lower() not in ("zip", "zip_rss")
+
+
 def token_cold_available(token_info):
     """True se almeno uno degli output snapshottati nel token esiste su cold."""
     if not isinstance(token_info, dict):

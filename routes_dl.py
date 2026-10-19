@@ -328,11 +328,11 @@ def token_download_page(token):
             translated_available = True
 
     # QR di trasferimento job sull'app mobile (best-effort). Escluso per i
-    # download di sola traduzione: l'app gestisce solo audiolibri, non i file
-    # di testo tradotto, quindi il QR "trasferisci sull'app" non ha senso lì.
+    # download di sola traduzione e per gli zip: l'app importa solo audiolibri
+    # m4b/mp3, quindi il QR "trasferisci sull'app" lì non ha senso.
     _transfer_qr = ""
     _transfer_url = ""
-    if dl_type != "translated":
+    if dl_type != "translated" and _tkstore.app_transfer_supported(output_format):
         try:
             _qr_payload, _ = _transfer_payload_for(job_id)
             _transfer_url = _qr_payload
