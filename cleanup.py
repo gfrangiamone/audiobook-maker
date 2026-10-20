@@ -888,9 +888,10 @@ def _job_archive_bytes(job_id):
 
 
 def _archive_sweep(now, force=False):
-    """Fa entrare nell'archivio i job conclusi degli abbonati che stanno nella
-    quota. Solo job con un download token ancora vivo: i file di un job gia'
-    scaduto non ci sono piu'. Ritorna il numero di job archiviati."""
+    """Fa entrare nell'archivio i job conclusi che stanno nella quota
+    dell'account (consenso al piano gratuito o piano regalato). Solo job con un
+    download token ancora vivo: i file di un job gia' scaduto non ci sono
+    piu'. Ritorna il numero di job archiviati."""
     if not force and now - _archive_sweep_state["at"] < ARCHIVE_SWEEP_INTERVAL_SEC:
         return 0
     _archive_sweep_state["at"] = now
@@ -898,7 +899,7 @@ def _archive_sweep(now, force=False):
         return 0
     used = {}
     added = 0
-    for c in accounts.archive_candidates():
+    for c in accounts.archive_candidates(now):
         jid, aid = c["job_id"], c["account_id"]
         if now - _archive_over_quota.get(jid, 0) < ARCHIVE_OVER_QUOTA_RETRY_SEC:
             continue
@@ -909,17 +910,17 @@ def _archive_sweep(now, force=False):
             continue
         if aid not in used:
             used[aid] = accounts.archive_usage(aid)[0]
-        quota = accounts.archive_quota_bytes(c["plan"])
+        quota = c["quota_bytes"]
         if used[aid] + nbytes > quota:
             _archive_over_quota[jid] = now
-            print(f"[archive] {jid} oltre quota ({used[aid] + nbytes}B > {quota}B, "
-                  f"piano {c['plan']}): retention ordinaria")
+            print(f"[archive] {jid} oltre quota ({used[aid] + nbytes}B > {quota}B): "
+                  f"retention ordinaria")
             continue
         if accounts.mark_archived(jid, nbytes, now):
             used[aid] += nbytes
             added += 1
             _archive_over_quota.pop(jid, None)
-            print(f"[archive] {jid} archiviato ({nbytes}B, piano {c['plan']})")
+            print(f"[archive] {jid} archiviato ({nbytes}B, quota {quota}B)")
     for jid in [j for j, t in _archive_over_quota.items() if now - t > 2 * ARCHIVE_OVER_QUOTA_RETRY_SEC]:
         _archive_over_quota.pop(jid, None)
     return added

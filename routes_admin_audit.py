@@ -1382,29 +1382,6 @@ def admin_api_accounts_audit():
     return jsonify(out)
 
 
-@bp.route("/admin/api/accounts/plan", methods=["POST"])
-@admin_required
-def admin_api_account_plan():
-    """Attribuisce o revoca l'abbonamento di archivio di un account.
-    Body: {"account_id": ..., "plan": "free"|"archive_10"|"archive_20"|"archive_50"}."""
-    if not accounts.enabled():
-        return jsonify({"error": "accounts disabled"}), 503
-    body = request.get_json(silent=True) or {}
-    account_id = str(body.get("account_id") or "").strip()
-    if not account_id:
-        return jsonify({"error": "account_id required"}), 400
-    try:
-        acct = accounts.set_plan(account_id, body.get("plan"))
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    if acct is None:
-        return jsonify({"error": "account not found"}), 404
-    print(f"[archive] admin: account {account_id} -> piano {acct['plan']}", flush=True)
-    return jsonify({"ok": True, "id": acct["id"], "plan": acct["plan"],
-                    "plan_until": acct.get("plan_until"),
-                    "archive_quota_bytes": accounts.archive_quota_bytes(acct["plan"])})
-
-
 @bp.route("/admin/api/optimization_cost_audit/languages", methods=["GET"])
 @admin_required
 def admin_api_optimization_cost_audit_languages():

@@ -230,6 +230,11 @@ def _grant_migrated_consent(c, ids, now):
         [(i, now, FREE_TERMS_VERSION) for i in ids])
 
 
+# Piani di archivio della versione precedente (10/20/50 GB): servono solo alla
+# migrazione dei dati, che li converte in sub_10 regalato.
+_LEGACY_ARCHIVE_PLANS = ("archive_10", "archive_20", "archive_50")
+
+
 def _migrate_plans_v2_data(c):
     """Dati dei piani v2, una volta sola e nell'ordine: account cancellati ->
     free; archive_10/20/50 -> sub_10 regalato (con consenso); revocati ancora
@@ -241,7 +246,7 @@ def _migrate_plans_v2_data(c):
     tolerance_sec = _env_int("ABM_ARCHIVE_TOLERANCE_DAYS", 15, floor=0) * 86400
     c.execute("UPDATE accounts SET plan=?, plan_source='', plan_until=NULL "
               "WHERE deleted_at IS NOT NULL", (PLAN_FREE,))
-    legacy = tuple(ARCHIVE_PLANS)
+    legacy = _LEGACY_ARCHIVE_PLANS
     marks = ",".join("?" * len(legacy))
     gifted = [r[0] for r in c.execute(f"SELECT id FROM accounts WHERE plan IN ({marks})", legacy)]
     c.execute(f"UPDATE accounts SET plan='sub_10', plan_source='gift' WHERE plan IN ({marks})", legacy)
@@ -854,8 +859,9 @@ def delete_account(account_id, now=None):
             (now, account_id),
         )
         c.execute(
-            "UPDATE accounts SET email=?, deleted_at=? WHERE id=?",
-            (f"deleted:{row['email_hash'][:16]}:{account_id}", now, account_id),
+            "UPDATE accounts SET email=?, deleted_at=?, plan=?, plan_source='', plan_until=NULL, "
+            "free_consent_at=NULL, archive_over_since=NULL, archive_notice_stage=0 WHERE id=?",
+            (f"deleted:{row['email_hash'][:16]}:{account_id}", now, PLAN_FREE, account_id),
         )
     # Fuori dalla transazione: il registro delle voci e' un file JSON e il
     # lock del DB non va tenuto durante l'I/O (stesso criterio di
@@ -870,8 +876,9 @@ def delete_account(account_id, now=None):
 
 def purge_expired(now=None):
     """Retention: storico oltre HISTORY_MONTHS per account free (o con piano
-    scaduto da piu' di GRACE_DAYS), codici scaduti da >24h, sessioni
-    scadute/revocate da >30 giorni. Ritorna i conteggi."""
+    scaduto da piu' di GRACE_DAYS) senza toccare i job che stanno nell'archivio,
+    codici scaduti da >24h, sessioni scadute/revocate da >30 giorni. Ritorna i
+    conteggi."""
     if not enabled():
         return {"jobs": 0, "codes": 0, "sessions": 0}
     now = _now(now)
@@ -881,7 +888,8 @@ def purge_expired(now=None):
         jobs = c.execute(
             "DELETE FROM account_jobs WHERE created_at<? AND account_id IN ("
             "SELECT id FROM accounts WHERE plan='free' "
-            "OR (plan_until IS NOT NULL AND plan_until<?))",
+            "OR (plan_until IS NOT NULL AND plan_until<?)) "
+            "AND job_id NOT IN (SELECT j.job_id FROM account_jobs j WHERE " + _JOB_IN_ARCHIVE + ")",
             (job_cut, grace_cut),
         ).rowcount
         codes = c.execute(
@@ -896,18 +904,26 @@ def purge_expired(now=None):
 
 # ---------------------------------------------------------------- archivio
 
-# Abbonamenti di archivio attribuiti dall'admin: piano -> quota in GiB. Un job
-# concluso di un account abbonato entra nell'archivio finche' la quota lo
-# consente; da quel momento file locali e cold non scadono piu' (la copia
-# locale lascia comunque il posto a quella cold alla fine della finestra calda).
+# Archivio dei lavori conclusi che l'utente tiene oltre la retention ordinaria.
+# La quota dipende dal consenso al piano gratuito (`free_consent_at`: entrano i
+# job creati da quel momento) oppure da un piano di spazio regalato attivo
+# (entra tutto lo storico, anche senza consenso). Un job archiviato resta
+# protetto (file locali e cold non scadono piu') indipendentemente dal piano:
+# lo libera solo la cancellazione dell'account, il nascondimento del job o la
+# tolleranza del cleanup (vedi archive_over_since).
 PLAN_FREE = "free"
-ARCHIVE_PLANS = {"archive_10": 10, "archive_20": 20, "archive_50": 50}
-# Piani di spazio v2 regalati dall'admin e versione dei termini del piano
-# gratuito registrata con ogni consenso.
+# Piani di spazio regalati dall'admin e versione dei termini del piano gratuito
+# registrata con ogni consenso.
 SPACE_PLANS = ("sub_5", "sub_10")
 FREE_TERMS_VERSION = "2026-10-20"
 GIB = 1024 ** 3
 MIB = 1024 ** 2
+# Piano -> (variabile d'ambiente, default, unita'): letta a ogni chiamata.
+_PLAN_QUOTAS = {
+    PLAN_FREE: ("ABM_PLAN_FREE_MB", 512, MIB),
+    "sub_5": ("ABM_PLAN_SUB5_GB", 5, GIB),
+    "sub_10": ("ABM_PLAN_SUB10_GB", 10, GIB),
+}
 # Retention "infinita" restituita per i token di un job archiviato.
 ARCHIVE_RETENTION_SEC = 100 * 365 * 86400
 _ARCHIVE_CACHE_TTL_SEC = 60
@@ -922,14 +938,68 @@ _JOB_IN_ARCHIVE = (
 _archive_cache_lock = threading.Lock()
 
 
-def archive_grace_days():
-    """Giorni in cui un archivio resta protetto dopo la revoca dell'abbonamento
-    (rete di sicurezza contro un cambio di piano sbagliato dalla console)."""
-    return max(0, _env_int("ABM_ARCHIVE_GRACE_DAYS", 30))
+def plan_quota_bytes(plan):
+    """Quota di archivio del piano in byte (0 per un piano sconosciuto)."""
+    spec = _PLAN_QUOTAS.get(plan or "")
+    if spec is None:
+        return 0
+    name, default, unit = spec
+    return _env_int(name, default, floor=0) * unit
 
 
-def archive_quota_bytes(plan):
-    return ARCHIVE_PLANS.get(plan or "", 0) * GIB
+def space_plan_active(account, now=None):
+    """True se l'account ha un piano di spazio (sub_5/sub_10) non scaduto:
+    `plan_until` assente, oppure strettamente nel futuro."""
+    if not account or account.get("plan") not in SPACE_PLANS:
+        return False
+    until = account.get("plan_until")
+    return until is None or int(until) > _now(now)
+
+
+def effective_plan(account, now=None):
+    """Piano in vigore: quello di spazio se attivo, altrimenti PLAN_FREE."""
+    return account["plan"] if space_plan_active(account, now) else PLAN_FREE
+
+
+def gift_active(account, now=None):
+    """True se il piano di spazio attivo e' un regalo dell'admin."""
+    return space_plan_active(account, now) and account.get("plan_source") == "gift"
+
+
+def archive_quota_for(account, now=None):
+    """Byte di archivio di cui l'account dispone adesso: 0 se manca o e' stato
+    cancellato; la quota del piano se c'e' un regalo attivo (anche senza
+    consenso: l'admin lo raccoglie fuori dal sito); 0 senza consenso al piano
+    gratuito; altrimenti la quota del piano in vigore (gratuito, o di spazio
+    non regalato)."""
+    if not account or account.get("deleted_at") is not None:
+        return 0
+    if gift_active(account, now):
+        return plan_quota_bytes(account["plan"])
+    if account.get("free_consent_at") is None:
+        return 0
+    return plan_quota_bytes(effective_plan(account, now))
+
+
+def archive_tolerance_days():
+    """Giorni di tolleranza fra l'avviso di perdita della quota e la prima
+    cancellazione di libri (almeno 1)."""
+    return _env_int("ABM_ARCHIVE_TOLERANCE_DAYS", 15, floor=1)
+
+
+def archive_tolerance_remind_days():
+    """Quanti giorni prima della fine della tolleranza parte il promemoria (0 =
+    nessuno)."""
+    return _env_int("ABM_ARCHIVE_TOLERANCE_REMIND_DAYS", 3, floor=0)
+
+
+def format_bytes(n):
+    """Dimensione leggibile per email e pagine: "380 MB" sotto 1 GiB, poi GB
+    con due decimali senza zeri finali ("1.25 GB", "10 GB")."""
+    n = max(0, int(n or 0))
+    if n < GIB:
+        return f"{n / MIB:.0f} MB"
+    return f"{n / GIB:.2f}".rstrip("0").rstrip(".") + " GB"
 
 
 def _archive_cache_clear():
@@ -937,39 +1007,11 @@ def _archive_cache_clear():
         _archive_cache["at"] = 0.0
 
 
-def set_plan(account_id, plan, now=None):
-    """Attribuisce (o revoca, con PLAN_FREE) l'abbonamento di archivio.
-
-    Revoca: `plan_until` = adesso, e l'archivio resta protetto per
-    archive_grace_days(); un piano piu' piccolo non toglie nulla di gia'
-    archiviato, blocca solo i nuovi ingressi oltre quota. Ritorna l'account
-    aggiornato, None se inesistente o cancellato; ValueError su piano ignoto."""
-    plan = (plan or "").strip().lower()
-    if plan != PLAN_FREE and plan not in ARCHIVE_PLANS:
-        raise ValueError(f"piano sconosciuto: {plan!r}")
-    if not enabled():
-        return None
-    now = _now(now)
-    with db.tx() as c:
-        row = c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
-        if row is None or row["deleted_at"] is not None:
-            return None
-        if plan in ARCHIVE_PLANS:
-            c.execute("UPDATE accounts SET plan=?, plan_until=NULL WHERE id=?", (plan, account_id))
-        elif row["plan"] != PLAN_FREE:
-            c.execute("UPDATE accounts SET plan=?, plan_until=? WHERE id=?",
-                      (PLAN_FREE, now, account_id))
-        row = c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
-    _archive_cache_clear()
-    return _row(row)
-
-
 def _archive_active_where(now):
     """Condizione SQL (alias `a`) di un account il cui archivio e' protetto:
-    abbonamento in corso o revocato da meno di archive_grace_days()."""
-    return ("a.deleted_at IS NULL AND (a.plan<>'free' OR "
-            "(a.plan_until IS NOT NULL AND a.plan_until>?))",
-            [now - archive_grace_days() * 86400])
+    ogni account vivo, qualunque sia il piano (la protezione di un job gia'
+    archiviato non dipende da piano o consenso). Ritorna (sql, args)."""
+    return "a.deleted_at IS NULL", []
 
 
 def archived_job_ids(now=None):
@@ -1032,59 +1074,82 @@ def archive_items_count(account_id):
 
 
 def archive_grace_until(account):
-    """Epoch di fine grazia di un abbonamento revocato, None se non revocato."""
-    if not account or (account.get("plan") or PLAN_FREE) in ARCHIVE_PLANS:
+    """Epoch di fine tolleranza (inizio + ABM_ARCHIVE_TOLERANCE_DAYS), None se
+    l'account non e' in tolleranza."""
+    since = (account or {}).get("archive_over_since")
+    if since is None:
         return None
-    until = account.get("plan_until")
-    if until is None:
-        return None
-    return int(until) + archive_grace_days() * 86400
+    return int(since) + archive_tolerance_days() * 86400
 
 
 def archive_state(account, now=None):
-    """"active" (abbonamento in corso), "grace" (revocato, archivio ancora
-    protetto fino ad archive_grace_until) o "none"."""
+    """"grace" (tolleranza aperta: quota persa con l'archivio oltre la nuova
+    quota), "active" (c'e' una quota) o "none"."""
     if not account:
         return "none"
-    if (account.get("plan") or PLAN_FREE) in ARCHIVE_PLANS:
-        return "active"
-    until = archive_grace_until(account)
-    return "grace" if until is not None and until > _now(now) else "none"
+    if account.get("archive_over_since") is not None:
+        return "grace"
+    return "active" if archive_quota_for(account, now) > 0 else "none"
 
 
 def archive_status(account, now=None):
-    """Riepilogo per l'area personale e per l'app, o None senza abbonamento
-    ne' archivio. `state`/`grace_until` dicono all'app se avvisare l'utente
-    che i libri solo-cloud stanno per essere cancellati."""
+    """Riepilogo per l'area personale e per l'app, o None senza quota, senza
+    archivio e senza tolleranza. `state`/`grace_until` dicono all'app se avvisare
+    l'utente che dei libri solo-cloud stanno per essere tolti; `plan`,
+    `plan_source` e `plan_until` descrivono il piano in vigore (vuoti se e' il
+    gratuito), `free_active` se c'e' il consenso al piano gratuito."""
     if not account:
         return None
+    now = _now(now)
     used, n = archive_usage(account["id"])
     items = archive_items_count(account["id"])
-    plan = account.get("plan") or PLAN_FREE
-    if plan not in ARCHIVE_PLANS and not n and not items:
-        return None
+    quota = archive_quota_for(account, now)
     state = archive_state(account, now)
-    return {"plan": plan, "quota_bytes": archive_quota_bytes(plan), "used_bytes": used, "jobs": n,
-            "items": items, "state": state,
+    if not (quota or used or n or items) and state != "grace":
+        return None
+    spaced = space_plan_active(account, now)
+    until = account.get("plan_until")
+    return {"plan": effective_plan(account, now),
+            "plan_source": (account.get("plan_source") or "") if spaced else "",
+            "plan_until": int(until) if spaced and until is not None else None,
+            "free_active": account.get("free_consent_at") is not None,
+            "quota_bytes": quota, "used_bytes": used, "jobs": n, "items": items,
+            "state": state,
             "grace_until": archive_grace_until(account) if state == "grace" else None}
 
 
-def archive_candidates():
-    """Job conclusi, visibili e non ancora archiviati degli account con un
-    abbonamento in corso (non in grazia: dopo la revoca non entra piu' nulla).
-    Dal piu' recente: con la quota stretta vince il lavoro nuovo."""
+def archive_candidates(now=None):
+    """Job conclusi, visibili e non ancora archiviati che possono entrare
+    nell'archivio, con la quota dell'account: dei job creati dal consenso al
+    piano gratuito in poi, e di tutto lo storico se c'e' un regalo attivo.
+    Esclusi gli account cancellati o in tolleranza e i job gia' tolti
+    dall'archivio (`archive_evicted_at`). Dal piu' recente: con la quota
+    stretta vince il lavoro nuovo."""
     if not enabled():
         return []
-    placeholders = ",".join("?" * len(ARCHIVE_PLANS))
+    now = _now(now)
+    cond, args = _archive_active_where(now)
+    marks = ",".join("?" * len(SPACE_PLANS))
     with db.tx() as c:
         rows = c.execute(
-            "SELECT j.job_id, j.account_id, a.plan FROM account_jobs j "
+            "SELECT j.job_id, j.account_id, a.plan, a.plan_source, a.plan_until, "
+            "a.free_consent_at, a.deleted_at FROM account_jobs j "
             "JOIN accounts a ON a.id=j.account_id "
-            f"WHERE a.deleted_at IS NULL AND a.plan IN ({placeholders}) "
+            "WHERE " + cond + " AND a.archive_over_since IS NULL "
             "AND j.status='done' AND j.archived_at IS NULL AND j.hidden_at IS NULL "
+            "AND j.archive_evicted_at IS NULL "
+            "AND ((a.free_consent_at IS NOT NULL AND j.created_at>=a.free_consent_at) "
+            f"OR (a.plan_source='gift' AND a.plan IN ({marks}) "
+            "AND (a.plan_until IS NULL OR a.plan_until>?))) "
             "ORDER BY j.created_at DESC, j.job_id DESC",
-            tuple(ARCHIVE_PLANS)).fetchall()
-    return [dict(r) for r in rows]
+            (*args, *SPACE_PLANS, now)).fetchall()
+    quotas, out = {}, []
+    for r in rows:
+        acc = r["account_id"]
+        if acc not in quotas:
+            quotas[acc] = archive_quota_for(dict(r), now)
+        out.append({"job_id": r["job_id"], "account_id": acc, "quota_bytes": quotas[acc]})
+    return out
 
 
 def job_fingerprint(job_id, token):
@@ -1180,8 +1245,8 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     sql_where = ("WHERE " + " AND ".join(where)) if where else ""
 
     sel = (
-        "SELECT a.id, a.email, a.email_hash, a.lang, a.plan, a.plan_until, "
-        "a.created_at, a.last_login_at, a.deleted_at, "
+        "SELECT a.id, a.email, a.email_hash, a.lang, a.plan, a.plan_source, a.plan_until, "
+        "a.free_consent_at, a.created_at, a.last_login_at, a.deleted_at, "
         "(SELECT COUNT(*) FROM sessions s WHERE s.account_id=a.id "
         " AND s.revoked_at IS NULL AND s.expires_at>?) AS sessions_active, "
         "(SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.account_id=a.id) AS last_seen_at, "
@@ -1235,13 +1300,13 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         else:
             d["state"] = "active"
         d["paid_eur"] = round(float(d.get("paid_eur") or 0), 2)
-        d["archive_quota_bytes"] = archive_quota_bytes(d.get("plan"))
+        d["archive_quota_bytes"] = archive_quota_for(d, now)
         d.pop("email_hash", None)
         recs.append(d)
     return {
         "records": recs,
         "count": int(total),
-        "plans": [PLAN_FREE] + list(ARCHIVE_PLANS),
+        "plans": [PLAN_FREE, *SPACE_PLANS],
         "aggregates": {
             "total": int(tot_all),
             "deleted": int(tot_del),

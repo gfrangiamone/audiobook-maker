@@ -1,8 +1,6 @@
 # test/test_account_archive.py
-"""Abbonamento di archivio: piano attribuito dall'admin, ingresso dei job in
-archivio entro quota, protezione da retention e cleanup, area personale."""
-import time
-
+"""Archivio dei lavori: quota del piano (gratuito con consenso), ingresso dei job
+in archivio entro quota, protezione da retention e cleanup, area personale."""
 import pytest
 
 import accounts
@@ -10,6 +8,7 @@ import cleanup
 import db
 import storage_backend
 import token_store as _tkstore
+from test.test_account_plans import _consent
 
 
 T0 = 1_800_000_000
@@ -44,61 +43,28 @@ def _done_job(acct, job_id, created=T0):
 
 # ------------------------------------------------------------ accounts.py
 
-def test_set_plan_validates_and_revokes_with_plan_until(acct_env):
-    acct = _login("a@b.it")
-    with pytest.raises(ValueError):
-        accounts.set_plan(acct["id"], "archive_99")
-    assert accounts.set_plan("missing", "archive_10") is None
-    out = accounts.set_plan(acct["id"], "archive_20", now=T0)
-    assert out["plan"] == "archive_20" and out["plan_until"] is None
-    assert accounts.archive_quota_bytes("archive_20") == 20 * GIB
-    out = accounts.set_plan(acct["id"], "free", now=T0 + 5)
-    assert out["plan"] == "free" and out["plan_until"] == T0 + 5
-    # free -> free non sposta la data di revoca
-    assert accounts.set_plan(acct["id"], "free", now=T0 + 99)["plan_until"] == T0 + 5
-
-
-def test_set_plan_refuses_deleted_account(acct_env):
-    acct = _login("a@b.it")
-    accounts.delete_account(acct["id"], now=T0)
-    assert accounts.set_plan(acct["id"], "archive_10") is None
-
-
-def test_candidates_only_done_visible_of_subscribers(acct_env):
+def test_candidates_only_done_visible_with_consent(acct_env):
     sub, free = _login("s@b.it"), _login("f@b.it")
-    accounts.set_plan(sub["id"], "archive_10")
+    _consent(sub, at=T0)
     _done_job(sub, "old", T0)
     _done_job(sub, "new", T0 + 10)
     accounts.record_job(sub["id"], "run", kind="generate", status="running")
     _done_job(sub, "hid", T0 + 5)
     accounts.hide_job(sub["id"], "hid")
     _done_job(free, "fj")
-    assert [c["job_id"] for c in accounts.archive_candidates()] == ["new", "old"]
+    cands = accounts.archive_candidates(now=T0 + 20)
+    assert [c["job_id"] for c in cands] == ["new", "old"]
+    assert {c["account_id"] for c in cands} == {sub["id"]}
+    assert all(c["quota_bytes"] == 512 * accounts.MIB for c in cands)
     assert accounts.mark_archived("new", 100, now=T0)
     assert not accounts.mark_archived("new", 200, now=T0)  # gia' archiviato
-    assert [c["job_id"] for c in accounts.archive_candidates()] == ["old"]
+    assert [c["job_id"] for c in accounts.archive_candidates(now=T0 + 20)] == ["old"]
     assert accounts.archive_usage(sub["id"]) == (100, 1)
-
-
-def test_protection_follows_plan_and_grace(acct_env, monkeypatch):
-    acct = _login("a@b.it")
-    accounts.set_plan(acct["id"], "archive_10")
-    _done_job(acct, "j1")
-    accounts.mark_archived("j1", 10)
-    assert accounts.archive_protects("j1")
-    assert not accounts.archive_protects("other")
-    now = int(time.time())
-    accounts.set_plan(acct["id"], "free", now=now)
-    assert accounts.archive_protects("j1")          # grazia
-    assert accounts.archive_candidates() == []        # niente nuovi ingressi
-    monkeypatch.setenv("ABM_ARCHIVE_GRACE_DAYS", "0")
-    accounts._archive_cache_clear()
-    assert not accounts.archive_protects("j1")
 
 
 def test_hide_and_delete_release_archive(acct_env):
     acct = _login("a@b.it")
-    accounts.set_plan(acct["id"], "archive_10")
+    _consent(acct)
     _done_job(acct, "j1")
     _done_job(acct, "j2")
     accounts.mark_archived("j1", 10)
@@ -113,19 +79,19 @@ def test_hide_and_delete_release_archive(acct_env):
 def test_archive_status_and_admin_list(acct_env):
     acct = _login("a@b.it")
     assert accounts.archive_status(acct) is None
-    accounts.set_plan(acct["id"], "archive_50")
+    _consent(acct)
     _done_job(acct, "j1")
-    accounts.mark_archived("j1", 3 * GIB)
+    accounts.mark_archived("j1", 300 * accounts.MIB)
     st = accounts.archive_status(accounts.get(acct["id"]))
-    assert st == {"plan": "archive_50", "quota_bytes": 50 * GIB, "used_bytes": 3 * GIB, "jobs": 1,
+    assert st == {"plan": "free", "plan_source": "", "plan_until": None, "free_active": True,
+                  "quota_bytes": 512 * accounts.MIB, "used_bytes": 300 * accounts.MIB, "jobs": 1,
                   "items": 0, "state": "active", "grace_until": None}
     out = accounts.admin_list(now=T0 + 60)
     r = out["records"][0]
-    assert r["plan"] == "archive_50"
-    assert r["archive_bytes"] == 3 * GIB and r["archive_jobs"] == 1
-    assert r["archive_quota_bytes"] == 50 * GIB
-    assert out["aggregates"]["subscribed"] == 1
-    assert out["plans"] == ["free", "archive_10", "archive_20", "archive_50"]
+    assert r["plan"] == "free"
+    assert r["archive_bytes"] == 300 * accounts.MIB and r["archive_jobs"] == 1
+    assert r["archive_quota_bytes"] == 512 * accounts.MIB
+    assert out["plans"] == ["free", "sub_5", "sub_10"]
 
 
 # ------------------------------------------------------------ cleanup.py
@@ -161,9 +127,9 @@ def test_job_archive_bytes_counts_local_and_cold(sweep_env, monkeypatch):
 
 
 def test_sweep_archives_within_quota_newest_first(sweep_env, monkeypatch):
-    monkeypatch.setitem(accounts.ARCHIVE_PLANS, "archive_10", 1)  # quota 1 GiB
+    monkeypatch.setattr(accounts, "plan_quota_bytes", lambda plan: GIB)  # quota 1 GiB
     acct = _login("a@b.it")
-    accounts.set_plan(acct["id"], "archive_10")
+    _consent(acct)
     _done_job(acct, "old", T0)
     _done_job(acct, "new", T0 + 10)
     sizes = {"old": GIB // 2, "new": GIB // 2 + 1}
@@ -181,7 +147,7 @@ def test_sweep_archives_within_quota_newest_first(sweep_env, monkeypatch):
 
 def test_sweep_skips_jobs_without_live_files(sweep_env, monkeypatch):
     acct = _login("a@b.it")
-    accounts.set_plan(acct["id"], "archive_10")
+    _consent(acct)
     _done_job(acct, "gone")
     _done_job(acct, "empty")
     monkeypatch.setattr(_tkstore, "has_active_download_tokens", lambda jid, now=None: jid != "gone")
@@ -197,7 +163,7 @@ def test_sweep_rate_limited(sweep_env, monkeypatch):
 
 def test_delete_cold_refused_for_archived(sweep_env, monkeypatch):
     acct = _login("a@b.it")
-    accounts.set_plan(acct["id"], "archive_10")
+    _consent(acct)
     _done_job(acct, "j1")
     accounts.mark_archived("j1", 10)
     deleted = []
@@ -210,7 +176,7 @@ def test_delete_cold_refused_for_archived(sweep_env, monkeypatch):
 
 def test_cleanup_job_preserves_archived_dir(sweep_env, monkeypatch):
     acct = _login("a@b.it")
-    accounts.set_plan(acct["id"], "archive_10")
+    _consent(acct)
     _done_job(acct, "j1")
     accounts.mark_archived("j1", 10)
     od = _output(sweep_env, "j1", 5)
@@ -235,46 +201,13 @@ def test_archived_release_due(monkeypatch):
 def test_token_retention_infinite_for_archived(acct_env):
     import audiobook_app as app
     acct = _login("a@b.it")
-    accounts.set_plan(acct["id"], "archive_10")
+    _consent(acct)
     _done_job(acct, "j1")
     base = app._effective_retention_for_token_info({"job_id": "j1", "is_gemini": True})
     accounts.mark_archived("j1", 10)
     assert app._effective_retention_for_token_info({"job_id": "j1"}) == accounts.ARCHIVE_RETENTION_SEC
     assert base < accounts.ARCHIVE_RETENTION_SEC
     assert app._effective_retention_for_token_info({"job_id": "j2"}) < accounts.ARCHIVE_RETENTION_SEC
-
-
-def _admin(monkeypatch):
-    import audiobook_app as app
-    monkeypatch.setattr(app, "ADMIN_TOKEN", "secret", raising=False)
-    monkeypatch.setattr(app, "_admin_auth_ok", lambda tok: tok == "secret")
-    app.app.config["TESTING"] = True
-    return app.app.test_client()
-
-
-def test_admin_plan_route(acct_env, monkeypatch):
-    client = _admin(monkeypatch)
-    acct = _login("a@b.it")
-    url = "/admin/api/accounts/plan"
-    assert client.post(url, json={"account_id": acct["id"], "plan": "archive_10"}).status_code == 401
-    h = {"X-Admin-Token": "secret"}
-    r = client.post(url, json={"account_id": acct["id"], "plan": "archive_20"}, headers=h)
-    assert r.status_code == 200
-    assert r.get_json()["plan"] == "archive_20"
-    assert r.get_json()["archive_quota_bytes"] == 20 * GIB
-    assert accounts.get(acct["id"])["plan"] == "archive_20"
-    assert client.post(url, json={"account_id": acct["id"], "plan": "gold"}, headers=h).status_code == 400
-    assert client.post(url, json={"account_id": "nope", "plan": "free"}, headers=h).status_code == 404
-    assert client.post(url, json={"plan": "free"}, headers=h).status_code == 400
-
-
-def test_admin_template_has_plan_selector():
-    import pathlib
-    html = pathlib.Path(__file__).resolve().parent.parent.joinpath(
-        "templates", "pages", "admin_audit_premium.html").read_text(encoding="utf-8")
-    assert "/admin/api/accounts/plan" in html
-    for label in ("Nessun abbonamento", "10 GB di archivio", "20 GB di archivio", "50 GB di archivio"):
-        assert label in html
 
 
 def test_account_page_shows_archive(acct_env):
@@ -287,7 +220,7 @@ def test_account_page_shows_archive(acct_env):
                             "archived": True}]}]
     html = account_page.render_history(
         t, lang="it", account=acct, rows=rows, page=1, per_page=50, total=1, voices_count=0,
-        now=T0, archive={"plan": "archive_10", "quota_bytes": 10 * GIB, "used_bytes": GIB, "jobs": 1})
+        now=T0, archive={"plan": "sub_10", "quota_bytes": 10 * GIB, "used_bytes": GIB, "jobs": 1})
     assert t["dl_archived"] in html
     assert "1.00 GB" in html and "10 GB" in html
     assert 'data-dl="2"' in html

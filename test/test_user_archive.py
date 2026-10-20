@@ -1,6 +1,7 @@
 # test/test_user_archive.py
 """Archivio dell'app: libri archiviati dallo smartphone su R2 entro la quota
-dell'abbonamento, collegamento ai job gia' archiviati, grazia dopo la revoca."""
+del piano (gratuito con consenso, o regalato), collegamento ai job gia'
+archiviati, sweep dei soli account cancellati."""
 import hashlib
 
 import pytest
@@ -9,6 +10,7 @@ import accounts
 import db
 import storage_backend
 import user_archive
+from test.test_account_plans import _consent
 
 
 T0 = 1_800_000_000
@@ -58,12 +60,12 @@ def env(tmp_path, monkeypatch):
     db.close()
 
 
-def _login(email="a@b.it", plan="archive_10"):
+def _login(email="a@b.it", consent=True):
     token, code = accounts.request_code(email, "login", "it", now=T0)
     status, acct = accounts.verify(token=token, code=code, purpose="login", now=T0)
     assert status == "ok"
-    if plan:
-        accounts.set_plan(acct["id"], plan, now=T0)
+    if consent:
+        _consent(acct, at=T0)
     return accounts.get(acct["id"])
 
 
@@ -131,7 +133,7 @@ def test_retry_of_pending_reuses_item(env):
 
 
 def test_quota_exceeded(env, monkeypatch):
-    monkeypatch.setitem(accounts.ARCHIVE_PLANS, "archive_10", 1)
+    monkeypatch.setattr(accounts, "plan_quota_bytes", lambda plan: GIB)
     acct = _login()
     accounts.record_job(acct["id"], "j1", kind="generate", status="done")
     accounts.mark_archived("j1", GIB - 50)
@@ -142,7 +144,7 @@ def test_quota_exceeded(env, monkeypatch):
 
 
 def test_inactive_and_bad_requests(env):
-    free = _login("f@b.it", plan=None)
+    free = _login("f@b.it", consent=False)
     assert _create(free)[0] == "inactive"
     acct = _login()
     assert _create(acct, fp="xyz")[0] == "bad_request"
@@ -310,22 +312,27 @@ def test_sweep_drops_stale_pending(env):
     assert user_archive.get_item(acct["id"], item["id"]) is None
 
 
-def test_grace_status_then_sweep_deletes(env, monkeypatch):
-    monkeypatch.setenv("ABM_ARCHIVE_GRACE_DAYS", "30")
+def test_sweep_keeps_items_of_live_accounts(env):
     acct = _login()
     item = _create(acct)[1]["item"]
     env.objects[item["r2_key"]] = b"x" * 100
     user_archive.finalize(acct, item["id"], now=T0)
-    accounts.set_plan(acct["id"], "free", now=T0 + 100)
+    with db.tx() as c:   # consenso perso: i libri li toglie solo la tolleranza (cleanup), mai lo sweep
+        c.execute("UPDATE accounts SET free_consent_at=NULL WHERE id=?", (acct["id"],))
+    out = user_archive.sweep(now=T0 + 10 * 365 * 86400, force=True)
+    assert out["expired"] == 0 and env.deleted == []
+    assert user_archive.get_item(acct["id"], item["id"])["state"] == "ready"
+    st = accounts.archive_status(accounts.get(acct["id"]), now=T0 + 200)
+    assert st["items"] == 1 and st["quota_bytes"] == 0 and st["state"] == "none"
+
+
+def test_create_refused_during_tolerance(env):
+    acct = _login()
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET archive_over_since=? WHERE id=?", (T0, acct["id"]))
     acct = accounts.get(acct["id"])
-    st = accounts.archive_status(acct, now=T0 + 200)
-    assert st["state"] == "grace" and st["grace_until"] == T0 + 100 + 30 * 86400
-    assert st["items"] == 1
+    assert accounts.archive_state(acct, T0 + 1) == "grace"
     assert _create(acct)[0] == "inactive"                    # niente nuovi ingressi
-    assert user_archive.sweep(now=T0 + 200, force=True)["expired"] == 0
-    out = user_archive.sweep(now=T0 + 100 + 30 * 86400, force=True)
-    assert out["expired"] == 1 and item["r2_key"] in env.deleted
-    assert accounts.archive_status(acct, now=T0 + 100 + 30 * 86400 + 1) is None
 
 
 def test_sweep_purges_deleted_accounts_and_is_rate_limited(env):
@@ -340,7 +347,8 @@ def test_sweep_purges_deleted_accounts_and_is_rate_limited(env):
 def test_active_status_shape(env):
     acct = _login()
     st = accounts.archive_status(acct)
-    assert st == {"plan": "archive_10", "quota_bytes": 10 * GIB, "used_bytes": 0, "jobs": 0,
+    assert st == {"plan": "free", "plan_source": "", "plan_until": None, "free_active": True,
+                  "quota_bytes": 512 * accounts.MIB, "used_bytes": 0, "jobs": 0,
                   "items": 0, "state": "active", "grace_until": None}
 
 
@@ -394,13 +402,13 @@ def test_routes_full_cycle(client, env):
 def test_route_quota_and_inactive(client, monkeypatch):
     c, holder, acct = client
     holder["acct"] = acct
-    monkeypatch.setitem(accounts.ARCHIVE_PLANS, "archive_10", 1)
+    monkeypatch.setattr(accounts, "plan_quota_bytes", lambda plan: GIB)
     body = {"fingerprint": FP, "size_bytes": GIB + 1, "filename": "L.m4b"}
     r = c.post("/api/account/archive/create", json=body)
     assert r.status_code == 409
     j = r.get_json()
     assert j["error_code"] == "archive_quota_exceeded" and j["needed_bytes"] == GIB + 1
-    holder["acct"] = _login("f@b.it", plan=None)
+    holder["acct"] = _login("f@b.it", consent=False)
     r = c.post("/api/account/archive/create", json=body)
     assert r.status_code == 403 and r.get_json()["error_code"] == "archive_inactive"
 

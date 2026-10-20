@@ -1,6 +1,6 @@
 # user_archive.py
 """Archivio dell'app: libri archiviati dalla libreria dello smartphone di un
-utente con abbonamento di archivio.
+utente con una quota di archivio (consenso al piano gratuito, o piano regalato).
 
 Un libro entra nell'archivio in due modi:
 - collegamento: e' gia' nell'archivio dell'account (stesso fingerprint di un
@@ -11,10 +11,11 @@ Un libro entra nell'archivio in due modi:
   quota si prenota alla creazione e il libro e' `ready` solo dopo `finalize`
   (dimensione verificata su R2). L'app cancella la copia locale solo dopo.
 
-Dopo la revoca dell'abbonamento i libri restano scaricabili per
-accounts.archive_grace_days(), poi `sweep` li cancella da R2 e dal DB.
-`sweep` converte anche in collegamenti i libri caricati che duplicano un job
-archiviato dell'account, e toglie la copia da R2.
+Perdere la quota non cancella nulla da qui: i libri restano finche' il
+cleanup, dopo la tolleranza e con l'avviso inviato, non li toglie con
+`purge_item`. `sweep` cancella da R2 e dal DB solo i libri degli account
+cancellati e gli upload mai chiusi, e converte in collegamenti i libri caricati
+che duplicano un job archiviato dell'account (toglie la copia da R2).
 
 Modulo di servizio: dipende da `db`, `accounts`, `storage_backend`,
 `storage_tiering`, `token_store` e dalla stdlib. Le route stanno in `routes_account`.
@@ -224,7 +225,7 @@ def create(account, *, fingerprint, size, filename, title="", author="", duratio
     used, _n = accounts.archive_usage(aid)
     if existing:  # upload rimasto a meta': la sua prenotazione e' gia' in `used`
         used -= int(existing["size_bytes"] or 0)
-    quota = accounts.archive_quota_bytes(account.get("plan"))
+    quota = accounts.archive_quota_for(account, now)
     if used + size > quota:
         return "quota", {"quota_bytes": quota, "used_bytes": used, "needed_bytes": size}
 
@@ -361,12 +362,12 @@ def delete(account, item_id):
     item = get_item(account["id"], item_id)
     if item is None:
         return "not_found"
-    return "ok" if _purge(item) else "storage_error"
+    return "ok" if purge_item(item) else "storage_error"
 
 
-def _purge(item):
+def purge_item(item):
     """Copia R2 (se nostra) e poi la riga: se il delete su R2 fallisce la riga
-    resta, cosi' il file non diventa un orfano invisibile."""
+    resta, cosi' il file non diventa un orfano invisibile. True se tolto."""
     for key in (item.get("r2_key"), item.get("orphan_key")):
         if not key:
             continue
@@ -432,9 +433,10 @@ def _dedupe_uploads(t, out):
 
 def sweep(now=None, force=False):
     """Pulizia periodica (dal loop di cleanup, al piu' ogni SWEEP_INTERVAL_SEC):
-    upload mai chiusi oltre PENDING_TTL_SEC, archivi di account cancellati o
-    con l'abbonamento revocato da oltre archive_grace_days(), e libri caricati
-    che duplicano un job archiviato dell'account (vedi _dedupe_uploads).
+    upload mai chiusi oltre PENDING_TTL_SEC, libri degli account cancellati e
+    libri caricati che duplicano un job archiviato dell'account (vedi
+    _dedupe_uploads). Un account vivo non perde mai libri qui, qualunque sia il
+    piano: li toglie solo il cleanup, dopo la tolleranza.
     Ritorna {"pending": n, "expired": n, "linked": n, "errors": n}."""
     t = _now(now)
     out = {"pending": 0, "expired": 0, "linked": 0, "errors": 0}
@@ -443,24 +445,20 @@ def sweep(now=None, force=False):
     _sweep_state["at"] = t
     if not accounts.enabled():
         return out
-    grace_cut = t - accounts.archive_grace_days() * 86400
-    plans = tuple(accounts.ARCHIVE_PLANS)
     with db.tx() as c:
         stale = [dict(r) for r in c.execute(
             "SELECT * FROM archive_items WHERE state='pending' AND updated_at<?",
             (t - PENDING_TTL_SEC,)).fetchall()]
         expired = [dict(r) for r in c.execute(
             "SELECT i.* FROM archive_items i JOIN accounts a ON a.id=i.account_id "
-            "WHERE a.deleted_at IS NOT NULL OR (a.plan NOT IN (" + ",".join("?" * len(plans)) + ") "
-            "AND (a.plan_until IS NULL OR a.plan_until<=?))",
-            plans + (grace_cut,)).fetchall()]
+            "WHERE a.deleted_at IS NOT NULL").fetchall()]
     seen = set()
     for kind, rows in (("pending", stale), ("expired", expired)):
         for item in rows:
             if item["id"] in seen:
                 continue
             seen.add(item["id"])
-            if _purge(item):
+            if purge_item(item):
                 out[kind] += 1
             else:
                 out["errors"] += 1
