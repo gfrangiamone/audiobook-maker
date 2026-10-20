@@ -910,8 +910,14 @@ def _archive_books_html(lang, books):
 
 
 def _archive_notice(email, lang, prefix, *, books, deadline, quota, used, manage_url):
+    try:
+        books_html = _archive_books_html(lang, books)
+    except Exception as e:      # noqa: BLE001  (elenco o testo "altri n" malformati: mai un'eccezione al chiamante)
+        print(f"[email] account {prefix}_subject non inviata: elenco libri non composto: "
+              f"{type(e).__name__}: {e}", flush=True)
+        return False
     return _acct_send(email, lang, f"{prefix}_subject", f"{prefix}_body",
-                      books_html=_archive_books_html(lang, books), deadline=deadline,
+                      books_html=books_html, deadline=deadline,
                       quota=quota, used=used, manage_url=manage_url)
 
 

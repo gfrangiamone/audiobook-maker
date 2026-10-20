@@ -176,3 +176,29 @@ def test_send_archive_returns_false_on_smtp_error(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("smtp")))
     assert email_service.send_archive_over("a@b.it", "en", **_mail_args([("T", "1 MB")])) is False
     assert email_service.send_archive_remind("a@b.it", "en", **_mail_args([("T", "1 MB")])) is False
+
+
+def test_send_archive_returns_false_when_books_cannot_be_composed(sent, monkeypatch, capsys):
+    """L'elenco dei libri si compone prima dell'invio: un testo rotto o una forma sbagliata
+    non fanno uscire un'eccezione (il chiamante si aspetta sempre un bool)."""
+    many = [(f"L{i}", "1 MB") for i in range(31)]
+    real = email_service._acct_t
+    monkeypatch.setattr(email_service, "_acct_t", lambda lang: {**real(lang), "archive_books_more": "{x} {"})
+    assert email_service.send_archive_over("a@b.it", "en", **_mail_args(many)) is False
+    assert email_service.send_archive_remind("a@b.it", "en", **_mail_args(many)) is False
+    assert "[email]" in capsys.readouterr().out
+    monkeypatch.setattr(email_service, "_acct_t", real)
+    for bad in ([("solo titolo",)], [None], None, 5):
+        assert email_service.send_archive_over("a@b.it", "en", **_mail_args(bad)) is False
+        assert email_service.send_archive_remind("a@b.it", "en", **_mail_args(bad)) is False
+    assert sent == []
+    assert email_service.send_archive_over("a@b.it", "en", **_mail_args(many)) is True
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("key", ARCHIVE_KEYS)
+def test_archive_placeholders_match_english_in_every_language(key):
+    data = _table()
+    want = set(re.findall(r"\{(\w+)\}", data["en"][key]))
+    for lang in LANGS:
+        assert set(re.findall(r"\{(\w+)\}", data[lang][key])) == want, (lang, key)

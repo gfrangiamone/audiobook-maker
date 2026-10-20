@@ -3,7 +3,6 @@
 cancellazione dei libri piu' vecchi (job tolti dalla protezione, upload tolti
 da R2 e dal DB)."""
 import hashlib
-import time
 
 import pytest
 
@@ -11,13 +10,15 @@ import accounts
 import archive_tolerance
 import db
 import email_service
+import storage_backend
 import user_archive
-from test.test_account_plans import GIB, T0, _consent, _done_job, _gift, _login
+from test.test_account_plans import T0, _consent, _done_job, _gift, _login
 from test.test_user_archive import FakeR2
 
 MIB = accounts.MIB
 DAY = 86400
-ZERO = {"gifts_expired": 0, "started": 0, "reminded": 0, "evicted": 0, "cleared": 0, "errors": 0}
+ZERO = {"gifts_expired": 0, "started": 0, "reminded": 0, "evicted": 0, "cleared": 0, "errors": 0,
+        "deferred": 0}
 
 
 @pytest.fixture
@@ -33,7 +34,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.delenv("ABM_ARCHIVE_TOLERANCE_DAYS", raising=False)
     monkeypatch.delenv("ABM_ARCHIVE_TOLERANCE_REMIND_DAYS", raising=False)
     accounts._archive_cache_clear()
-    archive_tolerance._sweep_state["at"] = 0.0
+    archive_tolerance._sweep_state["at"] = float("inf")     # i test non spazzano mai da soli: solo force=True
     user_archive._sweep_state["at"] = 0.0
     r2 = FakeR2()
     r2.install(monkeypatch)
@@ -89,10 +90,6 @@ def _item_ids(acct):
     with db.tx() as c:
         return sorted(r[0] for r in c.execute(
             "SELECT id FROM archive_items WHERE account_id=?", (acct["id"],)))
-
-
-def _day(ts):
-    return time.strftime("%Y-%m-%d", time.gmtime(ts))
 
 
 def _small_quota(monkeypatch, nbytes=100):
@@ -179,9 +176,15 @@ def test_set_archive_tolerance_and_evict_job(env):
     accounts.set_archive_tolerance(a["id"], T0 + 7, 1)
     acc = accounts.get(a["id"])
     assert (acc["archive_over_since"], acc["archive_notice_stage"]) == (T0 + 7, 1)
+    assert acc["archive_notice_quota"] is None                         # senza notice_quota la colonna resta NULL
+    accounts.set_archive_tolerance(a["id"], T0 + 7, 1, notice_quota=512 * MIB)
+    assert accounts.get(a["id"])["archive_notice_quota"] == 512 * MIB
+    accounts.set_archive_tolerance(a["id"], T0 + 7, 2, notice_quota=0)  # 0 e' un valore, non NULL
+    assert accounts.get(a["id"])["archive_notice_quota"] == 0
     accounts.set_archive_tolerance(a["id"], None, 0)
     acc = accounts.get(a["id"])
     assert (acc["archive_over_since"], acc["archive_notice_stage"]) == (None, 0)
+    assert acc["archive_notice_quota"] is None                         # chiudere azzera anche la quota annunciata
     assert accounts.archive_protects("j1")
     assert accounts.evict_archived_job("j1", now=T0 + 9) is True
     assert not accounts.archive_protects("j1")
@@ -196,6 +199,16 @@ def test_set_archive_tolerance_and_evict_job(env):
     accounts.set_archive_tolerance(a["id"], T0 + 7, 1)                  # account cancellato: non si tocca
     acc = accounts.get(a["id"])
     assert (acc["archive_over_since"], acc["archive_notice_stage"]) == (None, 0)
+
+
+def test_delete_account_clears_notice_quota(env):
+    a = _login("a@b.it")
+    accounts.set_archive_tolerance(a["id"], T0, 1, notice_quota=512 * MIB)
+    assert accounts.delete_account(a["id"], now=T0 + 1) is True
+    with db.tx() as c:
+        row = c.execute("SELECT archive_over_since, archive_notice_stage, archive_notice_quota "
+                        "FROM accounts WHERE id=?", (a["id"],)).fetchone()
+    assert tuple(row) == (None, 0, None)
 
 
 def test_purge_job_links(env):
@@ -233,10 +246,12 @@ def test_tolerance_full_cycle(env, mails, monkeypatch):
     assert mail["manage_url"] == email_service.BASE_URL + "/account"
     assert mail["books"] == [("j_old", accounts.format_bytes(60))]
     assert accounts.get(a["id"])["archive_notice_stage"] == 1
+    assert accounts.get(a["id"])["archive_notice_quota"] == 100          # la quota annunciata nell'avviso
     deadline = T0 + 10 + 15 * DAY
     archive_tolerance.sweep(now=deadline - 3 * DAY, force=True)
     archive_tolerance.sweep(now=deadline - 2 * DAY, force=True)
     assert len(mails.remind) == 1 and accounts.get(a["id"])["archive_notice_stage"] == 2
+    assert accounts.get(a["id"])["archive_notice_quota"] == 100          # il promemoria non la cambia
     assert mails.remind[0]["deadline"] == "2027-01-30"
     assert [b[0] for b in mails.remind[0]["books"]] == ["j_old"]
     archive_tolerance.sweep(now=deadline - 1, force=True)
@@ -250,6 +265,7 @@ def test_tolerance_full_cycle(env, mails, monkeypatch):
         assert c.execute("SELECT COUNT(*) FROM archive_items").fetchone()[0] == 2
     acc = accounts.get(a["id"])
     assert acc["archive_over_since"] is None and acc["archive_notice_stage"] == 0
+    assert acc["archive_notice_quota"] is None
     assert len(mails.over) == 1 and len(mails.remind) == 1
 
 
@@ -463,6 +479,244 @@ def test_account_error_does_not_stop_other_accounts(env, mails, monkeypatch):
     assert out["errors"] == 1 and out["started"] == 1 and len(calls) == 2
     assert accounts.get(first["id"])["archive_over_since"] is None
     assert accounts.get(second["id"])["archive_over_since"] == T0 + 10
+
+
+# ------------------------------------------------------------ quota scesa a tolleranza aperta
+
+def _gift_drop_setup(monkeypatch, mails):
+    """Regalo da 550 MiB che scade DOPO il promemoria e prima della scadenza; poi vale il
+    gratuito (512 MiB). Archivio da 600 MiB: j1, j2, j3 da 30 MiB e j4 da 510 MiB (l'avviso
+    elenca j1 e j2)."""
+    monkeypatch.setattr(accounts, "plan_quota_bytes",
+                        lambda p: {"free": 512 * MIB, "sub_10": 550 * MIB}.get(p, 0))
+    a = _login("a@b.it"); _consent(a)
+    for i, (job_id, size) in enumerate((("j1", 30), ("j2", 30), ("j3", 30), ("j4", 510))):
+        _archived(a, job_id, size * MIB, at=T0 + 1 + i)
+    _gift(a, "sub_10", T0 + 13 * DAY)
+    start = T0 + 10
+    assert archive_tolerance.sweep(now=start, force=True)["started"] == 1
+    old_deadline = start + 15 * DAY
+    assert archive_tolerance.sweep(now=old_deadline - 3 * DAY, force=True)["reminded"] == 1
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+        start, 2, 550 * MIB)
+    assert [b[0] for b in mails.over[0]["books"]] == ["j1", "j2"] and len(mails.remind) == 1
+    return a, start, old_deadline
+
+
+def _protected(*job_ids):
+    return [accounts.archive_protects(j) for j in job_ids]
+
+
+def test_quota_drop_after_reminder_restarts_tolerance(env, mails, monkeypatch):
+    a, start, old_deadline = _gift_drop_setup(monkeypatch, mails)
+    drop = T0 + 13 * DAY + 3600                               # il regalo e' scaduto dopo il promemoria
+    out = archive_tolerance.sweep(now=drop, force=True)
+    assert out["gifts_expired"] == 1 and out["started"] == 1
+    assert out["evicted"] == 0 and out["errors"] == 0 and out["reminded"] == 0
+    assert len(mails.over) == 2 and mails.over[1]["off"] is False
+    assert [b[0] for b in mails.over[1]["books"]] == ["j1", "j2", "j3"]    # piano ricalcolato sulla quota di adesso
+    assert mails.over[1]["deadline"] == "2027-02-12"
+    assert mails.over[1]["quota"] == accounts.format_bytes(512 * MIB)
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+        drop, 1, 512 * MIB)
+    out = archive_tolerance.sweep(now=old_deadline, force=True)            # la vecchia scadenza non vale piu'
+    assert out["evicted"] == 0 and out["errors"] == 0
+    assert _protected("j1", "j2", "j3", "j4") == [True] * 4
+    new_deadline = drop + 15 * DAY
+    out = archive_tolerance.sweep(now=new_deadline - 3 * DAY, force=True)  # promemoria della nuova finestra
+    assert out["reminded"] == 1 and len(mails.remind) == 2
+    assert [b[0] for b in mails.remind[1]["books"]] == ["j1", "j2", "j3"]
+    acc = accounts.get(a["id"])
+    assert (acc["archive_notice_stage"], acc["archive_notice_quota"]) == (2, 512 * MIB)
+    assert archive_tolerance.sweep(now=new_deadline - 1, force=True)["evicted"] == 0
+    out = archive_tolerance.sweep(now=new_deadline, force=True)
+    assert out["evicted"] == 3 and out["errors"] == 0
+    assert _protected("j1", "j2", "j3", "j4") == [False, False, False, True]
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+        None, 0, None)
+    assert len(mails.over) == 2 and len(mails.remind) == 2
+
+
+def test_quota_drop_restart_needs_email(env, mails, monkeypatch):
+    a, start, old_deadline = _gift_drop_setup(monkeypatch, mails)
+    drop = T0 + 13 * DAY + 3600
+    mails.ok = False                                          # il nuovo avviso non parte
+    for when in (drop, old_deadline, old_deadline + 20 * DAY):
+        out = archive_tolerance.sweep(now=when, force=True)
+        assert out["evicted"] == 0 and out["started"] == 0 and out["errors"] >= 1
+        assert _protected("j1", "j2", "j3", "j4") == [True] * 4
+        acc = accounts.get(a["id"])                           # tolleranza e quota annunciata restano quelle di prima
+        assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+            start, 2, 550 * MIB)
+    assert len(mails.over) == 4                               # un tentativo per giro, mai due avvisi insieme
+    mails.ok = True
+    later = old_deadline + 21 * DAY
+    out = archive_tolerance.sweep(now=later, force=True)
+    assert out["started"] == 1 and out["evicted"] == 0 and out["errors"] == 0
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+        later, 1, 512 * MIB)
+    assert _protected("j1", "j2", "j3", "j4") == [True] * 4
+
+
+def test_consent_toggle_cannot_postpone_forever(env, mails):
+    a = _login("a@b.it"); _consent(a)
+    _archived(a, "j1", 100 * MIB, at=T0 + 1)
+    _archived(a, "j2", 100 * MIB, at=T0 + 2)
+    _archived(a, "j3", 400 * MIB, at=T0 + 3)
+    out = archive_tolerance.sweep(now=T0 + 10, force=True)             # gratuito: 512 MiB, ne usa 600
+    assert out["started"] == 1 and [b[0] for b in mails.over[0]["books"]] == ["j1"]
+    assert accounts.get(a["id"])["archive_notice_quota"] == 512 * MIB
+
+    accounts.free_plan_action(a["id"], "deactivate", "account", now=T0 + DAY)
+    restart = T0 + 2 * DAY
+    out = archive_tolerance.sweep(now=restart, force=True)             # quota 0: avviso nuovo, "spento"
+    assert out["started"] == 1 and len(mails.over) == 2 and mails.over[1]["off"] is True
+    assert [b[0] for b in mails.over[1]["books"]] == ["j1", "j2", "j3"]
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+        restart, 1, 0)
+
+    accounts.free_plan_action(a["id"], "activate", "account", now=T0 + 3 * DAY)
+    out = archive_tolerance.sweep(now=T0 + 4 * DAY, force=True)        # la quota risale: niente di nuovo
+    assert out == ZERO and len(mails.over) == 2
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_quota"]) == (restart, 0)
+
+    accounts.free_plan_action(a["id"], "deactivate", "account", now=T0 + 5 * DAY)
+    out = archive_tolerance.sweep(now=T0 + 6 * DAY, force=True)        # e riscende: nessun riavvio
+    assert out == ZERO and len(mails.over) == 2 and mails.remind == []
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_quota"]) == (restart, 0)
+    assert _protected("j1", "j2", "j3") == [True] * 3
+
+    out = archive_tolerance.sweep(now=restart + 15 * DAY, force=True)  # scade la finestra dell'ultimo avviso
+    assert out["evicted"] == 3 and out["errors"] == 0 and len(mails.over) == 2
+    assert _protected("j1", "j2", "j3") == [False] * 3
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+        None, 0, None)
+
+
+def test_null_notice_quota_counts_as_zero(env, mails):
+    """Stato migrato (stage 2, scadenza passata, quota annunciata NULL) con un archivio ancora
+    oltre una quota > 0: nessun nuovo avviso, si toglie il necessario."""
+    a = _login("a@b.it"); _consent(a)
+    _archived(a, "j_old", 300 * MIB, at=T0 + 1)
+    _archived(a, "j_new", 300 * MIB, at=T0 + 2)
+    accounts.set_archive_tolerance(a["id"], T0 - 16 * DAY, 2)
+    assert accounts.get(a["id"])["archive_notice_quota"] is None
+    out = archive_tolerance.sweep(now=T0, force=True)
+    assert out["evicted"] == 1 and out["started"] == 0 and out["errors"] == 0
+    assert mails.over == [] and _protected("j_old", "j_new") == [False, True]
+
+
+# ------------------------------------------------------------ tetto di email per giro
+
+def _open_two(monkeypatch):
+    _small_quota(monkeypatch)
+    ids = []
+    for i, email in enumerate(("a@b.it", "c@d.it")):
+        acct = _login(email); _consent(acct)
+        _archived(acct, f"j{i}", 150, at=T0)
+        ids.append(acct["id"])
+    return ids
+
+
+def test_notice_cap_defers_the_remaining_accounts(env, mails, monkeypatch):
+    monkeypatch.setattr(archive_tolerance, "MAX_NOTICES_PER_SWEEP", 1)
+    ids = _open_two(monkeypatch)
+    out = archive_tolerance.sweep(now=T0 + 10, force=True)
+    assert len(mails.over) == 1 and out["started"] == 1 and out["deferred"] == 1 and out["errors"] == 0
+    started = [i for i in ids if accounts.get(i)["archive_over_since"] is not None]
+    assert len(started) == 1                                  # l'altro non ha tolleranza ne' stadio
+    other = accounts.get(next(i for i in ids if i not in started))
+    assert (other["archive_over_since"], other["archive_notice_stage"], other["archive_notice_quota"]) == (
+        None, 0, None)
+    out = archive_tolerance.sweep(now=T0 + 3600, force=True)  # al giro dopo tocca all'altro
+    assert len(mails.over) == 2 and out["started"] == 1 and out["deferred"] == 0
+    assert all(accounts.get(i)["archive_over_since"] is not None for i in ids)
+
+
+def test_notice_cap_counts_failed_attempts_and_reminders(env, mails, monkeypatch):
+    ids = _open_two(monkeypatch)
+    archive_tolerance.sweep(now=T0 + 10, force=True)
+    assert len(mails.over) == 2
+    deadline = T0 + 10 + 15 * DAY
+    monkeypatch.setattr(archive_tolerance, "MAX_NOTICES_PER_SWEEP", 1)
+    mails.ok = False                                          # un tentativo fallito consuma comunque il tetto
+    out = archive_tolerance.sweep(now=deadline - 3 * DAY, force=True)
+    assert len(mails.remind) == 1 and out["reminded"] == 0 and out["errors"] == 1 and out["deferred"] == 1
+    assert [accounts.get(i)["archive_notice_stage"] for i in ids] == [1, 1]
+    mails.ok = True
+    out = archive_tolerance.sweep(now=deadline - 3 * DAY + 3600, force=True)
+    assert len(mails.remind) == 2 and out["reminded"] == 1 and out["deferred"] == 1
+    out = archive_tolerance.sweep(now=deadline - 3 * DAY + 7200, force=True)
+    assert len(mails.remind) == 3 and out["reminded"] == 1 and out["deferred"] == 0
+    assert [accounts.get(i)["archive_notice_stage"] for i in ids] == [2, 2]
+
+
+def test_notice_cap_does_not_hold_back_evictions_without_email(env, mails, monkeypatch):
+    _small_quota(monkeypatch)
+    due = _login("a@b.it"); _consent(due)
+    _archived(due, "j_due", 150, at=T0)
+    accounts.set_archive_tolerance(due["id"], T0 - 16 * DAY, 2, notice_quota=100)
+    for i, email in enumerate(("c@d.it", "e@f.it")):          # due da avvisare, uno solo ne ha il posto
+        acct = _login(email); _consent(acct)
+        _archived(acct, f"j_new{i}", 150, at=T0)
+    monkeypatch.setattr(archive_tolerance, "MAX_NOTICES_PER_SWEEP", 1)
+    out = archive_tolerance.sweep(now=T0, force=True)
+    assert out["started"] == 1 and out["deferred"] == 1 and out["evicted"] == 1 and out["errors"] == 0
+    assert len(mails.over) == 1 and _protected("j_due") == [False]
+
+
+def test_quota_drop_needing_email_is_deferred_not_evicted(env, mails, monkeypatch):
+    """A tetto raggiunto un riavvio per quota scesa salta il giro: niente sfratto neanche allora."""
+    _small_quota(monkeypatch, 100)
+    a = _login("a@b.it"); _consent(a)
+    _archived(a, "j1", 150, at=T0)
+    accounts.set_archive_tolerance(a["id"], T0, 1, notice_quota=500)       # annunciata con 500, oggi la quota e' 100
+    monkeypatch.setattr(archive_tolerance, "MAX_NOTICES_PER_SWEEP", 0)
+    out = archive_tolerance.sweep(now=T0 + 20 * DAY, force=True)
+    assert out["deferred"] == 1 and out["evicted"] == 0 and out["started"] == 0 and mails.over == []
+    assert accounts.archive_protects("j1")
+    monkeypatch.setattr(archive_tolerance, "MAX_NOTICES_PER_SWEEP", 20)
+    out = archive_tolerance.sweep(now=T0 + 20 * DAY + 3600, force=True)
+    assert out["started"] == 1 and out["evicted"] == 0 and accounts.archive_protects("j1")
+
+
+# ------------------------------------------------------------ eviction parziale
+
+def test_partial_eviction_keeps_the_first_removal(env, mails, monkeypatch):
+    _small_quota(monkeypatch)
+    a = _login("a@b.it"); _consent(a)
+    k1 = _upload(a, "i1", 30, at=T0 + 1)
+    k2 = _upload(a, "i2", 30, at=T0 + 2)
+    _upload(a, "i3", 80, at=T0 + 3)                           # eccedenza 40: servono i1 e i2
+    archive_tolerance.sweep(now=T0 + 10, force=True)
+    deadline = T0 + 10 + 15 * DAY
+
+    def flaky(key):
+        if key == k2:
+            raise RuntimeError("r2 down")
+        env.delete(key)
+
+    monkeypatch.setattr(storage_backend, "delete_object", flaky)
+    out = archive_tolerance.sweep(now=deadline, force=True)
+    assert out["evicted"] == 1 and out["errors"] == 1
+    assert env.deleted == [k1] and _item_ids(a) == ["i2", "i3"]    # il primo resta tolto, il secondo c'e' ancora
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"]) == (T0 + 10, 1)
+    monkeypatch.setattr(storage_backend, "delete_object", env.delete)
+    out = archive_tolerance.sweep(now=deadline + 3600, force=True)  # 110 byte su 100: basta i2
+    assert out["evicted"] == 1 and out["errors"] == 0 and out["cleared"] == 0
+    assert env.deleted == [k1, k2] and _item_ids(a) == ["i3"]
+    acc = accounts.get(a["id"])
+    assert (acc["archive_over_since"], acc["archive_notice_stage"], acc["archive_notice_quota"]) == (
+        None, 0, None)
 
 
 def test_sweep_rate_limited(env, mails, monkeypatch):

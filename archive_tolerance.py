@@ -11,6 +11,18 @@ non uno di piu' di quelli che servono a rientrare. Senza email partita la
 tolleranza non si apre e non si cancella niente; rientrando nella quota la
 tolleranza si chiude da sola.
 
+L'elenco dell'avviso vale per la quota annunciata (`accounts.archive_notice_quota`).
+Se la quota scende sotto quella annunciata a tolleranza aperta (regalo scaduto
+dopo il promemoria, consenso ritirato) l'elenco non copre piu' quello che si
+cancellerebbe: parte un nuovo avviso con elenco e scadenza ricalcolati e la
+finestra riparte da quell'istante. Finche' quell'avviso non e' partito non si
+cancella niente, nemmeno oltre la vecchia scadenza. Se la quota risale la quota
+annunciata non cambia: ritirare e riattivare il consenso non allunga la finestra
+oltre quella dell'ultimo avviso.
+
+Un giro manda al piu' MAX_NOTICES_PER_SWEEP email (anche i tentativi falliti):
+gli account oltre il tetto aspettano il giro dopo, senza cambiare stato.
+
 Un job tolto perde la protezione (i file tornano alla retention ordinaria), un
 libro caricato dall'app si cancella da R2 e poi dal DB: al primo errore si
 ferma, la tolleranza resta aperta e il giro dopo riprova.
@@ -25,6 +37,7 @@ import email_service
 import user_archive
 
 SWEEP_INTERVAL_SEC = 3600
+MAX_NOTICES_PER_SWEEP = 20      # email (avvisi, riavvii, promemoria) per giro; si legge a ogni giro
 _sweep_state = {"at": 0.0}
 _DAY = 86400
 
@@ -58,28 +71,44 @@ def _warn(acct, what, out):
     print(f"WARNING archive_tolerance: {what} per l'account {acct['id']}", flush=True)
 
 
-def _start(acct, plan, quota, used, now, out):
-    """Apre la tolleranza solo se l'avviso e' partito: senza email non si cancella."""
+def _take_slot(budget, out):
+    """Un posto fra le email di questo giro; a tetto raggiunto False e il rinvio si conta."""
+    if budget["left"] <= 0:
+        out["deferred"] += 1
+        return False
+    budget["left"] -= 1
+    return True
+
+
+def _start(acct, plan, quota, used, now, out, budget, restart=False):
+    """Apre la tolleranza (o la riapre, `restart`: la quota e' scesa sotto quella
+    annunciata) solo se l'avviso e' partito: senza email non si cancella."""
+    if not _take_slot(budget, out):
+        return
     deadline = now + accounts.archive_tolerance_days() * _DAY
     if not email_service.send_archive_over(acct["email"], acct["lang"], off=(quota == 0),
                                            **_mail_args(plan, deadline, quota, used)):
-        _warn(acct, "avviso di inizio tolleranza non inviato, la tolleranza non parte", out)
+        _warn(acct, "nuovo avviso per quota scesa non inviato, la tolleranza resta quella di prima"
+              if restart else "avviso di inizio tolleranza non inviato, la tolleranza non parte", out)
         return
-    accounts.set_archive_tolerance(acct["id"], now, 1)
+    accounts.set_archive_tolerance(acct["id"], now, 1, notice_quota=quota)
     out["started"] += 1
 
 
-def _remind(acct, plan, quota, used, now, deadline, out):
+def _remind(acct, plan, quota, used, now, deadline, out, budget):
     """Promemoria una volta sola, negli ultimi ABM_ARCHIVE_TOLERANCE_REMIND_DAYS giorni."""
     if acct["archive_notice_stage"] != 1:
         return
     if now < deadline - accounts.archive_tolerance_remind_days() * _DAY:
         return
+    if not _take_slot(budget, out):
+        return
     if not email_service.send_archive_remind(acct["email"], acct["lang"],
                                              **_mail_args(plan, deadline, quota, used)):
         _warn(acct, "promemoria non inviato, si riprova al giro dopo", out)
         return
-    accounts.set_archive_tolerance(acct["id"], acct["archive_over_since"], 2)
+    accounts.set_archive_tolerance(acct["id"], acct["archive_over_since"], 2,
+                                   notice_quota=acct.get("archive_notice_quota"))
     out["reminded"] += 1
 
 
@@ -102,7 +131,7 @@ def _evict(acct, plan, quota, now, out):
         accounts.set_archive_tolerance(acct["id"], None, 0)
 
 
-def _check_account(acct, now, out):
+def _check_account(acct, now, out, budget):
     acct = accounts.get(acct["id"])         # stato di adesso: le email dei giri prima hanno richiesto tempo
     if acct is None or acct.get("deleted_at") is not None:
         return
@@ -118,11 +147,14 @@ def _check_account(acct, now, out):
     if not plan:                            # oltre la quota solo per upload ancora aperti: niente da togliere
         return
     if since is None:
-        _start(acct, plan, quota, used, now, out)
+        _start(acct, plan, quota, used, now, out, budget)
         return
+    if quota < int(acct.get("archive_notice_quota") or 0):      # NULL (stato migrato) vale 0
+        _start(acct, plan, quota, used, now, out, budget, restart=True)
+        return                              # mai cancellare con un elenco annunciato piu' corto
     deadline = int(since) + accounts.archive_tolerance_days() * _DAY
     if now < deadline:
-        _remind(acct, plan, quota, used, now, deadline, out)
+        _remind(acct, plan, quota, used, now, deadline, out, budget)
         return
     _evict(acct, plan, quota, now, out)
 
@@ -131,22 +163,29 @@ def sweep(now=None, force=False):
     """Un giro della tolleranza (dal loop di cleanup, al piu' ogni
     SWEEP_INTERVAL_SEC; `force` salta l'attesa): riporta a `free` i regali
     scaduti e poi, per ogni account con archivio, avvisa, ricorda o toglie.
-    Un errore su un account non ferma gli altri.
-    Ritorna {"gifts_expired", "started", "reminded", "evicted", "cleared", "errors"}."""
+    Un errore su un account non ferma gli altri; oltre MAX_NOTICES_PER_SWEEP email
+    gli account che ne servono aspettano il giro dopo (`deferred`).
+    Ritorna {"gifts_expired", "started", "reminded", "evicted", "cleared", "errors", "deferred"}
+    (`started` conta anche i riavvii per quota scesa)."""
     t = int(time.time() if now is None else now)
-    out = dict.fromkeys(("gifts_expired", "started", "reminded", "evicted", "cleared", "errors"), 0)
+    out = dict.fromkeys(("gifts_expired", "started", "reminded", "evicted", "cleared", "errors",
+                         "deferred"), 0)
     if not force and t - _sweep_state["at"] < SWEEP_INTERVAL_SEC:
         return out
     _sweep_state["at"] = t
     if not accounts.enabled():
         return out
     out["gifts_expired"] = accounts.expire_gifts(t)
+    budget = {"left": MAX_NOTICES_PER_SWEEP}
     for acct in accounts.archive_accounts_to_check():
         try:
-            _check_account(acct, t, out)
+            _check_account(acct, t, out, budget)
         except Exception as e:  # noqa: BLE001
             out["errors"] += 1
             print(f"[archive_tolerance] account {acct['id']}: {type(e).__name__}: {e}", flush=True)
+    if out["deferred"]:
+        print(f"[archive_tolerance] tetto di {MAX_NOTICES_PER_SWEEP} email per giro: "
+              f"{out['deferred']} account rinviati al giro dopo", flush=True)
     if any(out.values()):
         print(f"[archive_tolerance] sweep: {out}", flush=True)
     return out

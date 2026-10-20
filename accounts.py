@@ -197,8 +197,10 @@ ARCHIVE_ITEMS_ORPHAN_MIGRATION = [
 # 'paid' = riservato); `free_consent_*` il consenso al piano gratuito (versione
 # dei termini accettata), `free_offer_at` quando gli e' stato proposto;
 # `archive_over_since`/`archive_notice_stage` la tolleranza dopo la perdita della
-# quota; `archive_evicted_at` il job tolto dall'archivio. `plan_consents` e' il
-# registro delle scelte dell'utente: solo INSERT, mai UPDATE/DELETE.
+# quota, `archive_notice_quota` i byte di quota annunciati nell'ultima email di
+# inizio (NULL = nessuno, vale 0); `archive_evicted_at` il job tolto
+# dall'archivio. `plan_consents` e' il registro delle scelte dell'utente: solo
+# INSERT, mai UPDATE/DELETE.
 PLANS_V2_MIGRATION = [
     "ALTER TABLE accounts ADD COLUMN plan_source TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE accounts ADD COLUMN free_consent_at INTEGER",
@@ -206,6 +208,7 @@ PLANS_V2_MIGRATION = [
     "ALTER TABLE accounts ADD COLUMN free_offer_at INTEGER",
     "ALTER TABLE accounts ADD COLUMN archive_over_since INTEGER",
     "ALTER TABLE accounts ADD COLUMN archive_notice_stage INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE accounts ADD COLUMN archive_notice_quota INTEGER",
     "ALTER TABLE account_jobs ADD COLUMN archive_evicted_at INTEGER",
     """CREATE TABLE IF NOT EXISTS plan_consents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -865,7 +868,8 @@ def delete_account(account_id, now=None):
         )
         c.execute(
             "UPDATE accounts SET email=?, deleted_at=?, plan=?, plan_source='', plan_until=NULL, "
-            "free_consent_at=NULL, archive_over_since=NULL, archive_notice_stage=0 WHERE id=?",
+            "free_consent_at=NULL, archive_over_since=NULL, archive_notice_stage=0, "
+            "archive_notice_quota=NULL WHERE id=?",
             (f"deleted:{row['email_hash'][:16]}:{account_id}", now, PLAN_FREE, account_id),
         )
     # Fuori dalla transazione: il registro delle voci e' un file JSON e il
@@ -1274,15 +1278,18 @@ def archive_entries(account_id):
     return out
 
 
-def set_archive_tolerance(account_id, over_since, stage):
+def set_archive_tolerance(account_id, over_since, stage, notice_quota=None):
     """Apre (`over_since` = epoch), avanza (`stage` 1 avviso inviato, 2 promemoria
-    inviato) o chiude (None, 0) la tolleranza di un account vivo."""
+    inviato) o chiude (None, 0) la tolleranza di un account vivo. `notice_quota`
+    e' la quota in byte annunciata nell'ultima email di inizio (chi avanza lo
+    stadio la ripassa); chiudendo resta NULL."""
     if not enabled():
         return
     with db.tx() as c:
-        c.execute("UPDATE accounts SET archive_over_since=?, archive_notice_stage=? "
-                  "WHERE id=? AND deleted_at IS NULL",
-                  (None if over_since is None else int(over_since), int(stage), account_id))
+        c.execute("UPDATE accounts SET archive_over_since=?, archive_notice_stage=?, "
+                  "archive_notice_quota=? WHERE id=? AND deleted_at IS NULL",
+                  (None if over_since is None else int(over_since), int(stage),
+                   None if notice_quota is None else int(notice_quota), account_id))
 
 
 def evict_archived_job(job_id, now=None):
