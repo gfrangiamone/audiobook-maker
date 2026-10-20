@@ -197,8 +197,9 @@ ARCHIVE_ITEMS_ORPHAN_MIGRATION = [
 # 'paid' = riservato); `free_consent_*` il consenso al piano gratuito (versione
 # dei termini accettata), `free_offer_at` quando gli e' stato proposto;
 # `archive_over_since`/`archive_notice_stage` la tolleranza dopo la perdita della
-# quota, `archive_notice_excess` i byte di eccedenza (usato - quota) annunciati
-# nell'ultima email di inizio o riavvio (NULL = nessuno, niente da confrontare);
+# quota, `archive_notice_ids` l'array JSON delle chiavi `job:<id>`/`item:<id>` dei
+# libri elencati dall'ultima email di avviso, riavvio o promemoria (NULL = nessuno,
+# niente da confrontare: vedi `archive_notice_keys`);
 # `archive_evicted_at` il job tolto dall'archivio. `plan_consents` e' il registro
 # delle scelte dell'utente: solo INSERT, mai UPDATE/DELETE.
 PLANS_V2_MIGRATION = [
@@ -208,7 +209,7 @@ PLANS_V2_MIGRATION = [
     "ALTER TABLE accounts ADD COLUMN free_offer_at INTEGER",
     "ALTER TABLE accounts ADD COLUMN archive_over_since INTEGER",
     "ALTER TABLE accounts ADD COLUMN archive_notice_stage INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE accounts ADD COLUMN archive_notice_excess INTEGER",
+    "ALTER TABLE accounts ADD COLUMN archive_notice_ids TEXT",
     "ALTER TABLE account_jobs ADD COLUMN archive_evicted_at INTEGER",
     """CREATE TABLE IF NOT EXISTS plan_consents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -869,7 +870,7 @@ def delete_account(account_id, now=None):
         c.execute(
             "UPDATE accounts SET email=?, deleted_at=?, plan=?, plan_source='', plan_until=NULL, "
             "free_consent_at=NULL, archive_over_since=NULL, archive_notice_stage=0, "
-            "archive_notice_excess=NULL WHERE id=?",
+            "archive_notice_ids=NULL WHERE id=?",
             (f"deleted:{row['email_hash'][:16]}:{account_id}", now, PLAN_FREE, account_id),
         )
     # Fuori dalla transazione: il registro delle voci e' un file JSON e il
@@ -1278,18 +1279,36 @@ def archive_entries(account_id):
     return out
 
 
-def set_archive_tolerance(account_id, over_since, stage, notice_excess=None):
+def set_archive_tolerance(account_id, over_since, stage, notice_ids=None):
     """Apre (`over_since` = epoch), avanza (`stage` 1 avviso inviato, 2 promemoria
-    inviato) o chiude (None, 0) la tolleranza di un account vivo. `notice_excess`
-    e' l'eccedenza in byte (usato - quota) annunciata nell'ultima email di inizio
-    o riavvio (chi avanza lo stadio la ripassa); chiudendo resta NULL."""
+    inviato) o chiude (None, 0) la tolleranza di un account vivo. `notice_ids` sono
+    le chiavi (`job:<id>`/`item:<id>`) dei libri elencati dall'ultima email partita,
+    salvate come array JSON ordinato; None o chiusura della tolleranza: NULL."""
     if not enabled():
         return
+    ids = None if over_since is None or notice_ids is None else json.dumps(sorted(notice_ids))
     with db.tx() as c:
         c.execute("UPDATE accounts SET archive_over_since=?, archive_notice_stage=?, "
-                  "archive_notice_excess=? WHERE id=? AND deleted_at IS NULL",
-                  (None if over_since is None else int(over_since), int(stage),
-                   None if notice_excess is None else int(notice_excess), account_id))
+                  "archive_notice_ids=? WHERE id=? AND deleted_at IS NULL",
+                  (None if over_since is None else int(over_since), int(stage), ids, account_id))
+
+
+def archive_notice_keys(account):
+    """Insieme delle chiavi dei libri elencati dall'ultima email di un account (riga di
+    `get`), o None se non c'e' niente da confrontare: colonna NULL (stato migrato) o
+    JSON illeggibile, che si registra come WARNING e non solleva mai."""
+    raw = account.get("archive_notice_ids")
+    if raw is None:
+        return None
+    try:
+        keys = json.loads(raw)
+        if isinstance(keys, list) and all(isinstance(k, str) for k in keys):
+            return set(keys)
+    except (TypeError, ValueError):
+        pass
+    _log(f"WARNING accounts: archive_notice_ids illeggibile per l'account {account.get('id')}, "
+         f"trattato come assente")
+    return None
 
 
 def evict_archived_job(job_id, now=None):
