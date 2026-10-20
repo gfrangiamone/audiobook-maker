@@ -56,6 +56,9 @@ const s=SEO[lang]||SEO.en;
 let _canEl=document.querySelector('link[rel="canonical"]');
 let baseUrl="https://audiobook-maker.com";
 if(_canEl){let m=_canEl.href.match(/^(https?:\/\/[^/]+)\//);if(m)baseUrl=m[1];}
+// La radice / e' una pagina a se' (lingua da Accept-Language, x-default):
+// il suo canonical resta /, non /{lang}/, o punterebbe a un'altra pagina.
+const pageUrl=location.pathname==="/"?baseUrl+"/":baseUrl+"/"+lang+"/";
 document.title=s.title;
 let m=document.querySelector('meta[name="description"]');
 if(!m){m=document.createElement("meta");m.name="description";document.head.appendChild(m)}
@@ -75,7 +78,7 @@ if(!og_type){og_type=document.createElement("meta");og_type.setAttribute("proper
 og_type.content="website";
 let og_url=document.querySelector('meta[property="og:url"]');
 if(!og_url){og_url=document.createElement("meta");og_url.setAttribute("property","og:url");document.head.appendChild(og_url)}
-og_url.content=baseUrl + "/" + lang + "/";
+og_url.content=pageUrl;
 let og_img=document.querySelector('meta[property="og:image"]');
 if(!og_img){og_img=document.createElement("meta");og_img.setAttribute("property","og:image");document.head.appendChild(og_img);og_img.content=baseUrl + "/og-image.png"}
 let tw_img=document.querySelector('meta[name="twitter:image"]');
@@ -86,7 +89,7 @@ tw_img_alt.content=s.title;
 // Canonical
 let can=document.querySelector('link[rel="canonical"]');
 if(!can){can=document.createElement("link");can.rel="canonical";document.head.appendChild(can)}
-can.href=baseUrl + "/" + lang + "/";
+can.href=pageUrl;
 // Hreflang tags
 const langs=["it","en","fr","es","de","zh","hi"];
 const hreflangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans",hi:"hi"};
@@ -108,7 +111,7 @@ if(sc){sc.textContent=JSON.stringify({
 "@type":"SoftwareApplication",
 "name":s.ld,
 "alternateName": "Audiobook Maker Online",
-"url":baseUrl + "/" + lang + "/",
+"url":pageUrl,
 "description":s.desc,
 "applicationCategory":"MultimediaApplication",
 "applicationSubCategory":"Text-to-Speech Converter",

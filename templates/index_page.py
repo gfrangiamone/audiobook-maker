@@ -168,7 +168,7 @@ def build_html_template(
     if version:
         version_badge = (
             '<div id="appVersion" style="position:fixed;bottom:8px;left:12px;'
-            'font-size:11px;color:var(--txm,#9e9890);opacity:0.6;'
+            'font-size:11px;color:var(--txm,#9e9890);'
             'font-family:monospace;z-index:1;pointer-events:none;'
             f'user-select:none">v{version}</div>'
         )
@@ -178,7 +178,7 @@ def build_html_template(
     if updated_date:
         updated_badge = (
             '<div id="appUpdated" style="position:fixed;bottom:8px;right:12px;'
-            'font-size:11px;color:var(--txm,#9e9890);opacity:0.6;'
+            'font-size:11px;color:var(--txm,#9e9890);'
             'font-family:monospace;z-index:1;pointer-events:none;'
             f'user-select:none">Updated: {updated_date}</div>'
         )

@@ -50,7 +50,7 @@ def _extract_clips():
 # coda. Senza questa seconda parte il difetto non e' riproducibile.
 FINTO_DOM = """
 class FintoAudio{
-  constructor(){this._src='';this.paused=true;this.ended=false;this.coda=[];this.ascolto={};}
+  constructor(){this._src='';this.dataset={};this.paused=true;this.ended=false;this.coda=[];this.ascolto={};}
   addEventListener(ev,fn){(this.ascolto[ev]=this.ascolto[ev]||[]).push(fn);}
   get src(){return this._src;}
   set src(v){this._src=v;this.coda=[];}                 // il caricamento svuota la coda
@@ -155,3 +155,20 @@ def test_le_due_liste_delle_clip_sono_una_sola():
     assert "const _VOXCPM_AUDIO_IDS=_VOXCPM_CLIPS.map(" in APP
     for btn_id in ("voxcpmDemoCommonBtn", "voxcpmDemoStyledBtn", "voxcpmSampleBtn"):
         assert APP.count("'%s'" % btn_id) >= 1, "bottone %s fuori dalla lista" % btn_id
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+def test_le_clip_non_si_scaricano_prima_del_play(tmp_path):
+    """Con src impostato Chrome scarica la clip intera anche con preload=none:
+    la sorgente resta in data-src finche' l'utente non preme play."""
+    got = _esegui(tmp_path, "lazy.js", DUE_CLIP + """
+console.log(JSON.stringify({src:_VOXCPM_CLIPS.map(([,a])=>NODI[a].src),
+  data:_VOXCPM_CLIPS.map(([,a])=>NODI[a].dataset.src||'')}));
+""")
+    assert got["src"] == ["", "", ""]
+    assert got["data"] == ["/a-comune.wav", "/a-adatta.wav", ""]
+
+
+def test_il_play_assegna_la_sorgente_da_data_src():
+    fn = _extract_fn("_wireVoxcpmListen")
+    assert "audio.dataset.src" in fn and "audio.src=url" in fn

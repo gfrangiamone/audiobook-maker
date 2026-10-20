@@ -13,7 +13,7 @@
 /* ═══ DARK THEME ═══ */
 [data-theme="dark"]{
   --bg:#0e0e11;--srf:#18181d;--srf2:#222228;--srf3:#2c2c34;--brd:#333340;--brdh:#4a4a5a;
-  --tx:#e8e8ed;--txd:#9090a0;--txm:#7a7a8a;
+  --tx:#e8e8ed;--txd:#9090a0;--txm:#8c8c9c;
   --ac:#f0a050;--acs:rgba(240,160,80,.12);--ach:#f5b570;
   --ok:#50c878;--oks:rgba(80,200,120,.12);
   --err:#e05555;--errs:rgba(224,85,85,.12);
@@ -292,6 +292,8 @@ select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color
 .btn[hidden]{display:none}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn-p{background:var(--ac);color:#fff}
+/* Sul tema scuro l'arancio e' chiaro: testo bianco a 2,1:1, sotto WCAG AA. */
+[data-theme="dark"] .btn-p,[data-theme="dark"] #cookieBanner button.cb-accept{color:#1c1408}
 .btn-p:hover:not(:disabled){background:var(--ach);transform:translateY(-1px);box-shadow:0 4px 16px rgba(196,122,42,.25)}
 .btn-ok{background:var(--ok);color:#fff}
 .btn-ok:hover:not(:disabled){filter:brightness(1.1)}
@@ -896,6 +898,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* ─── LIVE STATS & MODAL ─── */
 .live-stats{display:flex;justify-content:center;align-items:center;gap:10px;max-width:760px;margin:-4px auto 16px;padding:2px 12px;font-size:.85rem;color:var(--txd);flex-wrap:wrap;background:transparent;border:0;border-radius:0}
 .live-stats[hidden]{display:none}
+/* Spazio riservato finche' loadLiveStats() non ha il numero: niente shift sotto. */
+.live-stats.ls-pending{visibility:hidden}
 .live-stats-icon{flex:0 0 auto;color:var(--ac)}
 .live-stats #lsToday{font-weight:700;color:var(--ac);font-variant-numeric:tabular-nums}
 .live-stats .ls-sep{color:var(--txm);opacity:.6}
@@ -1019,7 +1023,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .fbw-toggle-right{display:flex;align-items:center;gap:8px;font-weight:500;color:var(--txd);font-size:.9rem}
 .fbw-rating{position:relative;display:inline-block;font-size:1.05rem;line-height:1;letter-spacing:2px;font-family:Arial,sans-serif}
 .fbw-rating-bg{color:var(--brd)}
-.fbw-rating-fg{position:absolute;inset:0;width:0;overflow:hidden;color:#e6a92a;white-space:nowrap;transition:width .4s cubic-bezier(.22,1,.36,1)}
+/* Riempimento a transform (composito): la maschera scorre di p-100%, il
+   contenuto torna indietro di 100-p%, resta visibile la quota p delle stelle. */
+.fbw-rating-fg,.fbw-rating-in{transition:transform .4s cubic-bezier(.22,1,.36,1)}
+.fbw-rating-fg{position:absolute;inset:0;overflow:hidden;color:#e6a92a;white-space:nowrap;transform:translateX(-100%)}
+.fbw-rating-in{display:block;transform:translateX(100%)}
 .fbw-total{font-size:.8rem;color:var(--txm)}
 .fbw-chev{transition:transform .25s ease}
 .fbw[aria-expanded="true"] .fbw-chev,.fbw-toggle[aria-expanded="true"] .fbw-chev{transform:rotate(180deg)}

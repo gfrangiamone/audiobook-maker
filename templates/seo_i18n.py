@@ -1,25 +1,27 @@
-"""Server-side mirror of the client-side i18n strings that crawlers must see.
+r"""Server-side mirror of the client-side i18n strings.
 
 Why this exists:
-    The home page renders many SEO-critical strings (FAQ questions/answers,
-    guide-card link labels, heading texts) into <span data-t="…"></span>
-    placeholders that are filled by `applyI18n()` after the client JS loads.
-    Search engine crawlers and AI scrapers that don't execute JS therefore
-    see empty <span>s instead of localized anchor text — which kills both
-    keyword relevance and the FAQ rich-result eligibility.
+    The home page renders its texts into empty `data-t` placeholders
+    (<span data-t="…"></span>, <h2 data-t="…"></h2>, …) that `applyI18n()`
+    fills after the client JS loads. Two problems follow:
+      - crawlers and AI scrapers that don't execute JS see empty elements
+        instead of localized text (FAQ rich results, anchor text);
+      - real users see the layout grow when the texts arrive, which is the
+        main source of the home page's Cumulative Layout Shift.
 
 What it does:
-    Parses templates/_fragments/i18n_data.js once at startup and exposes a
-    Python dict { lang: { key: text } } with only the SEO-critical keys.
-    `prefill_seo_text()` then fills the placeholder elements server-side
-    so the static HTML the crawler downloads already contains the
-    localized text. The client `applyI18n()` runs afterwards and overwrites
-    the same nodes idempotently.
+    Parses templates/_fragments/i18n_data.js once at startup (the main
+    `const L={…}` object plus every later `Object.assign(L.xx,{…})` block)
+    into { lang: { key: text } }. `prefill_seo_text()` then fills every empty
+    `data-t` element server-side with the same text `applyI18n()` would write
+    (lang first, English fallback), so the first paint already has its final
+    size. The client `applyI18n()` runs afterwards and rewrites the same
+    nodes idempotently.
 
-The parser is intentionally minimal — it only handles the exact format
-written by hand in i18n_data.js (keys are bare identifiers, values are
-double-quoted strings, escapes are limited to \\\\, \\", \\n, \\t). If the
-format changes, run the smoke test in _smoke_seo.py to catch breakage.
+The parser only understands the format written by hand in i18n_data.js:
+bare identifier keys, double-quoted values, JS escapes (\n \t \" \' \\
+\uXXXX). A block it cannot read is skipped from the first unexpected token
+on, never raised: the client still fills those elements.
 """
 from __future__ import annotations
 
@@ -27,63 +29,103 @@ from html import escape as _esc
 from pathlib import Path
 import re
 
-# Keys whose translations must be visible to non-JS crawlers.
-# Ordered roughly by where they appear in the body.
-_SEO_KEYS: list[str] = [
-    "bc_home",
-    "guides_heading",
-    "guide_epub", "guide_pdf", "guide_m4b", "guide_tts", "guide_podcast", "guide_free_books",
-    "faq_heading_short",
-    "faq_q1", "faq_a1",
-    "faq_q2", "faq_a2",
-    "faq_q3", "faq_a3",
-    "faq_q4", "faq_a4",
-    "faq_q5", "faq_a5",
-    "faq_q6", "faq_a6",
-    "faq_translate_q", "faq_translate_a",
-    "faq_see_all",
-]
-
 _LANGS: list[str] = ["it", "en", "fr", "es", "de", "zh", "hi"]
 
-# JS string literal: any char that isn't an unescaped " or backslash, OR a
-# backslash followed by any char. Matches "Sì", "He said \"hi\"", etc.
-_VAL_RE = r'((?:[^"\\]|\\.)*)'
+# One `key:"value"` pair followed by its separator. Values never contain an
+# unescaped double quote.
+_PAIR_RE = re.compile(r'\s*([A-Za-z_$][\w$]*)\s*:\s*"((?:[^"\\]|\\.)*)"\s*([,}])', re.S)
+_LANG_OPEN_RE = re.compile(r"\s*([a-z]{2})\s*:\s*\{")
+_COMMA_RE = re.compile(r"\s*,")
+_NESTED_RE = re.compile(r"\s*[A-Za-z_$][\w$]*\s*:\s*[{\[]")
+_SEP_RE = re.compile(r"\s*([,}])")
+_STR_RE = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
+_ESC_RE = re.compile(r"\\(u[0-9a-fA-F]{4}|.)", re.S)
+_ESC_MAP = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 
 
 def _unescape_js(s: str) -> str:
-    """Reverse the small subset of JS string escapes used in i18n_data.js."""
-    return (
-        s.replace("\\n", "\n")
-         .replace("\\t", "\t")
-         .replace('\\"', '"')
-         .replace("\\\\", "\\")
-    )
+    """Reverse the JS string escapes used in i18n_data.js."""
+    def _one(m: "re.Match[str]") -> str:
+        e = m.group(1)
+        if len(e) == 5:
+            return chr(int(e[1:], 16))
+        return _ESC_MAP.get(e, e)
+    return _ESC_RE.sub(_one, s)
+
+
+def _skip_nested(src: str, pos: int) -> int:
+    """Skip a nested `{…}` / `[…]` value (e.g. the `langs` name table) whose
+    opener is at `pos`; returns the index just past its closer, or -1."""
+    depth, i, n = 0, pos, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"':
+            m = _STR_RE.match(src, i)
+            if not m:
+                return -1
+            i = m.end()
+            continue
+        if c in "{[":
+            depth += 1
+        elif c in "}]":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return -1
+
+
+def _read_pairs(src: str, pos: int, into: dict[str, str]) -> int:
+    """Read `key:"value"` pairs starting right after an opening brace.
+
+    Nested object/array values are skipped (no data-t points at them).
+    Returns the index just past the closing brace, or -1 if the block holds
+    something else (the pairs read so far are kept)."""
+    while True:
+        m = _PAIR_RE.match(src, pos)
+        if m:
+            into[m.group(1)] = _unescape_js(m.group(2))
+            pos = m.end()
+            if m.group(3) == "}":
+                return pos
+            continue
+        nested = _NESTED_RE.match(src, pos)
+        if not nested:
+            return -1
+        pos = _skip_nested(src, nested.end() - 1)
+        if pos < 0:
+            return -1
+        sep = _SEP_RE.match(src, pos)
+        if not sep:
+            return -1
+        pos = sep.end()
+        if sep.group(1) == "}":
+            return pos
 
 
 def _parse_i18n(js_path: Path) -> dict[str, dict[str, str]]:
     src = js_path.read_text(encoding="utf-8")
+    out: dict[str, dict[str, str]] = {lang: {} for lang in _LANGS}
 
-    # Locate the start of each language object: "<lang>:{"
-    starts: dict[str, int] = {}
-    for lang in _LANGS:
-        m = re.search(rf"(?:^|[,{{\s]){lang}:\{{", src)
-        if m:
-            # Position of the opening brace itself
-            starts[lang] = m.end() - 1
+    main = re.search(r"const L\s*=\s*\{", src)
+    if main:
+        pos = main.end()
+        while True:
+            m = _LANG_OPEN_RE.match(src, pos)
+            if not m or m.group(1) not in out:
+                break
+            pos = _read_pairs(src, m.end(), out[m.group(1)])
+            if pos < 0:
+                break
+            sep = _COMMA_RE.match(src, pos)
+            if not sep:
+                break
+            pos = sep.end()
 
-    # Slice each lang's object content using the next lang's start as the end
-    sorted_langs = sorted(starts.items(), key=lambda kv: kv[1])
-    out: dict[str, dict[str, str]] = {}
-    for i, (lang, pos) in enumerate(sorted_langs):
-        end = sorted_langs[i + 1][1] if i + 1 < len(sorted_langs) else len(src)
-        block = src[pos:end]
-        lang_dict: dict[str, str] = {}
-        for key in _SEO_KEYS:
-            m = re.search(rf'(?:[,{{]){re.escape(key)}:"{_VAL_RE}"', block)
-            if m:
-                lang_dict[key] = _unescape_js(m.group(1))
-        out[lang] = lang_dict
+    # Later blocks override the main object, as they do in the browser.
+    for m in re.finditer(r"Object\.assign\(L\.([a-z]{2})\s*,\s*\{", src):
+        if m.group(1) in out:
+            _read_pairs(src, m.end(), out[m.group(1)])
     return out
 
 
@@ -91,59 +133,50 @@ def _parse_i18n(js_path: Path) -> dict[str, dict[str, str]]:
 _FRAGMENTS_DIR = Path(__file__).parent / "_fragments"
 SEO_TEXT: dict[str, dict[str, str]] = _parse_i18n(_FRAGMENTS_DIR / "i18n_data.js")
 
-
-# Pre-compiled regexes for prefill. We rewrite three element shapes:
-#   <span data-t="KEY"></span>            → <span data-t="KEY">text</span>
-#   <summary data-t="KEY"></summary>      → <summary data-t="KEY">text</summary>
-#   <div class="faq-answer" data-t="KEY"></div>
-#                                          → <div … data-t="KEY">text</div>
-#
-# Empty elements only — we never overwrite text the author intentionally
-# placed inline. The data-t attribute is preserved so client applyI18n()
-# can still re-render on language switch.
-_SPAN_RE = re.compile(r'<span data-t="([^"]+)"></span>')
-_SUMMARY_RE = re.compile(r'<summary data-t="([^"]+)"></summary>')
-_FAQDIV_RE = re.compile(
-    r'<div class="faq-answer" data-t="([^"]+)"></div>'
-)
+# Any empty element carrying a data-t / data-t-html attribute:
+# <tag … data-t="KEY" …></tag>. `\sdata-t(-html)?="` excludes data-t-title
+# and data-t-ph, which translate attributes and stay client-only. Elements
+# that already have content are never touched.
+_EMPTY_RE = re.compile(r'<([a-z][a-z0-9]*)(\s[^<>]*?)></\1>')
+_KEY_RE = re.compile(r'\sdata-t(-html)?="([^"]+)"')
+_FAQ_RE = re.compile(r'\sclass="[^"]*\bfaq-answer\b')
+_HTML_RE = re.compile(r"<[a-z][\s\S]*>", re.I)
+_RAW_BLOCK_RE = re.compile(r"(<(?:script|style)\b[^>]*>.*?</(?:script|style)>)", re.S | re.I)
 
 
 def prefill_seo_text(html: str, lang: str) -> str:
     """Inject server-side text into empty data-t placeholders for `lang`.
 
-    Only keys listed in `_SEO_KEYS` are filled — other placeholders are
-    left to the client-side applyI18n(). Missing keys are silently left
-    as empty <span>s so we never crash the page on a typo.
-    """
-    table = SEO_TEXT.get(lang) or SEO_TEXT.get("en") or {}
-    if not table:
+    Mirrors `applyI18n()`: `lang` first, English fallback, text escaped.
+    Written as HTML, like the client does, are `data-t-html` values and
+    `.faq-answer` values holding links: both come from i18n_data.js, never
+    from users. Unknown keys stay empty so a typo never breaks the page."""
+    table = SEO_TEXT.get(lang) or {}
+    fallback = SEO_TEXT.get("en") or {}
+    if not table and not fallback:
         return html
 
-    def _span(m: "re.Match[str]") -> str:
-        key = m.group(1)
-        text = table.get(key)
-        if text is None:
+    def _fill(m: "re.Match[str]") -> str:
+        tag, attrs = m.group(1), m.group(2)
+        k = _KEY_RE.search(attrs)
+        if not k:
             return m.group(0)
-        return f'<span data-t="{key}">{_esc(text)}</span>'
-
-    def _summary(m: "re.Match[str]") -> str:
-        key = m.group(1)
-        text = table.get(key)
+        text = table.get(k.group(2))
         if text is None:
+            text = fallback.get(k.group(2))
+        if not text:
             return m.group(0)
-        return f'<summary data-t="{key}">{_esc(text)}</summary>'
+        if k.group(1):
+            body = text
+        elif _FAQ_RE.search(attrs):
+            body = text if _HTML_RE.search(text) else _esc(text).replace("\n", "<br>")
+        else:
+            body = _esc(text, quote=False)
+        return f"<{tag}{attrs}>{body}</{tag}>"
 
-    def _faqdiv(m: "re.Match[str]") -> str:
-        key = m.group(1)
-        text = table.get(key)
-        if text is None:
-            return m.group(0)
-        # FAQ answers contain plain text, but we still preserve newlines as
-        # <br> for readability when JS doesn't re-render.
-        body = _esc(text).replace("\n", "<br>")
-        return f'<div class="faq-answer" data-t="{key}">{body}</div>'
-
-    html = _SPAN_RE.sub(_span, html)
-    html = _SUMMARY_RE.sub(_summary, html)
-    html = _FAQDIV_RE.sub(_faqdiv, html)
-    return html
+    # Inline <script>/<style> blocks are copied untouched: markup inside a JS
+    # string must not get text injected into it.
+    parts = _RAW_BLOCK_RE.split(html)
+    for i in range(0, len(parts), 2):
+        parts[i] = _EMPTY_RE.sub(_fill, parts[i])
+    return "".join(parts)

@@ -274,9 +274,11 @@ function applyI18n(){
 // Cookie letto dalle pagine rese dal server (/account, /auth, /vc): l'area
 // personale deve seguire la lingua scelta nell'app, non quella del browser.
 function _setLangCookie(l){try{document.cookie='abm_lang='+l+';path=/;max-age=31536000;SameSite=Lax'+(location.protocol==='https:'?';Secure':'')}catch(e){}}
-function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);_setLangCookie(l);try{localStorage.setItem('abm_l',l)}catch(e){}
-  // Sync URL with selected language (SEO: URL ↔ content coherence)
+function setLang(l){cl=l;
+  // Sync URL with selected language (SEO: URL ↔ content coherence).
+  // Prima di applySEO: il canonical si calcola dal pathname.
   var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
+  applyI18n();buildAbout();applySEO(l);_setLangCookie(l);try{localStorage.setItem('abm_l',l)}catch(e){}
   // Visible SEO block removed from template — language sync handled by UI only
   // Notify widgets that render i18n-aware content (feedback, news) so
   // they can re-render with the freshly selected UI language.
@@ -1519,10 +1521,14 @@ function _loadVoxcpmSample(){
   const demos=(v&&Array.isArray(v.demos))?v.demos:[];
   const clipComune=demos.find(d=>d.common)||demos[0]||null;
   const clipAdatta=demos.find(d=>!d.common)||null;
+  // La sorgente vera si assegna solo al primo play (_wireVoxcpmListen): con
+  // src impostato e load() Chrome scarica la clip intera anche con
+  // preload="none", e le demo pesano ~1 MB l'una a ogni apertura della home.
   const set=(audio,url)=>{
     if(!audio)return;
     audio.pause();
-    if(url){audio.src=url;}else{audio.removeAttribute('src');}
+    if(url){audio.dataset.src=url;}else{delete audio.dataset.src;}
+    audio.removeAttribute('src');
     audio.load();
   };
   if(clipComune){
@@ -1606,8 +1612,10 @@ function _wireVoxcpmListen(){
     const audio=document.getElementById(audioId);
     if(!btn||!audio)continue;
     btn.addEventListener('click',()=>{
-      if(!audio.getAttribute('src'))return;
+      const url=audio.dataset.src;
+      if(!url)return;
       if(audio.paused){
+        if(audio.getAttribute('src')!==url)audio.src=url;
         // Un ascolto alla volta: gli altri player si fermano.
         for(const id of _VOXCPM_AUDIO_IDS){
           const altro=document.getElementById(id);
@@ -6667,7 +6675,7 @@ function tryGoToAudioSettings(){
       if(!r.ok) return;
       const data=await r.json();
       const count=parseInt(data.count,10)||0;
-      ls.hidden=false;
+      ls.classList.remove('ls-pending');
       if(count>0){
         animateCount(numEl,count,1200);
       }else{
@@ -7143,8 +7151,8 @@ function tryGoToAudioSettings(){
     const tot=document.getElementById('fbTotal');
     if(avg){
       const v=data.total?Math.max(0,Math.min(5,Number(data.avg)||0)):0;
-      const fg=avg.querySelector('.fbw-rating-fg');
-      if(fg) fg.style.width=(v/5*100)+'%';
+      const fg=avg.querySelector('.fbw-rating-fg'), fin=avg.querySelector('.fbw-rating-in');
+      if(fg&&fin){const p=v/5*100;fg.style.transform='translateX('+(p-100)+'%)';fin.style.transform='translateX('+(100-p)+'%)';}
       avg.setAttribute('aria-label',data.total?v.toFixed(1)+' / 5':'0 / 5');
       avg.setAttribute('content',data.total?v.toFixed(1):'0');
     }
