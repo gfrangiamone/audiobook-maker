@@ -6,7 +6,8 @@ Blueprint `admin_audit`: `/admin/audit-premium` (+ i due redirect storici),
 `/admin/api/gemini_kill_switch`, `/admin/api/tts_backend`,
 `/admin/api/gemini_model_availability`, `/admin/api/translation_cost_audit
 [/languages]`, `/admin/api/optimization_cost_audit[/languages]`,
-`/admin/api/voice_clone_audit`, `/admin/api/accounts_audit`, con i record
+`/admin/api/voice_clone_audit`, `/admin/api/accounts_audit` (+ i piani regalati:
+`/admin/api/accounts/gift` e `/gift_revoke`), con i record
 sintetici dei job in corso, la trattenuta effettiva dei cancel, la sonda
 manuale del backend Cloudflare. Spostato pari pari da `audiobook_app`.
 
@@ -118,6 +119,19 @@ def _pagination(default_limit, cap):
     limit = max(1, min(int(request.args.get("limit", default_limit)), cap))
     offset = max(0, int(request.args.get("offset", 0)))
     return limit, offset
+
+
+def _day_epoch(raw, end=False):
+    """`YYYY-MM-DD` (UTC) -> epoch della mezzanotte di quel giorno, o di quella
+    del giorno dopo con `end=True` (estremo escluso di un intervallo, e fine di
+    un regalo "fino a tutto quel giorno"). None se manca o e' malformata."""
+    try:
+        d = datetime.strptime(str(raw or "").strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if end:
+        d += timedelta(days=1)
+    return int(d.timestamp())
 
 
 @bp.route("/admin/audit-premium", methods=["GET"])
@@ -1347,7 +1361,9 @@ def admin_api_accounts_audit():
     `state`: all (default) | active | dormant | never | deleted.
     `q` cerca nell'email (gli account cancellati hanno gia' un segnaposto al
     posto dell'indirizzo: li trova solo per id). `date_from`/`date_to`
-    (YYYY-MM-DD, UTC) sulla data di registrazione.
+    (YYYY-MM-DD, UTC) sulla data di registrazione. `plan` (free | sub_5 |
+    sub_10) filtra sul piano effettivo, `origin` (paid | gift | free | none)
+    sull'origine del piano.
     """
     if not accounts.enabled():
         return jsonify({"error": "accounts disabled"}), 503
@@ -1356,30 +1372,69 @@ def admin_api_accounts_audit():
     except (TypeError, ValueError):
         return jsonify({"error": "invalid limit/offset"}), 400
 
-
-    def _epoch(name, end=False):
-        raw = (request.args.get(name) or "").strip()
-        if not raw:
-            return None
-        try:
-            d = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        except ValueError:
-            return None
-        if end:
-            d += timedelta(days=1)
-        return int(d.timestamp())
-
     try:
         out = accounts.admin_list(
             state=(request.args.get("state") or "all").strip().lower(),
             q=(request.args.get("q") or "").strip(),
-            date_from=_epoch("date_from"),
-            date_to=_epoch("date_to", end=True),
+            date_from=_day_epoch(request.args.get("date_from")),
+            date_to=_day_epoch(request.args.get("date_to"), end=True),
             limit=limit, offset=offset,
+            plan=(request.args.get("plan") or "").strip().lower(),
+            origin=(request.args.get("origin") or "").strip().lower(),
         )
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"accounts unavailable: {e}"}), 503
     return jsonify(out)
+
+
+@bp.route("/admin/api/accounts/gift", methods=["POST"])
+@admin_required
+def admin_api_account_gift():
+    """Regala un piano di spazio a un account fino a tutto il giorno `until`
+    (UTC). Body: {"account_id": ..., "plan": "sub_5"|"sub_10", "until":
+    "YYYY-MM-DD"}. 409 se c'e' un piano pagato attivo."""
+    if not accounts.enabled():
+        return jsonify({"error": "accounts disabled"}), 503
+    body = request.get_json(silent=True) or {}
+    account_id = str(body.get("account_id") or "").strip()
+    if not account_id:
+        return jsonify({"error": "account_id required"}), 400
+    until = _day_epoch(body.get("until"), end=True)
+    if until is None:
+        return jsonify({"error": "until must be YYYY-MM-DD"}), 400
+    try:
+        status, acct = accounts.gift_plan(account_id, str(body.get("plan") or ""), until)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if status == "not_found":
+        return jsonify({"error": "not_found"}), 404
+    if status == "paid":
+        return jsonify({"error": "paid_plan_active"}), 409
+    print(f"[archive] admin: account {acct['id']} -> regalo {acct['plan']} fino a {acct['plan_until']}",
+          flush=True)
+    return jsonify({"ok": True, "id": acct["id"], "plan": acct["plan"],
+                    "plan_source": acct["plan_source"], "plan_until": acct["plan_until"],
+                    "archive_quota_bytes": accounts.archive_quota_for(acct)})
+
+
+@bp.route("/admin/api/accounts/gift_revoke", methods=["POST"])
+@admin_required
+def admin_api_account_gift_revoke():
+    """Revoca il piano regalato di un account (torna al gratuito).
+    Body: {"account_id": ...}. 409 se il piano non e' un regalo."""
+    if not accounts.enabled():
+        return jsonify({"error": "accounts disabled"}), 503
+    body = request.get_json(silent=True) or {}
+    account_id = str(body.get("account_id") or "").strip()
+    if not account_id:
+        return jsonify({"error": "account_id required"}), 400
+    status, acct = accounts.revoke_gift(account_id)
+    if status == "not_found":
+        return jsonify({"error": "not_found"}), 404
+    if status == "not_gift":
+        return jsonify({"error": "not_gift"}), 409
+    print(f"[archive] admin: account {acct['id']} -> regalo revocato", flush=True)
+    return jsonify({"ok": True, "id": acct["id"], "plan": acct["plan"]})
 
 
 @bp.route("/admin/api/optimization_cost_audit/languages", methods=["GET"])

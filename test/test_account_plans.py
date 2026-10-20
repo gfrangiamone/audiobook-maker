@@ -48,7 +48,7 @@ def _consent(acct, at=T0):
 
 
 def _gift(acct, plan, until):
-    """Piano regalato con UPDATE diretto (la funzione di dominio arriva nel Task 4)."""
+    """Piano regalato con UPDATE diretto: ammette anche la scadenza assente (regali migrati), che gift_plan non permette."""
     with db.tx() as c:
         c.execute("UPDATE accounts SET plan=?, plan_source='gift', plan_until=? WHERE id=?",
                   (plan, until, acct["id"]))
@@ -391,3 +391,210 @@ def test_free_plan_activate_is_atomic_under_concurrency(env):
         t.join(timeout=10)
     assert not errors
     assert _consent_rows() == [(T0, "grant", accounts.FREE_TERMS_VERSION, "prompt")]
+
+
+# ------------------------------------------------------------ piani regalati
+
+def _set(acct, **cols):
+    sets = ", ".join(f"{k}=?" for k in cols)
+    with db.tx() as c:
+        c.execute(f"UPDATE accounts SET {sets} WHERE id=?", (*cols.values(), acct["id"]))
+
+
+def test_gift_and_revoke(env):
+    a = _login("a@b.it")
+    with pytest.raises(ValueError):
+        accounts.gift_plan(a["id"], "sub_99", T0 + 10, now=T0)
+    with pytest.raises(ValueError):
+        accounts.gift_plan(a["id"], "sub_5", T0 - 1, now=T0)
+    st, acc = accounts.gift_plan(a["id"], "sub_5", T0 + 86400, now=T0)
+    assert st == "ok" and (acc["plan"], acc["plan_source"], acc["plan_until"]) == ("sub_5", "gift", T0 + 86400)
+    assert acc["free_consent_at"] is None
+    assert accounts.gift_plan("nope", "sub_5", T0 + 10, now=T0)[0] == "not_found"
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET plan_source='paid' WHERE id=?", (a["id"],))
+    assert accounts.gift_plan(a["id"], "sub_10", T0 + 10, now=T0)[0] == "paid"
+    assert accounts.revoke_gift(a["id"], now=T0)[0] == "not_gift"
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET plan_source='gift' WHERE id=?", (a["id"],))
+    st, acc = accounts.revoke_gift(a["id"], now=T0)
+    assert st == "ok" and (acc["plan"], acc["plan_source"], acc["plan_until"]) == ("free", "", None)
+
+
+def test_gift_requires_a_future_integer_epoch(env):
+    a = _login("a@b.it")
+    for bad in (T0, T0 - 1, None, "4073587200", float(T0 + 10), True):
+        with pytest.raises(ValueError):
+            accounts.gift_plan(a["id"], "sub_5", bad, now=T0)
+    assert accounts.get(a["id"])["plan"] == "free"
+    assert accounts.gift_plan(a["id"], "sub_5", T0 + 1, now=T0)[0] == "ok"
+
+
+def test_gift_overwrites_gift_and_expired_paid_but_not_active_paid(env):
+    a = _login("a@b.it")
+    assert accounts.gift_plan(a["id"], "sub_5", T0 + 100, now=T0)[0] == "ok"
+    st, acc = accounts.gift_plan(a["id"], "sub_10", T0 + 500, now=T0)       # regalo su regalo
+    assert st == "ok" and (acc["plan"], acc["plan_until"]) == ("sub_10", T0 + 500)
+    _set(a, plan_source="paid", plan_until=T0 + 100)
+    assert accounts.gift_plan(a["id"], "sub_5", T0 + 500, now=T0 + 100)[0] == "ok"   # pagato scaduto
+    _set(a, plan_source="paid", plan_until=None)                            # pagato senza scadenza
+    st, acc = accounts.gift_plan(a["id"], "sub_5", T0 + 500, now=T0)
+    assert st == "paid" and (acc["plan"], acc["plan_source"], acc["plan_until"]) == ("sub_5", "paid", None)
+
+
+def test_gift_ignores_deleted_accounts_and_never_writes_consents(env):
+    gone, live = _login("d@b.it"), _login("l@b.it")
+    accounts.delete_account(gone["id"])
+    assert accounts.gift_plan(gone["id"], "sub_5", T0 + 10, now=T0) == ("not_found", None)
+    assert accounts.revoke_gift(gone["id"]) == ("not_found", None)
+    assert accounts.revoke_gift("nope") == ("not_found", None)
+    accounts.gift_plan(live["id"], "sub_10", T0 + 10, now=T0)
+    accounts.revoke_gift(live["id"])
+    accounts.gift_plan(live["id"], "sub_10", T0 + 10, now=T0)
+    accounts.expire_gifts(now=T0 + 10)
+    assert accounts.get(live["id"])["free_consent_at"] is None
+    assert accounts.get(live["id"])["free_offer_at"] is None
+    assert _consent_rows() == []
+
+
+def test_gift_and_revoke_clear_archive_cache(env):
+    a = _login("a@b.it")
+    accounts._archive_cache["at"] = 123.0
+    accounts.gift_plan(a["id"], "sub_5", T0 + 10, now=T0)
+    assert accounts._archive_cache["at"] == 0.0
+    accounts._archive_cache["at"] = 123.0
+    accounts.gift_plan("nope", "sub_5", T0 + 10, now=T0)                    # nessun cambiamento
+    assert accounts._archive_cache["at"] == 123.0
+    accounts.revoke_gift(a["id"])
+    assert accounts._archive_cache["at"] == 0.0
+
+
+def test_expire_gifts(env):
+    a = _login("a@b.it")
+    accounts.gift_plan(a["id"], "sub_10", T0 + 100, now=T0)
+    assert accounts.expire_gifts(now=T0 + 99) == 0
+    assert accounts.expire_gifts(now=T0 + 100) == 1
+    assert accounts.get(a["id"])["plan"] == "free"
+
+
+def test_expire_gifts_scope_and_cache(env):
+    due, later, forever, paid, plain = (_login(f"{n}@b.it") for n in "dlfpx")
+    accounts.gift_plan(due["id"], "sub_10", T0 + 100, now=T0)
+    accounts.gift_plan(later["id"], "sub_5", T0 + 200, now=T0)
+    _gift(forever, "sub_10", None)
+    _set(paid, plan="sub_5", plan_source="paid", plan_until=T0 + 50)
+    accounts._archive_cache["at"] = 123.0
+    assert accounts.expire_gifts(now=T0 + 150) == 1
+    assert accounts._archive_cache["at"] == 0.0
+    accounts._archive_cache["at"] = 123.0
+    assert accounts.expire_gifts(now=T0 + 150) == 0                         # niente da fare: cache intatta
+    assert accounts._archive_cache["at"] == 123.0
+    assert accounts.expire_gifts(now=T0 + 10 ** 9) == 1                     # il senza-scadenza resta
+    got = {k: accounts.get(v["id"]) for k, v in (
+        ("due", due), ("later", later), ("forever", forever), ("paid", paid), ("plain", plain))}
+    assert {k: (a["plan"], a["plan_source"], a["plan_until"]) for k, a in got.items()} == {
+        "due": ("free", "", None), "later": ("free", "", None),
+        "forever": ("sub_10", "gift", None), "paid": ("sub_5", "paid", T0 + 50),
+        "plain": ("free", "", None)}
+
+
+def test_admin_list_filters_by_plan_and_origin(env):
+    g, f, n = _login("g@x.it"), _login("f@x.it"), _login("n@x.it")
+    accounts.gift_plan(g["id"], "sub_10", T0 + 86400, now=T0)
+    accounts.free_plan_action(f["id"], "activate", "account", now=T0)
+    ids = lambda **kw: {r["id"] for r in accounts.admin_list(now=T0 + 1, **kw)["records"]}
+    assert ids(origin="gift") == {g["id"]} and ids(origin="free") == {f["id"]}
+    assert ids(origin="none") == {n["id"]} and ids(plan="sub_10") == {g["id"]}
+    assert ids(plan="free") == {f["id"], n["id"]}
+    agg = accounts.admin_list(now=T0 + 1)["aggregates"]
+    assert (agg["gift"], agg["free_active"], agg["paid"], agg["in_tolerance"]) == (1, 1, 0, 0)
+    rec = {r["id"]: r for r in accounts.admin_list(now=T0 + 1)["records"]}
+    assert rec[g["id"]]["origin"] == "gift" and rec[g["id"]]["archive_quota_bytes"] == 10 * GIB
+
+
+def test_admin_list_origin_paid_expired_gift_and_combined_filters(env):
+    p, g, e, c = (_login(f"{n}@x.it") for n in "pgec")
+    _set(p, plan="sub_5", plan_source="paid", plan_until=T0 + 1000)
+    accounts.gift_plan(g["id"], "sub_5", T0 + 1000, now=T0)
+    accounts.gift_plan(e["id"], "sub_10", T0 + 5, now=T0)       # scaduto ma non ancora ritirato
+    _consent(c)
+    out = accounts.admin_list(now=T0 + 10)
+    rec = {r["id"]: r for r in out["records"]}
+    assert out["origins"] == ["paid", "gift", "free", "none"]
+    assert [rec[x["id"]]["origin"] for x in (p, g, e, c)] == ["paid", "gift", "none", "free"]
+    assert [rec[x["id"]]["plan_effective"] for x in (p, g, e, c)] == ["sub_5", "sub_5", "free", "free"]
+    assert rec[e["id"]]["plan"] == "sub_10"                     # il dato grezzo resta quello del DB
+    ids = lambda **kw: {r["id"] for r in accounts.admin_list(now=T0 + 10, **kw)["records"]}
+    assert ids(origin="paid") == {p["id"]} and ids(origin="gift") == {g["id"]}
+    assert ids(origin="none") == {e["id"]} and ids(origin="free") == {c["id"]}
+    assert ids(plan="sub_5") == {p["id"], g["id"]} and ids(plan="sub_10") == set()
+    assert ids(plan="free") == {e["id"], c["id"]}
+    assert ids(plan="sub_5", origin="gift") == {g["id"]} and ids(plan="sub_10", origin="gift") == set()
+    assert ids(plan="free", origin="free") == {c["id"]}
+    assert ids(plan="bogus") == ids(origin="bogus") == {p["id"], g["id"], e["id"], c["id"]}
+    assert ids(origin="gift", q="g@x") == {g["id"]} and ids(origin="gift", q="p@x") == set()
+    agg = accounts.admin_list(now=T0 + 10)["aggregates"]
+    assert (agg["paid"], agg["gift"], agg["free_active"]) == (1, 1, 1)
+    assert accounts.admin_list(now=T0 + 10, origin="gift")["count"] == 1
+
+
+def test_space_plan_sql_follows_space_plan_active(env):
+    """Il filtro SQL e il predicato Python concordano sul confine di scadenza,
+    sul senza-scadenza, sul piano gratuito e sulle origini."""
+    rows = {"future": ("sub_5", "gift", T0 + 100), "edge": ("sub_5", "gift", T0),
+            "past": ("sub_5", "gift", T0 - 1), "forever": ("sub_10", "gift", None),
+            "paid": ("sub_10", "paid", T0 + 100), "free": ("free", "", None)}
+    accts = {}
+    for k, (plan, source, until) in rows.items():
+        accts[k] = _login(f"{k}@x.it")
+        _set(accts[k], plan=plan, plan_source=source, plan_until=until)
+    for source in (None, "gift", "paid"):
+        sql, args = accounts._space_plan_sql(T0, source)
+        with db.tx() as c:
+            got = {r[0] for r in c.execute(
+                "SELECT a.id FROM accounts a WHERE " + sql, tuple(args))}
+        want = {a["id"] for a in accts.values()
+                if accounts.space_plan_active(accounts.get(a["id"]), T0)
+                and (source is None or accounts.get(a["id"])["plan_source"] == source)}
+        assert got == want, source
+    sql, args = accounts._space_plan_sql(T0, ("gift", "paid"), alias="x")
+    assert sql.startswith("x.plan_source IN (?,?) AND x.plan IN (?,?)") and args[:2] == ["gift", "paid"]
+    expected = {"future": "gift", "edge": "none", "past": "none", "forever": "gift",
+                "paid": "paid", "free": "none"}
+    for k, a in accts.items():
+        assert accounts.plan_origin(accounts.get(a["id"]), T0) == expected[k], k
+
+
+def test_admin_list_record_fields_and_tolerance(env):
+    a, b = _login("a@x.it"), _login("b@x.it")
+    accounts.gift_plan(a["id"], "sub_5", T0 + 500, now=T0)
+    _consent(b)
+    _set(b, archive_over_since=T0 + 100)
+    out = accounts.admin_list(now=T0 + 200)
+    rec = {r["id"]: r for r in out["records"]}
+    ra, rb = rec[a["id"]], rec[b["id"]]
+    assert (ra["plan_source"], ra["plan_effective"], ra["origin"]) == ("gift", "sub_5", "gift")
+    assert ra["free_consent_at"] is None and ra["archive_over_since"] is None
+    assert ra["archive_grace_until"] is None
+    assert (rb["origin"], rb["plan_effective"], rb["free_consent_at"]) == ("free", "free", T0)
+    assert rb["archive_over_since"] == T0 + 100
+    assert rb["archive_grace_until"] == T0 + 100 + accounts.archive_tolerance_days() * 86400
+    assert out["aggregates"]["in_tolerance"] == 1
+    assert "subscribed" not in out["aggregates"]
+
+
+def test_admin_list_aggregates_skip_deleted_accounts(env):
+    g, f = _login("g@x.it"), _login("f@x.it")
+    accounts.gift_plan(g["id"], "sub_5", T0 + 500, now=T0)
+    accounts.free_plan_action(f["id"], "activate", "account", now=T0)
+    _set(g, archive_over_since=T0)
+    _set(f, archive_over_since=T0)
+    agg = accounts.admin_list(now=T0 + 1)["aggregates"]
+    assert (agg["gift"], agg["free_active"], agg["in_tolerance"]) == (1, 1, 2)
+    accounts.delete_account(g["id"])
+    accounts.delete_account(f["id"])
+    # dati sporchi su account gia' cancellati: gli aggregati contano solo i vivi
+    _set(g, plan="sub_5", plan_source="gift", archive_over_since=T0)
+    _set(f, free_consent_at=T0, archive_over_since=T0)
+    agg = accounts.admin_list(now=T0 + 1)["aggregates"]
+    assert (agg["gift"], agg["free_active"], agg["in_tolerance"], agg["deleted"]) == (0, 0, 0, 2)

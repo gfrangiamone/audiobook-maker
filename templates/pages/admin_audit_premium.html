@@ -409,6 +409,25 @@
         <input type="date" id="accDateTo">
       </div>
       <div>
+        <label for="accPlanFilter">Piano</label>
+        <select id="accPlanFilter">
+          <option value="">Tutti</option>
+          <option value="free">Gratuito</option>
+          <option value="sub_5">5 GB</option>
+          <option value="sub_10">10 GB</option>
+        </select>
+      </div>
+      <div>
+        <label for="accOriginFilter">Origine</label>
+        <select id="accOriginFilter">
+          <option value="">Tutte</option>
+          <option value="paid">Pagato</option>
+          <option value="gift">Regalato</option>
+          <option value="free">Gratuito attivo</option>
+          <option value="none">Nessun piano</option>
+        </select>
+      </div>
+      <div>
         <label>&nbsp;</label>
         <button type="button" id="accRefreshBtn">Aggiorna</button>
       </div>
@@ -422,7 +441,10 @@
       <div class="agg-box"><div class="agg-label" title="Registrazione avviata ma nessun accesso completato.">Mai entrati</div><div class="agg-value" id="accAggNever">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Cancellazione self-service: email sostituita da un segnaposto, storico rimosso.">Cancellati</div><div class="agg-value" id="accAggDeleted">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Registrazioni negli ultimi 30 giorni.">Nuovi 30 gg</div><div class="agg-value" id="accAggNew">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Account vivi con un abbonamento di archivio.">Abbonati archivio</div><div class="agg-value" id="accAggSub">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Account vivi con un piano di spazio pagato e ancora attivo.">Pagati</div><div class="agg-value" id="accAggPaid">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Account vivi con un piano regalato dall'admin e ancora attivo.">Regalati</div><div class="agg-value" id="accAggGift">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Account vivi senza piano pagato o regalato attivo, con il consenso al piano gratuito.">Gratuito attivo</div><div class="agg-value" id="accAggFree">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Account vivi con l'archivio oltre la quota: il periodo di tolleranza e' aperto.">In tolleranza</div><div class="agg-value" id="accAggTol">-</div></div>
     </div>
   </div>
   <div class="panel">
@@ -431,7 +453,7 @@
       <thead><tr>
         <th title="Data della prima registrazione">Registrato</th>
         <th>Email</th><th>Lingua</th>
-        <th title="Abbonamento di archivio: i job conclusi entrano nell'archivio (file conservati su cold, senza scadenza) finche' ci stanno nella quota. Revocandolo, l'archivio resta protetto per ABM_ARCHIVE_GRACE_DAYS (30 gg) e poi segue la retention ordinaria.">Abbonamento / archivio</th>
+        <th title="Piano di spazio e sua origine: Pagato, Regalato (con scadenza), Gratuito attivo (consenso dato) o Nessun piano. I job conclusi entrano nell'archivio finche' ci stanno nella quota del piano. Se la quota cala (regalo scaduto o revocato) l'eccedenza resta durante il periodo di tolleranza, la cui fine e' indicata nella cella.">Piano / archivio</th>
         <th title="Ultimo accesso completato (magic link o codice)">Ultimo accesso</th>
         <th title="Ultima attivita' vista su una sessione">Ultima attivita'</th>
         <th title="Sessioni non scadute ne' revocate">Sessioni</th>
@@ -1292,45 +1314,95 @@
     "never":   ["badge-warn", "Mai entrato"],
     "deleted": ["badge-err", "Cancellato"],
   };
-  const ACC_PLAN_LABEL = {
-    "free": "Nessun abbonamento",
-    "archive_10": "10 GB di archivio",
-    "archive_20": "20 GB di archivio",
-    "archive_50": "50 GB di archivio",
+  const ACC_ORIGIN_LABEL = {
+    "paid": "Pagato",
+    "gift": "Regalato",
+    "free": "Gratuito attivo",
+    "none": "Nessun piano",
   };
-  let ACC_PLANS = Object.keys(ACC_PLAN_LABEL);
+  const ACC_PLAN_LABEL = {"free": "Gratuito", "sub_5": "5 GB", "sub_10": "10 GB"};
+  // Dall'admin si assegna un piano solo come regalo, sempre con scadenza.
+  const ACC_GIFT_PLANS = {"sub_5": "5 GB (regalo)", "sub_10": "10 GB (regalo)"};
+  const ACC_ERR = {
+    "paid_plan_active": "L'account ha un piano pagato attivo: non si sovrascrive.",
+    "not_gift": "L'account non ha un regalo attivo (gia' revocato o scaduto).",
+    "not_found": "Account non trovato (forse e' stato cancellato).",
+  };
+  // esc() non tocca le virgolette: nei valori di attributo serve questa.
+  function escAttr(s){ return esc(s).replace(/"/g, "&quot;"); }
   function accGb(b){ return (Number(b||0)/1073741824).toFixed(2)+" GB"; }
+  // Il server ragiona in UTC: la prima data valida di un regalo e' l'oggi UTC.
+  function accToday(){ return new Date().toISOString().slice(0, 10); }
+  // plan_until e' la mezzanotte UTC dopo l'ultimo giorno di validita'.
+  function accGiftLastDay(ts){
+    return new Date((Number(ts)-1)*1000).toLocaleDateString("it-IT",
+      {timeZone:"UTC", day:"2-digit", month:"2-digit", year:"numeric"});
+  }
   function accPlanCell(r){
-    const cur = r.plan||"free";
-    let h;
-    if (r.deleted_at) {
-      h = esc(ACC_PLAN_LABEL[cur]||cur);
-    } else {
-      h = `<select data-acc-plan="${esc(r.id)}" data-cur="${esc(cur)}">` + ACC_PLANS.map(p =>
-        `<option value="${esc(p)}"${p===cur?" selected":""}>${esc(ACC_PLAN_LABEL[p]||p)}</option>`).join("") + `</select>`;
+    const origin = r.origin||"none", eff = r.plan_effective||"free";
+    const originLab = esc(ACC_ORIGIN_LABEL[origin]||origin);
+    let h = (origin === "paid" || origin === "gift")
+      ? `${esc(ACC_PLAN_LABEL[eff]||eff)} &middot; ${originLab}` : originLab;
+    if (origin === "gift") {
+      h += `<br><small>${r.plan_until ? "fino al "+accGiftLastDay(r.plan_until)+" (UTC)" : "senza scadenza"}</small>`;
     }
+    h += `<br><small>consenso al gratuito: ${r.free_consent_at ? "s&igrave;" : "no"}</small>`;
     const used = Number(r.archive_bytes||0), quota = Number(r.archive_quota_bytes||0);
     if (quota || used) {
       const over = quota && used > quota ? ' class="delta-negative"' : "";
       h += `<br><small${over}>${accGb(used)}${quota?" / "+accGb(quota):""} &middot; ${Number(r.archive_jobs||0)} job</small>`;
     }
-    if (cur === "free" && r.plan_until) h += `<br><small>revocato il ${accDate(r.plan_until)}</small>`;
+    if (r.archive_grace_until) {
+      h += `<br><small class="delta-negative">In tolleranza fino al ${accDate(r.archive_grace_until)}</small>`;
+    }
+    if (!r.deleted_at) {
+      h += `<div style="margin-top:4px;white-space:nowrap"><select data-acc-gift-plan>`
+        + Object.keys(ACC_GIFT_PLANS).map(p =>
+            `<option value="${escAttr(p)}">${esc(ACC_GIFT_PLANS[p])}</option>`).join("")
+        + `</select> <input type="date" data-acc-gift-until min="${escAttr(accToday())}">`
+        + ` <button type="button" data-acc-gift="${escAttr(r.id)}">Regala</button>`;
+      if (origin === "gift") {
+        h += ` <button type="button" data-acc-gift-revoke="${escAttr(r.id)}">Revoca regalo</button>`;
+      }
+      h += `</div>`;
+    }
     return h;
   }
-  async function accSetPlan(sel){
-    const id = sel.dataset.accPlan, cur = sel.dataset.cur, plan = sel.value;
-    const msg = plan === "free"
-      ? "Revocare l'abbonamento? L'archivio resta protetto per il periodo di grazia, poi i file seguono la retention ordinaria e vengono cancellati."
-      : `Attribuire "${ACC_PLAN_LABEL[plan]||plan}" a questo account?`;
-    if (!confirm(msg)) { sel.value = cur; return; }
-    sel.disabled = true;
+  async function accErrText(r){
+    const raw = await r.text();
     try {
-      const r = await fetch("/admin/api/accounts/plan", {method:"POST",
+      const e = JSON.parse(raw).error;
+      if (e) return ACC_ERR[e]||e;
+    } catch (_) { /* corpo non JSON: si mostra com'e' */ }
+    return raw;
+  }
+  async function accPost(btn, url, body){
+    btn.disabled = true;
+    try {
+      const r = await fetch(url, {method:"POST",
         headers:{"X-Admin-Token":ADMIN_TOKEN, "Content-Type":"application/json"},
-        body: JSON.stringify({account_id:id, plan:plan})});
-      if (!r.ok) { alert("Errore: "+r.status+" "+await r.text()); sel.value = cur; return; }
+        body: JSON.stringify(body)});
+      if (!r.ok) {
+        alert("Errore: "+r.status+" "+await accErrText(r));
+        // 404/409: l'account e' cambiato altrove, la tabella va riletta.
+        if (r.status === 404 || r.status === 409) accFetch();
+        return;
+      }
       accFetch();
-    } finally { sel.disabled = false; }
+    } finally { btn.disabled = false; }
+  }
+  function accGift(btn){
+    const td = btn.closest("td");
+    const plan = td.querySelector("select[data-acc-gift-plan]").value;
+    const until = td.querySelector("input[data-acc-gift-until]").value;
+    if (!until) { alert("Scegli l'ultimo giorno del regalo."); return; }
+    if (until < accToday()) { alert("L'ultimo giorno del regalo non puo' essere nel passato."); return; }
+    if (!confirm(`Regalare "${ACC_GIFT_PLANS[plan]||plan}" fino al ${until} incluso (UTC)?`)) return;
+    accPost(btn, "/admin/api/accounts/gift", {account_id: btn.dataset.accGift, plan: plan, until: until});
+  }
+  function accRevoke(btn){
+    if (!confirm("Revocare il regalo? L'account torna al piano gratuito, o a nessun piano se non ha dato il consenso.")) return;
+    accPost(btn, "/admin/api/accounts/gift_revoke", {account_id: btn.dataset.accGiftRevoke});
   }
   function accDate(ts){
     if (!ts) return "-";
@@ -1346,6 +1418,9 @@
     if (q) p.set("q",q);
     if (df) p.set("date_from",df);
     if (dt) p.set("date_to",dt);
+    const pl=$("accPlanFilter").value, og=$("accOriginFilter").value;
+    if (pl) p.set("plan",pl);
+    if (og) p.set("origin",og);
     p.set("limit","500");
     const r = await fetch("/admin/api/accounts_audit?"+p.toString(),
                           {headers:{"X-Admin-Token":ADMIN_TOKEN}});
@@ -1357,8 +1432,10 @@
     $("accAggNever").textContent = a.never_logged ?? 0;
     $("accAggDeleted").textContent = a.deleted ?? 0;
     $("accAggNew").textContent = a.last30 ?? 0;
-    $("accAggSub").textContent = a.subscribed ?? 0;
-    if (Array.isArray(d.plans) && d.plans.length) ACC_PLANS = d.plans;
+    $("accAggPaid").textContent = a.paid ?? 0;
+    $("accAggGift").textContent = a.gift ?? 0;
+    $("accAggFree").textContent = a.free_active ?? 0;
+    $("accAggTol").textContent = a.in_tolerance ?? 0;
     accRender(d.records||[], d.count||0);
   }
   function accRender(recs, total){
@@ -1387,8 +1464,10 @@
     }).join("") + auditTruncNote(recs.length, total, 11);
   }
   $("accRefreshBtn").addEventListener("click", accFetch);
-  $("accRecordsBody").addEventListener("change", (e)=>{
-    if (e.target.matches("select[data-acc-plan]")) accSetPlan(e.target);
+  $("accRecordsBody").addEventListener("click", (e)=>{
+    const btn = e.target.closest("button[data-acc-gift], button[data-acc-gift-revoke]");
+    if (!btn) return;
+    if (btn.dataset.accGift) accGift(btn); else accRevoke(btn);
   });
   $("accQuery").addEventListener("keydown", (e)=>{ if (e.key==="Enter") accFetch(); });
 

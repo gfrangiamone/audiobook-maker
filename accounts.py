@@ -921,6 +921,8 @@ PLAN_FREE = "free"
 # Piani di spazio regalati dall'admin e versione dei termini del piano gratuito
 # registrata con ogni consenso.
 SPACE_PLANS = ("sub_5", "sub_10")
+# Origini di un piano di spazio (`plan_source`): 'paid' e' riservato alla fase 2.
+PLAN_SOURCES = ("paid", "gift")
 FREE_TERMS_VERSION = "2026-10-20"
 GIB = 1024 ** 3
 MIB = 1024 ** 2
@@ -970,6 +972,30 @@ def effective_plan(account, now=None):
 def gift_active(account, now=None):
     """True se il piano di spazio attivo e' un regalo dell'admin."""
     return space_plan_active(account, now) and account.get("plan_source") == "gift"
+
+
+def plan_origin(account, now=None):
+    """Origine del piano in vigore: "paid"/"gift" se c'e' un piano di spazio
+    attivo con quella `plan_source`; altrimenti "free" (consenso al piano
+    gratuito dato) o "none"."""
+    if space_plan_active(account, now) and account.get("plan_source") in PLAN_SOURCES:
+        return account["plan_source"]
+    return "free" if account.get("free_consent_at") is not None else "none"
+
+
+def _space_plan_sql(now, source=None, alias="a"):
+    """Condizione SQL (tabella `alias`) di un piano di spazio attivo, con la
+    stessa regola di `space_plan_active`: `plan` in SPACE_PLANS e `plan_until`
+    assente o strettamente futuro. `source` (stringa o tupla di `plan_source`)
+    la restringe all'origine. Ritorna (sql, args)."""
+    marks = ",".join("?" * len(SPACE_PLANS))
+    sql = f"{alias}.plan IN ({marks}) AND ({alias}.plan_until IS NULL OR {alias}.plan_until>?)"
+    args = [*SPACE_PLANS, now]
+    if source is not None:
+        sources = (source,) if isinstance(source, str) else tuple(source)
+        sql = f"{alias}.plan_source IN ({','.join('?' * len(sources))}) AND " + sql
+        args = [*sources, *args]
+    return sql, args
 
 
 def archive_quota_for(account, now=None):
@@ -1135,7 +1161,7 @@ def archive_candidates(now=None):
         return []
     now = _now(now)
     cond, args = _archive_active_where(now)
-    marks = ",".join("?" * len(SPACE_PLANS))
+    gift_sql, gift_args = _space_plan_sql(now, "gift")
     with db.tx() as c:
         rows = c.execute(
             "SELECT j.job_id, j.account_id, a.plan, a.plan_source, a.plan_until, "
@@ -1145,10 +1171,9 @@ def archive_candidates(now=None):
             "AND j.status='done' AND j.archived_at IS NULL AND j.hidden_at IS NULL "
             "AND j.archive_evicted_at IS NULL "
             "AND ((a.free_consent_at IS NOT NULL AND j.created_at>=a.free_consent_at) "
-            f"OR (a.plan_source='gift' AND a.plan IN ({marks}) "
-            "AND (a.plan_until IS NULL OR a.plan_until>?))) "
+            "OR (" + gift_sql + ")) "
             "ORDER BY j.created_at DESC, j.job_id DESC",
-            (*args, *SPACE_PLANS, now)).fetchall()
+            (*args, *gift_args)).fetchall()
     quotas, out = {}, []
     for r in rows:
         acc = r["account_id"]
@@ -1208,8 +1233,37 @@ def mark_archived(job_id, nbytes, now=None):
     return cur.rowcount > 0
 
 
+ADMIN_PLAN_FILTERS = (PLAN_FREE, *SPACE_PLANS)
+ADMIN_ORIGINS = (*PLAN_SOURCES, "free", "none")
+
+
+def _admin_plan_where(plan, origin, now):
+    """Condizioni SQL (alias `a`) dei filtri per piano effettivo e per origine
+    della console admin, come ([sql, ...], [args]). Valori sconosciuti non
+    filtrano, come `state`."""
+    where, args = [], []
+    if plan in SPACE_PLANS:
+        sql, a = _space_plan_sql(now)
+        where.append(sql + " AND a.plan=?")
+        args += [*a, plan]
+    elif plan == PLAN_FREE:
+        sql, a = _space_plan_sql(now)
+        where.append("NOT (" + sql + ")")
+        args += a
+    if origin in PLAN_SOURCES:
+        sql, a = _space_plan_sql(now, origin)
+        where.append(sql)
+        args += a
+    elif origin in ("free", "none"):
+        sql, a = _space_plan_sql(now, PLAN_SOURCES)
+        where.append("NOT (" + sql + ") AND a.free_consent_at IS "
+                     + ("NOT NULL" if origin == "free" else "NULL"))
+        args += a
+    return where, args
+
+
 def admin_list(state="all", q="", date_from=None, date_to=None,
-               limit=500, offset=0, now=None):
+               limit=500, offset=0, now=None, plan="", origin=""):
     """Elenco account per la console admin: registrazione, ultimo accesso,
     cancellazione, sessioni attive e storico.
 
@@ -1218,8 +1272,13 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     (substring, case-insensitive); sugli account cancellati l'email e' gia'
     un segnaposto `deleted:...`, quindi la ricerca li trova solo per id.
     `date_from`/`date_to` sono epoch sulla data di registrazione.
+    `plan` (free | sub_5 | sub_10) filtra sul piano effettivo; `origin`
+    (paid | gift | free | none) sull'origine: `paid`/`gift` = piano di spazio
+    attivo con quella `plan_source`, `free` = nessun piano attivo e consenso al
+    piano gratuito, `none` = nessun piano attivo e nessun consenso.
 
-    Ritorna {"records": [...], "count": <totale filtrato>, "aggregates": {...}}.
+    Ritorna {"records": [...], "count": <totale filtrato>, "plans": [...],
+    "origins": [...], "aggregates": {...}}.
     """
     if not enabled():
         return {"records": [], "count": 0, "aggregates": {}}
@@ -1248,11 +1307,14 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     if date_to:
         where.append("a.created_at<?")
         args.append(int(date_to))
+    plan_where, plan_args = _admin_plan_where(plan, origin, now)
+    where += plan_where
+    args += plan_args
     sql_where = ("WHERE " + " AND ".join(where)) if where else ""
 
     sel = (
         "SELECT a.id, a.email, a.email_hash, a.lang, a.plan, a.plan_source, a.plan_until, "
-        "a.free_consent_at, a.created_at, a.last_login_at, a.deleted_at, "
+        "a.free_consent_at, a.archive_over_since, a.created_at, a.last_login_at, a.deleted_at, "
         "(SELECT COUNT(*) FROM sessions s WHERE s.account_id=a.id "
         " AND s.revoked_at IS NULL AND s.expires_at>?) AS sessions_active, "
         "(SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.account_id=a.id) AS last_seen_at, "
@@ -1285,9 +1347,12 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         last30 = c.execute(
             "SELECT COUNT(*) FROM accounts WHERE created_at>=?", (now - 30 * 86400,)
         ).fetchone()[0]
-        subscribed = c.execute(
-            "SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL AND plan<>'free'"
-        ).fetchone()[0]
+        live = "SELECT COUNT(*) FROM accounts a WHERE a.deleted_at IS NULL AND "
+        by_origin = {}
+        for key in ("paid", "gift", "free"):
+            cond, cargs = _admin_plan_where("", key, now)
+            by_origin[key] = c.execute(live + " AND ".join(cond), cargs).fetchone()[0]
+        in_tolerance = c.execute(live + "a.archive_over_since IS NOT NULL").fetchone()[0]
 
     recs = []
     for r in rows:
@@ -1307,19 +1372,26 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
             d["state"] = "active"
         d["paid_eur"] = round(float(d.get("paid_eur") or 0), 2)
         d["archive_quota_bytes"] = archive_quota_for(d, now)
+        d["plan_effective"] = effective_plan(d, now)
+        d["origin"] = plan_origin(d, now)
+        d["archive_grace_until"] = archive_grace_until(d)
         d.pop("email_hash", None)
         recs.append(d)
     return {
         "records": recs,
         "count": int(total),
-        "plans": [PLAN_FREE, *SPACE_PLANS],
+        "plans": list(ADMIN_PLAN_FILTERS),
+        "origins": list(ADMIN_ORIGINS),
         "aggregates": {
             "total": int(tot_all),
             "deleted": int(tot_del),
             "never_logged": int(tot_never),
             "with_session": int(tot_online),
             "last30": int(last30),
-            "subscribed": int(subscribed),
+            "paid": int(by_origin["paid"]),
+            "gift": int(by_origin["gift"]),
+            "free_active": int(by_origin["free"]),
+            "in_tolerance": int(in_tolerance),
             "filtered": int(total),
         },
     }
@@ -1381,3 +1453,81 @@ def free_plan_action(account_id, action, source, now=None):
                       (account_id,))
             _insert_consents(c, [(account_id, now, "withdraw", "", source)])
         return _row(c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone())
+
+
+# ---------------------------------------------------------------- piani regalati
+
+# Un piano di spazio (sub_5/sub_10) regalato dall'admin vale fino a `plan_until`
+# (epoch; NULL = senza scadenza, il caso dei regali migrati) e non registra
+# consensi: l'admin lo concorda fuori dal sito. Alla scadenza o alla revoca
+# l'account torna a `free`/''/NULL; l'archivio che eccede la quota segue la
+# tolleranza del cleanup.
+
+def _reset_plan(c, account_id):
+    c.execute("UPDATE accounts SET plan=?, plan_source='', plan_until=NULL WHERE id=?",
+              (PLAN_FREE, account_id))
+
+
+def _live_account(c, account_id):
+    """Riga dell'account (dict) o None se manca o e' stato cancellato."""
+    row = _row(c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone())
+    return None if row is None or row["deleted_at"] is not None else row
+
+
+def gift_plan(account_id, plan, until, now=None):
+    """Regala il piano di spazio `plan` fino a `until` (epoch intero, nel
+    futuro). ValueError su piano sconosciuto o `until` non intero o non futuro.
+
+    Ritorna (esito, account): "ok" (account aggiornato), "not_found" (assente o
+    cancellato, None) o "paid" (c'e' un piano pagato attivo: non si
+    sovrascrive; account invariato). Lettura e scrittura nella stessa
+    transazione."""
+    if plan not in SPACE_PLANS:
+        raise ValueError(f"unknown space plan: {plan!r}")
+    now = _now(now)
+    if isinstance(until, bool) or not isinstance(until, int) or until <= now:
+        raise ValueError(f"gift end must be a future epoch: {until!r}")
+    with db.tx() as c:
+        acct = _live_account(c, account_id)
+        if acct is None:
+            return "not_found", None
+        if space_plan_active(acct, now) and acct["plan_source"] == "paid":
+            return "paid", acct
+        c.execute("UPDATE accounts SET plan=?, plan_source='gift', plan_until=? WHERE id=?",
+                  (plan, until, account_id))
+        acct = _live_account(c, account_id)
+    _archive_cache_clear()
+    return "ok", acct
+
+
+def revoke_gift(account_id, now=None):
+    """Toglie il piano regalato e riporta l'account a `free`. Ritorna (esito,
+    account): "ok", "not_found" (assente o cancellato) o "not_gift" (il piano
+    non e' un regalo: un piano pagato non si revoca da qui)."""
+    with db.tx() as c:
+        acct = _live_account(c, account_id)
+        if acct is None:
+            return "not_found", None
+        if acct["plan_source"] != "gift":
+            return "not_gift", acct
+        _reset_plan(c, account_id)
+        acct = _live_account(c, account_id)
+    _archive_cache_clear()
+    return "ok", acct
+
+
+def expire_gifts(now=None):
+    """Riporta a `free` i regali con `plan_until <= now` (quelli senza scadenza
+    restano); ritorna quanti. I piani pagati scaduti non si toccano qui."""
+    if not enabled():
+        return 0
+    now = _now(now)
+    with db.tx() as c:
+        ids = [r[0] for r in c.execute(
+            "SELECT id FROM accounts WHERE plan_source='gift' "
+            "AND plan_until IS NOT NULL AND plan_until<=?", (now,))]
+        for account_id in ids:
+            _reset_plan(c, account_id)
+    if ids:
+        _archive_cache_clear()
+    return len(ids)

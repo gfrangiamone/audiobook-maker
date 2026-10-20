@@ -118,6 +118,37 @@ def test_accounts_audit_api_bad_date_is_ignored(acct_env, monkeypatch):
     assert r.get_json()["count"] == 1
 
 
+def test_accounts_audit_api_filters_by_plan_and_origin(acct_env, monkeypatch):
+    gifted = _login("gift@example.com", T0)
+    _login("none@example.com", T0)
+    # la route legge l'orologio reale: il regalo scade nel 2096
+    assert accounts.gift_plan(gifted["id"], "sub_5", 4_000_000_000, now=T0)[0] == "ok"
+    c = _admin(monkeypatch)
+    h = {"X-Admin-Token": "secret"}
+
+    def emails(query):
+        r = c.get("/admin/api/accounts_audit" + query, headers=h)
+        assert r.status_code == 200
+        return sorted(rec["email"] for rec in r.get_json()["records"])
+
+    assert emails("?origin=gift") == ["gift@example.com"]
+    assert emails("?origin=none") == ["none@example.com"]
+    assert emails("?origin=paid") == [] and emails("?origin=free") == []
+    assert emails("?plan=sub_5") == ["gift@example.com"]
+    assert emails("?plan=free") == ["none@example.com"]
+    assert emails("?plan=sub_5&origin=none") == []                 # filtri in AND
+    assert emails("?plan=sub_5&origin=gift") == ["gift@example.com"]
+    assert emails("?origin=%20GIFT%20") == ["gift@example.com"]    # trim + minuscolo
+    assert len(emails("?origin=inesistente&plan=boh")) == 2        # valori ignoti: nessun filtro
+    d = c.get("/admin/api/accounts_audit?origin=gift", headers=h).get_json()
+    assert d["origins"] == ["paid", "gift", "free", "none"]
+    rec = d["records"][0]
+    assert (rec["origin"], rec["plan_effective"], rec["plan_source"]) == ("gift", "sub_5", "gift")
+    agg = d["aggregates"]                                          # aggregati sull'intera anagrafica
+    assert (agg["gift"], agg["paid"], agg["free_active"], agg["in_tolerance"], agg["total"]) == (1, 0, 0, 0, 2)
+    assert "subscribed" not in agg
+
+
 def test_premium_page_has_accounts_tab(monkeypatch):
     c = _admin(monkeypatch)
     body = c.get("/admin/audit-premium",

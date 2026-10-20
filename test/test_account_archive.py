@@ -9,6 +9,7 @@ import db
 import storage_backend
 import token_store as _tkstore
 from test.test_account_plans import _consent
+from test.test_admin_accounts_audit import _admin
 
 
 T0 = 1_800_000_000
@@ -259,3 +260,121 @@ def test_i18n_keys_in_all_languages():
     for lang in i18n.LANGS:
         for k in ("dl_archived", "archive_line", "archive_line_ended", "job_delete_archived_p"):
             assert data[lang].get(k), (lang, k)
+
+
+# ------------------------------------------------------------ piani regalati: console admin
+
+def test_admin_gift_routes(acct_env, monkeypatch):
+    client = _admin(monkeypatch)
+    acct = _login("a@b.it")
+    h = {"X-Admin-Token": "secret"}
+    url = "/admin/api/accounts/gift"
+    body = {"account_id": acct["id"], "plan": "sub_10", "until": "2099-01-31"}
+    assert client.post(url, json=body).status_code == 401
+    r = client.post(url, json=body, headers=h)
+    assert r.status_code == 200 and r.get_json()["plan_source"] == "gift"
+    assert r.get_json()["plan_until"] == 4073587200          # 2099-02-01T00:00:00Z
+    assert client.post(url, json={**body, "until": "2000-01-01"}, headers=h).status_code == 400
+    assert client.post(url, json={**body, "plan": "archive_10"}, headers=h).status_code == 400
+    assert client.post(url, json={**body, "account_id": "nope"}, headers=h).status_code == 404
+    rv = "/admin/api/accounts/gift_revoke"
+    assert client.post(rv, json={"account_id": acct["id"]}, headers=h).status_code == 200
+    assert client.post(rv, json={"account_id": acct["id"]}, headers=h).status_code == 409
+    assert client.post("/admin/api/accounts/plan", json={}, headers=h).status_code in (404, 405)
+
+
+def test_admin_gift_route_contract(acct_env, monkeypatch):
+    client = _admin(monkeypatch)
+    acct = _login("a@b.it")
+    h = {"X-Admin-Token": "secret"}
+    url = "/admin/api/accounts/gift"
+    r = client.post(url, json={"account_id": acct["id"], "plan": "sub_5", "until": "2099-01-31"}, headers=h)
+    assert r.get_json() == {"ok": True, "id": acct["id"], "plan": "sub_5", "plan_source": "gift",
+                            "plan_until": 4073587200, "archive_quota_bytes": 5 * GIB}
+    stored = accounts.get(acct["id"])
+    assert (stored["plan"], stored["plan_source"], stored["plan_until"]) == ("sub_5", "gift", 4073587200)
+    assert stored["free_consent_at"] is None                 # il regalo non da' consensi
+    r = client.post("/admin/api/accounts/gift_revoke", json={"account_id": acct["id"]}, headers=h)
+    assert r.get_json() == {"ok": True, "id": acct["id"], "plan": "free"}
+    assert accounts.get(acct["id"])["plan_source"] == ""
+
+
+def test_admin_gift_route_validation(acct_env, monkeypatch):
+    client = _admin(monkeypatch)
+    acct = _login("a@b.it")
+    h = {"X-Admin-Token": "secret"}
+    url = "/admin/api/accounts/gift"
+    ok = {"account_id": acct["id"], "plan": "sub_5", "until": "2099-01-31"}
+    for bad in ({}, {**ok, "account_id": ""}, {"plan": "sub_5", "until": "2099-01-31"},
+                {**ok, "plan": ""}, {**ok, "plan": "free"}, {**ok, "plan": ["sub_5"]},
+                {**ok, "until": ""}, {**ok, "until": "31/01/2099"}, {**ok, "until": "2099-13-01"},
+                {k: v for k, v in ok.items() if k != "until"}, {**ok, "until": 4073587200},
+                {**ok, "until": "2000-01-01"}):
+        r = client.post(url, json=bad, headers=h)
+        assert r.status_code == 400, bad
+        assert r.get_json()["error"], bad
+    assert client.post(url, data="not json", headers=h).status_code == 400
+    assert accounts.get(acct["id"])["plan"] == "free"
+    rv = "/admin/api/accounts/gift_revoke"
+    assert client.post(rv, json={}, headers=h).status_code == 400
+    assert client.post(rv, json={"account_id": "nope"}, headers=h).get_json() == {"error": "not_found"}
+    assert client.post(rv, json={"account_id": "nope"}).status_code == 401
+
+
+def test_admin_gift_route_until_is_end_of_that_utc_day(acct_env, monkeypatch):
+    monkeypatch.setattr(accounts, "_now", lambda now: T0 if now is None else int(now))   # 2027-01-15T08:00Z
+    client = _admin(monkeypatch)
+    acct = _login("a@b.it")
+    h = {"X-Admin-Token": "secret"}
+    url = "/admin/api/accounts/gift"
+    body = {"account_id": acct["id"], "plan": "sub_5"}
+    assert client.post(url, json={**body, "until": "2027-01-14"}, headers=h).status_code == 400   # ieri
+    r = client.post(url, json={**body, "until": "2027-01-15"}, headers=h)                         # oggi
+    assert r.status_code == 200 and r.get_json()["plan_until"] == 1_800_057_600                  # 2027-01-16T00:00Z
+    assert accounts.get(acct["id"])["plan_until"] - T0 == 16 * 3600
+
+
+def test_admin_gift_route_conflicts_and_disabled(acct_env, monkeypatch):
+    client = _admin(monkeypatch)
+    acct = _login("a@b.it")
+    h = {"X-Admin-Token": "secret"}
+    url, rv = "/admin/api/accounts/gift", "/admin/api/accounts/gift_revoke"
+    body = {"account_id": acct["id"], "plan": "sub_10", "until": "2099-01-31"}
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET plan='sub_5', plan_source='paid', plan_until=NULL WHERE id=?",
+                  (acct["id"],))
+    r = client.post(url, json=body, headers=h)
+    assert r.status_code == 409 and r.get_json() == {"error": "paid_plan_active"}
+    r = client.post(rv, json={"account_id": acct["id"]}, headers=h)
+    assert r.status_code == 409 and r.get_json() == {"error": "not_gift"}
+    assert accounts.get(acct["id"])["plan_source"] == "paid"
+    monkeypatch.setattr(accounts, "ENABLE", False)
+    assert client.post(url, json=body, headers=h).status_code == 503
+    assert client.post(rv, json={"account_id": acct["id"]}, headers=h).status_code == 503
+
+
+def test_admin_template_has_gift_controls():
+    import pathlib
+    html = pathlib.Path(__file__).resolve().parent.parent.joinpath(
+        "templates", "pages", "admin_audit_premium.html").read_text(encoding="utf-8")
+    for s in ("/admin/api/accounts/gift", "/admin/api/accounts/gift_revoke",
+              "5 GB (regalo)", "10 GB (regalo)", "Gratuito attivo", "Nessun piano",
+              "Pagato", "Regalato", "In tolleranza"):
+        assert s in html
+    assert "/admin/api/accounts/plan\"" not in html and "archive_20" not in html
+
+
+def test_admin_template_gift_ui_is_consistent():
+    import pathlib
+    import re
+    html = pathlib.Path(__file__).resolve().parent.parent.joinpath(
+        "templates", "pages", "admin_audit_premium.html").read_text(encoding="utf-8")
+    assert not re.search(r"archive_(10|20|50)|ABM_ARCHIVE_GRACE_DAYS|subscribed", html)
+    assert "Revoca regalo" in html and 'origin === "gift"' in html
+    assert re.search(r'<input type="date" data-acc-gift-until min="\$\{', html)   # data minima = oggi
+    for param in ("plan", "origin"):
+        assert f'p.set("{param}"' in html
+    for agg in ("Pagati", "Regalati", "Gratuito attivo", "In tolleranza"):
+        assert agg in html
+    # i valori che arrivano dal server entrano solo escapati
+    assert "escAttr(r.id)" in html and "data-acc-gift" in html
