@@ -355,3 +355,81 @@ def test_login_logs_activity_with_hashed_sid(client, env, monkeypatch):
     assert rows and rows[-1][2] == "ACCOUNT_LOGIN"
     assert rows[-1][0] == "acct-" + accounts.email_hash("a@b.it")[:8]
     assert "a@b.it" not in rows[-1][0] + rows[-1][1]
+
+
+# ------------------------------------------------------------ piano gratuito
+
+def _login(client, env, email="a@b.it"):
+    client.post("/api/auth/request", json={"email": email, "lang": "it"})
+    return client.post("/api/auth/verify", json={"email": email, "code": env[-1][2]["code"]})
+
+
+def test_free_plan_route_and_me(client, env):
+    client.post("/api/auth/request", json={"email": "a@b.it", "lang": "it"})
+    d = client.post("/api/auth/verify", json={"email": "a@b.it", "code": env[0][2]["code"]}).get_json()
+    assert d["free_offer"] is True and d["free_quota_bytes"] == 512 * 1024 ** 2
+    me = client.get("/api/auth/me").get_json()
+    assert me["free_offer"] is True and me["archive"] is None
+    assert me["free_quota_bytes"] == 512 * 1024 ** 2 and me["tolerance_days"] == 15
+    r = client.post("/api/account/free_plan", json={"action": "activate", "source": "prompt"})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["ok"] and d["free_offer"] is False and d["archive"]["free_active"] is True
+    assert client.post("/api/account/free_plan", json={"action": "x"}).status_code == 400
+    assert client.post("/api/account/free_plan", json={"action": "activate",
+                                                       "source": "migration"}).status_code == 400
+
+
+def test_free_plan_route_requires_login(client, env):
+    r = client.post("/api/account/free_plan", json={"action": "activate"})
+    assert r.status_code == 401 and r.get_json()["error_code"] == "unauthorized"
+
+
+def test_free_plan_route_cycle_and_defaults(client, env):
+    _login(client, env)
+    acct = accounts.account_for_email("a@b.it")
+    # source di default = account, corpo vuoto = 400
+    assert client.post("/api/account/free_plan", json={}).status_code == 400
+    r = client.post("/api/account/free_plan", json={"action": "decline", "source": "prompt"})
+    d = r.get_json()
+    assert r.status_code == 200 and d["free_offer"] is False and d["archive"] is None
+    r = client.post("/api/account/free_plan", json={"action": "activate"})
+    d = r.get_json()
+    assert d["free_offer"] is False and d["archive"]["free_active"] is True
+    assert d["archive"]["quota_bytes"] == 512 * 1024 ** 2
+    assert client.get("/api/auth/me").get_json()["archive"]["free_active"] is True
+    r = client.post("/api/account/free_plan", json={"action": "deactivate"})
+    d = r.get_json()
+    assert r.status_code == 200 and d["free_offer"] is False
+    assert d["archive"] is None
+    with db.tx() as c:
+        rows = [tuple(x) for x in c.execute(
+            "SELECT action, source FROM plan_consents WHERE account_id=? ORDER BY id",
+            (acct["id"],)).fetchall()]
+    assert rows == [("decline", "prompt"), ("grant", "account"), ("withdraw", "account")]
+
+
+def test_free_plan_route_logs_and_login_body_matches_me(client, env, monkeypatch):
+    rows = []
+    monkeypatch.setattr(audiobook_app, "_log_activity",
+                        lambda sid, fn, op, **kw: rows.append((sid, fn, op)))
+    d = _login(client, env).get_json()
+    client.post("/api/account/free_plan", json={"action": "decline", "source": "prompt"})
+    assert rows[-1][2] == "ACCOUNT_FREE_DECLINE"
+    assert rows[-1][0] == "acct-" + accounts.email_hash("a@b.it")[:8]
+    assert "a@b.it" not in rows[-1][0] + rows[-1][1]
+    keys = {"free_offer", "free_quota_bytes", "tolerance_days", "archive"}
+    me = client.get("/api/auth/me").get_json()
+    assert keys <= set(d) and keys <= set(me)
+    assert me["free_offer"] is False and d["free_offer"] is True
+
+
+def test_me_hides_free_offer_during_active_gift(client, env):
+    _login(client, env)
+    acct = accounts.account_for_email("a@b.it")
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET plan='sub_5', plan_source='gift', plan_until=NULL WHERE id=?",
+                  (acct["id"],))
+    me = client.get("/api/auth/me").get_json()
+    assert me["free_offer"] is False and me["plan"] == "sub_5"
+    assert me["archive"]["plan"] == "sub_5" and me["archive"]["free_active"] is False

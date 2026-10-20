@@ -6,6 +6,7 @@ logout_device,me}`, `/auth/<token>` (magic link con anti-CSRF), `/account`
 (pagina), `/api/account/jobs` (elenco con download e stato riconciliato),
 `/api/account/jobs/delete`, `/api/account/archive{,/create,/finalize,/delete,
 /download,/share}` (archivio dell'app, logica in `user_archive`),
+`/api/account/free_plan` (consenso al piano gratuito),
 `/api/account/voucher_suggest`, `/api/account/delete_request`,
 `/api/account/delete_confirm`; con i cookie di sessione e CSRF, l'invio
 dei codici, la cancellazione dell'account, le righe dei job e le voci
@@ -289,7 +290,7 @@ def _acct_login_response(acct, payload=None, device_name=None):
                                   ip_hash=_hash_ip(client_ip()))
     _acct_log("ACCOUNT_LOGIN", acct["email"])
     body = {"ok": True, "email": acct["email"], "lang": acct.get("lang") or "en",
-            "plan": acct.get("plan") or "free"}
+            "plan": acct.get("plan") or "free", **_acct_plan_info(acct)}
     if payload is not None:
         body.update(payload)
     if (request.headers.get(_MOBILE_CID_HEADER) or "").strip():
@@ -460,6 +461,7 @@ def api_auth_me():
         "logged_in": True, "enabled": True, "email": acct["email"],
         "lang": acct.get("lang") or "en", "plan": acct.get("plan") or "free",
         "sessions_count": accounts.sessions_count(acct["id"]),
+        **_acct_plan_info(acct),
     })
 
 
@@ -628,6 +630,16 @@ def _account_archive_for(acct):
     except Exception as e:  # noqa: BLE001
         print(f"WARNING archive_status: {e}", flush=True)
         return None
+
+
+def _acct_plan_info(acct):
+    """Stato del piano di archivio esposto da login e `/api/auth/me`: se
+    proporre il piano gratuito, la sua quota, i giorni di tolleranza e il
+    riepilogo dell'archivio (None se non c'e' nulla da mostrare)."""
+    return {"free_offer": accounts.free_offer_pending(acct),
+            "free_quota_bytes": accounts.plan_quota_bytes(accounts.PLAN_FREE),
+            "tolerance_days": accounts.archive_tolerance_days(),
+            "archive": _account_archive_for(acct)}
 
 
 @bp.route("/account", methods=["GET"])
@@ -822,6 +834,26 @@ def api_account_archive():
         return err
     return jsonify({"archive": _account_archive_for(acct),
                     "items": [user_archive.public(i) for i in user_archive.list_items(acct["id"])]})
+
+
+@bp.route("/api/account/free_plan", methods=["POST"])
+def api_account_free_plan():
+    """Scelta sul piano gratuito: `action` activate|decline|deactivate, `source`
+    prompt|account (default account). Risponde con lo stato del piano gia'
+    aggiornato, come `/api/auth/me`."""
+    acct, err = _acct_required()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    action = str(data.get("action") or "")
+    try:
+        acct = accounts.free_plan_action(acct["id"], action, str(data.get("source") or "account"))
+    except ValueError:
+        return _acct_err("bad_request", "valid action and source required", 400)
+    if acct is None:
+        return _acct_err("unauthorized", "Sign in required", 401)
+    _acct_log("ACCOUNT_FREE_" + action.upper(), acct["email"])
+    return jsonify({"ok": True, **_acct_plan_info(acct)})
 
 
 @bp.route("/api/account/archive/create", methods=["POST"])

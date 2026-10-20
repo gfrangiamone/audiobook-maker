@@ -1,6 +1,7 @@
 # test/test_account_plans.py
 """Piani v2: piano gratuito con consenso, piani regalati sub_5/sub_10, migrazione
 dei vecchi archivi archive_10/20/50."""
+import threading
 import time
 
 import pytest
@@ -299,3 +300,94 @@ def test_format_bytes():
     assert accounts.format_bytes(0) == "0 MB"
     assert accounts.format_bytes(GIB) == "1 GB"
     assert accounts.format_bytes(int(2.5 * GIB)) == "2.5 GB"
+
+
+# ------------------------------------------------------------ consenso al piano gratuito
+
+def _consent_rows():
+    with db.tx() as c:
+        return [tuple(r) for r in c.execute(
+            "SELECT at, action, version, source FROM plan_consents ORDER BY id").fetchall()]
+
+
+def test_free_plan_actions_record_consents(env):
+    a = _login("a@b.it")
+    assert accounts.free_offer_pending(accounts.get(a["id"]))
+    accounts.free_plan_action(a["id"], "decline", "prompt", now=T0)
+    acc = accounts.get(a["id"])
+    assert not accounts.free_offer_pending(acc) and acc["free_consent_at"] is None
+    acc = accounts.free_plan_action(a["id"], "activate", "account", now=T0 + 5)
+    assert acc["free_consent_at"] == T0 + 5 and acc["free_offer_at"] == T0
+    accounts.free_plan_action(a["id"], "activate", "account", now=T0 + 6)   # idempotente
+    acc = accounts.free_plan_action(a["id"], "deactivate", "account", now=T0 + 9)
+    assert acc["free_consent_at"] is None
+    assert _consent_rows() == [(T0, "decline", "", "prompt"),
+                               (T0 + 5, "grant", accounts.FREE_TERMS_VERSION, "account"),
+                               (T0 + 9, "withdraw", "", "account")]
+    with pytest.raises(ValueError):
+        accounts.free_plan_action(a["id"], "maybe", "account")
+    with pytest.raises(ValueError):
+        accounts.free_plan_action(a["id"], "activate", "migration")
+    assert accounts.free_plan_action("missing", "activate", "account") is None
+
+
+def test_no_offer_while_gift_active(env):
+    g = _login("g@b.it")
+    _gift(g, "sub_10", T0 + 86400)
+    assert not accounts.free_offer_pending(accounts.get(g["id"]), now=T0)
+    assert accounts.free_offer_pending(accounts.get(g["id"]), now=T0 + 86400)
+    with db.tx() as c:
+        assert c.execute("SELECT COUNT(*) FROM plan_consents").fetchone()[0] == 0
+
+
+def test_free_plan_noop_actions_write_nothing(env):
+    a = _login("a@b.it")
+    # ritirare senza consenso e' un no-op
+    acc = accounts.free_plan_action(a["id"], "deactivate", "account", now=T0)
+    assert acc["free_consent_at"] is None and acc["free_offer_at"] is None
+    assert _consent_rows() == []
+    accounts.free_plan_action(a["id"], "activate", "prompt", now=T0 + 1)
+    # rifiutare con il consenso gia' dato non lo toglie ne' registra nulla
+    acc = accounts.free_plan_action(a["id"], "decline", "prompt", now=T0 + 2)
+    assert acc["free_consent_at"] == T0 + 1
+    assert _consent_rows() == [(T0 + 1, "grant", accounts.FREE_TERMS_VERSION, "prompt")]
+
+
+def test_free_offer_not_shown_again_after_any_choice(env):
+    a, b = _login("a@b.it"), _login("b@b.it")
+    accounts.free_plan_action(a["id"], "activate", "prompt", now=T0)
+    accounts.free_plan_action(a["id"], "deactivate", "account", now=T0 + 1)
+    accounts.free_plan_action(b["id"], "decline", "prompt", now=T0)
+    assert not accounts.free_offer_pending(accounts.get(a["id"]), now=T0 + 2)
+    assert not accounts.free_offer_pending(accounts.get(b["id"]), now=T0 + 2)
+    assert not accounts.free_offer_pending(None)
+
+
+def test_free_plan_ignores_deleted_accounts(env):
+    a = _login("a@b.it")
+    accounts.delete_account(a["id"], now=T0)
+    assert accounts.free_plan_action(a["id"], "activate", "account", now=T0 + 1) is None
+    assert not accounts.free_offer_pending(accounts.get(a["id"]), now=T0 + 1)
+    assert _consent_rows() == []
+
+
+def test_free_plan_activate_is_atomic_under_concurrency(env):
+    a = _login("a@b.it")
+    n = 8
+    gate = threading.Barrier(n)
+    errors = []
+
+    def click():
+        try:
+            gate.wait(timeout=5)
+            accounts.free_plan_action(a["id"], "activate", "prompt", now=T0)
+        except Exception as e:  # noqa: BLE001  l'errore deve far fallire il test
+            errors.append(e)
+
+    threads = [threading.Thread(target=click) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not errors
+    assert _consent_rows() == [(T0, "grant", accounts.FREE_TERMS_VERSION, "prompt")]

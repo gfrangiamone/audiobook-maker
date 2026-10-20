@@ -219,15 +219,20 @@ PLANS_V2_MIGRATION = [
 ]
 
 
+def _insert_consents(c, rows):
+    """Aggiunge al registro `plan_consents` le righe (account_id, at, action,
+    version, source): e' l'unico punto che lo scrive."""
+    c.executemany(
+        "INSERT INTO plan_consents(account_id, at, action, version, source) "
+        "VALUES (?, ?, ?, ?, ?)", rows)
+
+
 def _grant_migrated_consent(c, ids, now):
     """Consenso al piano gratuito (source='migration') per gli account `ids`."""
     c.executemany(
         "UPDATE accounts SET free_consent_at=?, free_consent_version=?, free_offer_at=? WHERE id=?",
         [(now, FREE_TERMS_VERSION, now, i) for i in ids])
-    c.executemany(
-        "INSERT INTO plan_consents(account_id, at, action, version, source) "
-        "VALUES (?, ?, 'grant', ?, 'migration')",
-        [(i, now, FREE_TERMS_VERSION) for i in ids])
+    _insert_consents(c, [(i, now, "grant", FREE_TERMS_VERSION, "migration") for i in ids])
 
 
 # Piani di archivio della versione precedente (10/20/50 GB): servono solo alla
@@ -1318,3 +1323,61 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
             "filtered": int(total),
         },
     }
+
+
+# ---------------------------------------------------------------- piano gratuito
+
+# Il piano gratuito (archivio da `plan_quota_bytes(PLAN_FREE)`) si attiva solo
+# con il consenso dell'utente: lo si propone una volta (`free_offer_at`) e ogni
+# scelta resta nel registro `plan_consents`. `migration` e' una sorgente valida
+# nel registro ma la scrive solo la migrazione dei dati, mai questa funzione.
+FREE_PLAN_ACTIONS = ("activate", "decline", "deactivate")
+FREE_CONSENT_SOURCES = ("prompt", "account")
+
+
+def free_offer_pending(account, now=None):
+    """True se all'utente va proposto il piano gratuito: account vivo, mai
+    proposto, nessun consenso e nessun regalo attivo (con un regalo la proposta
+    non compare e ricompare, senza consenso, al primo accesso dopo la scadenza)."""
+    if not account or account.get("deleted_at") is not None:
+        return False
+    if account.get("free_consent_at") is not None or account.get("free_offer_at") is not None:
+        return False
+    return not gift_active(account, now)
+
+
+def free_plan_action(account_id, action, source, now=None):
+    """Registra la scelta dell'utente sul piano gratuito e ritorna l'account
+    aggiornato (None se manca o e' stato cancellato).
+
+    `activate` da' il consenso (riga `grant`), `decline` chiude la proposta senza
+    consenso (riga `decline`), `deactivate` ritira il consenso (riga `withdraw`).
+    Le azioni che non cambiano nulla (attivare con il consenso gia' dato,
+    rifiutare con il consenso dato, ritirarlo quando manca) non scrivono righe.
+    Lettura e scrittura stanno nella stessa transazione: un doppio click non
+    duplica la riga. ValueError su azione o sorgente sconosciute."""
+    if action not in FREE_PLAN_ACTIONS:
+        raise ValueError(f"unknown free plan action: {action!r}")
+    if source not in FREE_CONSENT_SOURCES:
+        raise ValueError(f"unknown free plan source: {source!r}")
+    now = _now(now)
+    with db.tx() as c:
+        row = c.execute("SELECT free_consent_at, deleted_at FROM accounts WHERE id=?",
+                        (account_id,)).fetchone()
+        if row is None or row["deleted_at"] is not None:
+            return None
+        has_consent = row["free_consent_at"] is not None
+        if action == "activate" and not has_consent:
+            c.execute("UPDATE accounts SET free_consent_at=?, free_consent_version=?, "
+                      "free_offer_at=COALESCE(free_offer_at, ?) WHERE id=?",
+                      (now, FREE_TERMS_VERSION, now, account_id))
+            _insert_consents(c, [(account_id, now, "grant", FREE_TERMS_VERSION, source)])
+        elif action == "decline" and not has_consent:
+            c.execute("UPDATE accounts SET free_offer_at=COALESCE(free_offer_at, ?) WHERE id=?",
+                      (now, account_id))
+            _insert_consents(c, [(account_id, now, "decline", "", source)])
+        elif action == "deactivate" and has_consent:
+            c.execute("UPDATE accounts SET free_consent_at=NULL, free_consent_version='' WHERE id=?",
+                      (account_id,))
+            _insert_consents(c, [(account_id, now, "withdraw", "", source)])
+        return _row(c.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone())
