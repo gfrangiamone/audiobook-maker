@@ -487,6 +487,18 @@ def _delete_cold_for_job(job_id):
         print(f"[cleanup] Cold delete error for {job_id}: {e}")
 
 
+def _delete_cold_if_no_live_token(job_id, now, reason=""):
+    """G5: la dir locale del job e' gia' assente. Cancella il cold SOLO se non
+    resta alcun download token vivo: il cold e' il tier durevole e non va
+    purgato finche' un link email e' valido. Ritorna True se ha cancellato."""
+    if _tkstore.has_active_download_tokens(job_id, now):
+        print(f"[cleanup] {job_id} local gone but cold preserved "
+              f"(token still valid) — {reason}")
+        return False
+    _delete_cold_for_job(job_id)
+    return True
+
+
 def _marker_protection_window(is_gemini):
     """Finestra di protezione (sec) da incidere nel marker email, per tipo voce.
 
@@ -987,14 +999,7 @@ def _cleanup_job(job_id, reason=""):
         _delete_cold_for_job(job_id)       # solo sul path che procede alla rimozione
         shutil.rmtree(str(work_dir), ignore_errors=True)
     else:
-        # G5: dir già assente — cancella il cold SOLO se non resta alcun token
-        # vivo. Il cold è il tier durevole: non va purgato finché un link email
-        # è valido (anche se il locale è sparito).
-        if not _tkstore.has_active_download_tokens(job_id, now):
-            _delete_cold_for_job(job_id)
-        else:
-            print(f"[cleanup] {job_id} local gone but cold preserved "
-                  f"(token still valid) — {reason}")
+        _delete_cold_if_no_live_token(job_id, now, reason)
     print(f"[cleanup] {job_id} removed ({reason})")
 
 
@@ -1405,6 +1410,64 @@ def _account_maintenance_supervisor():
             delay = 60
 
 
+def _expire_download_tokens(now):
+    """Rimuove i download token scaduti e, per i job non piu' in memoria,
+    la dir locale e il cold quando nessuna protezione regge.
+
+    Retention per-token: se il token e' marcato is_gemini (voce PREMIUM)
+    vale GEMINI_FILE_RETENTION_SEC, altrimenti EMAIL_FILE_RETENTION_SEC.
+    _effective_* raddoppia per voci PREMIUM mai scaricate (protezione costo).
+
+    Dir locale gia' assente (rimossa fuori dall'app, o job uscito dalla RAM
+    con un restart): il cold va cancellato lo stesso, altrimenti resta su R2
+    per sempre (incidente 2026-10, cron abm-cleanup-stale). Ritorna il
+    numero di token rimossi."""
+    with _tkstore.tokens_lock:
+        expired_tokens = [(t, info) for t, info in list(_tkstore.download_tokens.items())
+                          if (now - info["created_at"]) > _effective_retention_for_token_info(info) + 300]
+    for t, t_info in expired_tokens:
+        with _tkstore.tokens_lock:
+            _tkstore.download_tokens.pop(t, None)
+        jid = t_info.get("job_id", "")
+        with _jobs_lock:
+            job_in_memory = jid in _jobs()
+        if not jid:
+            continue
+        job_dir = _upload_dir() / jid
+        # Legacy: tokens created before the per-epoch refactor may have an
+        # `output_archive_dir` field pointing to a manually-built archive.
+        archive_rel = t_info.get("output_archive_dir", "")
+        if archive_rel and job_dir.exists():
+            archive_path = job_dir / archive_rel
+            if archive_path.exists() and archive_path.is_dir():
+                shutil.rmtree(str(archive_path), ignore_errors=True)
+                print(f"[cleanup] Legacy archive removed (token expired): {archive_path}")
+        if job_in_memory:
+            continue
+        if not job_dir.exists():
+            if _delete_cold_if_no_live_token(jid, now, "token expired, local already gone"):
+                print(f"[cleanup] Token-orphan cold purged: {jid} (local already gone)")
+            continue
+        if _email_marker_protects(job_dir, now):
+            continue
+        if _forensic_marker_protects(job_dir, now):
+            continue
+        # G5: un job può avere più token (es. audio + .abm). Abbiamo
+        # rimosso UNO scaduto, ma se un fratello è ancora valido NON
+        # distruggere dir + cold.
+        if _tkstore.has_active_download_tokens(jid, now):
+            continue
+        _delete_cold_for_job(jid)
+        shutil.rmtree(str(job_dir), ignore_errors=True)
+        print(f"[cleanup] Token-orphan dir removed: {jid}")
+    if expired_tokens:
+        # _tkstore.save_tokens() acquires _tkstore.tokens_lock internally; wrapping it here
+        # would deadlock on the non-reentrant lock and freeze every later
+        # caller (including the post-COMPLETE email notification).
+        _tkstore.save_tokens()
+    return len(expired_tokens)
+
+
 def _cleanup_loop():
     """Background thread: periodically clean up finished/abandoned jobs."""
     while True:
@@ -1574,47 +1637,7 @@ def _cleanup_loop():
             except Exception as e:
                 print(f"[cleanup] error removing {jid}: {e}")
 
-        #  -  -  Cleanup expired download tokens  -  -
-        # Retention per-token: se il token e' marcato is_gemini (voce PREMIUM)
-        # vale GEMINI_FILE_RETENTION_SEC, altrimenti EMAIL_FILE_RETENTION_SEC.
-        # _effective_* raddoppia per voci PREMIUM mai scaricate (protezione costo).
-        with _tkstore.tokens_lock:
-            expired_tokens = [(t, info) for t, info in list(_tkstore.download_tokens.items())
-                              if (now - info["created_at"]) > _effective_retention_for_token_info(info) + 300]
-        for t, t_info in expired_tokens:
-            with _tkstore.tokens_lock:
-                _tkstore.download_tokens.pop(t, None)
-            jid = t_info.get("job_id", "")
-            with _jobs_lock:
-                job_in_memory = jid in _jobs()
-            if jid:
-                job_dir = _upload_dir() / jid
-                # Legacy: tokens created before the per-epoch refactor may have an
-                # `output_archive_dir` field pointing to a manually-built archive.
-                archive_rel = t_info.get("output_archive_dir", "")
-                if archive_rel and job_dir.exists():
-                    archive_path = job_dir / archive_rel
-                    if archive_path.exists() and archive_path.is_dir():
-                        shutil.rmtree(str(archive_path), ignore_errors=True)
-                        print(f"[cleanup] Legacy archive removed (token expired): {archive_path}")
-                if not job_in_memory and job_dir.exists():
-                    if _email_marker_protects(job_dir, now):
-                        continue
-                    if _forensic_marker_protects(job_dir, now):
-                        continue
-                    # G5: un job può avere più token (es. audio + .abm). Abbiamo
-                    # rimosso UNO scaduto, ma se un fratello è ancora valido NON
-                    # distruggere dir + cold.
-                    if _tkstore.has_active_download_tokens(jid, now):
-                        continue
-                    _delete_cold_for_job(jid)
-                    shutil.rmtree(str(job_dir), ignore_errors=True)
-                    print(f"[cleanup] Token-orphan dir removed: {jid}")
-        if expired_tokens:
-            # _tkstore.save_tokens() acquires _tkstore.tokens_lock internally; wrapping it here
-            # would deadlock on the non-reentrant lock and freeze every later
-            # caller (including the post-COMPLETE email notification).
-            _tkstore.save_tokens()
+        _expire_download_tokens(now)
 
         #  -  -  Cleanup orphan per-epoch output dirs  -  -
         # An output_{epoch}/ directory is removable when:
