@@ -192,6 +192,71 @@ ARCHIVE_ITEMS_ORPHAN_MIGRATION = [
 ]
 
 
+# Piani v2: archivio gratuito con consenso + piani di spazio regalati dall'admin.
+# `plan_source` dice da dove viene `plan` ('' = nessuno, 'gift' = regalo admin,
+# 'paid' = riservato); `free_consent_*` il consenso al piano gratuito (versione
+# dei termini accettata), `free_offer_at` quando gli e' stato proposto;
+# `archive_over_since`/`archive_notice_stage` la tolleranza dopo la perdita della
+# quota; `archive_evicted_at` il job tolto dall'archivio. `plan_consents` e' il
+# registro delle scelte dell'utente: solo INSERT, mai UPDATE/DELETE.
+PLANS_V2_MIGRATION = [
+    "ALTER TABLE accounts ADD COLUMN plan_source TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE accounts ADD COLUMN free_consent_at INTEGER",
+    "ALTER TABLE accounts ADD COLUMN free_consent_version TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE accounts ADD COLUMN free_offer_at INTEGER",
+    "ALTER TABLE accounts ADD COLUMN archive_over_since INTEGER",
+    "ALTER TABLE accounts ADD COLUMN archive_notice_stage INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE account_jobs ADD COLUMN archive_evicted_at INTEGER",
+    """CREATE TABLE IF NOT EXISTS plan_consents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        version TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_plan_consents_account ON plan_consents(account_id)",
+]
+
+
+def _grant_migrated_consent(c, ids, now):
+    """Consenso al piano gratuito (source='migration') per gli account `ids`."""
+    c.executemany(
+        "UPDATE accounts SET free_consent_at=?, free_consent_version=?, free_offer_at=? WHERE id=?",
+        [(now, FREE_TERMS_VERSION, now, i) for i in ids])
+    c.executemany(
+        "INSERT INTO plan_consents(account_id, at, action, version, source) "
+        "VALUES (?, ?, 'grant', ?, 'migration')",
+        [(i, now, FREE_TERMS_VERSION) for i in ids])
+
+
+def _migrate_plans_v2_data(c):
+    """Dati dei piani v2, una volta sola e nell'ordine: account cancellati ->
+    free; archive_10/20/50 -> sub_10 regalato (con consenso); revocati ancora
+    in grazia -> free con consenso; revocati a grazia scaduta -> tolleranza gia'
+    scaduta (la vecchia regola aveva promesso la cancellazione: niente nuova
+    email); ogni altro `plan_until` -> NULL."""
+    now = int(time.time())
+    grace_sec = _env_int("ABM_ARCHIVE_GRACE_DAYS", 30, floor=0) * 86400
+    tolerance_sec = _env_int("ABM_ARCHIVE_TOLERANCE_DAYS", 15, floor=0) * 86400
+    c.execute("UPDATE accounts SET plan=?, plan_source='', plan_until=NULL "
+              "WHERE deleted_at IS NOT NULL", (PLAN_FREE,))
+    legacy = tuple(ARCHIVE_PLANS)
+    marks = ",".join("?" * len(legacy))
+    gifted = [r[0] for r in c.execute(f"SELECT id FROM accounts WHERE plan IN ({marks})", legacy)]
+    c.execute(f"UPDATE accounts SET plan='sub_10', plan_source='gift' WHERE plan IN ({marks})", legacy)
+    _grant_migrated_consent(c, gifted, now)
+    in_grace = [r[0] for r in c.execute(
+        "SELECT id FROM accounts WHERE plan=? AND plan_until IS NOT NULL AND plan_until + ? > ?",
+        (PLAN_FREE, grace_sec, now))]
+    c.executemany("UPDATE accounts SET plan_until=NULL WHERE id=?", [(i,) for i in in_grace])
+    _grant_migrated_consent(c, in_grace, now)
+    c.execute("UPDATE accounts SET plan_until=NULL, archive_over_since=?, archive_notice_stage=2 "
+              "WHERE plan=? AND plan_until IS NOT NULL", (now - tolerance_sec - 1, PLAN_FREE))
+    c.execute("UPDATE accounts SET plan_until=NULL WHERE plan_until IS NOT NULL AND plan NOT IN (?, ?)",
+              SPACE_PLANS)
+
+
 def init_schema():
     db.migrate("accounts_v1", SCHEMA)
     db.migrate("account_jobs_plan_v1", JOBS_PLAN_MIGRATION)
@@ -200,6 +265,8 @@ def init_schema():
     db.migrate("archive_items_v1", ARCHIVE_ITEMS_MIGRATION)
     db.migrate("account_jobs_libfp_v1", JOBS_LIBFP_MIGRATION)
     db.migrate("archive_items_orphan_v1", ARCHIVE_ITEMS_ORPHAN_MIGRATION)
+    db.migrate("accounts_plans_v2", PLANS_V2_MIGRATION)
+    db.migrate("accounts_plans_v2_data", [_migrate_plans_v2_data])
 
 
 # ---------------------------------------------------------------- helpers
@@ -835,7 +902,12 @@ def purge_expired(now=None):
 # locale lascia comunque il posto a quella cold alla fine della finestra calda).
 PLAN_FREE = "free"
 ARCHIVE_PLANS = {"archive_10": 10, "archive_20": 20, "archive_50": 50}
+# Piani di spazio v2 regalati dall'admin e versione dei termini del piano
+# gratuito registrata con ogni consenso.
+SPACE_PLANS = ("sub_5", "sub_10")
+FREE_TERMS_VERSION = "2026-10-20"
 GIB = 1024 ** 3
+MIB = 1024 ** 2
 # Retention "infinita" restituita per i token di un job archiviato.
 ARCHIVE_RETENTION_SEC = 100 * 365 * 86400
 _ARCHIVE_CACHE_TTL_SEC = 60

@@ -125,7 +125,10 @@ def tx():
 def migrate(name, statements):
     """Applica `statements` una sola volta, sotto il nome `name`.
 
-    Ritorna True se applicata ora, False se gia' registrata.
+    Ogni elemento e' una stringa SQL oppure un callable `fn(conn)` (per i
+    passi di dati che l'SQL puro non esprime), eseguiti in ordine nella
+    stessa transazione. Ritorna True se applicata ora, False se gia'
+    registrata.
     """
     with tx() as c:
         row = c.execute(
@@ -134,7 +137,10 @@ def migrate(name, statements):
         if row is not None:
             return False
         for s in statements:
-            c.execute(s)
+            if callable(s):
+                s(c)
+            else:
+                c.execute(s)
         c.execute(
             "INSERT INTO schema_migrations(name, applied_at) VALUES (?, ?)",
             (name, int(time.time())),
