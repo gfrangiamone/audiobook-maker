@@ -16,6 +16,7 @@ Server-side SEO:
 """
 
 import hashlib
+import json
 import os
 import re
 from datetime import datetime
@@ -63,6 +64,21 @@ _FRAGMENT_ORDER = [
     "html_tail.html",
 ]
 
+def _i18n_fragment(lang: str, version: str) -> str:
+    """i18n della home di `lang` piu' `I18N_SRC`, gli URL delle lingue non
+    incluse. L'impronta del contenuto nell'URL permette la cache di un anno."""
+    from templates import seo_i18n
+    page = seo_i18n.i18n_page_js(lang)
+    src = {}
+    for lc in seo_i18n._LANGS:
+        js = seo_i18n.i18n_lang_js(lc)
+        if js is None or f"\nL.{lc}={{" in page:
+            continue
+        digest = hashlib.sha1(js.encode("utf-8")).hexdigest()[:8]
+        src[lc] = f"/i18n/{lc}.js?v={version or '3.3'}.{digest}"
+    return page + "var I18N_SRC=" + json.dumps(src) + ";\n"
+
+
 # Mappe hreflang / og:locale e relativi tag: page_brand (foglia).
 import page_brand as _brand
 from og_image_data import og_image_url
@@ -101,8 +117,14 @@ def build_html_template(
         Complete HTML string with all SEO baked in.
     """
     # ── 1. Assemble fragments ──
+    # i18n_data.js (7 lingue, ~390 KB) entra solo con la lingua della pagina
+    # e l'inglese di fallback: le altre arrivano da /i18n/<lang>.js quando
+    # l'utente cambia lingua (setLang).
     parts = []
     for fname in _FRAGMENT_ORDER:
+        if fname == "i18n_data.js":
+            parts.append(_i18n_fragment(lang, version))
+            continue
         fpath = _FRAGMENTS_DIR / fname
         parts.append(fpath.read_text(encoding="utf-8"))
     html = "".join(parts)

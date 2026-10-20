@@ -640,6 +640,20 @@ def og_image():
                      max_age=86400 * 30)
 
 
+@bp.route("/i18n/<lang>.js")
+def i18n_lang_js(lang):
+    """Traduzioni di una lingua che la home non incorpora (setLang le carica
+    al cambio lingua). L'URL della pagina porta l'impronta del contenuto."""
+    from templates import seo_i18n
+    js = seo_i18n.i18n_lang_js(lang)
+    if js is None:
+        return "Not found", 404
+    return js, 200, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "public, max-age=31536000, immutable",
+    }
+
+
 @bp.route("/manifest.json")
 def web_manifest():
     """Web App Manifest  -  Google lo usa come fonte primaria per le favicon nei risultati di ricerca."""

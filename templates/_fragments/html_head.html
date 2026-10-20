@@ -27,7 +27,14 @@ try{
   }
 }catch(e){}
 </script>
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-RBY3J76PDV"></script>
+<!-- gtag.js dopo il load, al primo momento libero: non compete con il primo
+     rendering. I comandi qui sopra restano in dataLayer e li legge all'arrivo. -->
+<script>
+window.addEventListener('load',function(){
+  var go=function(){var s=document.createElement('script');s.async=true;s.src='https://www.googletagmanager.com/gtag/js?id=G-RBY3J76PDV';document.head.appendChild(s);};
+  if('requestIdleCallback' in window)requestIdleCallback(go,{timeout:3000});else setTimeout(go,0);
+});
+</script>
 <!-- Baidu Tongji analytics — abilitato solo se ABM_BAIDU_TONGJI_ID configurato -->
 __BAIDU_TONGJI__
 <meta charset="UTF-8">

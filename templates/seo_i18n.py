@@ -129,9 +129,89 @@ def _parse_i18n(js_path: Path) -> dict[str, dict[str, str]]:
     return out
 
 
+_ASSIGN_RE = re.compile(r"Object\.assign\(L\.([a-z]{2})\s*,\s*\{")
+_ASSIGN_END_RE = re.compile(r"\s*\)\s*;?")
+_LINE_COMMENT_RE = re.compile(r"^\s*//[^\n]*$", re.M)
+_SHELL_RE = re.compile(r"\s*const L\s*=\s*\{[\s,]*\}\s*;?\s*")
+
+
+def _split_i18n(src: str) -> dict[str, list[str]] | None:
+    """Split i18n_data.js into per-language JS statements.
+
+    For each language: `L.xx={…};` from the main object, then every
+    `Object.assign(L.xx,{…});` in file order. They only touch their own
+    language, so any subset of languages can be loaded in any order and
+    gives the same L[xx] as the whole file. Returns None when something
+    in the file is not one of those blocks (a comment aside): the caller
+    then inlines the whole file, as before."""
+    out: dict[str, list[str]] = {lang: [] for lang in _LANGS}
+    spans: list[tuple[int, int]] = []
+    main = re.search(r"const L\s*=\s*\{", src)
+    if not main:
+        return None
+    pos = main.end()
+    while True:
+        m = _LANG_OPEN_RE.match(src, pos)
+        if not m:
+            break
+        if m.group(1) not in out:
+            return None
+        end = _read_pairs(src, m.end(), {})
+        if end < 0:
+            return None
+        out[m.group(1)].append(f"L.{m.group(1)}={src[m.end() - 1:end]};")
+        spans.append((m.start(), end))
+        sep = _COMMA_RE.match(src, end)
+        if not sep:
+            break
+        pos = sep.end()
+    for m in _ASSIGN_RE.finditer(src):
+        if m.group(1) not in out:
+            return None
+        end = _read_pairs(src, m.end(), {})
+        tail = _ASSIGN_END_RE.match(src, end) if end >= 0 else None
+        if not tail:
+            return None
+        out[m.group(1)].append(src[m.start():end] + ");")
+        spans.append((m.start(), tail.end()))
+    # Everything outside the blocks must be the `const L={…};` shell and
+    # comments, or a statement would be lost.
+    spans.sort()
+    rest, last = [], 0
+    for a, b in spans:
+        rest.append(src[last:a])
+        last = b
+    rest.append(src[last:])
+    leftover = _LINE_COMMENT_RE.sub("", "".join(rest))
+    if not _SHELL_RE.fullmatch(leftover):
+        return None
+    return out
+
+
 # Parse once at import time; re-import to refresh.
 _FRAGMENTS_DIR = Path(__file__).parent / "_fragments"
+_I18N_SRC = (_FRAGMENTS_DIR / "i18n_data.js").read_text(encoding="utf-8")
 SEO_TEXT: dict[str, dict[str, str]] = _parse_i18n(_FRAGMENTS_DIR / "i18n_data.js")
+_I18N_SPLIT = _split_i18n(_I18N_SRC)
+
+
+def i18n_page_js(lang: str) -> str:
+    """i18n_data.js as inlined in the home of `lang`: only `lang` and the
+    English fallback; the other languages come from i18n_lang_js() when
+    the user switches (setLang). Whole file if the split failed."""
+    if _I18N_SPLIT is None or lang not in _I18N_SPLIT:
+        return _I18N_SRC
+    keep = [lang] if lang == "en" else [lang, "en"]
+    body = "\n".join(s for lc in keep for s in _I18N_SPLIT[lc])
+    return f"// ═══════════════════ i18n ═══════════════════\nconst L={{}};\n{body}\n"
+
+
+def i18n_lang_js(lang: str) -> str | None:
+    """The statements of one language, served as /i18n/<lang>.js; None if
+    unknown or the split failed (then the page already has every language)."""
+    if _I18N_SPLIT is None or lang not in _I18N_SPLIT:
+        return None
+    return "\n".join(_I18N_SPLIT[lang]) + "\n"
 
 # Any empty element carrying a data-t / data-t-html attribute:
 # <tag … data-t="KEY" …></tag>. `\sdata-t(-html)?="` excludes data-t-title
