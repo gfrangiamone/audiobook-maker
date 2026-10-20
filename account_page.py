@@ -1,11 +1,14 @@
 # account_page.py
-"""Pagine server-side dell'account (modulo foglia): conferma magic link,
-errori, account cancellato e, dal Task 6, lo storico. Solo stdlib: i testi
-arrivano gia' scelti per lingua (dict `t`), l'escaping e' fatto qui.
+"""Pagine server-side dell'account: conferma magic link, errori, account
+cancellato e lo storico con la testata del piano. Dipende da foglie e da
+`accounts` (solo `format_bytes` e i nomi dei piani): i testi arrivano gia'
+scelti per lingua (dict `t`), l'escaping e' fatto qui.
 """
 import html
+import time
 from client_identity import mask_email as _ci_mask_email
 
+import accounts
 import page_brand
 
 _CSS = page_brand.BASE_CSS + (
@@ -14,6 +17,13 @@ _CSS = page_brand.BASE_CSS + (
     "button.small{padding:.3em .8em;font-size:.85em;white-space:nowrap}"
     ".signed{display:flex;align-items:center;justify-content:space-between;gap:1em;flex-wrap:wrap}"
     ".signed p{margin:0}"
+    ".planhead{margin:1.2em 0 0;padding:.8em 1em;border:1px solid var(--brd);border-radius:12px;"
+    "background:var(--srf)}"
+    ".planhead .row{display:flex;align-items:center;justify-content:space-between;gap:1em;flex-wrap:wrap}"
+    ".planhead p{margin:0}.planhead .meta{margin-top:.3em}"
+    ".quota{height:6px;border-radius:3px;background:var(--srf2);margin:.7em 0 .3em;overflow:hidden}"
+    ".quota i{display:block;height:100%;background:var(--ac)}"
+    ".planhead .warn{margin-top:.5em;font-size:.9em;color:var(--err)}"
     ".cnt{display:inline-block;min-width:1.4em;text-align:center;font-size:.85em;border-radius:1em;"
     "padding:0 .4em;background:var(--ac);color:#fff;margin-left:.3em}"
     "button.primary .cnt{background:#fff;color:var(--ac)}"
@@ -272,6 +282,12 @@ _HISTORY_JS = (
     "lc=document.getElementById('acctLogoutConfirm');"
     "if(lo)lo.onclick=function(){openDlg(ld);};"
     "if(lc)lc.onclick=function(){lc.disabled=true;post('/api/auth/logout').then(function(){location.href='/';});};"
+    "var fp=document.getElementById('freePlanOn')||document.getElementById('freePlanOff'),"
+    "fd=document.getElementById('freePlanDlg'),fc=document.getElementById('freePlanConfirm');"
+    "if(fp)fp.onclick=function(){openDlg(fd);};"
+    "if(fc)fc.onclick=function(){fc.disabled=true;post('/api/account/free_plan',"
+    "{action:fc.getAttribute('data-action'),source:'account'}).then(function(r){"
+    "if(r.ok){location.reload();}else{fc.disabled=false;}}).catch(function(){fc.disabled=false;});};"
     "var del=document.getElementById('acctDelete'),ddl=document.getElementById('acctDeleteDlg'),"
     "dc=document.getElementById('acctDeleteConfirm');"
     "if(del)del.onclick=function(){openDlg(ddl);};"
@@ -305,29 +321,107 @@ _HISTORY_JS = (
 )
 
 
-def _archive_line(t, archive):
-    """Riga dell'abbonamento di archivio sotto l'intestazione, o "" senza."""
-    if not archive:
-        return ""
-    gib = 1024 ** 3
-    used = f"{archive['used_bytes'] / gib:.2f} GB"
-    if archive.get("quota_bytes"):
-        txt = (t["archive_line"].replace("{used}", used)
-               .replace("{quota}", f"{archive['quota_bytes'] // gib} GB"))
+def _usage_pct(used, quota):
+    """Percentuale intera (0-100) dello spazio occupato, per difetto: 99,5% e'
+    99, mai "pieno" se non lo e'. Senza quota un archivio non vuoto e' pieno
+    (tolleranza dopo lo spegnimento del gratuito), uno vuoto no."""
+    used, quota = max(0, int(used or 0)), max(0, int(quota or 0))
+    if not used:
+        return 0
+    if not quota:
+        return 100
+    return min(100, used * 100 // quota)
+
+
+def _utc_day(epoch):
+    """`YYYY-MM-DD` UTC di un epoch."""
+    return time.strftime("%Y-%m-%d", time.gmtime(int(epoch)))
+
+
+def _txt(t, key, **vals):
+    """Testo i18n con i segnaposto `{nome}` sostituiti, poi escapato per intero."""
+    s = t[key]
+    for k, v in vals.items():
+        s = s.replace("{" + k + "}", str(v))
+    return _e(s)
+
+
+def _free_plan_dialog(t, *, deactivate, free_quota_bytes, tolerance_days):
+    """Popup del piano gratuito: spiegazione e conferma di attivazione, oppure
+    avviso e conferma di ritiro (qui «Annulla» ha il fuoco iniziale, come nel
+    popup dell'uscita). La conferma e' `#freePlanConfirm`, il resto lo fa il JS."""
+    if deactivate:
+        title, body = t["free_deactivate_title"], _txt(t, "free_deactivate_p", days=tolerance_days)
+        confirm = (f"<button type=\"button\" class=\"danger\" id=\"freePlanConfirm\" "
+                   f"data-action=\"deactivate\">{_e(t['free_deactivate_confirm'])}</button>"
+                   f"<button type=\"button\" class=\"primary\" data-close autofocus>{_e(t['cancel_btn'])}</button>")
     else:
-        txt = t["archive_line_ended"].replace("{used}", used)
-    return f"<p class=\"meta\">{_e(txt)}</p>"
+        title = t["free_activate_title"]
+        body = _txt(t, "free_info_p", quota=accounts.format_bytes(free_quota_bytes), days=tolerance_days)
+        confirm = (f"<button type=\"button\" class=\"primary\" id=\"freePlanConfirm\" "
+                   f"data-action=\"activate\">{_e(t['free_confirm_btn'])}</button>"
+                   f"<button type=\"button\" data-close>{_e(t['cancel_btn'])}</button>")
+    return (f"<dialog id=\"freePlanDlg\"><h2>{_e(title)}</h2><p>{body}</p>"
+            f"<div class=\"actions\">{confirm}</div></dialog>")
+
+
+def _plan_header(t, account, archive, *, free_quota_bytes, tolerance_days):
+    """Testata dell'area personale: piano in vigore, occupazione dell'archivio,
+    avviso di tolleranza e attivazione/ritiro del piano gratuito.
+
+    Guida il consenso (`account["free_consent_at"]`) e il piano in vigore
+    (`archive["plan"]` fra i piani di spazio), non `plan == "free"`: senza
+    consenso `archive_status` dice comunque "free", ma la quota e' 0. Senza
+    consenso ne' regalo, con libri ancora in archivio (tolleranza), il nome e'
+    «non attiva» e la barra e' piena. Con un regalo attivo il consenso l'ha
+    raccolto l'admin: nessun pulsante attiva/disattiva."""
+    archive = archive or {}
+    plan = archive.get("plan") or ""
+    spaced = plan in accounts.SPACE_PLANS
+    gift = spaced and archive.get("plan_source") == "gift"
+    consent = account.get("free_consent_at") is not None
+    quota = int(archive.get("quota_bytes") or 0)
+    used = int(archive.get("used_bytes") or 0)
+    grace = archive.get("state") == "grace"
+    if spaced:
+        name = t["plan_name_" + plan]
+    elif consent:
+        name = t["plan_name_free"]
+    else:
+        name = t["plan_inactive"]
+    button = dialog = ""
+    if not gift:
+        bid, label = ("freePlanOff", t["free_deactivate_btn"]) if consent else ("freePlanOn", t["free_activate_btn"])
+        button = (f"<button type=\"button\" class=\"small{'' if consent else ' primary'}\" "
+                  f"id=\"{bid}\">{_e(label)}</button>")
+        dialog = _free_plan_dialog(t, deactivate=consent, free_quota_bytes=free_quota_bytes,
+                                   tolerance_days=tolerance_days)
+    rows = [f"<div class=\"row\"><p><strong>{_e(t['plan_title'])}</strong> &middot; {_e(name)}</p>{button}</div>"]
+    if gift and archive.get("plan_until") is not None:
+        rows.append("<p class=\"meta\">"
+                    + _txt(t, "plan_gift_until", date=_utc_day(int(archive["plan_until"]) - 1)) + "</p>")
+    if archive and (quota or used or grace):
+        rows.append(f"<div class=\"quota\"><i style=\"width:{_usage_pct(used, quota)}%\"></i></div>")
+        rows.append("<p class=\"meta\">" + _txt(t, "archive_usage", used=accounts.format_bytes(used),
+                                                 quota=accounts.format_bytes(quota)) + "</p>")
+    if grace and archive.get("grace_until") is not None:
+        rows.append("<p class=\"warn\">"
+                    + _txt(t, "archive_tolerance_warn", date=_utc_day(archive["grace_until"])) + "</p>")
+    return "<div class=\"planhead\">" + "".join(rows) + "</div>" + dialog
 
 
 def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None,
                    now=None, sessions=None, current_sid="", tab="books", link_lang="",
-                   new_voice_url="", archive=None):
-    """Area personale: intestazione con il bottone «I tuoi dispositivi», tab
-    audiolibri / voci campionate, azioni in fondo e i due popup (dispositivi,
+                   new_voice_url="", archive=None, free_quota_bytes=0, tolerance_days=0):
+    """Area personale: intestazione con il bottone «I tuoi dispositivi», testata
+    del piano (occupazione dell'archivio e attivazione del gratuito), tab
+    audiolibri / voci campionate, azioni in fondo e i popup (dispositivi,
     conferma cancellazione). `sessions` come da `accounts.list_sessions`,
     `current_sid` e' l'id della sessione che sta guardando la pagina.
     `new_voice_url` e' il link che riapre l'app sul campionamento: vuoto
-    quando la funzione non e' attiva, cosi' il bottone non compare."""
+    quando la funzione non e' attiva, cosi' il bottone non compare.
+    `archive` come da `accounts.archive_status`; `free_quota_bytes` e
+    `tolerance_days` servono al testo del popup del piano gratuito."""
     import time as _time
     now = now if now is not None else _time.time()
     voices = voices or []
@@ -338,7 +432,8 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         f"<div class=\"signed\"><p class=\"meta\">{_e(t['history_signed_in_as'])} <strong>{_e(account['email'])}</strong></p>"
         f"<button type=\"button\" class=\"small\" id=\"acctDevices\">{_e(t['devices_btn'])}"
         f"<span class=\"cnt\">{n_sess}</span></button></div>",
-        _archive_line(t, archive),
+        _plan_header(t, account, archive, free_quota_bytes=free_quota_bytes,
+                     tolerance_days=tolerance_days),
         "<nav class=\"tabs\" role=\"tablist\">"
         f"<button type=\"button\" role=\"tab\" data-tab=\"books\" aria-selected=\"{'true' if tab == 'books' else 'false'}\">"
         f"{_e(t['tab_books'])}</button>"

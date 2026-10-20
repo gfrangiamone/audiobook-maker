@@ -497,3 +497,29 @@ def test_delete_request_ignores_body_email(logged, env):
     c, acct = logged
     c.post("/api/account/delete_request", json={"email": "victim@x.it"})
     assert env["codes"][-1][0] == "a@b.it"
+
+
+def test_account_page_plan_header_route(logged):
+    """/account passa quota gratuita e tolleranza alla testata: prima del consenso
+    c'e' l'attivazione (con la quota nel popup), dopo il consenso il ritiro e la
+    barra con l'occupazione reale dell'archivio."""
+    c, acct = logged
+    h = {"Accept-Language": "it"}
+    html = c.get("/account", headers=h).data.decode()
+    assert 'id="freePlanOn"' in html and 'id="freePlanOff"' not in html
+    assert "Non attiva" in html and 'class="quota"' not in html
+    assert "512 MB" in html and "15 giorni" in html
+    r = c.post("/api/account/free_plan", json={"action": "activate", "source": "account"})
+    assert r.status_code == 200
+    html = c.get("/account", headers=h).data.decode()
+    assert 'id="freePlanOff"' in html and 'id="freePlanOn"' not in html
+    assert "Piano gratuito" in html and "0 MB su 512 MB" in html
+    accounts.record_job(acct["id"], "ja", kind="generate", book_title="Libro", status="done",
+                        created_at=time.time())
+    accounts.mark_archived("ja", 380 * accounts.MIB)
+    html = c.get("/account", headers=h).data.decode()
+    assert "380 MB su 512 MB" in html and 'style="width:74%"' in html
+    # i testi della testata non nominano mai un provider
+    assert not re.search(r"deepseek|gemini", html.split("Libreria cloud", 1)[1].split("<nav", 1)[0], re.I)
+    html = c.get("/account?lang=en").data.decode()
+    assert "380 MB of 512 MB" in html and "Turn off the library" in html

@@ -1,6 +1,9 @@
 # test/test_account_archive.py
 """Archivio dei lavori: quota del piano (gratuito con consenso), ingresso dei job
 in archivio entro quota, protezione da retention e cleanup, area personale."""
+import re
+from html import escape
+
 import pytest
 
 import accounts
@@ -247,19 +250,131 @@ def test_account_page_shows_archive(acct_env):
                             "archived": True}]}]
     html = account_page.render_history(
         t, lang="it", account=acct, rows=rows, page=1, per_page=50, total=1, voices_count=0,
-        now=T0, archive={"plan": "sub_10", "quota_bytes": 10 * GIB, "used_bytes": GIB, "jobs": 1})
+        now=T0, archive={"plan": "sub_10", "plan_source": "paid", "plan_until": None,
+                         "free_active": False, "quota_bytes": 10 * GIB, "used_bytes": GIB,
+                         "jobs": 1, "items": 0, "state": "active", "grace_until": None})
     assert t["dl_archived"] in html
-    assert "1.00 GB" in html and "10 GB" in html
+    assert "1 GB" in html and "10 GB" in html and t["plan_name_sub_10"] in html
     assert 'data-dl="2"' in html
     assert "acctJobDelPArch" in html
+
+
+def _render(t, acct, archive):
+    import account_page
+    return account_page.render_history(
+        t, lang="it", account=acct, rows=[], page=1, per_page=50, total=0, voices_count=0,
+        now=T0, archive=archive, free_quota_bytes=512 * accounts.MIB, tolerance_days=15)
+
+
+def _it():
+    import i18n
+    return i18n.pick(i18n.load("account_pages"), "it")
+
+
+def test_plan_header_states(acct_env):
+    t = _it()
+    acct = _login("a@b.it")
+    html = _render(t, acct, None)
+    assert t["plan_inactive"] in html and t["free_activate_btn"] in html
+    assert "/api/account/free_plan" in html and t["free_deactivate_btn"] not in html
+    acct = accounts.free_plan_action(acct["id"], "activate", "account", now=T0)
+    st = {"plan": "free", "plan_source": "", "plan_until": None, "free_active": True,
+          "quota_bytes": 512 * accounts.MIB, "used_bytes": 380 * accounts.MIB, "jobs": 3,
+          "items": 0, "state": "active", "grace_until": None}
+    html = _render(t, acct, st)
+    assert "380 MB" in html and "512 MB" in html and 'style="width:74%"' in html
+    assert t["free_deactivate_btn"] in html
+    html = _render(t, acct, {**st, "state": "grace", "grace_until": T0 + 15 * 86400})
+    assert "2027-01-30" in html          # T0 = 2027-01-15 08:00 UTC, + 15 giorni
+    gift = {**st, "plan": "sub_10", "plan_source": "gift", "plan_until": T0 + 10 * 86400,
+            "free_active": False, "quota_bytes": 10 * accounts.GIB}
+    html = _render(t, accounts.get(acct["id"]), gift)
+    assert t["plan_name_sub_10"] in html and "2027-01-25" in html
+    assert 'id="freePlanOn"' not in html and 'id="freePlanOff"' not in html
+
+
+def test_plan_header_escapes(acct_env):
+    import i18n
+    t = dict(i18n.pick(i18n.load("account_pages"), "it"))
+    t["plan_name_free"] = "<script>x</script>"
+    acct = accounts.free_plan_action(_login("a@b.it")["id"], "activate", "account", now=T0)
+    html = _render(t, acct, {"plan": "free", "plan_source": "", "plan_until": None,
+                             "free_active": True, "quota_bytes": 1, "used_bytes": 0, "jobs": 0,
+                             "items": 0, "state": "active", "grace_until": None})
+    assert "<script>x</script>" not in html and "&lt;script&gt;" in html
+
+
+def test_plan_header_inactive_with_content(acct_env):
+    """Senza consenso ne' regalo ma con libri ancora nell'archivio (tolleranza dopo
+    lo spegnimento del gratuito o la scadenza di un regalo): non e' il piano
+    gratuito (quota 0), la barra e' piena, la data limite si vede e il gratuito si
+    puo' riattivare."""
+    t = _it()
+    acct = _login("a@b.it")
+    _done_job(acct, "j1")
+    accounts.mark_archived("j1", 200 * accounts.MIB)
+    accounts.set_archive_tolerance(acct["id"], T0, 1)
+    acct = accounts.get(acct["id"])
+    st = accounts.archive_status(acct, now=T0)
+    assert st["quota_bytes"] == 0 and st["state"] == "grace" and st["used_bytes"] == 200 * accounts.MIB
+    html = _render(t, acct, st)
+    assert t["plan_inactive"] in html and t["plan_name_free"] not in html
+    assert 'style="width:100%"' in html and "200 MB su 0 MB" in html
+    assert "2027-01-30" in html and escape(t["archive_tolerance_warn"].split("{date}")[0]) in html
+    assert 'id="freePlanOn"' in html and 'id="freePlanOff"' not in html
+    assert escape(t["free_deactivate_btn"]) not in html and escape(t["free_deactivate_p"].split("{days}")[0]) not in html
+    # con `plan` "none" (nessun piano in vigore) l'esito e' lo stesso
+    html = _render(t, acct, {**st, "plan": "none"})
+    assert t["plan_inactive"] in html and t["plan_name_free"] not in html
+    assert 'style="width:100%"' in html and 'id="freePlanOn"' in html
+
+
+def test_plan_header_dialogs_and_wiring(acct_env):
+    t = _it()
+    acct = _login("a@b.it")
+    html = _render(t, acct, None)
+    # un solo dialog, quello di attivazione, con quota e giorni di tolleranza
+    assert html.count('<dialog id="freePlanDlg">') == 1
+    assert escape(t["free_info_p"].replace("{quota}", "512 MB").replace("{days}", "15")) in html
+    assert t["free_deactivate_title"] not in html and 'data-action="activate"' in html
+    assert "'/api/account/free_plan'" in html and "source:'account'" in html
+    acct = accounts.free_plan_action(acct["id"], "activate", "account", now=T0)
+    html = _render(t, acct, None)
+    # consenso dato e archivio non leggibile: piano gratuito e ritiro, senza barra
+    assert t["plan_name_free"] in html and 'id="freePlanOff"' in html and 'class="quota"' not in html
+    assert escape(t["free_deactivate_p"].replace("{days}", "15")) in html
+    assert 'data-action="deactivate"' in html and escape(t["free_info_p"].split("{quota}")[0]) not in html
+
+
+def test_plan_header_usage_percent():
+    import account_page
+    assert account_page._usage_pct(0, 0) == 0 and account_page._usage_pct(0, 5) == 0
+    assert account_page._usage_pct(5, 0) == 100                  # senza quota non c'e' margine
+    assert account_page._usage_pct(1, 2) == 50 and account_page._usage_pct(3, 2) == 100
+    assert account_page._usage_pct(995, 1000) == 99               # mai "pieno" se non lo e'
 
 
 def test_i18n_keys_in_all_languages():
     import i18n
     data = i18n.load("account_pages")
+    new = ("plan_title", "plan_name_free", "plan_name_sub_5", "plan_name_sub_10", "plan_gift_until",
+           "plan_inactive", "archive_usage", "archive_tolerance_warn", "free_activate_btn",
+           "free_activate_title", "free_info_p", "free_confirm_btn", "free_deactivate_btn",
+           "free_deactivate_title", "free_deactivate_p", "free_deactivate_confirm")
     for lang in i18n.LANGS:
-        for k in ("dl_archived", "archive_line", "archive_line_ended", "job_delete_archived_p"):
+        for k in ("dl_archived", "job_delete_archived_p", *new):
             assert data[lang].get(k), (lang, k)
+        assert "archive_line" not in data[lang] and "archive_line_ended" not in data[lang], lang
+    # i segnaposto sono gli stessi in ogni lingua
+    for k in new:
+        marks = {lang: sorted(re.findall(r"\{\w+\}", data[lang][k])) for lang in i18n.LANGS}
+        assert all(m == marks["en"] for m in marks.values()), (k, marks)
+    assert sorted(re.findall(r"\{\w+\}", data["en"]["free_info_p"])) == ["{days}", "{quota}"]
+    assert re.findall(r"\{\w+\}", data["en"]["free_deactivate_p"]) == ["{days}"]
+    # nessun nome di provider nei testi della testata
+    for lang in i18n.LANGS:
+        for k in new:
+            assert not re.search(r"deepseek|gemini|openai|google|speechify|voxcpm", data[lang][k], re.I), (lang, k)
 
 
 # ------------------------------------------------------------ piani regalati: console admin

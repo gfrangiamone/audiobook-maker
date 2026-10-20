@@ -677,7 +677,9 @@ def account_page_view():
         t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
         total=total, voices_count=len(voices), voices=voices,
         sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab,
-        link_lang=link_lang, new_voice_url=new_voice_url, archive=_account_archive_for(acct)))
+        link_lang=link_lang, new_voice_url=new_voice_url, archive=_account_archive_for(acct),
+        free_quota_bytes=accounts.plan_quota_bytes(accounts.PLAN_FREE),
+        tolerance_days=accounts.archive_tolerance_days()))
 
 
 @bp.route("/api/account/jobs", methods=["GET"])
