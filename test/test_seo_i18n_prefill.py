@@ -156,11 +156,13 @@ def test_gtag_caricato_dopo_il_load():
     assert "googletagmanager.com/gtag/js?id=G-RBY3J76PDV" in head[i:i + 400]
 
 
-def test_guida_podcast_senza_immagini_base64():
-    pg = (ROOT / "templates/_fragments/podcast_guide_data.js").read_text(encoding="utf-8")
-    assert "data:image" not in pg
-    for name in re.findall(r"/static/img/([\w.]+)\?v=__APP_VERSION__", pg):
-        assert (ROOT / "static/img" / name).stat().st_size > 1000, name
+def test_home_senza_la_vecchia_guida_podcast():
+    """La guida podcast vive in /guide/podcast/ (link nella home): il vecchio
+    riquadro e' stato tolto, i suoi dati non devono tornare nella pagina."""
+    from templates.index_page import build_html_template
+    html = build_html_template("it", {"title": "t"}, "", "1.0")
+    assert "buildPodcastGuide" not in html and "data:image" not in html
+    assert "/guide/podcast/it/" in html and "openAbout" in html
 
 
 def test_banner_cookie_primo_script_defer_e_fuori_da_app_js():

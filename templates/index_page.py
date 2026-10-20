@@ -5,7 +5,7 @@ The template is assembled from modular fragments at startup:
   - _fragments/html_head.html         : HTML structure, CSS, early JS
   - _fragments/i18n_data.js           : UI translations (7 languages)
   - _fragments/free_books_data.js     : Free book sites data + functions
-  - _fragments/podcast_guide_data.js  : Podcast guide (base64 images + per-language sections + About)
+  - _fragments/about_data.js          : "About the project" modal (per-language texts)
   - _fragments/seo_data.js            : SEO metadata per language + applySEO()
   - _fragments/html_tail.html         : Active jobs monitor, applyI18n, main app logic, closing tags
 
@@ -59,7 +59,7 @@ _FRAGMENT_ORDER = [
     "html_head.html",
     "i18n_data.js",
     "free_books_data.js",
-    "podcast_guide_data.js",
+    "about_data.js",
     "seo_data.js",
     "html_tail.html",
 ]
