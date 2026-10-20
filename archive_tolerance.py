@@ -11,14 +11,19 @@ non uno di piu' di quelli che servono a rientrare. Senza email partita la
 tolleranza non si apre e non si cancella niente; rientrando nella quota la
 tolleranza si chiude da sola.
 
-L'elenco dell'avviso vale per la quota annunciata (`accounts.archive_notice_quota`).
-Se la quota scende sotto quella annunciata a tolleranza aperta (regalo scaduto
-dopo il promemoria, consenso ritirato) l'elenco non copre piu' quello che si
-cancellerebbe: parte un nuovo avviso con elenco e scadenza ricalcolati e la
-finestra riparte da quell'istante. Finche' quell'avviso non e' partito non si
-cancella niente, nemmeno oltre la vecchia scadenza. Se la quota risale la quota
-annunciata non cambia: ritirare e riattivare il consenso non allunga la finestra
-oltre quella dell'ultimo avviso.
+L'elenco dell'avviso vale per l'eccedenza annunciata, usato - quota
+(`accounts.archive_notice_excess`). I libri nuovi entrano sempre dopo quelli che
+ci sono e quelli che ci sono si possono togliere in qualsiasi momento: con
+un'eccedenza non oltre quella annunciata il piano dal piu' vecchio e' quindi un
+sottoinsieme dei libri elencati. Se a tolleranza aperta l'eccedenza supera quella
+annunciata (quota scesa per regalo scaduto o consenso ritirato, archivio cresciuto)
+l'elenco non copre piu' quello che si cancellerebbe: parte un nuovo avviso con
+elenco e scadenza ricalcolati e la finestra riparte da quell'istante. Finche'
+quell'avviso non e' partito non si cancella niente, nemmeno oltre la vecchia
+scadenza. Se l'eccedenza cala (quota risalita, libri tolti dall'utente) non parte
+niente e l'eccedenza annunciata non cambia: ritirare e riattivare il consenso non
+allunga la finestra oltre quella dell'ultimo avviso. Eccedenza annunciata NULL
+(stato migrato): niente da confrontare.
 
 Un giro manda al piu' MAX_NOTICES_PER_SWEEP email (anche i tentativi falliti):
 gli account oltre il tetto aspettano il giro dopo, senza cambiare stato.
@@ -81,17 +86,19 @@ def _take_slot(budget, out):
 
 
 def _start(acct, plan, quota, used, now, out, budget, restart=False):
-    """Apre la tolleranza (o la riapre, `restart`: la quota e' scesa sotto quella
-    annunciata) solo se l'avviso e' partito: senza email non si cancella."""
+    """Apre la tolleranza (o la riapre, `restart`: l'eccedenza e' cresciuta oltre
+    quella annunciata) solo se l'avviso e' partito: senza email non si cancella.
+    Salva l'eccedenza annunciata (usato - quota)."""
     if not _take_slot(budget, out):
         return
     deadline = now + accounts.archive_tolerance_days() * _DAY
     if not email_service.send_archive_over(acct["email"], acct["lang"], off=(quota == 0),
                                            **_mail_args(plan, deadline, quota, used)):
-        _warn(acct, "nuovo avviso per quota scesa non inviato, la tolleranza resta quella di prima"
-              if restart else "avviso di inizio tolleranza non inviato, la tolleranza non parte", out)
+        _warn(acct, "nuovo avviso per eccedenza cresciuta non inviato: non si toglie niente fino a "
+                    "quando non parte, si riprova al giro dopo" if restart
+              else "avviso di inizio tolleranza non inviato, la tolleranza non parte", out)
         return
-    accounts.set_archive_tolerance(acct["id"], now, 1, notice_quota=quota)
+    accounts.set_archive_tolerance(acct["id"], now, 1, notice_excess=used - quota)
     out["started"] += 1
 
 
@@ -108,7 +115,7 @@ def _remind(acct, plan, quota, used, now, deadline, out, budget):
         _warn(acct, "promemoria non inviato, si riprova al giro dopo", out)
         return
     accounts.set_archive_tolerance(acct["id"], acct["archive_over_since"], 2,
-                                   notice_quota=acct.get("archive_notice_quota"))
+                                   notice_excess=acct.get("archive_notice_excess"))
     out["reminded"] += 1
 
 
@@ -149,7 +156,8 @@ def _check_account(acct, now, out, budget):
     if since is None:
         _start(acct, plan, quota, used, now, out, budget)
         return
-    if quota < int(acct.get("archive_notice_quota") or 0):      # NULL (stato migrato) vale 0
+    announced = acct.get("archive_notice_excess")
+    if announced is not None and used - quota > int(announced):     # NULL (stato migrato): niente da confrontare
         _start(acct, plan, quota, used, now, out, budget, restart=True)
         return                              # mai cancellare con un elenco annunciato piu' corto
     deadline = int(since) + accounts.archive_tolerance_days() * _DAY
@@ -166,7 +174,7 @@ def sweep(now=None, force=False):
     Un errore su un account non ferma gli altri; oltre MAX_NOTICES_PER_SWEEP email
     gli account che ne servono aspettano il giro dopo (`deferred`).
     Ritorna {"gifts_expired", "started", "reminded", "evicted", "cleared", "errors", "deferred"}
-    (`started` conta anche i riavvii per quota scesa)."""
+    (`started` conta anche i riavvii per eccedenza cresciuta)."""
     t = int(time.time() if now is None else now)
     out = dict.fromkeys(("gifts_expired", "started", "reminded", "evicted", "cleared", "errors",
                          "deferred"), 0)
