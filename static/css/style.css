@@ -292,9 +292,6 @@ select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color
 .btn[hidden]{display:none}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn-p{background:var(--ac);color:#fff}
-/* Sul tema scuro l'arancio e' chiaro: testo bianco a 2,1:1, sotto WCAG AA.
-   Il bottone principale (.btn-p) resta bianco per scelta. */
-[data-theme="dark"] #cookieBanner button.cb-accept{color:#1c1408}
 .btn-p:hover:not(:disabled){background:var(--ach);transform:translateY(-1px);box-shadow:0 4px 16px rgba(196,122,42,.25)}
 .btn-ok{background:var(--ok);color:#fff}
 .btn-ok:hover:not(:disabled){filter:brightness(1.1)}
