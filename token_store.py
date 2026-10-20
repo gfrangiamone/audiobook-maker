@@ -145,6 +145,13 @@ def tokens_by_job():
     return idx
 
 
+def _download_token_live(info, now):
+    """True se il download token non e' scaduto: retention effettiva (+300s di
+    margine come nel resto del cleanup). Unico posto che decide la vivezza di
+    un token per `has_active_download_tokens` e `jobs_with_active_download_tokens`."""
+    return (now - (info.get("created_at") or 0)) <= _retention(info) + 300
+
+
 def has_active_download_tokens(job_id, now=None):
     """True se esiste almeno un download token non scaduto per il job_id.
 
@@ -158,11 +165,25 @@ def has_active_download_tokens(job_id, now=None):
         for _t, info in list(download_tokens.items()):
             if info.get("job_id") != job_id:
                 continue
-            if (now - info.get("created_at", 0)) <= _retention(info) + 300:
+            if _download_token_live(info, now):
                 return True
     except Exception:
         pass
     return False
+
+
+def jobs_with_active_download_tokens(now=None):
+    """Insieme dei job_id con almeno un download token non scaduto, in un solo
+    passaggio O(T) sulla tabella (snapshot sotto tokens_lock): chi deve
+    controllare molti job lo calcola una volta invece di chiamare
+    `has_active_download_tokens` per ciascuno (J x T). Le voci non-dict o senza
+    job_id sono ignorate."""
+    if now is None:
+        now = time.time()
+    with tokens_lock:
+        infos = list(download_tokens.values())
+    return {info["job_id"] for info in infos
+            if isinstance(info, dict) and info.get("job_id") and _download_token_live(info, now)}
 
 
 def find_available_download_token(job_id, cid, now=None):

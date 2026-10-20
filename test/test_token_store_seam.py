@@ -52,6 +52,24 @@ def test_app_policies_are_resolved_at_call_time(monkeypatch, tmp_path):
     assert token_store.load_tokens() is None                                        # file assente: no-op
 
 
+def test_jobs_with_active_download_tokens_one_pass(monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 10)
+    monkeypatch.setattr(token_store, "download_tokens", {
+        "live": {"job_id": "A", "created_at": 1000.0},
+        "live2": {"job_id": "A", "created_at": 1200.0},
+        "other": {"job_id": "B", "created_at": 1000.0},
+        "expired": {"job_id": "C", "created_at": 1000.0 - 311},
+        "no_job": {"created_at": 1000.0},
+        "no_created": {"job_id": "D"},
+        "broken": "not-a-dict",
+    })
+    live = token_store.jobs_with_active_download_tokens(now=1000.0)
+    assert live == {"A", "B"}                                   # scaduto, senza job_id, senza data, malformato: fuori
+    assert token_store.jobs_with_active_download_tokens(now=1000.0 + 10 + 301) == {"A"}   # solo live2 resta vivo
+    for jid in ("A", "B", "C", "D"):                            # stesso predicato di has_active_download_tokens
+        assert (jid in live) == token_store.has_active_download_tokens(jid, now=1000.0), jid
+
+
 def test_transfer_and_share_tables_are_mutated_in_place(monkeypatch, tmp_path):
     monkeypatch.setattr(token_store, "TRANSFER_TOKENS_FILE", tmp_path / "t.json")
     monkeypatch.setattr(token_store, "SHARE_TOKENS_FILE", tmp_path / "s.json")

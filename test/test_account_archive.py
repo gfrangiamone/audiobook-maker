@@ -101,9 +101,15 @@ def sweep_env(acct_env, monkeypatch):
     import audiobook_app  # noqa: F401  configura cleanup (lock, cartelle, policy)
     monkeypatch.setattr(cleanup, "_upload_dir", lambda: acct_env)
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
-    monkeypatch.setattr(_tkstore, "has_active_download_tokens", lambda jid, now=None: True)
+    monkeypatch.setattr(_tkstore, "download_tokens", {})
     monkeypatch.setattr(cleanup, "_archive_over_quota", {})
     return acct_env
+
+
+def _live_tokens(monkeypatch, *job_ids, created=T0):
+    """Un download token per ciascun job_id: sono i job con i file ancora vivi."""
+    monkeypatch.setattr(_tkstore, "download_tokens",
+                        {"tok-" + j: {"job_id": j, "created_at": created} for j in job_ids})
 
 
 def _output(root, job_id, nbytes, name="book.m4b"):
@@ -132,6 +138,7 @@ def test_sweep_archives_within_quota_newest_first(sweep_env, monkeypatch):
     _consent(acct)
     _done_job(acct, "old", T0)
     _done_job(acct, "new", T0 + 10)
+    _live_tokens(monkeypatch, "old", "new")
     sizes = {"old": GIB // 2, "new": GIB // 2 + 1}
     monkeypatch.setattr(cleanup, "_job_archive_bytes", lambda jid: sizes[jid])
     assert cleanup._archive_sweep(T0, force=True) == 1
@@ -150,9 +157,28 @@ def test_sweep_skips_jobs_without_live_files(sweep_env, monkeypatch):
     _consent(acct)
     _done_job(acct, "gone")
     _done_job(acct, "empty")
-    monkeypatch.setattr(_tkstore, "has_active_download_tokens", lambda jid, now=None: jid != "gone")
+    _live_tokens(monkeypatch, "empty")                  # "gone": token scaduti, non e' nell'insieme
     assert cleanup._archive_sweep(T0, force=True) == 0  # "empty" non ha output
     assert accounts.archive_usage(acct["id"]) == (0, 0)
+
+
+def test_sweep_scans_tokens_once_not_per_candidate(sweep_env, monkeypatch):
+    acct = _login("a@b.it")
+    _consent(acct)
+    ids = [f"j{i}" for i in range(6)]
+    for i, jid in enumerate(ids):
+        _done_job(acct, jid, T0 + i)
+    _live_tokens(monkeypatch, *ids[:4])                 # j4 e j5: token scaduti
+    real = _tkstore.jobs_with_active_download_tokens
+    calls = []
+    monkeypatch.setattr(_tkstore, "jobs_with_active_download_tokens",
+                        lambda now=None: calls.append(now) or real(now))
+    monkeypatch.setattr(_tkstore, "has_active_download_tokens",
+                        lambda *a, **k: pytest.fail("scansione dei token per candidato"))
+    monkeypatch.setattr(cleanup, "_job_archive_bytes", lambda jid: 1)
+    assert cleanup._archive_sweep(T0 + 100, force=True) == 4
+    assert calls == [T0 + 100]                          # una sola volta, con 6 candidati
+    assert [accounts.archive_protects(j) for j in ids] == [True] * 4 + [False] * 2
 
 
 def test_sweep_rate_limited(sweep_env, monkeypatch):

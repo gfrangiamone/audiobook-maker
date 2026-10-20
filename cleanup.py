@@ -899,11 +899,14 @@ def _archive_sweep(now, force=False):
         return 0
     used = {}
     added = 0
+    # Un solo passaggio sui token per sweep: i candidati crescono con lo
+    # storico degli account e quelli con token scaduti non escono dall'insieme.
+    live = _tkstore.jobs_with_active_download_tokens(now)
     for c in accounts.archive_candidates(now):
         jid, aid = c["job_id"], c["account_id"]
         if now - _archive_over_quota.get(jid, 0) < ARCHIVE_OVER_QUOTA_RETRY_SEC:
             continue
-        if not _tkstore.has_active_download_tokens(jid, now):
+        if jid not in live:
             continue
         nbytes = _job_archive_bytes(jid)
         if nbytes <= 0:
@@ -913,14 +916,15 @@ def _archive_sweep(now, force=False):
         quota = c["quota_bytes"]
         if used[aid] + nbytes > quota:
             _archive_over_quota[jid] = now
-            print(f"[archive] {jid} oltre quota ({used[aid] + nbytes}B > {quota}B): "
-                  f"retention ordinaria")
+            print(f"[archive] {jid} oltre quota ({accounts.format_bytes(used[aid] + nbytes)} > "
+                  f"{accounts.format_bytes(quota)}): retention ordinaria")
             continue
         if accounts.mark_archived(jid, nbytes, now):
             used[aid] += nbytes
             added += 1
             _archive_over_quota.pop(jid, None)
-            print(f"[archive] {jid} archiviato ({nbytes}B, quota {quota}B)")
+            print(f"[archive] {jid} archiviato ({accounts.format_bytes(nbytes)}, "
+                  f"quota {accounts.format_bytes(quota)})")
     for jid in [j for j, t in _archive_over_quota.items() if now - t > 2 * ARCHIVE_OVER_QUOTA_RETRY_SEC]:
         _archive_over_quota.pop(jid, None)
     return added

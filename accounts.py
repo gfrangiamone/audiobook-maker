@@ -243,7 +243,7 @@ def _migrate_plans_v2_data(c):
     email); ogni altro `plan_until` -> NULL."""
     now = int(time.time())
     grace_sec = _env_int("ABM_ARCHIVE_GRACE_DAYS", 30, floor=0) * 86400
-    tolerance_sec = _env_int("ABM_ARCHIVE_TOLERANCE_DAYS", 15, floor=0) * 86400
+    tolerance_sec = archive_tolerance_days() * 86400
     c.execute("UPDATE accounts SET plan=?, plan_source='', plan_until=NULL "
               "WHERE deleted_at IS NOT NULL", (PLAN_FREE,))
     legacy = _LEGACY_ARCHIVE_PLANS
@@ -889,7 +889,8 @@ def purge_expired(now=None):
             "DELETE FROM account_jobs WHERE created_at<? AND account_id IN ("
             "SELECT id FROM accounts WHERE plan='free' "
             "OR (plan_until IS NOT NULL AND plan_until<?)) "
-            "AND job_id NOT IN (SELECT j.job_id FROM account_jobs j WHERE " + _JOB_IN_ARCHIVE + ")",
+            "AND NOT EXISTS (SELECT 1 FROM account_jobs j WHERE j.job_id=account_jobs.job_id "
+            "AND " + _JOB_IN_ARCHIVE + ")",
             (job_cut, grace_cut),
         ).rowcount
         codes = c.execute(
