@@ -812,12 +812,13 @@ def _vc_num(value, kind="float"):
 def _i18n_send(table, tag, email, lang, subject_key, body_keys, **values):
     """Compone e manda una email dai testi `table` (lingua -> chiave, fallback
     per chiave su en). `body_keys`: chiavi da concatenare, piu' `footer` se
-    c'e'. I valori vengono escapati tranne gli URL (chiavi *_url). Ritorna
-    False su qualunque errore: chi chiama sta gia' nel flusso."""
+    c'e'. I valori vengono escapati tranne gli URL (chiavi *_url) e l'HTML
+    gia' composto da chi chiama (chiavi *_html, che escapa i suoi valori).
+    Ritorna False su qualunque errore: chi chiama sta gia' nel flusso."""
     t = _i18n_table(table, lang)
     if not t or not email:
         return False
-    safe = {k: (v if k.endswith("_url") else html.escape(str(v))) for k, v in values.items()}
+    safe = {k: (v if k.endswith(("_url", "_html")) else html.escape(str(v))) for k, v in values.items()}
     try:
         subject = t[subject_key].format(**safe)
         body = "".join(t[k].format(**safe) for k in body_keys) + t.get("footer", "")
@@ -892,6 +893,40 @@ def send_account_code(email, lang, *, code, link_url, purpose, minutes):
 
 def send_account_deleted(email, lang):
     return _acct_send(email, lang, "deleted_subject", "deleted_body")
+
+
+ARCHIVE_MAIL_MAX_BOOKS = 30
+
+
+def _archive_books_html(lang, books):
+    """Elenco `<ul>` dei libri `(titolo, dimensione)` di un avviso di archivio,
+    titoli escapati, al piu' ARCHIVE_MAIL_MAX_BOOKS righe e poi "…e altri n"."""
+    rows = "".join(f"<li>{_esc_html(title)} ({_esc_html(size)})</li>"
+                   for title, size in books[:ARCHIVE_MAIL_MAX_BOOKS])
+    more = len(books) - ARCHIVE_MAIL_MAX_BOOKS
+    more_text = _acct_t(lang).get("archive_books_more", "") if more > 0 else ""
+    tail = f"<p>{more_text.format(n=more)}</p>" if more_text else ""
+    return f"<ul>{rows}</ul>{tail}"
+
+
+def _archive_notice(email, lang, prefix, *, books, deadline, quota, used, manage_url):
+    return _acct_send(email, lang, f"{prefix}_subject", f"{prefix}_body",
+                      books_html=_archive_books_html(lang, books), deadline=deadline,
+                      quota=quota, used=used, manage_url=manage_url)
+
+
+def send_archive_over(email, lang, *, books, deadline, quota, used, manage_url, off=False):
+    """Avviso di inizio tolleranza: l'archivio supera la quota e dopo `deadline`
+    (YYYY-MM-DD, UTC) si tolgono i libri piu' vecchi elencati in `books`.
+    `off=True` quando la quota e' 0 (nessun piano e gratuito spento)."""
+    return _archive_notice(email, lang, "archive_off" if off else "archive_over", books=books,
+                           deadline=deadline, quota=quota, used=used, manage_url=manage_url)
+
+
+def send_archive_remind(email, lang, *, books, deadline, quota, used, manage_url):
+    """Promemoria pochi giorni prima di `deadline`."""
+    return _archive_notice(email, lang, "archive_remind", books=books, deadline=deadline,
+                           quota=quota, used=used, manage_url=manage_url)
 
 
 def send_voice_clone_reminder(email, lang, *, resume_url, stage):

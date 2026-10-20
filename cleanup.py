@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 import accounts
+import archive_tolerance
 import assembly_queue
 import db
 import jsonl_audit
@@ -1497,6 +1498,10 @@ def _cleanup_loop():
             user_archive.sweep(now)
         except Exception as e:  # noqa: BLE001
             print(f"[user_archive] sweep error (non-fatal): {e}")
+        try:
+            archive_tolerance.sweep(now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[archive_tolerance] sweep error (non-fatal): {e}")
         try:
             archived = accounts.archived_job_ids()
         except Exception as e:  # noqa: BLE001

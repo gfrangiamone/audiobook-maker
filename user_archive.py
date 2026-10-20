@@ -380,6 +380,17 @@ def purge_item(item):
     return True
 
 
+def purge_job_links(account_id, job_id):
+    """Toglie i libri dell'app collegati al job (collegamenti e chiavi R2
+    orfane), uno alla volta: al primo errore R2 si ferma e ritorna False, il
+    job resta nell'archivio e si riprova al giro dopo."""
+    with db.tx() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT * FROM archive_items WHERE account_id=? AND job_id=? ORDER BY id",
+            (account_id, str(job_id))).fetchall()]
+    return all(purge_item(item) for item in rows)
+
+
 def download_name(item):
     return item.get("filename") or f"{item['id']}{_ext(item.get('r2_key') or '') or '.m4b'}"
 

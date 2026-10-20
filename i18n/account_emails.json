@@ -7,6 +7,13 @@
     "delete_body": "<p>Hai chiesto di cancellare il tuo account Audiobook Maker. Per confermare inserisci questo codice:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>oppure apri il link: <a href=\"{link_url}\">{link_url}</a></p><p>Il codice vale {minutes} minuti. Lo storico dei job e le sessioni verranno eliminati; i file gia' consegnati restano scaricabili dai link ricevuti via email fino alla loro scadenza.</p><p>Se non sei stato tu, ignora questa email: non succede nulla.</p>",
     "deleted_subject": "Account cancellato",
     "deleted_body": "<p>Il tuo account Audiobook Maker e' stato cancellato. Puoi continuare a usare il servizio senza account, o crearne uno nuovo in qualunque momento con la stessa email.</p>",
+    "archive_over_subject": "La tua libreria cloud ha superato lo spazio disponibile",
+    "archive_over_body": "<p>La tua libreria cloud ha ora {quota} di spazio e ne occupa {used}.</p><p>Se il {deadline} sarà ancora oltre il limite, toglieremo gli audiolibri più vecchi finché non rientra nello spazio:</p>{books_html}<p>Per tenerli, elimina altri libri dalla tua <a href=\"{manage_url}\">area personale</a>.</p>",
+    "archive_off_subject": "La tua libreria cloud verrà svuotata il {deadline}",
+    "archive_off_body": "<p>La tua libreria cloud è disattivata e contiene ancora {used}.</p><p>Il {deadline} toglieremo questi audiolibri:</p>{books_html}<p>Per tenerli, attiva la libreria gratuita dalla tua <a href=\"{manage_url}\">area personale</a>.</p>",
+    "archive_remind_subject": "Promemoria: il {deadline} toglieremo alcuni audiolibri",
+    "archive_remind_body": "<p>Fra pochi giorni, il {deadline}, toglieremo questi audiolibri dalla tua libreria cloud:</p>{books_html}<p>La tua libreria cloud contiene {used} e ha {quota} di spazio. Per tenerli, apri la tua <a href=\"{manage_url}\">area personale</a> ed elimina altri libri, oppure attiva la libreria gratuita se è disattivata.</p>",
+    "archive_books_more": "…e altri {n}",
     "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
   },
   "en": {
@@ -17,6 +24,13 @@
     "delete_body": "<p>You asked to delete your Audiobook Maker account. To confirm, enter this code:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>or open the link: <a href=\"{link_url}\">{link_url}</a></p><p>The code is valid for {minutes} minutes. Your job history and sessions will be removed; files already delivered stay downloadable from the links you received by email until they expire.</p><p>If this was not you, ignore this email: nothing happens.</p>",
     "deleted_subject": "Account deleted",
     "deleted_body": "<p>Your Audiobook Maker account has been deleted. You can keep using the service without an account, or create a new one at any time with the same email.</p>",
+    "archive_over_subject": "Your cloud library is over its space",
+    "archive_over_body": "<p>Your cloud library now has {quota} of space and holds {used}.</p><p>If it is still over on {deadline}, we will remove the oldest audiobooks until it fits again:</p>{books_html}<p>To keep them, delete other books from your <a href=\"{manage_url}\">personal area</a>.</p>",
+    "archive_off_subject": "Your cloud library will be emptied on {deadline}",
+    "archive_off_body": "<p>Your cloud library is turned off and still holds {used}.</p><p>On {deadline} we will remove these audiobooks:</p>{books_html}<p>To keep them, turn on the free library from your <a href=\"{manage_url}\">personal area</a>.</p>",
+    "archive_remind_subject": "Reminder: some audiobooks will be removed on {deadline}",
+    "archive_remind_body": "<p>In a few days, on {deadline}, we will remove these audiobooks from your cloud library:</p>{books_html}<p>Your cloud library holds {used} and has {quota} of space. To keep them, open your <a href=\"{manage_url}\">personal area</a> and delete other books, or turn on the free library if it is off.</p>",
+    "archive_books_more": "…and {n} more",
     "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
   },
   "fr": {
@@ -27,6 +41,13 @@
     "delete_body": "<p>Vous avez demandé la suppression de votre compte Audiobook Maker. Pour confirmer, saisissez ce code :</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>ou ouvrez le lien : <a href=\"{link_url}\">{link_url}</a></p><p>Le code est valable {minutes} minutes. L'historique des travaux et les sessions seront supprimés ; les fichiers déjà livrés restent téléchargeables depuis les liens reçus par e-mail jusqu'à leur expiration.</p><p>Si ce n'était pas vous, ignorez cet e-mail : rien ne se passe.</p>",
     "deleted_subject": "Compte supprimé",
     "deleted_body": "<p>Votre compte Audiobook Maker a été supprimé. Vous pouvez continuer à utiliser le service sans compte, ou en créer un nouveau à tout moment avec la même adresse.</p>",
+    "archive_over_subject": "Votre bibliothèque cloud dépasse son espace",
+    "archive_over_body": "<p>Votre bibliothèque cloud dispose désormais de {quota} d'espace et en occupe {used}.</p><p>Si elle dépasse encore la limite le {deadline}, nous supprimerons les livres audio les plus anciens jusqu'à ce qu'elle rentre dans l'espace disponible :</p>{books_html}<p>Pour les conserver, supprimez d'autres livres depuis votre <a href=\"{manage_url}\">espace personnel</a>.</p>",
+    "archive_off_subject": "Votre bibliothèque cloud sera vidée le {deadline}",
+    "archive_off_body": "<p>Votre bibliothèque cloud est désactivée et contient encore {used}.</p><p>Le {deadline}, nous supprimerons ces livres audio :</p>{books_html}<p>Pour les conserver, activez la bibliothèque gratuite depuis votre <a href=\"{manage_url}\">espace personnel</a>.</p>",
+    "archive_remind_subject": "Rappel : des livres audio seront supprimés le {deadline}",
+    "archive_remind_body": "<p>Dans quelques jours, le {deadline}, nous supprimerons ces livres audio de votre bibliothèque cloud :</p>{books_html}<p>Votre bibliothèque cloud contient {used} et dispose de {quota} d'espace. Pour les conserver, ouvrez votre <a href=\"{manage_url}\">espace personnel</a> et supprimez d'autres livres, ou activez la bibliothèque gratuite si elle est désactivée.</p>",
+    "archive_books_more": "…et {n} autres",
     "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
   },
   "es": {
@@ -37,6 +58,13 @@
     "delete_body": "<p>Has pedido eliminar tu cuenta de Audiobook Maker. Para confirmar, introduce este código:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>o abre el enlace: <a href=\"{link_url}\">{link_url}</a></p><p>El código vale {minutes} minutos. El historial de trabajos y las sesiones se eliminarán; los archivos ya entregados siguen descargables desde los enlaces recibidos por correo hasta su caducidad.</p><p>Si no has sido tú, ignora este correo: no pasa nada.</p>",
     "deleted_subject": "Cuenta eliminada",
     "deleted_body": "<p>Tu cuenta de Audiobook Maker ha sido eliminada. Puedes seguir usando el servicio sin cuenta o crear una nueva en cualquier momento con el mismo correo.</p>",
+    "archive_over_subject": "Tu biblioteca en la nube ha superado su espacio",
+    "archive_over_body": "<p>Tu biblioteca en la nube tiene ahora {quota} de espacio y ocupa {used}.</p><p>Si el {deadline} sigue por encima del límite, eliminaremos los audiolibros más antiguos hasta que vuelva a caber:</p>{books_html}<p>Para conservarlos, elimina otros libros desde tu <a href=\"{manage_url}\">área personal</a>.</p>",
+    "archive_off_subject": "Tu biblioteca en la nube se vaciará el {deadline}",
+    "archive_off_body": "<p>Tu biblioteca en la nube está desactivada y todavía ocupa {used}.</p><p>El {deadline} eliminaremos estos audiolibros:</p>{books_html}<p>Para conservarlos, activa la biblioteca gratuita desde tu <a href=\"{manage_url}\">área personal</a>.</p>",
+    "archive_remind_subject": "Recordatorio: el {deadline} eliminaremos algunos audiolibros",
+    "archive_remind_body": "<p>Dentro de unos días, el {deadline}, eliminaremos estos audiolibros de tu biblioteca en la nube:</p>{books_html}<p>Tu biblioteca en la nube ocupa {used} y tiene {quota} de espacio. Para conservarlos, abre tu <a href=\"{manage_url}\">área personal</a> y elimina otros libros, o activa la biblioteca gratuita si está desactivada.</p>",
+    "archive_books_more": "…y {n} más",
     "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
   },
   "de": {
@@ -47,6 +75,13 @@
     "delete_body": "<p>Du hast die Löschung deines Audiobook-Maker-Kontos angefordert. Gib zur Bestätigung diesen Code ein:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>oder öffne den Link: <a href=\"{link_url}\">{link_url}</a></p><p>Der Code gilt {minutes} Minuten. Auftragsverlauf und Sitzungen werden gelöscht; bereits gelieferte Dateien bleiben über die per E-Mail erhaltenen Links bis zu deren Ablauf herunterladbar.</p><p>Falls das nicht du warst, ignoriere diese E-Mail: es passiert nichts.</p>",
     "deleted_subject": "Konto gelöscht",
     "deleted_body": "<p>Dein Audiobook-Maker-Konto wurde gelöscht. Du kannst den Dienst ohne Konto weiter nutzen oder jederzeit mit derselben E-Mail ein neues anlegen.</p>",
+    "archive_over_subject": "Deine Cloud-Bibliothek hat ihren Speicherplatz überschritten",
+    "archive_over_body": "<p>Deine Cloud-Bibliothek hat jetzt {quota} Speicherplatz und belegt {used}.</p><p>Liegt sie am {deadline} noch darüber, entfernen wir die ältesten Hörbücher, bis sie wieder passt:</p>{books_html}<p>Um sie zu behalten, lösche andere Bücher in deinem <a href=\"{manage_url}\">persönlichen Bereich</a>.</p>",
+    "archive_off_subject": "Deine Cloud-Bibliothek wird am {deadline} geleert",
+    "archive_off_body": "<p>Deine Cloud-Bibliothek ist ausgeschaltet und belegt noch {used}.</p><p>Am {deadline} entfernen wir diese Hörbücher:</p>{books_html}<p>Um sie zu behalten, schalte die kostenlose Bibliothek in deinem <a href=\"{manage_url}\">persönlichen Bereich</a> ein.</p>",
+    "archive_remind_subject": "Erinnerung: Am {deadline} werden einige Hörbücher entfernt",
+    "archive_remind_body": "<p>In wenigen Tagen, am {deadline}, entfernen wir diese Hörbücher aus deiner Cloud-Bibliothek:</p>{books_html}<p>Deine Cloud-Bibliothek belegt {used} und hat {quota} Speicherplatz. Um sie zu behalten, öffne deinen <a href=\"{manage_url}\">persönlichen Bereich</a> und lösche andere Bücher, oder schalte die kostenlose Bibliothek ein, falls sie ausgeschaltet ist.</p>",
+    "archive_books_more": "…und {n} weitere",
     "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
   },
   "zh": {
@@ -57,6 +92,13 @@
     "delete_body": "<p>您申请删除 Audiobook Maker 账户。请输入以下验证码确认：</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>或打开链接：<a href=\"{link_url}\">{link_url}</a></p><p>验证码 {minutes} 分钟内有效。任务历史和会话将被删除；已交付的文件在过期前仍可通过邮件中的链接下载。</p><p>如果不是您本人操作，请忽略此邮件，不会有任何变化。</p>",
     "deleted_subject": "账户已删除",
     "deleted_body": "<p>您的 Audiobook Maker 账户已删除。您可以继续无账户使用服务，也可以随时用同一邮箱重新创建账户。</p>",
+    "archive_over_subject": "您的云端书库已超出空间",
+    "archive_over_body": "<p>您的云端书库现有 {quota} 空间，已使用 {used}。</p><p>如果到 {deadline} 仍然超出，我们将删除最早的有声书，直到书库重新容得下：</p>{books_html}<p>如需保留，请在您的<a href=\"{manage_url}\">个人空间</a>中删除其他书籍。</p>",
+    "archive_off_subject": "您的云端书库将于 {deadline} 清空",
+    "archive_off_body": "<p>您的云端书库已关闭，仍占用 {used}。</p><p>我们将于 {deadline} 删除以下有声书：</p>{books_html}<p>如需保留，请在您的<a href=\"{manage_url}\">个人空间</a>中开启免费书库。</p>",
+    "archive_remind_subject": "提醒：部分有声书将于 {deadline} 被删除",
+    "archive_remind_body": "<p>再过几天，即 {deadline}，我们将从您的云端书库中删除以下有声书：</p>{books_html}<p>您的云端书库已占用 {used}，空间为 {quota}。如需保留，请打开您的<a href=\"{manage_url}\">个人空间</a>删除其他书籍，或在免费书库已关闭时将其开启。</p>",
+    "archive_books_more": "……还有 {n} 本",
     "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
   },
   "hi": {
@@ -67,6 +109,13 @@
     "delete_body": "<p>आपने अपना Audiobook Maker खाता हटाने का अनुरोध किया है। पुष्टि के लिए यह कोड दर्ज करें:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{code}</strong></p><p>या यह लिंक खोलें: <a href=\"{link_url}\">{link_url}</a></p><p>कोड {minutes} मिनट तक मान्य है। कार्य इतिहास और सत्र हटा दिए जाएँगे; पहले से डिलीवर की गई फ़ाइलें ईमेल में मिले लिंक से उनकी समाप्ति तक डाउनलोड की जा सकती हैं।</p><p>यदि यह आप नहीं थे, तो इस ईमेल को अनदेखा करें: कुछ नहीं होगा।</p>",
     "deleted_subject": "खाता हटा दिया गया",
     "deleted_body": "<p>आपका Audiobook Maker खाता हटा दिया गया है। आप बिना खाते के सेवा का उपयोग जारी रख सकते हैं, या उसी ईमेल से कभी भी नया खाता बना सकते हैं।</p>",
+    "archive_over_subject": "आपकी क्लाउड लाइब्रेरी अपनी जगह से ज़्यादा भर गई है",
+    "archive_over_body": "<p>आपकी क्लाउड लाइब्रेरी में अब {quota} जगह है और उसमें {used} भरा है।</p><p>यदि {deadline} को भी वह सीमा से ऊपर रही, तो हम सबसे पुराने ऑडियोबुक तब तक हटाएँगे जब तक वह दोबारा समा न जाए:</p>{books_html}<p>उन्हें रखने के लिए अपने <a href=\"{manage_url}\">निजी क्षेत्र</a> से अन्य किताबें हटाएँ।</p>",
+    "archive_off_subject": "आपकी क्लाउड लाइब्रेरी {deadline} को खाली कर दी जाएगी",
+    "archive_off_body": "<p>आपकी क्लाउड लाइब्रेरी बंद है और उसमें अब भी {used} भरा है।</p><p>{deadline} को हम ये ऑडियोबुक हटा देंगे:</p>{books_html}<p>उन्हें रखने के लिए अपने <a href=\"{manage_url}\">निजी क्षेत्र</a> से मुफ़्त लाइब्रेरी चालू करें।</p>",
+    "archive_remind_subject": "याद दिलाना: {deadline} को कुछ ऑडियोबुक हटा दिए जाएँगे",
+    "archive_remind_body": "<p>कुछ ही दिनों में, {deadline} को, हम आपकी क्लाउड लाइब्रेरी से ये ऑडियोबुक हटा देंगे:</p>{books_html}<p>आपकी क्लाउड लाइब्रेरी में {used} भरा है और उसमें {quota} जगह है। उन्हें रखने के लिए अपना <a href=\"{manage_url}\">निजी क्षेत्र</a> खोलें और अन्य किताबें हटाएँ, या यदि मुफ़्त लाइब्रेरी बंद है तो उसे चालू करें।</p>",
+    "archive_books_more": "…और {n} अन्य",
     "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
   }
 }

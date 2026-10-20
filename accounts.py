@@ -1233,6 +1233,72 @@ def mark_archived(job_id, nbytes, now=None):
     return cur.rowcount > 0
 
 
+def archive_accounts_to_check():
+    """Account vivi su cui la tolleranza deve guardare: con un job nell'archivio,
+    con un libro caricato dall'app (`job_id=''`) o con la tolleranza gia' aperta.
+    Quelli cancellati li ripulisce `user_archive.sweep`."""
+    if not enabled():
+        return []
+    cond, args = _archive_active_where(_now(None))
+    with db.tx() as c:
+        rows = c.execute(
+            "SELECT a.* FROM accounts a WHERE " + cond + " AND (a.archive_over_since IS NOT NULL "
+            "OR EXISTS (SELECT 1 FROM account_jobs j WHERE j.account_id=a.id AND " + _JOB_IN_ARCHIVE + ") "
+            "OR EXISTS (SELECT 1 FROM archive_items i WHERE i.account_id=a.id AND i.job_id='')) "
+            "ORDER BY a.id", tuple(args)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def archive_entries(account_id):
+    """Voci che la tolleranza puo' togliere, dalla piu' vecchia: i job nell'archivio
+    (`entered_at` = ingresso nell'archivio) e i libri caricati dall'app pronti
+    (`entered_at` = caricamento), sempre con byte > 0. `title` non e' mai vuoto:
+    ripiega sul nome file e poi sull'id. [{kind, id, title, bytes, entered_at}]."""
+    if not enabled():
+        return []
+    cond, args = _archive_active_where(_now(None))
+    with db.tx() as c:
+        jobs = c.execute(
+            "SELECT j.job_id, j.book_title, j.archived_bytes, j.archived_at FROM account_jobs j "
+            "JOIN accounts a ON a.id=j.account_id WHERE j.account_id=? AND " + _JOB_IN_ARCHIVE +
+            " AND j.archived_bytes>0 AND " + cond, (account_id, *args)).fetchall()
+        items = c.execute(
+            "SELECT i.id, i.title, i.filename, i.size_bytes, i.created_at FROM archive_items i "
+            "JOIN accounts a ON a.id=i.account_id WHERE i.account_id=? AND i.job_id='' "
+            "AND i.state='ready' AND i.size_bytes>0 AND " + cond, (account_id, *args)).fetchall()
+    out = [{"kind": "job", "id": r["job_id"], "title": r["book_title"] or r["job_id"],
+            "bytes": int(r["archived_bytes"]), "entered_at": int(r["archived_at"])} for r in jobs]
+    out += [{"kind": "item", "id": r["id"], "title": r["title"] or r["filename"] or r["id"],
+             "bytes": int(r["size_bytes"]), "entered_at": int(r["created_at"])} for r in items]
+    out.sort(key=lambda e: (e["entered_at"], e["id"]))
+    return out
+
+
+def set_archive_tolerance(account_id, over_since, stage):
+    """Apre (`over_since` = epoch), avanza (`stage` 1 avviso inviato, 2 promemoria
+    inviato) o chiude (None, 0) la tolleranza di un account vivo."""
+    if not enabled():
+        return
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET archive_over_since=?, archive_notice_stage=? "
+                  "WHERE id=? AND deleted_at IS NULL",
+                  (None if over_since is None else int(over_since), int(stage), account_id))
+
+
+def evict_archived_job(job_id, now=None):
+    """Toglie il job dall'archivio: finisce la protezione e i suoi file tornano
+    alla retention ordinaria. La riga di storico resta (`archive_evicted_at`).
+    True se il job era nell'archivio."""
+    if not enabled():
+        return False
+    with db.tx() as c:
+        cur = c.execute(
+            "UPDATE account_jobs SET archived_at=NULL, archived_bytes=0, archive_evicted_at=? "
+            "WHERE job_id=? AND archived_at IS NOT NULL", (_now(now), str(job_id)))
+    _archive_cache_clear()
+    return cur.rowcount > 0
+
+
 ADMIN_PLAN_FILTERS = (PLAN_FREE, *SPACE_PLANS)
 ADMIN_ORIGINS = (*PLAN_SOURCES, "free", "none")
 

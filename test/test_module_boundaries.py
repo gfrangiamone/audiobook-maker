@@ -40,7 +40,7 @@ SERVICES_NO_ENGINE = {
     "llm_output_judge", "voice_language_guard", "community_moderator",
     "community_translator", "abuse_watch", "free_quota", "free_tts_quota",
     "community_store", "pending_jobs", "metrics_store", "email_service",
-    "accounts", "payment", "voice_clone", "voxcpm_ranking",
+    "accounts", "payment", "voice_clone", "voxcpm_ranking", "archive_tolerance",
 }
 
 # (nome, regex, moduli in cui il pattern e' ammesso)
