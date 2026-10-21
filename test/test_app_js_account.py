@@ -3,6 +3,7 @@
 le notifiche all'email dell'account. Test statici sul sorgente JS/HTML,
 piu' `node --check` se node e' disponibile."""
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ ACCT_KEYS = [
     "acct_email_ph", "acct_send_code", "acct_code_ph", "acct_code_intro", "acct_verify",
     "acct_err_wrong", "acct_err_expired", "acct_err_locked", "acct_err_none",
     "acct_err_rate", "acct_err_generic", "acct_forced_notice", "acct_signed_in_as",
-    "acct_logged_out", "acct_nudge",
+    "acct_logged_out", "acct_nudge", "acct_free_nudge",
 ]
 
 
@@ -264,8 +265,12 @@ def test_il_cookie_della_lingua_e_posato_anche_al_boot():
     assert "_setLangCookie(cl)" in boot
 
 
-def test_nudge_shown_once_per_day_only_to_guests():
-    assert 'id="acctNudge"' in HEAD and 'data-t="acct_nudge"' in HEAD
+def test_guest_nudge_shown_once_per_day():
+    # il testo lo scrive _acctNudgeFill (due versioni, una con la quota): un
+    # data-t lo riscriverebbe con quello degli anonimi a ogni cambio lingua
+    assert 'id="acctNudge"' in HEAD and 'id="acctNudgeText"' in HEAD
+    assert 'data-t="acct_nudge"' not in HEAD
+    assert "_acctNudgeFill()" in _extract_fn("_acctRender")
     fn = _extract_fn("_acctNudgeMaybe")
     assert "_acctLoggedIn()" in fn and "_acctMe.enabled" in fn
     assert "localStorage.getItem(_ACCT_NUDGE_KEY)===today" in fn
@@ -280,6 +285,11 @@ def test_nudge_shown_once_per_day_only_to_guests():
 
 FP_KEYS = ["fp_title", "fp_body", "fp_activate", "fp_decline", "fp_on_toast",
            "cloud_invite", "cloud_invite_btn"]
+
+
+def test_free_nudge_text_carries_the_quota_in_all_languages():
+    values = re.findall(r'\bacct_free_nudge:"([^"]*)"', I18N)
+    assert len(values) == 7 and all(v.count("{quota}") == 1 for v in values)
 
 
 @pytest.mark.parametrize("key", FP_KEYS)
@@ -516,6 +526,93 @@ def test_free_offer_gives_focus_back_to_the_opener_only_if_visible(tmp_path):
     for case in ("nascosto", "visibility", "rimosso"):
         assert got[case] != "trigger", case                  # mai su un elemento nascosto/rimosso
     assert got["nessuno"] != "trigger"                       # senza un chiamante non si inventa nulla
+
+
+_NUDGE_HARNESS = r"""
+const RealDate=Date;
+const shared={store:{},broken:false,today:null};
+function page(me){
+  // una "pagina" nuova: stato del modulo azzerato, localStorage condiviso
+  const calls=[];
+  const els={};
+  for(const id of ['acctNudge','acctNudgeText','acctNudgeClose'])
+    els[id]={hidden:true,textContent:'',on:{},addEventListener(ev,fn){this.on[ev]=fn}};
+  let ready=null;
+  const document={getElementById:id=>els[id]||null,
+                  addEventListener:(ev,fn)=>{if(ev==='DOMContentLoaded')ready=fn}};
+  const localStorage={
+    getItem(k){if(shared.broken)throw new Error('blocked');return k in shared.store?shared.store[k]:null},
+    setItem(k,v){if(shared.broken)throw new Error('blocked');shared.store[k]=String(v)}};
+  class Date extends RealDate{constructor(...a){if(a.length)super(...a);else super(shared.today.getTime())}}
+  const setTimeout=()=>1, clearTimeout=()=>{};
+  let _acctMe=me;
+  const t=(k,r)=>k+(r?JSON.stringify(r):'');
+  const _acctFmtBytes=n=>n+'B';
+  const _acctFreeQuota=i=>i.free_quota_bytes;
+  const _acctFreeOffer=()=>calls.push('offer');
+  const openLoginModal=()=>calls.push('login');
+  __FN_LOGGED__
+  __BLOCK__
+  ready();
+  _acctNudgeMaybe();
+  return {shown:!els.acctNudge.hidden,text:els.acctNudgeText.textContent,
+          click(){els.acctNudgeText.on.click();return {calls,hidden:els.acctNudge.hidden}}};
+}
+function day(y,m,d){shared.today=new RealDate(y,m-1,d,10,0,0)}
+const guest={enabled:true,logged_in:false};
+const user=(nudge)=>({enabled:true,logged_in:true,email:'a@b.it',free_nudge:nudge,free_quota_bytes:512});
+const KEY='abm_free_nudge_day';
+const out={};
+day(2026,10,21);
+let g=page(guest);
+out.guest_first=g.shown; out.guest_text=g.text;
+out.guest_same_day=page(guest).shown;
+day(2026,10,22);
+out.guest_next_day=page(guest).shown;
+out.user_no_nudge=page(user(false)).shown;
+let p=page(user(true));
+out.free_first=p.shown; out.free_text=p.text;
+out.free_click=p.click();
+for(const [d,label] of [[23,'free_d1'],[28,'free_d6'],[29,'free_d7']]){day(2026,10,d);out[label]=page(user(true)).shown}
+// ora legale del 28/03/2027 in mezzo: 7 giorni di calendario sono 167 ore,
+// che contano 7 e non 6
+shared.store[KEY]='2027-03-24';
+day(2027,3,30); out.dst_d6=page(user(true)).shown;
+day(2027,3,31); out.dst_d7=page(user(true)).shown;
+shared.store[KEY]='2027-04-10'; out.future_date=page(user(true)).shown;   // orologio spostato
+shared.store[KEY]='rubbish'; out.bad_date=page(user(true)).shown;
+day(2027,5,30); shared.broken=true; out.storage_blocked=page(user(true)).shown;
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+def test_nudge_cadence_and_click_for_guests_and_free_reminder(tmp_path):
+    start = APP.index("const _ACCT_NUDGE_KEY=")
+    block = APP[start:APP.index("\nfunction _acctRender(){", start)]
+    script = tmp_path / "nudge.js"
+    script.write_text(_NUDGE_HARNESS.replace("__FN_LOGGED__", _extract_fn("_acctLoggedIn"))
+                      .replace("__BLOCK__", block), encoding="utf-8")
+    res = subprocess.run(["node", str(script)], capture_output=True, text=True,
+                         env={**os.environ, "TZ": "Europe/Rome"})
+    assert res.returncode == 0, res.stderr
+    got = json.loads(res.stdout.strip().splitlines()[-1])
+    assert got["guest_first"] is True and got["guest_text"] == "acct_nudge"
+    assert got["guest_same_day"] is False and got["guest_next_day"] is True   # una volta al giorno
+    assert got["user_no_nudge"] is False                             # loggato senza promemoria dovuto
+    assert got["free_first"] is True
+    assert got["free_text"] == 'acct_free_nudge{"quota":"512B"}'
+    assert got["free_click"] == {"calls": ["offer"], "hidden": True} # apre la proposta, non il login
+    assert (got["free_d1"], got["free_d6"], got["free_d7"]) == (False, False, True)
+    assert (got["dst_d6"], got["dst_d7"]) == (False, True)
+    assert got["future_date"] is True and got["bad_date"] is True
+    assert got["storage_blocked"] is False
+
+
+def test_free_offer_restarts_the_nudge_week():
+    offer = _extract_fn("_acctFreeOffer")
+    mark = "localStorage.setItem(_ACCT_FREE_NUDGE_KEY,_acctNudgeToday())"
+    assert mark in offer and offer.index(mark) < offer.index("m.classList.add('open')")
 
 
 def test_free_offer_reads_the_opener_before_moving_focus():

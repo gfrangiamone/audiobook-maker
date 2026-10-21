@@ -1514,18 +1514,30 @@ FREE_PLAN_ACTIONS = ("activate", "decline", "deactivate")
 FREE_CONSENT_SOURCES = ("prompt", "account")
 
 
-def free_offer_pending(account, now=None):
-    """True se all'utente va proposto il piano gratuito: account vivo, mai
-    proposto, nessun consenso, quota gratuita maggiore di 0 e nessun regalo
-    attivo (con un regalo la proposta non compare e ricompare, senza consenso,
-    al primo accesso dopo la scadenza)."""
+def _free_plan_offerable(account, now):
+    """True se il piano gratuito ha senso per l'account: vivo, senza consenso,
+    quota gratuita maggiore di 0 e nessun regalo attivo (con un regalo l'offerta
+    non compare e ricompare, senza consenso, al primo accesso dopo la scadenza)."""
     if not account or account.get("deleted_at") is not None:
         return False
-    if account.get("free_consent_at") is not None or account.get("free_offer_at") is not None:
+    if account.get("free_consent_at") is not None:
         return False
     if plan_quota_bytes(PLAN_FREE) <= 0:      # quota azzerata da env: niente da offrire
         return False
     return not gift_active(account, now)
+
+
+def free_offer_pending(account, now=None):
+    """True se all'utente va proposto il piano gratuito (la proposta una tantum):
+    offerta sensata e mai fatta."""
+    return _free_plan_offerable(account, now) and account.get("free_offer_at") is None
+
+
+def free_nudge_pending(account, now=None):
+    """True se all'utente va ricordato il piano gratuito (il fumetto della SPA):
+    offerta sensata ma gia' fatta, cioe' rifiutata o con il consenso ritirato.
+    La cadenza del promemoria la decide la SPA."""
+    return _free_plan_offerable(account, now) and account.get("free_offer_at") is not None
 
 
 def free_plan_action(account_id, action, source, now=None):

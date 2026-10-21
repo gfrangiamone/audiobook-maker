@@ -7321,40 +7321,75 @@ async function _acctBoot(){
     return;
   }
   // Account che non ha ancora scelto sul piano gratuito: la proposta una
-  // tantum prende il posto del fumetto (che e' comunque solo per gli anonimi).
+  // tantum prende il posto del fumetto.
   if(_acctMe&&_acctMe.free_offer){_acctFreeOffer(_acctMe);return}
   _acctNudgeMaybe();
 }
 
-// Fumetto sotto l'icona account: invita gli utenti non registrati ad accedere,
-// al massimo una volta al giorno (data locale in localStorage).
+// Fumetto sotto l'icona account, in due versioni (date locali in localStorage):
+// agli utenti non registrati invita ad accedere, al massimo una volta al giorno;
+// ai loggati che hanno chiuso la proposta del piano gratuito la ricorda, al
+// massimo una volta ogni _ACCT_FREE_NUDGE_DAYS giorni contati anche dall'ultima
+// volta che si e' aperta la proposta. Il clic apre la proposta, non attiva nulla.
 const _ACCT_NUDGE_KEY='abm_acct_nudge_day';
+const _ACCT_FREE_NUDGE_KEY='abm_free_nudge_day';
+const _ACCT_FREE_NUDGE_DAYS=7;
 let _acctNudgeTimer=null;
+let _acctNudgeKind='';  // 'guest' | 'free' | '' = nascosto
 function _acctNudgeToday(){
   const d=new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
+// Giorni da a a b (date locali YYYY-MM-DD); NaN se una delle due non si legge.
+// Math.round assorbe i giorni da 23 e 25 ore del cambio d'ora.
+function _acctDaysBetween(a,b){
+  function ms(s){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');return m?new Date(+m[1],m[2]-1,+m[3]).getTime():NaN}
+  return Math.round((ms(b)-ms(a))/86400000);
+}
 function _acctNudgeMaybe(){
   const box=document.getElementById('acctNudge');
-  if(!box||!_acctMe||!_acctMe.enabled||_acctLoggedIn())return;
+  if(!box||!_acctMe||!_acctMe.enabled)return;
+  const kind=_acctLoggedIn()?(_acctMe.free_nudge?'free':''):'guest';
+  if(!kind)return;
   const today=_acctNudgeToday();
   try{
-    if(localStorage.getItem(_ACCT_NUDGE_KEY)===today)return;
-    localStorage.setItem(_ACCT_NUDGE_KEY,today);
+    if(kind==='guest'){
+      if(localStorage.getItem(_ACCT_NUDGE_KEY)===today)return;
+      localStorage.setItem(_ACCT_NUDGE_KEY,today);
+    }else{
+      // una data illeggibile o nel futuro (orologio spostato) non blocca il promemoria
+      const d=_acctDaysBetween(localStorage.getItem(_ACCT_FREE_NUDGE_KEY),today);
+      if(d>=0&&d<_ACCT_FREE_NUDGE_DAYS)return;
+      localStorage.setItem(_ACCT_FREE_NUDGE_KEY,today);
+    }
   }catch(e){return}
-  const txt=document.getElementById('acctNudgeText');
-  if(txt)txt.textContent=t('acct_nudge');
+  _acctNudgeKind=kind;
+  _acctNudgeFill();
   box.hidden=false;
   _acctNudgeTimer=setTimeout(_acctNudgeHide,20000);
+}
+// Testo nella lingua corrente: niente data-t, perche' le versioni sono due e
+// una ha la quota; al cambio lingua lo riscrive _acctRender().
+function _acctNudgeFill(){
+  const txt=document.getElementById('acctNudgeText');
+  if(!txt||!_acctNudgeKind)return;
+  txt.textContent=_acctNudgeKind==='free'
+    ?t('acct_free_nudge',{quota:_acctFmtBytes(_acctFreeQuota(_acctMe))})
+    :t('acct_nudge');
 }
 function _acctNudgeHide(){
   const box=document.getElementById('acctNudge');
   if(box)box.hidden=true;
+  _acctNudgeKind='';
   if(_acctNudgeTimer){clearTimeout(_acctNudgeTimer);_acctNudgeTimer=null}
 }
 document.addEventListener('DOMContentLoaded',function(){
   const txt=document.getElementById('acctNudgeText');
-  if(txt)txt.addEventListener('click',function(){_acctNudgeHide();openLoginModal()});
+  if(txt)txt.addEventListener('click',function(){
+    const kind=_acctNudgeKind;
+    _acctNudgeHide();
+    if(kind==='free')_acctFreeOffer(_acctMe);else openLoginModal();
+  });
   const x=document.getElementById('acctNudgeClose');
   if(x)x.addEventListener('click',_acctNudgeHide);
 });
@@ -7376,6 +7411,7 @@ function _acctRender(){
   }
   _acctApplyForcedEmail();
   _acctCloudInviteRender();
+  _acctNudgeFill();
 }
 
 function _acctBtnClick(){
@@ -7557,6 +7593,8 @@ function _acctFreeOffer(info){
   const m=document.getElementById('freePlanModal');
   if(!m||!info)return Promise.resolve();
   if(_fpPending)return _fpPending;
+  // la proposta aperta vale come promemoria: il fumetto riparte da oggi
+  try{localStorage.setItem(_ACCT_FREE_NUDGE_KEY,_acctNudgeToday())}catch(e){}
   const body=document.getElementById('fpBody');
   if(body)body.textContent=t('fp_body',{
     quota:_acctFmtBytes(_acctFreeQuota(info)),

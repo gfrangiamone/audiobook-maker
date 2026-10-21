@@ -638,9 +638,10 @@ def _account_archive_for(acct):
 
 def _acct_plan_info(acct):
     """Stato del piano di archivio esposto da login e `/api/auth/me`: se
-    proporre il piano gratuito, la sua quota, i giorni di tolleranza e il
-    riepilogo dell'archivio (None se non c'e' nulla da mostrare)."""
+    proporre il piano gratuito o ricordarlo, la sua quota, i giorni di
+    tolleranza e il riepilogo dell'archivio (None se non c'e' nulla da mostrare)."""
     return {"free_offer": accounts.free_offer_pending(acct),
+            "free_nudge": accounts.free_nudge_pending(acct),
             "free_quota_bytes": accounts.plan_quota_bytes(accounts.PLAN_FREE),
             "tolerance_days": accounts.archive_tolerance_days(),
             "archive": _account_archive_for(acct)}

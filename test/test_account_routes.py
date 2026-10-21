@@ -369,7 +369,7 @@ def test_free_plan_route_and_me(client, env):
     d = client.post("/api/auth/verify", json={"email": "a@b.it", "code": env[0][2]["code"]}).get_json()
     assert d["free_offer"] is True and d["free_quota_bytes"] == 512 * 1024 ** 2
     me = client.get("/api/auth/me").get_json()
-    assert me["free_offer"] is True and me["archive"] is None
+    assert me["free_offer"] is True and me["free_nudge"] is False and me["archive"] is None
     assert me["free_quota_bytes"] == 512 * 1024 ** 2 and me["tolerance_days"] == 15
     r = client.post("/api/account/free_plan", json={"action": "activate", "source": "prompt"})
     assert r.status_code == 200
@@ -393,14 +393,16 @@ def test_free_plan_route_cycle_and_defaults(client, env):
     r = client.post("/api/account/free_plan", json={"action": "decline", "source": "prompt"})
     d = r.get_json()
     assert r.status_code == 200 and d["free_offer"] is False and d["archive"] is None
+    assert d["free_nudge"] is True and client.get("/api/auth/me").get_json()["free_nudge"] is True
     r = client.post("/api/account/free_plan", json={"action": "activate"})
     d = r.get_json()
     assert d["free_offer"] is False and d["archive"]["free_active"] is True
+    assert d["free_nudge"] is False
     assert d["archive"]["quota_bytes"] == 512 * 1024 ** 2
     assert client.get("/api/auth/me").get_json()["archive"]["free_active"] is True
     r = client.post("/api/account/free_plan", json={"action": "deactivate"})
     d = r.get_json()
-    assert r.status_code == 200 and d["free_offer"] is False
+    assert r.status_code == 200 and d["free_offer"] is False and d["free_nudge"] is True
     assert d["archive"] is None
     with db.tx() as c:
         rows = [tuple(x) for x in c.execute(

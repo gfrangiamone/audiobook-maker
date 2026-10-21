@@ -412,6 +412,36 @@ def test_free_offer_not_shown_again_after_any_choice(env):
     assert not accounts.free_offer_pending(None)
 
 
+def test_free_nudge_only_after_the_offer_and_without_consent(env, monkeypatch):
+    """Il promemoria e' l'altra meta' della proposta: mai insieme, mai con il
+    consenso dato, mai con un regalo attivo o senza quota gratuita."""
+    def state(acct_id, now=T0 + 10):
+        acc = accounts.get(acct_id)
+        return accounts.free_offer_pending(acc, now=now), accounts.free_nudge_pending(acc, now=now)
+
+    a, b = _login("a@b.it"), _login("b@b.it")
+    assert state(a["id"]) == (True, False)              # mai risposto: proposta, non promemoria
+    accounts.free_plan_action(a["id"], "decline", "prompt", now=T0)
+    assert state(a["id"]) == (False, True)              # rifiutata
+    accounts.free_plan_action(a["id"], "activate", "account", now=T0 + 1)
+    assert state(a["id"]) == (False, False)             # consenso dato
+    accounts.free_plan_action(a["id"], "deactivate", "account", now=T0 + 2)
+    assert state(a["id"]) == (False, True)              # consenso ritirato
+    accounts.free_plan_action(b["id"], "activate", "prompt", now=T0)
+    assert state(b["id"]) == (False, False)             # attivata alla prima proposta
+    # regalo attivo: niente promemoria, che torna alla scadenza
+    _gift(a, "sub_10", T0 + 86400)
+    assert state(a["id"]) == (False, False)
+    assert state(a["id"], now=T0 + 86400) == (False, True)
+    # quota gratuita azzerata da env: nulla da ricordare
+    monkeypatch.setenv("ABM_PLAN_FREE_MB", "0")
+    assert state(a["id"], now=T0 + 86400) == (False, False)
+    monkeypatch.setenv("ABM_PLAN_FREE_MB", "512")
+    accounts.delete_account(a["id"], now=T0 + 86401)
+    assert state(a["id"], now=T0 + 86402) == (False, False)
+    assert not accounts.free_nudge_pending(None)
+
+
 def test_free_plan_ignores_deleted_accounts(env):
     a = _login("a@b.it")
     accounts.delete_account(a["id"], now=T0)
