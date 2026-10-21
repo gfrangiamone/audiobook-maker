@@ -456,7 +456,10 @@ def api_auth_me():
         return jsonify({"logged_in": False, "enabled": False})
     acct = _current_account()
     if not acct:
-        return jsonify({"logged_in": False, "enabled": True})
+        # La quota del gratuito serve all'invito d'iscrizione a fine generazione:
+        # la SPA non ne tiene una copia (vale ABM_PLAN_FREE_MB).
+        return jsonify({"logged_in": False, "enabled": True,
+                        "free_quota_bytes": accounts.plan_quota_bytes(accounts.PLAN_FREE)})
     return jsonify({
         "logged_in": True, "enabled": True, "email": acct["email"],
         "lang": acct.get("lang") or "en", "plan": acct.get("plan") or "free",

@@ -101,7 +101,8 @@ function _trapFocusIn(el){
   const handler=function(e){
     if(e.key!=='Tab')return;
     const first=focusable[0], last=focusable[focusable.length-1];
-    if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+    // Maiusc+Tab dal contenitore (tabindex=-1, fuori dalla lista) vale come dal primo
+    if(e.shiftKey&&(document.activeElement===first||Array.prototype.indexOf.call(focusable,document.activeElement)<0)){e.preventDefault();last.focus();}
     else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
   };
   el.addEventListener('keydown',handler);
@@ -7507,7 +7508,8 @@ async function _acctVerify(){
 
 async function _acctLogout(){
   try{await fetch('/api/auth/logout',{method:'POST'})}catch(e){}
-  _acctMe=_acctMe?{enabled:_acctMe.enabled,logged_in:false}:null;
+  // la quota del gratuito resta: serve all'invito d'iscrizione, che torna visibile
+  _acctMe=_acctMe?{enabled:_acctMe.enabled,logged_in:false,free_quota_bytes:_acctMe.free_quota_bytes}:null;
   _acctRender();
   _acctToast(t('acct_logged_out'));
 }
@@ -7522,10 +7524,16 @@ function _acctFmtBytes(n){
   return (n/GIB).toFixed(2).replace(/0+$/,'').replace(/\.$/,'')+' GB';
 }
 
-// /api/auth/me non manda la quota agli anonimi (e la proposta la porta sempre):
-// ripiego sul valore standard del piano gratuito, 512 MiB.
+// La quota del piano gratuito la manda il server (/api/auth/me, anche agli
+// anonimi, e la risposta di login): vale ABM_PLAN_FREE_MB. Il valore standard,
+// 512 MiB, e' solo un ripiego difensivo se il campo manca.
 const _ACCT_FREE_QUOTA_DEFAULT=512*1048576;
-const _ACCT_TOLERANCE_DAYS_DEFAULT=15;
+function _acctFreeQuota(info){
+  const q=info&&info.free_quota_bytes;
+  return typeof q==='number'?q:_ACCT_FREE_QUOTA_DEFAULT;
+}
+// Tetto di attesa della scelta: oltre, e' un errore di rete e il modale si chiude.
+const _ACCT_FP_TIMEOUT_MS=15000;
 
 let _fpPending=null;
 // Mostra #freePlanModal e risolve quando l'utente ha scelto o chiuso. Il
@@ -7538,17 +7546,18 @@ function _acctFreeOffer(info){
   if(_fpPending)return _fpPending;
   const body=document.getElementById('fpBody');
   if(body)body.textContent=t('fp_body',{
-    quota:_acctFmtBytes(info.free_quota_bytes||_ACCT_FREE_QUOTA_DEFAULT),
-    days:info.tolerance_days||_ACCT_TOLERANCE_DAYS_DEFAULT});
+    quota:_acctFmtBytes(_acctFreeQuota(info)),
+    days:info.tolerance_days});
   const bAct=document.getElementById('fpActivate'),bDec=document.getElementById('fpDecline');
   const bX=document.getElementById('fpClose'),panel=document.getElementById('fpPanel');
   _fpPending=new Promise(function(resolve){
-    let busy=false;
+    let busy=false,downOnOverlay=false;
     function onKey(ev){if(ev.key==='Escape')choose('decline')}
     function finish(){
       document.removeEventListener('keydown',onKey);
       m.classList.remove('open');
       m.onclick=null;
+      m.onmousedown=null;
       [bAct,bDec,bX].forEach(function(b){if(b){b.onclick=null;b.disabled=false}});
       _fpPending=null;
       resolve();
@@ -7557,24 +7566,40 @@ function _acctFreeOffer(info){
       if(busy)return;
       busy=true;
       [bAct,bDec].forEach(function(b){if(b)b.disabled=true});
+      // un POST appeso lascerebbe il modale bloccato (busy ignora X ed Esc):
+      // oltre il tetto e' un errore di rete come gli altri
+      const ctrl=new AbortController();
+      const tmr=setTimeout(function(){ctrl.abort()},_ACCT_FP_TIMEOUT_MS);
+      let saved=false;
       try{
-        const r=await fetch('/api/account/free_plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,source:'prompt'})});
+        const r=await fetch('/api/account/free_plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,source:'prompt'}),signal:ctrl.signal});
         const d=await r.json().catch(function(){return{}});
-        if(r.ok&&d.ok){
-          info.free_offer=false;
-          if(action==='activate')_acctToast(t('fp_on_toast'));
-        }
+        saved=!!(r.ok&&d.ok);
       }catch(e){}
+      finally{clearTimeout(tmr)}
+      if(saved){
+        info.free_offer=false;
+        if(action==='activate')_acctToast(t('fp_on_toast'));
+      }else if(action==='activate'){
+        // nulla registrato: chi voleva attivare lo deve sapere (puo' farlo
+        // dall'area personale); un "Non ora" andato a vuoto resta silenzioso
+        _acctToast(t('acct_err_generic'));
+      }
       finish();
     }
     if(bAct)bAct.onclick=function(){choose('activate')};
     if(bDec)bDec.onclick=function(){choose('decline')};
     if(bX)bX.onclick=function(){choose('decline')};
-    m.onclick=function(ev){if(ev.target===m)choose('decline')};
+    // "clic fuori" solo se anche la pressione e' partita dallo sfondo: una
+    // selezione di testo dal riquadro allo sfondo non e' un rifiuto
+    m.onmousedown=function(ev){downOnOverlay=(ev.target===m)};
+    m.onclick=function(ev){const out=(ev.target===m&&downOnOverlay);downOnOverlay=false;if(out)choose('decline')};
     document.addEventListener('keydown',onKey);
     m.classList.add('open');
     // il focus va al riquadro, non a un pulsante: nessuna scelta suggerita
     try{panel&&panel.focus()}catch(e){}
+    // Tab resta nel dialogo (aria-modal); si rilascia da solo alla chiusura
+    _trapFocusIn(m);
   });
   return _fpPending;
 }
@@ -7585,11 +7610,12 @@ function _acctFreeOffer(info){
 function _acctCloudInviteRender(){
   const box=document.getElementById('cloudInvite');
   if(!box)return;
-  const on=!!(_acctMe&&_acctMe.enabled&&!_acctLoggedIn());
+  // senza quota (gratuito spento dal server) non c'e' nulla da offrire
+  const on=!!(_acctMe&&_acctMe.enabled&&!_acctLoggedIn()&&_acctFreeQuota(_acctMe)>0);
   box.style.display=on?'flex':'none';
   if(!on)return;
   const txt=document.getElementById('cloudInviteText');
-  if(txt)txt.textContent=t('cloud_invite',{quota:_acctFmtBytes(_acctMe.free_quota_bytes||_ACCT_FREE_QUOTA_DEFAULT)});
+  if(txt)txt.textContent=t('cloud_invite',{quota:_acctFmtBytes(_acctFreeQuota(_acctMe))});
   const btn=document.getElementById('cloudInviteBtn');
   if(btn)btn.onclick=function(){openLoginModal()};
 }

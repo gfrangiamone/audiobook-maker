@@ -433,3 +433,14 @@ def test_me_hides_free_offer_during_active_gift(client, env):
     me = client.get("/api/auth/me").get_json()
     assert me["free_offer"] is False and me["plan"] == "sub_5"
     assert me["archive"]["plan"] == "sub_5" and me["archive"]["free_active"] is False
+
+
+def test_me_anonymous_carries_free_quota_from_server(client, monkeypatch):
+    # L'invito d'iscrizione a fine generazione mostra la quota del gratuito:
+    # arriva dal server anche agli anonimi, la SPA non ne tiene una copia.
+    me = client.get("/api/auth/me").get_json()
+    assert me["logged_in"] is False and me["enabled"] is True
+    assert me["free_quota_bytes"] == accounts.plan_quota_bytes("free")
+    monkeypatch.setenv("ABM_PLAN_FREE_MB", "256")
+    me = client.get("/api/auth/me").get_json()
+    assert me["free_quota_bytes"] == 256 * 1024 ** 2

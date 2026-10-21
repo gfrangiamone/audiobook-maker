@@ -337,3 +337,66 @@ def test_free_offer_closing_the_modal_is_a_decline():
 def test_fmt_bytes_follows_server_rule():
     fn = _extract_fn("_acctFmtBytes")
     assert "MB" in fn and "GB" in fn and "toFixed(2)" in fn
+
+
+# ── Fix round: quota dal server, timeout, guardie del modale ──
+
+def test_free_quota_for_invite_comes_from_server_not_a_second_copy():
+    # la quota degli anonimi arriva da /api/auth/me e sopravvive al logout:
+    # la costante resta solo come ripiego se il campo manca
+    logout = _extract_fn("_acctLogout")
+    assert "free_quota_bytes" in logout and "_acctMe.free_quota_bytes" in logout
+    quota = _extract_fn("_acctFreeQuota")
+    assert "free_quota_bytes" in quota and "_ACCT_FREE_QUOTA_DEFAULT" in quota
+    assert "typeof" in quota  # 0 dal server e' un valore, non un campo mancante
+    assert "_acctFreeQuota(" in _extract_fn("_acctCloudInviteRender")
+    assert "_acctFreeQuota(" in _extract_fn("_acctFreeOffer")
+    # il server manda sempre tolerance_days con la proposta: niente seconda copia
+    assert "_ACCT_TOLERANCE_DAYS_DEFAULT" not in APP
+
+
+def test_free_offer_failed_activation_is_toasted_and_failed_decline_is_silent():
+    offer = _extract_fn("_acctFreeOffer")
+    assert "acct_err_generic" in offer
+    # l'errore si mostra solo per l'attivazione, mai per un "Non ora" andato a vuoto
+    assert re.search(r"else if\(action==='activate'\)\{[^}]*acct_err_generic", offer)
+
+
+def test_free_offer_post_has_a_timeout_that_unblocks_the_modal():
+    offer = _extract_fn("_acctFreeOffer")
+    assert "new AbortController()" in offer and "signal" in offer
+    assert "abort()" in offer and "setTimeout(" in offer
+    # il timer si ferma comunque (finally) e il modale si chiude dopo l'errore
+    assert "finally" in offer and "clearTimeout(" in offer
+    assert re.search(r"_ACCT_FP_TIMEOUT_MS\s*=\s*1[0-9]{4}(?!\d)", APP)
+    assert "_ACCT_FP_TIMEOUT_MS" in offer
+
+
+def test_free_offer_overlay_click_needs_mousedown_on_overlay_too():
+    # una selezione di testo che parte dal riquadro e finisce sullo sfondo non
+    # e' un "clic fuori": non deve registrare un rifiuto persistente
+    offer = _extract_fn("_acctFreeOffer")
+    assert "onmousedown" in offer
+    click = offer[offer.index("m.onclick=function"):]
+    click = click.splitlines()[0]
+    assert "ev.target===m" in click and "choose('decline')" in click
+    assert "downOnOverlay" in click
+    down = offer[offer.index("m.onmousedown=function"):]
+    down = down.splitlines()[0]
+    assert "ev.target===m" in down and "downOnOverlay" in down
+
+
+def test_free_offer_traps_focus_but_never_focuses_a_button():
+    offer = _extract_fn("_acctFreeOffer")
+    assert "_trapFocusIn(m)" in offer
+    assert offer.index("panel.focus()") < offer.index("_trapFocusIn(m)")
+    # l'unico focus e' sul riquadro: nessuna scelta suggerita
+    receivers = re.findall(r"([A-Za-z_]\w*)\.focus\(", offer)
+    assert receivers == ["panel"], receivers
+    assert offer.count(".focus(") == len(receivers)
+    for btn in ("bAct", "bDec", "bX"):
+        assert btn + ".focus" not in offer
+    assert "autofocus" not in offer and ".click()" not in offer
+    # Maiusc+Tab dal riquadro (focus sul contenitore) non esce dal dialogo
+    trap = _extract_fn("_trapFocusIn")
+    assert "indexOf" in trap or "includes" in trap
