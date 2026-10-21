@@ -1,5 +1,7 @@
 # test/test_admin_accounts_audit.py
 """Tab admin "Utenti registrati": elenco account, API e markup."""
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 import accounts
@@ -226,6 +228,30 @@ def test_accounts_audit_api_filters_by_plan_and_origin(acct_env, monkeypatch):
     agg = d["aggregates"]                                          # aggregati sull'intera anagrafica
     assert (agg["gift"], agg["paid"], agg["free_active"], agg["in_tolerance"], agg["total"]) == (1, 0, 0, 0, 2)
     assert "subscribed" not in agg
+
+
+def test_accounts_audit_api_tolerance_filter_and_last30_since(acct_env, monkeypatch):
+    late = _login("late@example.com", T0)
+    _login("ok@example.com", T0)
+    _set(late, archive_over_since=T0)
+    c = _admin(monkeypatch)
+    h = {"X-Admin-Token": "secret"}
+
+    def get(query):
+        r = c.get("/admin/api/accounts_audit" + query, headers=h)
+        assert r.status_code == 200
+        return r.get_json()
+
+    for on in ("?tolerance=1", "?tolerance=true"):
+        d = get(on)
+        assert [rec["email"] for rec in d["records"]] == ["late@example.com"], on
+        assert d["count"] == d["aggregates"]["in_tolerance"] == 1
+    for off in ("", "?tolerance=0", "?tolerance=no"):
+        assert get(off)["count"] == 2, off
+    # la route legge l'orologio reale: last30_since e' la mezzanotte UTC di 30 giorni fa
+    day = datetime.strptime(get("")["last30_since"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - day
+    assert timedelta(days=30) <= age < timedelta(days=31)
 
 
 def test_premium_page_has_accounts_tab(monkeypatch):

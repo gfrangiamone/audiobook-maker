@@ -1367,12 +1367,15 @@ def admin_api_accounts_audit():
     """Anagrafica degli account dell'area personale: data di registrazione,
     ultimo accesso, sessioni attive, storico e cancellazione. Admin-only.
 
-    `state`: all (default) | active | dormant | never | deleted.
-    `q` cerca nell'email (gli account cancellati hanno gia' un segnaposto al
-    posto dell'indirizzo: li trova solo per id). `date_from`/`date_to`
-    (YYYY-MM-DD, UTC) sulla data di registrazione. `plan` (free | sub_5 |
-    sub_10) filtra sul piano effettivo, `origin` (paid | gift | free | none)
-    sull'origine del piano.
+    `state`: all (default) | active (account vivo con una sessione valida) |
+    dormant | never | deleted. `q` cerca nell'email (gli account cancellati
+    hanno gia' un segnaposto al posto dell'indirizzo: li trova solo per id).
+    `date_from`/`date_to` (YYYY-MM-DD, UTC) sulla data di registrazione.
+    `plan` (free | sub_5 | sub_10) filtra sul piano effettivo, `origin` (paid
+    | gift | free | none) sull'origine del piano, `tolerance=1` tiene solo gli
+    account nella tolleranza dell'archivio. Ogni aggregato conta le righe del
+    filtro che la sua casella applica; `last30_since` e' il `date_from` di
+    "Nuovi 30 gg".
     """
     if not accounts.enabled():
         return jsonify({"error": "accounts disabled"}), 503
@@ -1390,6 +1393,7 @@ def admin_api_accounts_audit():
             limit=limit, offset=offset,
             plan=(request.args.get("plan") or "").strip().lower(),
             origin=(request.args.get("origin") or "").strip().lower(),
+            tolerance=request.args.get("tolerance") in ("1", "true"),
         )
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"accounts unavailable: {e}"}), 503
@@ -1401,7 +1405,8 @@ def admin_api_accounts_audit():
 def admin_api_account_gift():
     """Regala un piano di spazio a un account fino a tutto il giorno `until`
     (UTC). Body: {"account_id": ..., "plan": "sub_5"|"sub_10", "until":
-    "YYYY-MM-DD"}. 409 se c'e' un piano pagato attivo."""
+    "YYYY-MM-DD"}. 409 `paid_plan_active` se c'e' un piano pagato attivo,
+    409 `gift_active` se c'e' gia' un regalo attivo (va revocato prima)."""
     if not accounts.enabled():
         return jsonify({"error": "accounts disabled"}), 503
     body = json_body()
@@ -1419,6 +1424,8 @@ def admin_api_account_gift():
         return jsonify({"error": "not_found"}), 404
     if status == "paid":
         return jsonify({"error": "paid_plan_active"}), 409
+    if status == "gift":
+        return jsonify({"error": "gift_active"}), 409
     print(f"[archive] admin: account {acct['id']} -> regalo {acct['plan']} fino a {acct['plan_until']}",
           flush=True)
     return jsonify({"ok": True, "id": acct["id"], "plan": acct["plan"],

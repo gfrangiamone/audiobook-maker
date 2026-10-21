@@ -523,6 +523,16 @@ def test_admin_gift_route_conflicts_and_disabled(acct_env, monkeypatch):
     r = client.post(rv, json={"account_id": acct["id"]}, headers=h)
     assert r.status_code == 409 and r.get_json() == {"error": "not_gift"}
     assert accounts.get(acct["id"])["plan_source"] == "paid"
+    # regalo attivo: va revocato prima di farne un altro
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET plan='sub_5', plan_source='gift', plan_until=4073587200 WHERE id=?",
+                  (acct["id"],))
+    r = client.post(url, json=body, headers=h)
+    assert r.status_code == 409 and r.get_json() == {"error": "gift_active"}
+    stored = accounts.get(acct["id"])
+    assert (stored["plan"], stored["plan_source"], stored["plan_until"]) == ("sub_5", "gift", 4073587200)
+    assert client.post(rv, json={"account_id": acct["id"]}, headers=h).status_code == 200
+    assert client.post(url, json=body, headers=h).status_code == 200
     monkeypatch.setattr(accounts, "ENABLE", False)
     assert client.post(url, json=body, headers=h).status_code == 503
     assert client.post(rv, json={"account_id": acct["id"]}, headers=h).status_code == 503
