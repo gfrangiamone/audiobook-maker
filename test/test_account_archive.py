@@ -1,9 +1,13 @@
 # test/test_account_archive.py
 """Archivio dei lavori: quota del piano (gratuito con consenso), ingresso dei job
 in archivio entro quota, protezione da retention e cleanup, area personale."""
+import json
+import pathlib
 import re
 import shutil
+import subprocess
 from html import escape
+from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 
@@ -538,73 +542,269 @@ def test_admin_gift_route_conflicts_and_disabled(acct_env, monkeypatch):
     assert client.post(rv, json={"account_id": acct["id"]}, headers=h).status_code == 503
 
 
+ADMIN_HTML = pathlib.Path(__file__).resolve().parent.parent.joinpath(
+    "templates", "pages", "admin_audit_premium.html")
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+
+# Finto DOM minimo per eseguire in node la sezione "Utenti registrati" della console:
+# elementi per id creati al volo, caselle degli aggregati prese dal template (AGG_KEYS),
+# fetch/alert/confirm registrati. AUDIT e' la risposta di /admin/api/accounts_audit.
+_ADMIN_FAKE_DOM = r"""
+const _els = {};
+function _el(id){
+  const cls = new Set(), on = {};
+  const e = {id, value: "", checked: false, hidden: false, disabled: false, innerHTML: "",
+    textContent: "", dataset: {},
+    classList: {toggle(c, v){ if (v) cls.add(c); else cls.delete(c); }, contains: (c) => cls.has(c)},
+    addEventListener(t, f){ (on[t] = on[t] || []).push(f); },
+    _fire(t, ev){ (on[t] || []).forEach(f => f(Object.assign({target: e, currentTarget: e, preventDefault(){}}, ev))); },
+    querySelector(){ return null; }, focus(){}};
+  return e;
+}
+const $ = (id) => _els[id] || (_els[id] = _el(id));
+const _boxes = AGG_KEYS.map(k => {
+  const b = _el(), v = _el();
+  b.dataset.accAgg = k; b.querySelector = () => v; b._value = v;
+  return b;
+});
+const _box = (k) => _boxes.find(b => b.dataset.accAgg === k);
+const document = Object.assign(_el(), {
+  querySelectorAll: () => _boxes,
+  createElement(){ let v = ""; return {set textContent(s){ v = String(s); },
+    get innerHTML(){ return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }}; },
+});
+const ADMIN_TOKEN = "t";
+const _fetches = [], _alerts = [];
+let _giftReply = {ok: true, status: 200, body: "{}"};
+function fmtEur(n){ return String(n); }
+function auditTruncNote(){ return ""; }
+function alert(m){ _alerts.push(String(m)); }
+function confirm(){ return true; }
+async function fetch(url, opts){
+  _fetches.push({url, body: opts && opts.body ? JSON.parse(opts.body) : null});
+  if (url.startsWith("/admin/api/accounts_audit")) return {ok: true, status: 200, json: async () => AUDIT};
+  return {ok: _giftReply.ok, status: _giftReply.status, text: async () => _giftReply.body};
+}
+const _tick = () => new Promise(r => setTimeout(r, 0));
+"""
+
+
+def _js_fn(html, name):
+    """Sorgente della funzione `name` del template."""
+    start = html.index("function %s(" % name)
+    depth = 0
+    for j in range(html.index("{", start), len(html)):
+        depth += {"{": 1, "}": -1}.get(html[j], 0)
+        if depth == 0:
+            return html[start:j + 1]
+    raise AssertionError(name)
+
+
+def _run_admin_accounts_js(tmp_path, consts, body):
+    """Esegue in node la sezione "Utenti registrati" del template sul finto DOM, poi `body` in
+    una funzione async; `consts` diventano costanti JS. Ritorna il JSON stampato da `body`."""
+    html = ADMIN_HTML.read_text(encoding="utf-8")
+    section = html[html.index("// ===================== Utenti registrati"):
+                   html.index("// ===================== Tab switching")]
+    consts = dict({"AUDIT": {}}, **consts, AGG_KEYS=re.findall(r'data-acc-agg="([a-z0-9_]+)"', html))
+    script = tmp_path / "admin_accounts.js"
+    script.write_text(
+        "".join("const %s = %s;\n" % (k, json.dumps(v)) for k, v in consts.items())
+        + _ADMIN_FAKE_DOM + _js_fn(html, "esc") + "\n" + section
+        + "\n(async () => {\n" + body + "\n})().catch(e => { console.error(e); process.exit(1); });\n",
+        encoding="utf-8")
+    res = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    return json.loads(res.stdout.strip())
+
+
 def test_admin_template_has_gift_controls():
-    import pathlib
-    html = pathlib.Path(__file__).resolve().parent.parent.joinpath(
-        "templates", "pages", "admin_audit_premium.html").read_text(encoding="utf-8")
+    html = ADMIN_HTML.read_text(encoding="utf-8")
     for s in ("/admin/api/accounts/gift", "/admin/api/accounts/gift_revoke",
               "5 GB (regalo)", "10 GB (regalo)", "Gratuito attivo", "Nessun piano",
-              "Pagato", "Regalato", "In tolleranza"):
+              "Pagato", "Regalato", "In tolleranza", 'id="accGiftModal"', 'id="accTolFilter"',
+              '"gift_active":'):
         assert s in html
     assert "/admin/api/accounts/plan\"" not in html and "archive_20" not in html
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+@needs_node
 def test_admin_console_plan_cell_escapes_server_values(tmp_path):
     """Si esegue davvero `accPlanCell` con valori ostili (id, piano, origine): il payload grezzo non
-    compare nel markup, ne' esce da un attributo; c'e' solo la forma escapata."""
-    import json
-    import pathlib
-    import subprocess
-    html = pathlib.Path(__file__).resolve().parent.parent.joinpath(
-        "templates", "pages", "admin_audit_premium.html").read_text(encoding="utf-8")
-
-    def fn(name):
-        start = html.index("function %s(" % name)
-        depth, i = 0, html.index("{", start)
-        for j in range(i, len(html)):
-            depth += {"{": 1, "}": -1}.get(html[j], 0)
-            if depth == 0:
-                return html[start:j + 1]
-        raise AssertionError(name)
-
-    block = html[html.index("const ACC_ORIGIN_LABEL"):html.index("async function accErrText")]
+    compare nel markup, ne' esce da un attributo; c'e' solo la forma escapata. Il bottone Regalo e'
+    colorato sul regalo attivo, spento sul pagato, assente sul cancellato; niente controlli inline."""
     evil_id = 'x"><script>alert(1)</script>'
     rows = [{"id": evil_id, "origin": "gift", "plan_effective": "<img src=x onerror=alert(1)>",
              "plan_until": 1_800_057_600, "archive_bytes": 1, "archive_quota_bytes": 2,
              "archive_grace_until": 1_800_057_600},
-            {"id": evil_id, "origin": "<svg onload=alert(1)>", "plan_effective": "free"}]
-    script = tmp_path / "cell.js"
-    script.write_text(
-        "const document={createElement(){let v='';return{set textContent(s){v=String(s)},"
-        "get innerHTML(){return v.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}}}};\n"
-        + fn("esc") + "\n" + fn("accDate") + "\n" + block + "\n"
-        + "console.log(JSON.stringify(" + json.dumps(rows) + ".map(accPlanCell)));", encoding="utf-8")
-    res = subprocess.run(["node", str(script)], capture_output=True, text=True)
-    assert res.returncode == 0, res.stderr
-    cells = json.loads(res.stdout.strip())
-    assert len(cells) == 2
-    for cell in cells:
+            {"id": evil_id, "origin": "<svg onload=alert(1)>", "plan_effective": "free"},
+            {"id": "acc-paid", "origin": "paid", "plan_effective": "sub_5"},
+            {"id": "acc-del", "origin": "none", "deleted_at": T0}]
+    cells = _run_admin_accounts_js(tmp_path, {"ROWS": rows},
+                                   "console.log(JSON.stringify(ROWS.map(accPlanCell)));")
+    gift, odd, paid, deleted = cells
+    for cell in (gift, odd):
         assert "<script" not in cell and "<img" not in cell and "<svg" not in cell
         assert 'onerror=alert(1)>' not in cell and 'onload=alert(1)>' not in cell
-        assert 'x"><' not in cell                                          # non esce dall'attributo
-        assert 'data-acc-gift="x&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"' in cell
-    assert "&lt;img src=x onerror=alert(1)&gt;" in cells[0]
-    assert "&lt;svg onload=alert(1)&gt;" in cells[1]
-    assert 'data-acc-gift-revoke="x&quot;' in cells[0]
+        assert '="x"' not in cell and evil_id not in cell                 # non esce dall'attributo
+        assert 'data-acc-gift-open="x&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"' in cell
+    assert "&lt;img src=x onerror=alert(1)&gt;" in gift
+    assert "&lt;svg onload=alert(1)&gt;" in odd
+
+    def btn(cell):
+        return re.search(r"<button [^>]*data-acc-gift-open[^>]*>", cell).group(0)
+    assert "secondary" not in btn(gift) and "secondary" in btn(odd)      # accent solo sul regalo attivo
+    assert re.search(r"\bdisabled\b", btn(paid)) and 'title="' in btn(paid)
+    assert not re.search(r"\bdisabled\b", btn(gift) + btn(odd))
+    assert "data-acc-gift-open" not in deleted
+    for cell in cells:
+        assert "<select" not in cell and "<input" not in cell and "Revoca" not in cell
+
+
+@needs_node
+def test_admin_gift_popup_opens_filled_and_reports_errors_inside(tmp_path):
+    """Il popup si riempie all'apertura con la riga della tabella: taglio e data liberi senza
+    regalo, in sola lettura con la revoca sul regalo attivo, valori escapati. Gli errori
+    (validazione, 409 del server) restano nel popup senza alert; l'esito ok chiude e rilegge la
+    tabella; Esc, clic sull'overlay e X chiudono."""
+    evil_id = 'x"><script>alert(1)</script>'
+    rows = [{"id": "acc-free", "email": "a@x.it", "origin": "free", "plan_effective": "free"},
+            {"id": evil_id, "email": "<img src=x onerror=alert(1)>", "origin": "gift",
+             "plan_effective": "sub_10", "plan_until": 1_800_057_600},
+            {"id": "acc-paid", "email": "p@x.it", "origin": "paid", "plan_effective": "sub_5"},
+            {"id": "acc-del", "origin": "none", "deleted_at": T0}]
+    out = _run_admin_accounts_js(tmp_path, {"ROWS": rows, "EVIL": evil_id,
+                                            "AUDIT": {"records": rows, "count": 4}}, r"""
+      const modal = $("accGiftModal"), err = $("accGiftErr"), out = {today: accToday()};
+      const posts = () => _fetches.filter(f => !f.url.startsWith("/admin/api/accounts_audit"));
+      const reloads = () => _fetches.length - posts().length;
+      accRender(ROWS, ROWS.length);
+      out.table = $("accRecordsBody").innerHTML;
+      accGiftOpen("acc-free");
+      out.free = {hidden: modal.hidden, body: $("accGiftBody").innerHTML};
+      $("accGiftPlan").value = "sub_5";
+      $("accGiftUntil").value = "";
+      await accGift({});
+      out.noDate = {err: err.textContent, errHidden: err.hidden, posts: posts().length};
+      $("accGiftUntil").value = "2999-12-31";
+      _giftReply = {ok: false, status: 409, body: '{"error":"gift_active"}'};
+      await accGift({}); await _tick();
+      out.conflict = {err: err.textContent, hidden: modal.hidden, post: posts()[0]};
+      _giftReply = {ok: true, status: 200, body: "{}"};
+      const before = reloads();
+      await accGift({}); await _tick();
+      out.ok = {hidden: modal.hidden, reloaded: reloads() - before, errHidden: err.hidden};
+      accGiftOpen(EVIL);
+      out.gift = {hidden: modal.hidden, body: $("accGiftBody").innerHTML};
+      await accRevoke({}); await _tick();
+      out.revoke = posts().pop();
+      accGiftOpen("acc-free"); document._fire("keydown", {key: "Escape"});
+      out.esc = modal.hidden;
+      accGiftOpen("acc-free"); modal._fire("click", {target: modal});
+      out.overlay = modal.hidden;
+      accGiftOpen("acc-free");
+      modal._fire("click", {target: {closest: () => ({dataset: {accGiftAct: "close"}})}});
+      out.x = modal.hidden;
+      out.alerts = _alerts;
+      console.log(JSON.stringify(out));
+    """)
+    assert out["table"].count("data-acc-gift-open=") == 3                # non sulla riga cancellata
+
+    def tag(body, pattern):
+        return re.search(pattern, body).group(0)
+    free = out["free"]["body"]
+    assert out["free"]["hidden"] is False
+    assert "disabled" not in tag(free, r"<select [^>]*>")
+    date_in = tag(free, r'<input type="date"[^>]*>')
+    assert 'min="%s"' % out["today"] in date_in and "disabled" not in date_in
+    assert "5 GB (regalo)" in free and "10 GB (regalo)" in free
+    assert 'data-acc-gift-act="submit"' in free and 'data-acc-gift-act="close"' in free
+    assert "Revoca regalo" not in free
+
+    assert "ultimo giorno" in out["noDate"]["err"]
+    assert out["noDate"]["errHidden"] is False and out["noDate"]["posts"] == 0
+    assert "revocato prima" in out["conflict"]["err"] and out["conflict"]["hidden"] is False
+    assert out["conflict"]["post"] == {"url": "/admin/api/accounts/gift", "body": {
+        "account_id": "acc-free", "plan": "sub_5", "until": "2999-12-31"}}
+    assert out["ok"] == {"hidden": True, "reloaded": 1, "errHidden": True}
+
+    gift = out["gift"]["body"]
+    assert out["gift"]["hidden"] is False
+    assert "disabled" in tag(gift, r"<select [^>]*>") and '<option value="sub_10" selected>' in gift
+    date_in = tag(gift, r'<input type="date"[^>]*>')
+    assert "disabled" in date_in and 'value="2027-01-15"' in date_in and "15/01/2027" in gift
+    assert 'data-acc-gift-act="revoke"' in gift and "Revoca regalo" in gift
+    assert 'data-acc-gift-act="submit"' not in gift
+    assert "<img" not in gift and "<script" not in gift
+    assert "&lt;img src=x onerror=alert(1)&gt;" in gift and "&lt;script&gt;" in gift
+    assert out["revoke"] == {"url": "/admin/api/accounts/gift_revoke", "body": {"account_id": evil_id}}
+
+    assert out["esc"] is out["overlay"] is out["x"] is True
+    assert out["alerts"] == []
+
+
+@needs_node
+def test_admin_aggregate_boxes_are_quick_filters(tmp_path):
+    """Ogni casella degli Aggregati e' un filtro rapido: azzera gli altri filtri e imposta quelli
+    con cui il server la conta (`accounts._ADMIN_AGGREGATES`; "Nuovi 30 gg" = `last30_since`).
+    Resta evidenziata, il secondo clic azzera tutto, un filtro toccato a mano la spegne."""
+    html = ADMIN_HTML.read_text(encoding="utf-8")
+    boxes = re.findall(r'<div class="agg-box"[^>]*data-acc-agg="[^"]+"[^>]*>', html)
+    expected = dict(accounts._ADMIN_AGGREGATES, last30={"date_from": "2026-09-21"})
+    assert len(boxes) == len(expected)
+    for b in boxes:
+        assert 'role="button"' in b and 'tabindex="0"' in b
+    aggregates = {k: i + 1 for i, k in enumerate(expected)}
+    out = _run_admin_accounts_js(tmp_path, {"AUDIT": {
+        "records": [], "count": 0, "aggregates": aggregates, "last30_since": "2026-09-21"}}, r"""
+      const fields = () => Object.fromEntries(Object.entries(ACC_FILTER_DEFAULTS).map(([id, d]) =>
+        [id, typeof d === "boolean" ? $(id).checked : $(id).value]));
+      const marked = () => _boxes.filter(b => b.classList.contains("agg-active")).map(b => b.dataset.accAgg);
+      await accFetch();
+      const out = {values: Object.fromEntries(_boxes.map(b => [b.dataset.accAgg, String(b._value.textContent)])),
+                   apply: {}};
+      for (const b of _boxes) {
+        $("accQuery").value = "resto di un filtro a mano";
+        b._fire("click"); await _tick();
+        out.apply[b.dataset.accAgg] = {fields: fields(), marked: marked(), url: _fetches[_fetches.length - 1].url};
+      }
+      _box("paid")._fire("keydown", {key: "Enter"}); await _tick();
+      out.enter = {fields: fields(), marked: marked()};
+      _box("paid")._fire("click"); await _tick();
+      out.second = {fields: fields(), marked: marked()};
+      _box("gift")._fire("click"); await _tick();
+      $("accOriginFilter")._fire("change");
+      out.manual = {fields: fields(), marked: marked()};
+      console.log(JSON.stringify(out));
+    """)
+    param = {"accStateFilter": "state", "accQuery": "q", "accDateFrom": "date_from",
+             "accDateTo": "date_to", "accPlanFilter": "plan", "accOriginFilter": "origin",
+             "accTolFilter": "tolerance"}
+
+    def as_filter(fields):
+        return {param[k]: v for k, v in fields.items() if v not in ("", "all", False)}
+
+    assert out["values"] == {k: str(v) for k, v in aggregates.items()}
+    for key, kw in expected.items():
+        got = out["apply"][key]
+        assert as_filter(got["fields"]) == kw, key
+        assert got["marked"] == [key], key
+        query = dict(parse_qsl(urlsplit(got["url"]).query))
+        query.pop("limit")
+        assert query == {k: "1" if v is True else v for k, v in kw.items()}, key
+    assert as_filter(out["enter"]["fields"]) == {"origin": "paid"} and out["enter"]["marked"] == ["paid"]
+    assert as_filter(out["second"]["fields"]) == {} and out["second"]["marked"] == []
+    assert as_filter(out["manual"]["fields"]) == {"origin": "gift"} and out["manual"]["marked"] == []
 
 
 def test_admin_template_gift_ui_is_consistent():
-    import pathlib
-    import re
-    html = pathlib.Path(__file__).resolve().parent.parent.joinpath(
-        "templates", "pages", "admin_audit_premium.html").read_text(encoding="utf-8")
+    html = ADMIN_HTML.read_text(encoding="utf-8")
     assert not re.search(r"archive_(10|20|50)|ABM_ARCHIVE_GRACE_DAYS|subscribed", html)
     assert "Revoca regalo" in html and 'origin === "gift"' in html
-    assert re.search(r'<input type="date" data-acc-gift-until min="\$\{', html)   # data minima = oggi
-    for param in ("plan", "origin"):
+    assert re.search(r'<input type="date" id="accGiftUntil" min="\$\{', html)   # data minima = oggi
+    for param in ("plan", "origin", "tolerance"):
         assert f'p.set("{param}"' in html
     for agg in ("Pagati", "Regalati", "Gratuito attivo", "In tolleranza"):
         assert agg in html
     # i valori che arrivano dal server entrano solo escapati
-    assert "escAttr(r.id)" in html and "data-acc-gift" in html
+    assert "escAttr(r.id)" in html and "data-acc-gift-open" in html

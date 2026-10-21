@@ -50,6 +50,21 @@
   .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
   .toggle-row input{width:auto}
   .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(139,92,246,.18);color:var(--accent);margin-left:6px}
+  .agg-box[data-acc-agg]{cursor:pointer}
+  .agg-box[data-acc-agg]:hover,.agg-box[data-acc-agg]:focus-visible{border-color:var(--muted);outline:none}
+  .agg-box.agg-active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .btn-sm{padding:4px 10px;font-size:.78rem}
+  .btn-sm:disabled{opacity:.45;cursor:not-allowed}
+  /* Popup del regalo: stessa forma del modale di risposta di /admin/community. */
+  .acc-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:999}
+  .acc-modal-overlay[hidden]{display:none}
+  .acc-modal{position:relative;background:var(--panel);border-radius:12px;padding:24px;max-width:440px;width:90%;max-height:90vh;overflow-y:auto}
+  .acc-modal h3{margin:0 0 12px;font-size:1.1rem;color:var(--accent)}
+  .acc-modal label{margin-top:10px}
+  .acc-modal :disabled{opacity:.6}
+  .acc-modal .err{color:var(--err);margin:10px 0 0;font-size:.85rem}
+  .acc-modal-x{position:absolute;top:10px;right:12px;background:transparent;color:var(--muted);padding:2px 8px;font-size:1.3rem;line-height:1}
+  .acc-modal-btns{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
 </style></head>
 <body>
 <div style="margin-bottom:16px">
@@ -429,22 +444,29 @@
       </div>
       <div>
         <label>&nbsp;</label>
+        <label class="toggle-row" style="margin:0;padding:8px 0;cursor:pointer"
+               title="Solo gli account vivi con l'archivio oltre la quota: il periodo di tolleranza e' aperto.">
+          <input type="checkbox" id="accTolFilter"><span>Solo in tolleranza</span>
+        </label>
+      </div>
+      <div>
+        <label>&nbsp;</label>
         <button type="button" id="accRefreshBtn">Aggiorna</button>
       </div>
     </div>
   </div>
   <div class="panel">
-    <h2>Aggregati</h2>
+    <h2>Aggregati <small style="font-size:.75rem;color:var(--muted);font-weight:400">clic su una casella per filtrare la tabella, di nuovo per toglierlo</small></h2>
     <div class="agg-grid">
-      <div class="agg-box"><div class="agg-label" title="Tutti gli account mai registrati, cancellati compresi.">Account totali</div><div class="agg-value" id="accAggTotal">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Account vivi con almeno una sessione non scaduta ne' revocata.">Con sessione attiva</div><div class="agg-value" id="accAggOnline">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Registrazione avviata ma nessun accesso completato.">Mai entrati</div><div class="agg-value" id="accAggNever">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Cancellazione self-service: email sostituita da un segnaposto, storico rimosso.">Cancellati</div><div class="agg-value" id="accAggDeleted">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Registrazioni negli ultimi 30 giorni.">Nuovi 30 gg</div><div class="agg-value" id="accAggNew">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Account vivi con un piano di spazio pagato e ancora attivo.">Pagati</div><div class="agg-value" id="accAggPaid">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Account vivi con un piano regalato dall'admin e ancora attivo.">Regalati</div><div class="agg-value" id="accAggGift">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Account vivi senza piano pagato o regalato attivo, con il consenso al piano gratuito.">Gratuito attivo</div><div class="agg-value" id="accAggFree">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Account vivi con l'archivio oltre la quota: il periodo di tolleranza e' aperto.">In tolleranza</div><div class="agg-value" id="accAggTol">-</div></div>
+      <div class="agg-box" data-acc-agg="total" role="button" tabindex="0"><div class="agg-label" title="Tutti gli account mai registrati, cancellati compresi.">Account totali</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="with_session" role="button" tabindex="0"><div class="agg-label" title="Account vivi con almeno una sessione non scaduta ne' revocata.">Con sessione attiva</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="never_logged" role="button" tabindex="0"><div class="agg-label" title="Registrazione avviata ma nessun accesso completato.">Mai entrati</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="deleted" role="button" tabindex="0"><div class="agg-label" title="Cancellazione self-service: email sostituita da un segnaposto, storico rimosso.">Cancellati</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="last30" role="button" tabindex="0"><div class="agg-label" title="Registrazioni dalla mezzanotte UTC di 30 giorni fa.">Nuovi 30 gg</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="paid" role="button" tabindex="0"><div class="agg-label" title="Account vivi con un piano di spazio pagato e ancora attivo.">Pagati</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="gift" role="button" tabindex="0"><div class="agg-label" title="Account vivi con un piano regalato dall'admin e ancora attivo.">Regalati</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="free_active" role="button" tabindex="0"><div class="agg-label" title="Account vivi senza piano pagato o regalato attivo, con il consenso al piano gratuito.">Gratuito attivo</div><div class="agg-value">-</div></div>
+      <div class="agg-box" data-acc-agg="in_tolerance" role="button" tabindex="0"><div class="agg-label" title="Account vivi con l'archivio oltre la quota: il periodo di tolleranza e' aperto.">In tolleranza</div><div class="agg-value">-</div></div>
     </div>
   </div>
   <div class="panel">
@@ -466,6 +488,14 @@
         <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare gli utenti.</td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<div class="acc-modal-overlay" id="accGiftModal" hidden>
+  <div class="acc-modal" role="dialog" aria-modal="true" aria-labelledby="accGiftTitle">
+    <button type="button" class="acc-modal-x" data-acc-gift-act="close" aria-label="Chiudi" title="Chiudi">&times;</button>
+    <h3 id="accGiftTitle">Regalo abbonamento</h3>
+    <div id="accGiftBody"></div>
   </div>
 </div>
 
@@ -1326,6 +1356,7 @@
   const ACC_ERR = {
     "paid_plan_active": "L'account ha un piano pagato attivo: non si sovrascrive.",
     "not_gift": "L'account non ha un regalo attivo (gia' revocato o scaduto).",
+    "gift_active": "L'account ha gia' un regalo attivo: va revocato prima di farne un altro.",
     "not_found": "Account non trovato (forse e' stato cancellato).",
   };
   // esc() non tocca le virgolette: nei valori di attributo serve questa.
@@ -1334,8 +1365,9 @@
   // Il server ragiona in UTC: la prima data valida di un regalo e' l'oggi UTC.
   function accToday(){ return new Date().toISOString().slice(0, 10); }
   // plan_until e' la mezzanotte UTC dopo l'ultimo giorno di validita'.
+  function accGiftLastDate(ts){ return new Date((Number(ts)-1)*1000); }
   function accGiftLastDay(ts){
-    return new Date((Number(ts)-1)*1000).toLocaleDateString("it-IT",
+    return accGiftLastDate(ts).toLocaleDateString("it-IT",
       {timeZone:"UTC", day:"2-digit", month:"2-digit", year:"numeric"});
   }
   function accPlanCell(r){
@@ -1356,18 +1388,51 @@
       h += `<br><small class="delta-negative">In tolleranza fino al ${accDate(r.archive_grace_until)}</small>`;
     }
     if (!r.deleted_at) {
-      h += `<div style="margin-top:4px;white-space:nowrap"><select data-acc-gift-plan>`
-        + Object.keys(ACC_GIFT_PLANS).map(p =>
-            `<option value="${escAttr(p)}">${esc(ACC_GIFT_PLANS[p])}</option>`).join("")
-        + `</select> <input type="date" data-acc-gift-until min="${escAttr(accToday())}">`
-        + ` <button type="button" data-acc-gift="${escAttr(r.id)}">Regala</button>`;
-      if (origin === "gift") {
-        h += ` <button type="button" data-acc-gift-revoke="${escAttr(r.id)}">Revoca regalo</button>`;
-      }
-      h += `</div>`;
+      // Il regalo si gestisce nel popup; sopra un piano pagato non si regala.
+      const cls = origin === "gift" ? "btn-sm" : "btn-sm secondary";
+      const off = origin === "paid"
+        ? ' disabled title="Piano pagato attivo: il regalo non si sovrappone a un abbonamento pagato."' : "";
+      h += `<div style="margin-top:4px"><button type="button" class="${cls}"${off}`
+        + ` data-acc-gift-open="${escAttr(r.id)}">Regalo</button></div>`;
     }
     return h;
   }
+  // Popup del regalo: un solo modale, riempito all'apertura con la riga della tabella.
+  // Con un regalo attivo taglio e data restano in sola lettura: si puo' solo revocare.
+  let accRecs = new Map(), accGiftId = "";
+  function accGiftForm(r){
+    const active = r.origin === "gift", off = active ? " disabled" : "";
+    const lastDay = active && r.plan_until
+      ? accGiftLastDate(r.plan_until).toISOString().slice(0, 10) : "";
+    let h = `<p style="margin:0 0 6px">${r.email ? esc(r.email) : "(email rimossa)"}<br><code>${esc(r.id)}</code></p>`;
+    if (active) {
+      h += `<p style="margin:0 0 6px;font-size:.85rem;color:var(--muted)">Regalo attivo: `
+        + `${esc(ACC_PLAN_LABEL[r.plan_effective]||r.plan_effective)}, `
+        + (r.plan_until ? `ultimo giorno ${accGiftLastDay(r.plan_until)} (UTC)` : "senza scadenza")
+        + `. Per regalarne un altro va prima revocato.</p>`;
+    }
+    return h + `<label for="accGiftPlan">Taglio</label><select id="accGiftPlan"${off}>`
+      + Object.keys(ACC_GIFT_PLANS).map(p => `<option value="${escAttr(p)}"`
+          + `${active && p === r.plan_effective ? " selected" : ""}>${esc(ACC_GIFT_PLANS[p])}</option>`).join("")
+      + `</select><label for="accGiftUntil">Ultimo giorno incluso (UTC)</label>`
+      + `<input type="date" id="accGiftUntil" min="${escAttr(accToday())}" value="${escAttr(lastDay)}"${off}>`
+      + `<div class="err" id="accGiftErr" role="alert" hidden></div>`
+      + `<div class="acc-modal-btns"><button type="button" class="secondary" data-acc-gift-act="close">Annulla</button>`
+      + (active ? `<button type="button" data-acc-gift-act="revoke">Revoca regalo</button>`
+                : `<button type="button" data-acc-gift-act="submit">Regala</button>`)
+      + `</div>`;
+  }
+  function accGiftOpen(id){
+    const r = accRecs.get(id);
+    if (!r) return;
+    accGiftId = id;
+    $("accGiftBody").innerHTML = accGiftForm(r);
+    $("accGiftModal").hidden = false;
+    const first = $("accGiftBody").querySelector("select:not([disabled]), [data-acc-gift-act]");
+    if (first) first.focus();
+  }
+  function accGiftClose(){ $("accGiftModal").hidden = true; accGiftId = ""; }
+  function accGiftError(msg){ const e = $("accGiftErr"); e.textContent = msg; e.hidden = !msg; }
   async function accErrText(r){
     const raw = await r.text();
     try {
@@ -1376,33 +1441,72 @@
     } catch (_) { /* corpo non JSON: si mostra com'e' */ }
     return raw;
   }
+  // Esito nel popup: l'errore resta li', il successo lo chiude e rilegge la tabella.
   async function accPost(btn, url, body){
     btn.disabled = true;
+    accGiftError("");
     try {
       const r = await fetch(url, {method:"POST",
         headers:{"X-Admin-Token":ADMIN_TOKEN, "Content-Type":"application/json"},
         body: JSON.stringify(body)});
       if (!r.ok) {
-        alert("Errore: "+r.status+" "+await accErrText(r));
+        accGiftError("Errore "+r.status+": "+await accErrText(r));
         // 404/409: l'account e' cambiato altrove, la tabella va riletta.
         if (r.status === 404 || r.status === 409) accFetch();
         return;
       }
+      accGiftClose();
       accFetch();
+    } catch (e) {
+      accGiftError("Errore di rete: "+e.message);
     } finally { btn.disabled = false; }
   }
   function accGift(btn){
-    const td = btn.closest("td");
-    const plan = td.querySelector("select[data-acc-gift-plan]").value;
-    const until = td.querySelector("input[data-acc-gift-until]").value;
-    if (!until) { alert("Scegli l'ultimo giorno del regalo."); return; }
-    if (until < accToday()) { alert("L'ultimo giorno del regalo non puo' essere nel passato."); return; }
+    const plan = $("accGiftPlan").value, until = $("accGiftUntil").value;
+    if (!until) { accGiftError("Scegli l'ultimo giorno del regalo."); return; }
+    if (until < accToday()) { accGiftError("L'ultimo giorno del regalo non puo' essere nel passato."); return; }
     if (!confirm(`Regalare "${ACC_GIFT_PLANS[plan]||plan}" fino al ${until} incluso (UTC)?`)) return;
-    accPost(btn, "/admin/api/accounts/gift", {account_id: btn.dataset.accGift, plan: plan, until: until});
+    return accPost(btn, "/admin/api/accounts/gift", {account_id: accGiftId, plan: plan, until: until});
   }
   function accRevoke(btn){
     if (!confirm("Revocare il regalo? L'account torna al piano gratuito, o a nessun piano se non ha dato il consenso.")) return;
-    accPost(btn, "/admin/api/accounts/gift_revoke", {account_id: btn.dataset.accGiftRevoke});
+    return accPost(btn, "/admin/api/accounts/gift_revoke", {account_id: accGiftId});
+  }
+  // Caselle degli Aggregati = filtri rapidi: il clic azzera i filtri e imposta quelli con cui
+  // il server conta la casella (accounts._ADMIN_AGGREGATES); il secondo clic azzera tutto.
+  const ACC_FILTER_DEFAULTS = {accStateFilter: "all", accQuery: "", accDateFrom: "", accDateTo: "",
+                               accPlanFilter: "", accOriginFilter: "", accTolFilter: false};
+  const ACC_AGG_FILTERS = {
+    "total":        {},
+    "with_session": {accStateFilter: "active"},
+    "never_logged": {accStateFilter: "never"},
+    "deleted":      {accStateFilter: "deleted"},
+    "last30":       {accDateFrom: () => accLast30Since},
+    "paid":         {accOriginFilter: "paid"},
+    "gift":         {accOriginFilter: "gift"},
+    "free_active":  {accOriginFilter: "free"},
+    "in_tolerance": {accTolFilter: true},
+  };
+  let accAggActive = "", accLast30Since = "";
+  function accAggBoxes(){ return document.querySelectorAll("#tab_accounts [data-acc-agg]"); }
+  function accAggMark(){
+    accAggBoxes().forEach(b => b.classList.toggle("agg-active", b.dataset.accAgg === accAggActive));
+  }
+  function accAggApply(key){
+    accAggActive = accAggActive === key ? "" : key;
+    const f = Object.assign({}, ACC_FILTER_DEFAULTS, accAggActive ? ACC_AGG_FILTERS[key] : {});
+    for (const [id, v] of Object.entries(f)) {
+      const val = typeof v === "function" ? v() : v;
+      if (typeof val === "boolean") $(id).checked = val; else $(id).value = val;
+    }
+    accAggMark();
+    accFetch();
+  }
+  // Un filtro toccato a mano non corrisponde piu' a nessuna casella.
+  function accAggClear(){
+    if (!accAggActive) return;
+    accAggActive = "";
+    accAggMark();
   }
   function accDate(ts){
     if (!ts) return "-";
@@ -1421,24 +1525,19 @@
     const pl=$("accPlanFilter").value, og=$("accOriginFilter").value;
     if (pl) p.set("plan",pl);
     if (og) p.set("origin",og);
+    if ($("accTolFilter").checked) p.set("tolerance","1");
     p.set("limit","500");
     const r = await fetch("/admin/api/accounts_audit?"+p.toString(),
                           {headers:{"X-Admin-Token":ADMIN_TOKEN}});
     if (!r.ok){ alert("Errore caricamento utenti: "+r.status); return; }
     const d = await r.json();
     const a = d.aggregates||{};
-    $("accAggTotal").textContent = a.total ?? 0;
-    $("accAggOnline").textContent = a.with_session ?? 0;
-    $("accAggNever").textContent = a.never_logged ?? 0;
-    $("accAggDeleted").textContent = a.deleted ?? 0;
-    $("accAggNew").textContent = a.last30 ?? 0;
-    $("accAggPaid").textContent = a.paid ?? 0;
-    $("accAggGift").textContent = a.gift ?? 0;
-    $("accAggFree").textContent = a.free_active ?? 0;
-    $("accAggTol").textContent = a.in_tolerance ?? 0;
+    accLast30Since = d.last30_since||"";
+    accAggBoxes().forEach(b => { b.querySelector(".agg-value").textContent = a[b.dataset.accAgg] ?? 0; });
     accRender(d.records||[], d.count||0);
   }
   function accRender(recs, total){
+    accRecs = new Map(recs.map(r => [r.id, r]));
     const tb = $("accRecordsBody");
     if (!recs.length){ tb.innerHTML='<tr><td colspan="11" class="empty-msg">Nessun utente trovato.</td></tr>'; return; }
     tb.innerHTML = recs.map(r=>{
@@ -1465,9 +1564,30 @@
   }
   $("accRefreshBtn").addEventListener("click", accFetch);
   $("accRecordsBody").addEventListener("click", (e)=>{
-    const btn = e.target.closest("button[data-acc-gift], button[data-acc-gift-revoke]");
+    const btn = e.target.closest("button[data-acc-gift-open]");
+    if (btn) accGiftOpen(btn.dataset.accGiftOpen);
+  });
+  $("accGiftModal").addEventListener("click", (e)=>{
+    if (e.target === e.currentTarget) { accGiftClose(); return; }   // clic sull'overlay
+    const btn = e.target.closest("button[data-acc-gift-act]");
     if (!btn) return;
-    if (btn.dataset.accGift) accGift(btn); else accRevoke(btn);
+    const act = btn.dataset.accGiftAct;
+    if (act === "close") accGiftClose();
+    else if (act === "submit") accGift(btn);
+    else if (act === "revoke") accRevoke(btn);
+  });
+  document.addEventListener("keydown", (e)=>{
+    if (e.key === "Escape" && !$("accGiftModal").hidden) accGiftClose();
+  });
+  accAggBoxes().forEach(b => {
+    b.addEventListener("click", () => accAggApply(b.dataset.accAgg));
+    b.addEventListener("keydown", (e)=>{
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); accAggApply(b.dataset.accAgg); }
+    });
+  });
+  Object.keys(ACC_FILTER_DEFAULTS).forEach(id => {
+    $(id).addEventListener("input", accAggClear);
+    $(id).addEventListener("change", accAggClear);
   });
   $("accQuery").addEventListener("keydown", (e)=>{ if (e.key==="Enter") accFetch(); });
 
