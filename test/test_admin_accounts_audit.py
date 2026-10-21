@@ -7,6 +7,7 @@ import pytest
 import accounts
 import audiobook_app as app
 import db
+from test.test_account_plans import _set
 
 
 T0 = 1_800_000_000
@@ -110,12 +111,6 @@ AGG_FILTERS = {
     "free_active": {"origin": "free"},
     "in_tolerance": {"tolerance": True},
 }
-
-
-def _set(acct, **cols):
-    sets = ", ".join(f"{k}=?" for k in cols)
-    with db.tx() as c:
-        c.execute(f"UPDATE accounts SET {sets} WHERE id=?", (*cols.values(), acct["id"]))
 
 
 def test_admin_aggregates_match_their_filters(acct_env):

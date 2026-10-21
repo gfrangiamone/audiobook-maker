@@ -576,14 +576,24 @@ const document = Object.assign(_el(), {
 const ADMIN_TOKEN = "t";
 const _fetches = [], _alerts = [];
 let _giftReply = {ok: true, status: 200, body: "{}"};
+// _holdUrl: le risposte alle URL con questo prefisso restano in _held finche' il test non le rilascia.
+let _holdUrl = "";
+const _held = [];
 function fmtEur(n){ return String(n); }
 function auditTruncNote(){ return ""; }
 function alert(m){ _alerts.push(String(m)); }
 function confirm(){ return true; }
 async function fetch(url, opts){
   _fetches.push({url, body: opts && opts.body ? JSON.parse(opts.body) : null});
-  if (url.startsWith("/admin/api/accounts_audit")) return {ok: true, status: 200, json: async () => AUDIT};
-  return {ok: _giftReply.ok, status: _giftReply.status, text: async () => _giftReply.body};
+  let res;
+  if (url.startsWith("/admin/api/accounts_audit")) {
+    const snap = JSON.parse(JSON.stringify(AUDIT));      // AUDIT com'era alla richiesta
+    res = {ok: true, status: 200, json: async () => snap};
+  } else {
+    const g = _giftReply;
+    res = {ok: g.ok, status: g.status, text: async () => g.body};
+  }
+  return _holdUrl && url.startsWith(_holdUrl) ? new Promise(r => _held.push(() => r(res))) : res;
 }
 const _tick = () => new Promise(r => setTimeout(r, 0));
 """
@@ -687,9 +697,14 @@ def test_admin_gift_popup_opens_filled_and_reports_errors_inside(tmp_path):
       await accGift({});
       out.noDate = {err: err.textContent, errHidden: err.hidden, posts: posts().length};
       $("accGiftUntil").value = "2999-12-31";
+      // Nel frattempo l'account ha avuto un regalo altrove: il 409 rilegge la tabella e il
+      // popup riparte dallo stato nuovo (solo revoca), con l'errore sopra.
+      AUDIT.records = [Object.assign({}, ROWS[0], {origin: "gift", plan_effective: "sub_10",
+                                                   plan_until: 1_800_057_600}), ...ROWS.slice(1)];
       _giftReply = {ok: false, status: 409, body: '{"error":"gift_active"}'};
       await accGift({}); await _tick();
-      out.conflict = {err: err.textContent, hidden: modal.hidden, post: posts()[0]};
+      out.conflict = {err: err.textContent, errHidden: err.hidden, hidden: modal.hidden,
+                      post: posts()[0], body: $("accGiftBody").innerHTML};
       _giftReply = {ok: true, status: 200, body: "{}"};
       const before = reloads();
       await accGift({}); await _tick();
@@ -705,6 +720,14 @@ def test_admin_gift_popup_opens_filled_and_reports_errors_inside(tmp_path):
       accGiftOpen("acc-free");
       modal._fire("click", {target: {closest: () => ({dataset: {accGiftAct: "close"}})}});
       out.x = modal.hidden;
+      // 404 e la riga sparita dalla tabella riletta: l'azione resta spenta, ritentarla darebbe
+      // lo stesso errore; il popup resta aperto con il messaggio.
+      accGiftOpen("acc-free");
+      AUDIT.records = [];
+      _giftReply = {ok: false, status: 404, body: '{"error":"not_found"}'};
+      const gone = {disabled: false};
+      await accRevoke(gone); await _tick();
+      out.gone = {disabled: gone.disabled, hidden: modal.hidden, err: err.textContent};
       out.alerts = _alerts;
       console.log(JSON.stringify(out));
     """)
@@ -723,9 +746,12 @@ def test_admin_gift_popup_opens_filled_and_reports_errors_inside(tmp_path):
 
     assert "ultimo giorno" in out["noDate"]["err"]
     assert out["noDate"]["errHidden"] is False and out["noDate"]["posts"] == 0
-    assert "revocato prima" in out["conflict"]["err"] and out["conflict"]["hidden"] is False
+    assert "revocato prima" in out["conflict"]["err"] and out["conflict"]["errHidden"] is False
+    assert out["conflict"]["hidden"] is False
     assert out["conflict"]["post"] == {"url": "/admin/api/accounts/gift", "body": {
         "account_id": "acc-free", "plan": "sub_5", "until": "2999-12-31"}}
+    assert 'data-acc-gift-act="revoke"' in out["conflict"]["body"]
+    assert 'data-acc-gift-act="submit"' not in out["conflict"]["body"]
     assert out["ok"] == {"hidden": True, "reloaded": 1, "errHidden": True}
 
     gift = out["gift"]["body"]
@@ -740,7 +766,61 @@ def test_admin_gift_popup_opens_filled_and_reports_errors_inside(tmp_path):
     assert out["revoke"] == {"url": "/admin/api/accounts/gift_revoke", "body": {"account_id": evil_id}}
 
     assert out["esc"] is out["overlay"] is out["x"] is True
+    assert out["gone"] == {"disabled": True, "hidden": False,
+                           "err": "Errore 404: Account non trovato (forse e' stato cancellato)."}
     assert out["alerts"] == []
+
+
+@needs_node
+def test_admin_accounts_slow_reply_does_not_overwrite_newer_one(tmp_path):
+    """Due clic rapidi su caselle diverse: se la risposta della prima arriva dopo quella della
+    seconda, tabella e numeri restano quelli dell'ultima richiesta, cioe' della casella evidenziata."""
+    out = _run_admin_accounts_js(tmp_path, {"AUDIT": {"records": [], "count": 1,
+                                                      "aggregates": {"gift": 1}}}, r"""
+      _holdUrl = "/admin/api/accounts_audit";
+      AUDIT.aggregates.gift = 111; AUDIT.records = [{id: "dalla-prima"}];
+      _box("gift")._fire("click");
+      AUDIT.aggregates.gift = 222; AUDIT.records = [{id: "dalla-seconda"}];
+      _box("paid")._fire("click");
+      _held[1](); await _tick();
+      _held[0](); await _tick();
+      console.log(JSON.stringify({gift: String(_box("gift")._value.textContent),
+        rows: $("accRecordsBody").innerHTML,
+        marked: _boxes.filter(b => b.classList.contains("agg-active")).map(b => b.dataset.accAgg)}));
+    """)
+    assert out["marked"] == ["paid"]
+    assert out["gift"] == "222"
+    assert "dalla-seconda" in out["rows"] and "dalla-prima" not in out["rows"]
+
+
+@needs_node
+def test_admin_gift_reply_leaves_alone_a_popup_opened_meanwhile(tmp_path):
+    """Regalo inviato, popup chiuso e riaperto su un altro account prima della risposta: ne' l'esito
+    ok ne' il 409 (con la sua rilettura) chiudono, riscrivono o sporcano il popup nuovo."""
+    rows = [{"id": "acc-free", "email": "a@x.it", "origin": "free", "plan_effective": "free"},
+            {"id": "acc-other", "email": "b@x.it", "origin": "free", "plan_effective": "free"}]
+    out = _run_admin_accounts_js(tmp_path, {"ROWS": rows, "AUDIT": {"records": rows, "count": 2}}, r"""
+      const modal = $("accGiftModal"), err = $("accGiftErr"), out = {};
+      accRender(ROWS, ROWS.length);
+      const switched = async () => {
+        accGiftOpen("acc-free");
+        $("accGiftPlan").value = "sub_5"; $("accGiftUntil").value = "2999-12-31";
+        const sent = accGift({});
+        document._fire("keydown", {key: "Escape"});
+        accGiftOpen("acc-other");
+        _held.shift()(); await sent; await _tick();
+        return {hidden: modal.hidden, id: accGiftId, err: err.textContent,
+                other: $("accGiftBody").innerHTML.includes("acc-other")};
+      };
+      _holdUrl = "/admin/api/accounts/gift";
+      out.ok = await switched();
+      _giftReply = {ok: false, status: 409, body: '{"error":"gift_active"}'};
+      out.conflict = await switched();
+      console.log(JSON.stringify(out));
+    """)
+    expected = {"hidden": False, "id": "acc-other", "err": "", "other": True}
+    assert out["ok"] == expected
+    assert out["conflict"] == expected
 
 
 @needs_node

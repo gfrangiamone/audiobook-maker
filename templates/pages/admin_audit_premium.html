@@ -1441,8 +1441,11 @@
     } catch (_) { /* corpo non JSON: si mostra com'e' */ }
     return raw;
   }
-  // Esito nel popup: l'errore resta li', il successo lo chiude e rilegge la tabella.
+  // Esito nel popup: l'errore resta li', il successo lo chiude e rilegge la tabella. Un popup
+  // chiuso o riaperto su un altro account prima della risposta non si tocca.
   async function accPost(btn, url, body){
+    const id = accGiftId;
+    let gone = false;
     btn.disabled = true;
     accGiftError("");
     try {
@@ -1450,16 +1453,23 @@
         headers:{"X-Admin-Token":ADMIN_TOKEN, "Content-Type":"application/json"},
         body: JSON.stringify(body)});
       if (!r.ok) {
-        accGiftError("Errore "+r.status+": "+await accErrText(r));
-        // 404/409: l'account e' cambiato altrove, la tabella va riletta.
-        if (r.status === 404 || r.status === 409) accFetch();
+        const msg = "Errore "+r.status+": "+await accErrText(r);
+        // 404/409: l'account e' cambiato altrove; riletta la tabella il popup riparte dallo
+        // stato nuovo, e se la riga non c'e' piu' l'azione resta spenta.
+        if (r.status === 404 || r.status === 409) {
+          await accFetch();
+          if (accGiftId === id) {
+            if (accRecs.has(id)) accGiftOpen(id); else gone = true;
+          }
+        }
+        if (accGiftId === id) accGiftError(msg);
         return;
       }
-      accGiftClose();
+      if (accGiftId === id) accGiftClose();
       accFetch();
     } catch (e) {
-      accGiftError("Errore di rete: "+e.message);
-    } finally { btn.disabled = false; }
+      if (accGiftId === id) accGiftError("Errore di rete: "+e.message);
+    } finally { btn.disabled = gone; }
   }
   function accGift(btn){
     const plan = $("accGiftPlan").value, until = $("accGiftUntil").value;
@@ -1514,7 +1524,10 @@
     return d.toLocaleString("it-IT", {day:"2-digit",month:"2-digit",year:"numeric",
                                       hour:"2-digit",minute:"2-digit"});
   }
+  // Clic rapidi sulle caselle: vale solo la risposta dell'ultima richiesta.
+  let accFetchSeq = 0;
   async function accFetch(){
+    const seq = ++accFetchSeq;
     const p = new URLSearchParams();
     const st=$("accStateFilter").value, q=$("accQuery").value.trim();
     const df=$("accDateFrom").value, dt=$("accDateTo").value;
@@ -1529,8 +1542,10 @@
     p.set("limit","500");
     const r = await fetch("/admin/api/accounts_audit?"+p.toString(),
                           {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (seq !== accFetchSeq) return;
     if (!r.ok){ alert("Errore caricamento utenti: "+r.status); return; }
     const d = await r.json();
+    if (seq !== accFetchSeq) return;
     const a = d.aggregates||{};
     accLast30Since = d.last30_since||"";
     accAggBoxes().forEach(b => { b.querySelector(".agg-value").textContent = a[b.dataset.accAgg] ?? 0; });
