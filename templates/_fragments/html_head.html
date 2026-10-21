@@ -892,6 +892,13 @@ __REVIEWS_LD__
           <div id="panel5Err" role="alert" aria-live="assertive"></div>
         </div>
 
+        <!-- Invito alla libreria cloud (solo anonimi, riempito da
+             _acctCloudInviteRender: il testo porta la quota). -->
+        <div id="cloudInvite" role="note" style="display:none;margin-top:22px;padding:12px 16px;border:1px solid var(--brd);border-radius:10px;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;text-align:left">
+          <span id="cloudInviteText" style="flex:1 1 220px;line-height:1.5;font-size:.92rem"></span>
+          <button class="btn btn-outline" type="button" id="cloudInviteBtn" data-t="cloud_invite_btn"></button>
+        </div>
+
         <div class="actions-row">
           <button class="btn btn-outline btn-lg" id="btnBackCh" onclick="goBackToChapters()" style="display:none">&#x1F4D6;&#xFE0F; <span data-t="btn_back_chapters"></span></button>
           <button class="btn btn-g btn-lg" id="btnRetry" onclick="retryGeneration()" style="display:none">&#x1F504; <span data-t="btn_retry"></span></button>
@@ -1519,6 +1526,25 @@ __REVIEWS_LD__
           <button class="btn btn-outline" onclick="closeLoginModal()" data-t="btn_cancel"></button>
           <button class="btn btn-ok" id="acctSendBtn" onclick="_acctRequest()" data-t="acct_send_code"></button>
           <button class="btn btn-ok" id="acctVerifyBtn" onclick="_acctVerify()" data-t="acct_verify" style="display:none" disabled></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Proposta una tantum della libreria cloud gratuita (consenso esplicito):
+       i due pulsanti hanno la stessa classe, nessuno e' preselezionato; i
+       gestori sono agganciati da _acctFreeOffer. -->
+  <div class="modal-overlay" id="freePlanModal" role="dialog" aria-modal="true" aria-labelledby="fpTitle">
+    <div class="modal" id="fpPanel" tabindex="-1" style="max-width:440px;outline:none">
+      <div class="modal-head">
+        <span data-t="fp_title" id="fpTitle"></span>
+        <button class="modal-close" type="button" id="fpClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="fpBody" style="margin:0 0 16px;line-height:1.6;font-size:.92rem"></p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-outline" type="button" id="fpDecline" data-t="fp_decline"></button>
+          <button class="btn btn-outline" type="button" id="fpActivate" data-t="fp_activate"></button>
         </div>
       </div>
     </div>

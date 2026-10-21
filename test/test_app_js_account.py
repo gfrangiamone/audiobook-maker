@@ -273,3 +273,67 @@ def test_nudge_shown_once_per_day_only_to_guests():
     boot = _extract_fn("_acctBoot")
     assert boot.index("openLoginModal();\n    return;") < boot.index("_acctNudgeMaybe()")
     assert "_acctNudgeHide()" in _extract_fn("openLoginModal")
+
+
+# ── Proposta una tantum del piano gratuito e invito al cloud ──
+
+FP_KEYS = ["fp_title", "fp_body", "fp_activate", "fp_decline", "fp_on_toast",
+           "cloud_invite", "cloud_invite_btn"]
+
+
+@pytest.mark.parametrize("key", FP_KEYS)
+def test_free_offer_key_in_all_seven_languages(key):
+    assert len(re.findall(r"\b%s:" % key, I18N)) == 7, key
+    matches = list(re.finditer(r'\b%s:"((?:[^"\\]|\\.)*)"' % key, I18N))
+    # senza questo conteggio un valore non letto dalla regex salterebbe il
+    # controllo sui nomi di provider senza far fallire nulla
+    assert len(matches) == 7, key
+    for m in matches:
+        assert m.group(1).strip(), key
+        assert not re.search(r"DeepSeek|Gemini|Speechify|VoxCPM", m.group(1))
+
+
+def test_free_offer_flow_wiring():
+    offer = _extract_fn("_acctFreeOffer")
+    assert "/api/account/free_plan" in offer and "'prompt'" in offer
+    assert "decline" in offer and "activate" in offer and "innerHTML" not in offer
+    assert "_acctFreeOffer" in _extract_fn("_acctBoot")
+    verify = _extract_fn("_acctVerify")
+    assert verify.index("_acctFreeOffer") < verify.index("after()")
+    assert verify.index("_acctFreeOffer") < verify.index("/api/auth/me")
+    invite = _extract_fn("_acctCloudInviteRender")
+    assert "_acctLoggedIn()" in invite and "openLoginModal" in invite
+    assert "innerHTML" not in invite
+
+
+def test_free_offer_markup_has_no_preselection():
+    start = HEAD.index('id="freePlanModal"')
+    m = HEAD[start:HEAD.index('id="fpDecline"', start) + 200]
+    assert 'id="fpActivate"' in m and "autofocus" not in m and "checked" not in m
+    assert 'id="cloudInvite"' in HEAD and 'id="cloudInviteBtn"' in HEAD
+    # stesso peso visivo: i due pulsanti hanno la stessa classe
+    cls = [re.search(r'class="([^"]*)"', re.search(r'<button[^>]*id="%s"[^>]*>' % i, HEAD).group(0)).group(1)
+           for i in ("fpActivate", "fpDecline")]
+    assert cls[0] == cls[1]
+
+
+def test_free_offer_boot_replaces_nudge_and_invite_follows_generation():
+    boot = _extract_fn("_acctBoot")
+    assert boot.index("_acctFreeOffer(") < boot.index("_acctNudgeMaybe()")
+    # l'invito compare a fine generazione, dopo aver popolato il pannello 5
+    done = APP[APP.index("if(d.status==='done'||d.status==='partial'){"):]
+    done = done[:done.index("// Heartbeat")]
+    assert done.index("Populate panel 5 download buttons") < done.index("_acctCloudInviteRender()") < done.index("goToStep(5)")
+    assert "_acctCloudInviteRender()" in _extract_fn("_acctRender")
+
+
+def test_free_offer_closing_the_modal_is_a_decline():
+    offer = _extract_fn("_acctFreeOffer")
+    # X, clic sullo sfondo ed Esc valgono "Non ora"
+    assert offer.count("choose('decline')") >= 3
+    assert "Escape" in offer
+
+
+def test_fmt_bytes_follows_server_rule():
+    fn = _extract_fn("_acctFmtBytes")
+    assert "MB" in fn and "GB" in fn and "toFixed(2)" in fn

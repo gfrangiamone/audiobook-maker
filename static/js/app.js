@@ -5250,6 +5250,7 @@ function listenProgress(){
           }
         }
         document.getElementById('cnA').style.display='none';
+        _acctCloudInviteRender();
         goToStep(5);
         _showTransferQr(myJobId, 'transferDoneImg', 'transferDoneArea');
 
@@ -7305,6 +7306,9 @@ async function _acctBoot(){
     openLoginModal();
     return;
   }
+  // Account che non ha ancora scelto sul piano gratuito: la proposta una
+  // tantum prende il posto del fumetto (che e' comunque solo per gli anonimi).
+  if(_acctMe&&_acctMe.free_offer){_acctFreeOffer(_acctMe);return}
   _acctNudgeMaybe();
 }
 
@@ -7357,6 +7361,7 @@ function _acctRender(){
     if(em)em.textContent=_acctLoggedIn()?_acctMe.email:'';
   }
   _acctApplyForcedEmail();
+  _acctCloudInviteRender();
 }
 
 function _acctBtnClick(){
@@ -7480,6 +7485,9 @@ async function _acctVerify(){
     _acctAfterLogin=null;
     closeLoginModal();
     _acctToast(t('acct_signed_in_as',{email:d.email||_acctPendingEmail||''}));
+    // Primo accesso senza scelta sul piano gratuito: si decide qui, prima di
+    // lasciare la pagina (after) e prima di rileggere lo stato dal server.
+    if(d.free_offer)await _acctFreeOffer(d);
     if(after){after();return}
     // ricarica lo stato dal server (email, lingua, piano)
     try{const m=await fetch('/api/auth/me',{cache:'no-store'});_acctMe=m.ok?await m.json():_acctMe}catch(e){}
@@ -7502,6 +7510,88 @@ async function _acctLogout(){
   _acctMe=_acctMe?{enabled:_acctMe.enabled,logged_in:false}:null;
   _acctRender();
   _acctToast(t('acct_logged_out'));
+}
+
+// ── Libreria cloud gratuita: proposta una tantum e invito a fine generazione ──
+// Stessa regola di accounts.format_bytes: "N MB" sotto 1 GiB, poi GB con due
+// decimali senza zeri finali.
+function _acctFmtBytes(n){
+  const MIB=1048576,GIB=1073741824;
+  n=Math.max(0,Math.floor(Number(n)||0));
+  if(n<GIB)return Math.round(n/MIB)+' MB';
+  return (n/GIB).toFixed(2).replace(/0+$/,'').replace(/\.$/,'')+' GB';
+}
+
+// /api/auth/me non manda la quota agli anonimi (e la proposta la porta sempre):
+// ripiego sul valore standard del piano gratuito, 512 MiB.
+const _ACCT_FREE_QUOTA_DEFAULT=512*1048576;
+const _ACCT_TOLERANCE_DAYS_DEFAULT=15;
+
+let _fpPending=null;
+// Mostra #freePlanModal e risolve quando l'utente ha scelto o chiuso. Il
+// consenso e' esplicito: i due pulsanti pesano uguale, niente e' preselezionato
+// o a fuoco, e chiudere (X, Esc, clic fuori) vale "Non ora". Un errore di rete
+// chiude il modale senza registrare nulla: la proposta torna al prossimo accesso.
+function _acctFreeOffer(info){
+  const m=document.getElementById('freePlanModal');
+  if(!m||!info)return Promise.resolve();
+  if(_fpPending)return _fpPending;
+  const body=document.getElementById('fpBody');
+  if(body)body.textContent=t('fp_body',{
+    quota:_acctFmtBytes(info.free_quota_bytes||_ACCT_FREE_QUOTA_DEFAULT),
+    days:info.tolerance_days||_ACCT_TOLERANCE_DAYS_DEFAULT});
+  const bAct=document.getElementById('fpActivate'),bDec=document.getElementById('fpDecline');
+  const bX=document.getElementById('fpClose'),panel=document.getElementById('fpPanel');
+  _fpPending=new Promise(function(resolve){
+    let busy=false;
+    function onKey(ev){if(ev.key==='Escape')choose('decline')}
+    function finish(){
+      document.removeEventListener('keydown',onKey);
+      m.classList.remove('open');
+      m.onclick=null;
+      [bAct,bDec,bX].forEach(function(b){if(b){b.onclick=null;b.disabled=false}});
+      _fpPending=null;
+      resolve();
+    }
+    async function choose(action){
+      if(busy)return;
+      busy=true;
+      [bAct,bDec].forEach(function(b){if(b)b.disabled=true});
+      try{
+        const r=await fetch('/api/account/free_plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,source:'prompt'})});
+        const d=await r.json().catch(function(){return{}});
+        if(r.ok&&d.ok){
+          info.free_offer=false;
+          if(action==='activate')_acctToast(t('fp_on_toast'));
+        }
+      }catch(e){}
+      finish();
+    }
+    if(bAct)bAct.onclick=function(){choose('activate')};
+    if(bDec)bDec.onclick=function(){choose('decline')};
+    if(bX)bX.onclick=function(){choose('decline')};
+    m.onclick=function(ev){if(ev.target===m)choose('decline')};
+    document.addEventListener('keydown',onKey);
+    m.classList.add('open');
+    // il focus va al riquadro, non a un pulsante: nessuna scelta suggerita
+    try{panel&&panel.focus()}catch(e){}
+  });
+  return _fpPending;
+}
+
+// Invito a fine generazione: solo per chi non ha un account. Parla dei libri
+// *prossimi*, perche' il job appena scaricato non entra nello storico
+// dell'account e il consenso vale solo per i job successivi.
+function _acctCloudInviteRender(){
+  const box=document.getElementById('cloudInvite');
+  if(!box)return;
+  const on=!!(_acctMe&&_acctMe.enabled&&!_acctLoggedIn());
+  box.style.display=on?'flex':'none';
+  if(!on)return;
+  const txt=document.getElementById('cloudInviteText');
+  if(txt)txt.textContent=t('cloud_invite',{quota:_acctFmtBytes(_acctMe.free_quota_bytes||_ACCT_FREE_QUOTA_DEFAULT)});
+  const btn=document.getElementById('cloudInviteBtn');
+  if(btn)btn.onclick=function(){openLoginModal()};
 }
 
 // Conferma breve in cima alla pagina (stesso stile del toast download,
