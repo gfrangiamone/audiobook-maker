@@ -177,13 +177,24 @@ def jobs_with_active_download_tokens(now=None):
     passaggio O(T) sulla tabella (snapshot sotto tokens_lock): chi deve
     controllare molti job lo calcola una volta invece di chiamare
     `has_active_download_tokens` per ciascuno (J x T). Le voci non-dict o senza
-    job_id sono ignorate."""
+    job_id sono ignorate; una voce corrotta (data non numerica, retention che
+    solleva) si salta con un log e non ferma le altre: chi chiama (l'ingresso in
+    archivio del cleanup) altrimenti non vedrebbe nessun job."""
     if now is None:
         now = time.time()
     with tokens_lock:
         infos = list(download_tokens.values())
-    return {info["job_id"] for info in infos
-            if isinstance(info, dict) and info.get("job_id") and _download_token_live(info, now)}
+    live = set()
+    for info in infos:
+        if not isinstance(info, dict) or not info.get("job_id"):
+            continue
+        try:
+            if _download_token_live(info, now):
+                live.add(info["job_id"])
+        except Exception as e:  # noqa: BLE001 - una voce rotta non deve fermare le altre
+            print(f"[tokens] voce del job {info.get('job_id')!r} ignorata: {type(e).__name__}: {e}",
+                  flush=True)
+    return live
 
 
 def find_available_download_token(job_id, cid, now=None):

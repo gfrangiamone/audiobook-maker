@@ -70,6 +70,21 @@ def test_jobs_with_active_download_tokens_one_pass(monkeypatch):
         assert (jid in live) == token_store.has_active_download_tokens(jid, now=1000.0), jid
 
 
+def test_jobs_with_active_download_tokens_skips_a_corrupt_entry(monkeypatch, capsys):
+    """Una voce con la data non numerica (o job_id non hashabile) non ferma il passaggio: le due
+    buone tornano e l'anomalia finisce nel log."""
+    monkeypatch.setattr(audiobook_app, "_effective_retention_for_token_info", lambda info: 10)
+    monkeypatch.setattr(token_store, "download_tokens", {
+        "good1": {"job_id": "A", "created_at": 1000.0},
+        "bad_date": {"job_id": "BAD", "created_at": "ieri"},
+        "bad_id": {"job_id": ["X"], "created_at": 1000.0},
+        "good2": {"job_id": "B", "created_at": 1000.0},
+    })
+    assert token_store.jobs_with_active_download_tokens(now=1000.0) == {"A", "B"}
+    log = capsys.readouterr().out
+    assert "BAD" in log and "TypeError" in log and log.count("[tokens]") == 2
+
+
 def test_transfer_and_share_tables_are_mutated_in_place(monkeypatch, tmp_path):
     monkeypatch.setattr(token_store, "TRANSFER_TOKENS_FILE", tmp_path / "t.json")
     monkeypatch.setattr(token_store, "SHARE_TOKENS_FILE", tmp_path / "s.json")
