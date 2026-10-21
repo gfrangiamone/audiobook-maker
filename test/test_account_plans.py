@@ -509,10 +509,19 @@ def test_gift_requires_a_future_integer_epoch(env):
     assert accounts.gift_plan(a["id"], "sub_5", T0 + 1, now=T0)[0] == "ok"
 
 
-def test_gift_overwrites_gift_and_expired_paid_but_not_active_paid(env):
+def test_gift_refuses_active_gift_and_active_paid_but_overwrites_expired(env):
+    """Il regalo si fa solo con origine free o none: un regalo attivo va revocato
+    prima, un piano pagato attivo non si tocca; quelli scaduti si sovrascrivono."""
     a = _login("a@b.it")
+    _consent(a)                                                             # origine free
     assert accounts.gift_plan(a["id"], "sub_5", T0 + 100, now=T0)[0] == "ok"
-    st, acc = accounts.gift_plan(a["id"], "sub_10", T0 + 500, now=T0)       # regalo su regalo
+    st, acc = accounts.gift_plan(a["id"], "sub_10", T0 + 500, now=T0)       # regalo su regalo attivo
+    assert st == "gift" and (acc["plan"], acc["plan_source"], acc["plan_until"]) == ("sub_5", "gift", T0 + 100)
+    assert accounts.get(a["id"])["plan"] == "sub_5"
+    _gift(a, "sub_10", None)                                                # regalo migrato senza scadenza
+    assert accounts.gift_plan(a["id"], "sub_5", T0 + 500, now=T0)[0] == "gift"
+    _gift(a, "sub_5", T0 + 100)
+    st, acc = accounts.gift_plan(a["id"], "sub_10", T0 + 500, now=T0 + 100)  # regalo scaduto, non ancora ritirato
     assert st == "ok" and (acc["plan"], acc["plan_until"]) == ("sub_10", T0 + 500)
     _set(a, plan_source="paid", plan_until=T0 + 100)
     assert accounts.gift_plan(a["id"], "sub_5", T0 + 500, now=T0 + 100)[0] == "ok"   # pagato scaduto
@@ -642,6 +651,47 @@ def test_admin_list_origin_paid_expired_gift_and_combined_filters(env):
     agg = accounts.admin_list(now=T0 + 10)["aggregates"]
     assert (agg["paid"], agg["gift"], agg["free_active"]) == (1, 1, 1)
     assert accounts.admin_list(now=T0 + 10, origin="gift")["count"] == 1
+
+
+def test_admin_list_origin_paid_and_gift_leave_out_deleted_accounts(env):
+    """Anche `origin=paid/gift` vale solo per gli account vivi, come gli aggregati."""
+    p, g, live = _login("p@x.it"), _login("g@x.it"), _login("l@x.it")
+    accounts.delete_account(p["id"], now=T0)
+    accounts.delete_account(g["id"], now=T0)
+    # dati sporchi su account gia' cancellati
+    _set(p, plan="sub_5", plan_source="paid", plan_until=T0 + 1000)
+    _set(g, plan="sub_5", plan_source="gift", plan_until=T0 + 1000)
+    accounts.gift_plan(live["id"], "sub_10", T0 + 1000, now=T0)
+    ids = lambda **kw: {r["id"] for r in accounts.admin_list(now=T0 + 1, **kw)["records"]}
+    assert ids(origin="paid") == set()
+    assert ids(origin="gift") == {live["id"]}
+    assert ids(state="deleted") == {p["id"], g["id"]}
+
+
+def test_admin_list_tolerance_filter_matches_aggregate(env):
+    a, b, gone = _login("a@x.it"), _login("b@x.it"), _login("gone@x.it")
+    _set(a, archive_over_since=T0)
+    accounts.delete_account(gone["id"], now=T0)
+    _set(gone, archive_over_since=T0)                                       # dato sporco su un cancellato
+    out = accounts.admin_list(now=T0 + 1, tolerance=True)
+    assert {r["id"] for r in out["records"]} == {a["id"]}
+    assert out["count"] == out["aggregates"]["in_tolerance"] == 1
+    assert accounts.admin_list(now=T0 + 1, tolerance=False)["count"] == 3
+    assert accounts.admin_list(now=T0 + 1, tolerance=True, q="b@x")["count"] == 0
+
+
+def test_admin_list_last30_starts_at_utc_midnight(env):
+    """"Nuovi 30 gg" parte dalla mezzanotte UTC di 30 giorni fa (T0 e' alle 08:00
+    UTC del 15/01/2027), cosi' coincide col filtro `date_from` del giorno."""
+    since = T0 - 30 * 86400 - 8 * 3600
+    _login("before@x.it", now=since - 1)
+    _login("edge@x.it", now=since)
+    _login("morning@x.it", now=since + 3600)                                # fuori da now-30gg esatto
+    _login("recent@x.it", now=T0)
+    out = accounts.admin_list(now=T0)
+    assert out["last30_since"] == "2026-12-16"
+    assert out["aggregates"]["last30"] == 3
+    assert accounts.admin_list(now=T0, date_from=since)["count"] == 3
 
 
 def test_space_plan_sql_follows_space_plan_active(env):

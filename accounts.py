@@ -1340,14 +1340,47 @@ def evict_archived_job(job_id, now=None):
 
 ADMIN_PLAN_FILTERS = (PLAN_FREE, *SPACE_PLANS)
 ADMIN_ORIGINS = (*PLAN_SOURCES, "free", "none")
+# Account vivo nella tolleranza del cleanup dell'archivio (alias `a`).
+_ADMIN_TOLERANCE_SQL = "a.deleted_at IS NULL AND a.archive_over_since IS NOT NULL"
+# Casella degli aggregati -> filtri di `_admin_where` che la console applica
+# al clic: il numero della casella e' il conteggio di quelle stesse righe.
+# "last30" (date_from = mezzanotte UTC di 30 giorni fa) si calcola a parte.
+_ADMIN_AGGREGATES = (
+    ("total", {}),
+    ("with_session", {"state": "active"}),
+    ("never_logged", {"state": "never"}),
+    ("deleted", {"state": "deleted"}),
+    ("paid", {"origin": "paid"}),
+    ("gift", {"origin": "gift"}),
+    ("free_active", {"origin": "free"}),
+    ("in_tolerance", {"tolerance": True}),
+)
+
+
+def _admin_state_where(state, now):
+    """Condizioni SQL (alias `a`) del filtro per stato della console admin,
+    come ([sql, ...], [args]): `active` = account vivo con almeno una sessione
+    valida, `dormant` = account vivo senza, `never` = vivo e mai entrato,
+    `deleted` = cancellato. Altri valori non filtrano."""
+    live_session = ("EXISTS (SELECT 1 FROM sessions s WHERE s.account_id=a.id "
+                    "AND s.revoked_at IS NULL AND s.expires_at>?)")
+    if state == "active":
+        return ["a.deleted_at IS NULL AND " + live_session], [now]
+    if state == "dormant":
+        return ["a.deleted_at IS NULL AND NOT " + live_session], [now]
+    if state == "deleted":
+        return ["a.deleted_at IS NOT NULL"], []
+    if state == "never":
+        return ["a.deleted_at IS NULL AND a.last_login_at IS NULL"], []
+    return [], []
 
 
 def _admin_plan_where(plan, origin, now):
     """Condizioni SQL (alias `a`) dei filtri per piano effettivo e per origine
     della console admin, come ([sql, ...], [args]). Valori sconosciuti non
-    filtrano, come `state`. `plan=free`, `origin=free` e `origin=none` valgono
-    solo per gli account vivi (un account cancellato torna a `free`, ma non ha
-    piano ne' origine), come gli aggregati."""
+    filtrano, come `state`. `plan=free` e ogni `origin` valgono solo per gli
+    account vivi (un account cancellato torna a `free`, ma non ha piano ne'
+    origine), come gli aggregati."""
     where, args = [], []
     if plan in SPACE_PLANS:
         sql, a = _space_plan_sql(now)
@@ -1359,7 +1392,7 @@ def _admin_plan_where(plan, origin, now):
         args += a
     if origin in PLAN_SOURCES:
         sql, a = _space_plan_sql(now, origin)
-        where.append(sql)
+        where.append("a.deleted_at IS NULL AND " + sql)
         args += a
     elif origin in ("free", "none"):
         sql, a = _space_plan_sql(now, PLAN_SOURCES)
@@ -1369,41 +1402,11 @@ def _admin_plan_where(plan, origin, now):
     return where, args
 
 
-def admin_list(state="all", q="", date_from=None, date_to=None,
-               limit=500, offset=0, now=None, plan="", origin=""):
-    """Elenco account per la console admin: registrazione, ultimo accesso,
-    cancellazione, sessioni attive e storico.
-
-    `state`: all | active (non cancellati) | deleted | never (mai entrati) |
-    dormant (nessuna sessione attiva, account vivo). `q` filtra sull'email
-    (substring, case-insensitive); sugli account cancellati l'email e' gia'
-    un segnaposto `deleted:...`, quindi la ricerca li trova solo per id.
-    `date_from`/`date_to` sono epoch sulla data di registrazione.
-    `plan` (free | sub_5 | sub_10) filtra sul piano effettivo; `origin`
-    (paid | gift | free | none) sull'origine: `paid`/`gift` = piano di spazio
-    attivo con quella `plan_source`, `free` = nessun piano attivo e consenso al
-    piano gratuito, `none` = nessun piano attivo e nessun consenso.
-
-    Ritorna {"records": [...], "count": <totale filtrato>, "plans": [...],
-    "origins": [...], "aggregates": {...}}.
-    """
-    if not enabled():
-        return {"records": [], "count": 0, "aggregates": {}}
-    now = _now(now)
-    limit = max(1, min(int(limit or 500), 2000))
-    offset = max(0, int(offset or 0))
-    where, args = [], []
-    if state == "active":
-        where.append("a.deleted_at IS NULL")
-    elif state == "deleted":
-        where.append("a.deleted_at IS NOT NULL")
-    elif state == "never":
-        where.append("a.deleted_at IS NULL AND a.last_login_at IS NULL")
-    elif state == "dormant":
-        where.append("a.deleted_at IS NULL AND NOT EXISTS ("
-                     "SELECT 1 FROM sessions s WHERE s.account_id=a.id "
-                     "AND s.revoked_at IS NULL AND s.expires_at>?)")
-        args.append(now)
+def _admin_where(now, state="all", q="", date_from=None, date_to=None,
+                 plan="", origin="", tolerance=False):
+    """Condizioni SQL (alias `a`) di tutti i filtri della console admin, in AND,
+    come ([sql, ...], [args]): le usano sia l'elenco sia gli aggregati."""
+    where, args = _admin_state_where(state, now)
     if q:
         where.append("(LOWER(a.email) LIKE ? OR a.id LIKE ?)")
         like = "%" + str(q).strip().lower() + "%"
@@ -1417,7 +1420,40 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     plan_where, plan_args = _admin_plan_where(plan, origin, now)
     where += plan_where
     args += plan_args
+    if tolerance:
+        where.append(_ADMIN_TOLERANCE_SQL)
+    return where, args
+
+
+def admin_list(state="all", q="", date_from=None, date_to=None,
+               limit=500, offset=0, now=None, plan="", origin="", tolerance=False):
+    """Elenco account per la console admin: registrazione, ultimo accesso,
+    cancellazione, sessioni attive e storico.
+
+    `state`: all | active (account vivo con una sessione valida) | deleted |
+    never (mai entrati) | dormant (nessuna sessione valida, account vivo). `q`
+    filtra sull'email (substring, case-insensitive); sugli account cancellati
+    l'email e' gia' un segnaposto `deleted:...`, quindi la ricerca li trova
+    solo per id. `date_from`/`date_to` sono epoch sulla data di registrazione.
+    `plan` (free | sub_5 | sub_10) filtra sul piano effettivo; `origin`
+    (paid | gift | free | none) sull'origine: `paid`/`gift` = piano di spazio
+    attivo con quella `plan_source`, `free` = nessun piano attivo e consenso al
+    piano gratuito, `none` = nessun piano attivo e nessun consenso.
+    `tolerance` tiene solo gli account vivi nella tolleranza dell'archivio.
+
+    Ritorna {"records": [...], "count": <totale filtrato>, "plans": [...],
+    "origins": [...], "aggregates": {...}, "last30_since": "YYYY-MM-DD"}: ogni
+    aggregato conta le righe del filtro corrispondente (`_ADMIN_AGGREGATES`),
+    "last30" quelle con `date_from` = `last30_since`, mezzanotte UTC.
+    """
+    if not enabled():
+        return {"records": [], "count": 0, "aggregates": {}}
+    now = _now(now)
+    limit = max(1, min(int(limit or 500), 2000))
+    offset = max(0, int(offset or 0))
+    where, args = _admin_where(now, state, q, date_from, date_to, plan, origin, tolerance)
     sql_where = ("WHERE " + " AND ".join(where)) if where else ""
+    since30 = (now - 30 * 86400) // 86400 * 86400
 
     sel = (
         "SELECT a.id, a.email, a.email_hash, a.lang, a.plan, a.plan_source, a.plan_until, "
@@ -1437,29 +1473,17 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
     )
     with db.tx() as c:
-        total = c.execute("SELECT COUNT(*) FROM accounts a " + sql_where, tuple(args)).fetchone()[0]
+        def count(cond, cargs):
+            sql = "SELECT COUNT(*) FROM accounts a" + (" WHERE " + " AND ".join(cond) if cond else "")
+            return int(c.execute(sql, tuple(cargs)).fetchone()[0])
+
+        total = count(where, args)
         rows = c.execute(sel, tuple([now] + args + [limit, offset])).fetchall()
         # Aggregati sull'intera anagrafica (non sul filtro): servono da
-        # cruscotto, non da conteggio della pagina mostrata.
-        tot_all = c.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
-        tot_del = c.execute("SELECT COUNT(*) FROM accounts WHERE deleted_at IS NOT NULL").fetchone()[0]
-        tot_never = c.execute(
-            "SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL AND last_login_at IS NULL"
-        ).fetchone()[0]
-        tot_online = c.execute(
-            "SELECT COUNT(DISTINCT s.account_id) FROM sessions s JOIN accounts a ON a.id=s.account_id "
-            "WHERE a.deleted_at IS NULL AND s.revoked_at IS NULL AND s.expires_at>?",
-            (now,),
-        ).fetchone()[0]
-        last30 = c.execute(
-            "SELECT COUNT(*) FROM accounts WHERE created_at>=?", (now - 30 * 86400,)
-        ).fetchone()[0]
-        live = "SELECT COUNT(*) FROM accounts a WHERE a.deleted_at IS NULL AND "
-        by_origin = {}
-        for key in ("paid", "gift", "free"):
-            cond, cargs = _admin_plan_where("", key, now)
-            by_origin[key] = c.execute(live + " AND ".join(cond), cargs).fetchone()[0]
-        in_tolerance = c.execute(live + "a.archive_over_since IS NOT NULL").fetchone()[0]
+        # cruscotto e da filtri rapidi, non da conteggio della pagina mostrata.
+        aggregates = {key: count(*_admin_where(now, **kw)) for key, kw in _ADMIN_AGGREGATES}
+        aggregates["last30"] = count(*_admin_where(now, date_from=since30))
+        aggregates["filtered"] = total
 
     recs = []
     for r in rows:
@@ -1486,21 +1510,11 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         recs.append(d)
     return {
         "records": recs,
-        "count": int(total),
+        "count": total,
         "plans": list(ADMIN_PLAN_FILTERS),
         "origins": list(ADMIN_ORIGINS),
-        "aggregates": {
-            "total": int(tot_all),
-            "deleted": int(tot_del),
-            "never_logged": int(tot_never),
-            "with_session": int(tot_online),
-            "last30": int(last30),
-            "paid": int(by_origin["paid"]),
-            "gift": int(by_origin["gift"]),
-            "free_active": int(by_origin["free"]),
-            "in_tolerance": int(in_tolerance),
-            "filtered": int(total),
-        },
+        "aggregates": aggregates,
+        "last30_since": utc_day(since30),
     }
 
 
@@ -1599,11 +1613,13 @@ def _live_account(c, account_id):
 def gift_plan(account_id, plan, until, now=None):
     """Regala il piano di spazio `plan` fino a `until` (epoch intero, nel
     futuro). ValueError su piano sconosciuto o `until` non intero o non futuro.
+    Il regalo si fa solo con origine "free" o "none" (`plan_origin`).
 
     Ritorna (esito, account): "ok" (account aggiornato), "not_found" (assente,
-    cancellato o account disattivati, None) o "paid" (c'e' un piano pagato
-    attivo: non si sovrascrive; account invariato). Lettura e scrittura nella
-    stessa transazione."""
+    cancellato o account disattivati, None), "paid" (c'e' un piano pagato
+    attivo: non si sovrascrive) o "gift" (c'e' gia' un regalo attivo: va
+    revocato prima di farne un altro); negli ultimi due l'account e'
+    invariato. Lettura e scrittura nella stessa transazione."""
     if plan not in SPACE_PLANS:
         raise ValueError(f"unknown space plan: {plan!r}")
     now = _now(now)
@@ -1615,8 +1631,9 @@ def gift_plan(account_id, plan, until, now=None):
         acct = _live_account(c, account_id)
         if acct is None:
             return "not_found", None
-        if space_plan_active(acct, now) and acct["plan_source"] == "paid":
-            return "paid", acct
+        origin = plan_origin(acct, now)
+        if origin in PLAN_SOURCES:
+            return origin, acct
         c.execute("UPDATE accounts SET plan=?, plan_source='gift', plan_until=? WHERE id=?",
                   (plan, until, account_id))
         acct = _live_account(c, account_id)

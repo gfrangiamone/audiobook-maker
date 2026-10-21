@@ -81,6 +81,73 @@ def test_admin_list_states_never_and_dormant(acct_env):
     assert accounts.admin_list(now=later)["count"] == 1
 
 
+def test_admin_list_state_active_means_live_session(acct_env):
+    """`state=active` = account vivo con una sessione valida, come dice la select."""
+    on = _login("on@example.com", T0)
+    accounts.open_session(on["id"], now=T0)
+    _login("off@example.com", T0)                              # accesso fatto, nessuna sessione
+    old = _login("old@example.com", T0)
+    accounts.open_session(old["id"], now=T0 - accounts.SESSION_DAYS * 86400)   # scaduta
+    gone = _login("gone@example.com", T0)
+    accounts.open_session(gone["id"], now=T0)
+    accounts.delete_account(gone["id"], now=T0)
+    out = accounts.admin_list(state="active", now=T0 + 60)
+    assert [r["email"] for r in out["records"]] == ["on@example.com"]
+    assert out["count"] == out["aggregates"]["with_session"] == 1
+    assert accounts.admin_list(state="dormant", now=T0 + 60)["count"] == 2
+
+
+# Casella degli aggregati -> filtro che applica al clic.
+AGG_FILTERS = {
+    "total": {},
+    "with_session": {"state": "active"},
+    "never_logged": {"state": "never"},
+    "deleted": {"state": "deleted"},
+    "paid": {"origin": "paid"},
+    "gift": {"origin": "gift"},
+    "free_active": {"origin": "free"},
+    "in_tolerance": {"tolerance": True},
+}
+
+
+def _set(acct, **cols):
+    sets = ", ".join(f"{k}=?" for k in cols)
+    with db.tx() as c:
+        c.execute(f"UPDATE accounts SET {sets} WHERE id=?", (*cols.values(), acct["id"]))
+
+
+def test_admin_aggregates_match_their_filters(acct_env):
+    """Il numero di ogni casella e' il `count` del filtro che la casella applica,
+    anche con dati sporchi sugli account cancellati."""
+    now = T0 + 40 * 86400
+    online = _login("online@example.com", now - 86400)
+    accounts.open_session(online["id"], now=now - 86400)
+    never = _login("never@example.com", T0)
+    _set(never, last_login_at=None)
+    paid = _login("paid@example.com", T0)
+    _set(paid, plan="sub_5", plan_source="paid", plan_until=now + 1000)
+    gift = _login("gift@example.com", now - 3600)
+    accounts.gift_plan(gift["id"], "sub_10", now + 1000, now=now)
+    free = _login("free@example.com", T0)
+    accounts.free_plan_action(free["id"], "activate", "account", now=T0)
+    _set(free, archive_over_since=now - 10)
+    gone = _login("gone@example.com", now - 7200)
+    accounts.open_session(gone["id"], now=now)
+    accounts.delete_account(gone["id"], now=now)
+    _set(gone, plan="sub_5", plan_source="gift", plan_until=now + 1000,
+         free_consent_at=T0, archive_over_since=T0, last_login_at=None)
+    with db.tx() as c:                                         # sessione viva su un cancellato
+        c.execute("UPDATE sessions SET revoked_at=NULL WHERE account_id=?", (gone["id"],))
+    out = accounts.admin_list(now=now)
+    agg = out["aggregates"]
+    for key, kw in AGG_FILTERS.items():
+        assert agg[key] == accounts.admin_list(now=now, **kw)["count"], key
+    assert (agg["with_session"], agg["never_logged"], agg["deleted"]) == (1, 1, 1)
+    assert (agg["paid"], agg["gift"], agg["free_active"], agg["in_tolerance"]) == (1, 1, 1, 1)
+    since = (now - 30 * 86400) // 86400 * 86400
+    assert agg["last30"] == accounts.admin_list(now=now, date_from=since)["count"] == 3
+
+
 def test_admin_list_filters_by_query_and_date(acct_env):
     _login("uno@example.com", T0)
     _login("due@other.com", T0 + 10 * 86400)
