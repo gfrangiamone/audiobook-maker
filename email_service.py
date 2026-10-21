@@ -293,6 +293,7 @@ def _voice_clone_block_html(data=None):
 # Payment email config — imported from payment.py (single source of truth)
 # ---------------------------------------------------------------------------
 
+import payment
 from payment import VOUCHER_BONUS_PERCENT, VOUCHER_EXPIRY_DAYS
 
 
@@ -707,6 +708,15 @@ def _premium_refund_block(t, amount, voucher_code, email):
 _RECEIPT_SERVICE = {lg: t.get("service_names", {}) for lg, t in _RECEIPT_I18N.items()}
 
 
+def voucher_mail_sent(code, email, sent):
+    """Annota sul buono `code` l'email che ne porta il codice (`notified`,
+    colonna "inviata" della console admin) se l'SMTP l'ha accettata: le
+    email automatiche contano come il bottone manuale. Ritorna `sent`."""
+    if sent and code:
+        payment.record_voucher_notification(code, email)
+    return sent
+
+
 def _voucher_expiry():
     """Data di scadenza (gg/mm/aaaa) di un buono emesso adesso."""
     from datetime import datetime, timedelta
@@ -781,7 +791,7 @@ def _send_voucher_email(code, email, amount_eur, book_title, kind="optimization"
   {_layout.voucher_box(code, amount, expiry, code_label=t["code"] + ":", value_label=t["value"], expiry_label=t["expiry"])}
   <p>{use}</p>
   <p style="font-size:.85em;color:#666">{t["note"]}</p>""", BASE_URL)
-    _send_email(email, subject, html_body)
+    voucher_mail_sent(code, email, _send_email(email, subject, html_body))
 
 
 # ---------------------------------------------------------------------------
@@ -958,11 +968,12 @@ def send_voice_clone_refunded(email, lang, *, amount_eur, method, reason, vouche
         v_amount = _vc_num(voucher_amount if voucher_amount is not None else amount)
         if v_amount is None:
             return False
-        return _vc_send(email, lang, "refund_subject", ("refund_body_paypal",), reason=reason_text,
-                        voucher_code=voucher_code,
-                        voucher_amount=f"{v_amount:.2f}",
-                        expiry_days=expiry_days if expiry_days is not None else VOUCHER_EXPIRY_DAYS,
-                        amount=f"{amount:.2f}")
+        return voucher_mail_sent(voucher_code, email, _vc_send(
+            email, lang, "refund_subject", ("refund_body_paypal",), reason=reason_text,
+            voucher_code=voucher_code,
+            voucher_amount=f"{v_amount:.2f}",
+            expiry_days=expiry_days if expiry_days is not None else VOUCHER_EXPIRY_DAYS,
+            amount=f"{amount:.2f}"))
     return _vc_send(email, lang, "refund_subject", ("refund_body_voucher",), reason=reason_text,
                     amount=f"{amount:.2f}")
 
@@ -1059,7 +1070,7 @@ def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None
   {refund_block}
   {retry_hint}
   <p>{t["apology"]}</p>""", BASE_URL)
-    _send_email(email, subject, html_body)
+    voucher_mail_sent(voucher_code, email, _send_email(email, subject, html_body))
 
 
 def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
@@ -1725,7 +1736,8 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
   {refund_block}
   {note}
   <p style="font-size:.9em;color:#666">{t["retained_note"]}</p>""", BASE_URL)
-    _send_email(email, subject, html_body)
+    voucher_mail_sent(voucher_code if refund_eur > 0 else None, email,
+                      _send_email(email, subject, html_body))
 
 
 def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label, voucher_code=None,
@@ -1757,4 +1769,4 @@ def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label
   <p>{t["failed_refund"]}</p>
   {refund_block}
   <p>{t["failed_retry"]}</p>""", BASE_URL)
-    _send_email(email, subject, html_body)
+    voucher_mail_sent(voucher_code, email, _send_email(email, subject, html_body))

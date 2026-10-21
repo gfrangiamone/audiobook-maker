@@ -75,6 +75,7 @@ def _invia(job, refund, vouchers=None):
                       side_effect=lambda to, subj, html: inviate.append(
                           (to, subj, html)) or True), \
          patch.object(ge.payment, "_vouchers", vouchers or {}), \
+         patch.object(ge.payment, "_save_vouchers", lambda: None), \
          patch.object(ge, "_send_push", None):
         esito = ge._notify_user_premium_job_failed("job1", job, refund)
     return esito, inviate

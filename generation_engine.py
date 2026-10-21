@@ -2547,8 +2547,10 @@ def _notify_user_premium_job_failed(job_id, job, refund):
 
     texts = _premium_failed_email_texts(book_title, amount, code, expiry)
     t = dict(_i18n_pick(texts, lang, merge=False))
+    mailed_code = ""
     if refund.get("method") == "paypal" and code and amount > 0:
         t["warn"] = t["refund_paypal"]
+        mailed_code = code
     elif refund.get("method") == "voucher" and amount > 0:
         t["warn"] = t["refund_voucher"]
     else:
@@ -2563,6 +2565,7 @@ def _notify_user_premium_job_failed(job_id, job, refund):
         success = False
     if success:
         job["premium_fail_email_sent"] = True
+    email_service.voucher_mail_sent(mailed_code, email, success)
     _log_activity(job_id, job.get("original_filename", ""),
                   "PREMIUM_FAIL_EMAIL_SENT" if success
                   else "PREMIUM_FAIL_EMAIL_FAILED",
