@@ -2,6 +2,7 @@
 """La SPA espone login/logout via magic link + codice e, da loggata, vincola
 le notifiche all'email dell'account. Test statici sul sorgente JS/HTML,
 piu' `node --check` se node e' disponibile."""
+import json
 import re
 import shutil
 import subprocess
@@ -384,6 +385,12 @@ def test_free_offer_overlay_click_needs_mousedown_on_overlay_too():
     down = offer[offer.index("m.onmousedown=function"):]
     down = down.splitlines()[0]
     assert "ev.target===m" in down and "downOnOverlay" in down
+    # anche il rilascio deve cadere sullo sfondo: dallo sfondo al riquadro il
+    # click nasce comunque sullo sfondo (antenato comune) e non e' un rifiuto
+    assert "onmouseup" in offer and "upOnOverlay" in click
+    up = offer[offer.index("m.onmouseup=function"):].splitlines()[0]
+    assert "ev.target===m" in up and "upOnOverlay" in up
+    assert "m.onmouseup=null" in offer       # finish() scollega anche questo
 
 
 def test_free_offer_traps_focus_but_never_focuses_a_button():
@@ -392,7 +399,7 @@ def test_free_offer_traps_focus_but_never_focuses_a_button():
     assert offer.index("panel.focus()") < offer.index("_trapFocusIn(m)")
     # l'unico focus e' sul riquadro: nessuna scelta suggerita
     receivers = re.findall(r"([A-Za-z_]\w*)\.focus\(", offer)
-    assert receivers == ["panel"], receivers
+    assert receivers == ["prev", "panel"], receivers     # prev = chi l'aveva prima dell'apertura
     assert offer.count(".focus(") == len(receivers)
     for btn in ("bAct", "bDec", "bX"):
         assert btn + ".focus" not in offer
@@ -400,3 +407,122 @@ def test_free_offer_traps_focus_but_never_focuses_a_button():
     # Maiusc+Tab dal riquadro (focus sul contenitore) non esce dal dialogo
     trap = _extract_fn("_trapFocusIn")
     assert "indexOf" in trap or "includes" in trap
+
+
+# ---- proposta del gratuito: eventi del mouse e focus alla chiusura (comportamento) ----
+
+_FP_HARNESS = r"""
+let _fpPending=null;
+const _ACCT_FP_TIMEOUT_MS=15000;
+const t=function(k){return k};
+const _acctFmtBytes=function(n){return String(n)};
+const _acctFreeQuota=function(){return 1};
+const _acctToast=function(){};
+const _trapFocusIn=function(){};
+const getComputedStyle=function(el){return{visibility:el.visibility||'visible'}};
+const state={active:null};
+const body={id:'body'};
+state.active=body;
+function mk(id){
+  return{id:id,rects:1,isConnected:true,visibility:'visible',textContent:'',disabled:false,
+    classList:{s:new Set(),add(c){this.s.add(c)},remove(c){this.s.delete(c)},contains(c){return this.s.has(c)}},
+    getClientRects(){return{length:this.rects}},
+    focus(){if(this.rects&&this.isConnected)state.active=this}};
+}
+const els={};
+['freePlanModal','fpBody','fpActivate','fpDecline','fpClose','fpPanel'].forEach(function(i){els[i]=mk(i)});
+const document={body:body,
+  getElementById:function(i){return els[i]||null},
+  addEventListener(){},removeEventListener(){},
+  get activeElement(){return state.active}};
+const calls=[];
+const fetch=async function(url,opt){calls.push(JSON.parse(opt.body).action);
+  return{ok:true,json:async function(){return{ok:true}}}};
+"""
+
+_FP_MOUSE = r"""
+(async function(){
+  const m=els.freePlanModal,panel=els.fpPanel,out=[];
+  const seqs={
+    'sfondo-sfondo':[['down',m],['up',m],['click',m]],
+    'sfondo-riquadro':[['down',m],['up',panel],['click',m]],
+    'riquadro-sfondo':[['down',panel],['up',m],['click',m]],
+    'sfondo-riquadro poi sfondo-sfondo':[['down',m],['up',panel],['click',m],['down',m],['up',m],['click',m]]
+  };
+  for(const name of Object.keys(seqs)){
+    calls.length=0;
+    const p=_acctFreeOffer({tolerance_days:15});
+    for(const [kind,target] of seqs[name]){
+      if(kind==='down')m.onmousedown({target:target});
+      else if(kind==='up'){if(m.onmouseup)m.onmouseup({target:target})}
+      else m.onclick({target:target});
+    }
+    out.push([name,calls.length]);
+    if(!calls.length)els.fpClose.onclick();     // chiude per passare al caso dopo
+    await p;
+  }
+  console.log(JSON.stringify(out));
+})();
+"""
+
+_FP_FOCUS = r"""
+(async function(){
+  const out={};
+  async function run(name,setup){
+    state.active=body;
+    const trigger=mk('trigger');
+    trigger.rects=1;trigger.isConnected=true;trigger.visibility='visible';
+    setup(trigger);
+    const p=_acctFreeOffer({tolerance_days:15});
+    out[name+'_open']=state.active.id;                  // il focus e' sul riquadro
+    els.fpClose.onclick();
+    await p;
+    out[name]=state.active.id;
+  }
+  await run('visibile',function(tr){state.active=tr});
+  await run('nascosto',function(tr){tr.rects=0;state.active=tr});
+  await run('visibility',function(tr){tr.visibility='hidden';state.active=tr});
+  await run('rimosso',function(tr){tr.isConnected=false;state.active=tr});
+  await run('nessuno',function(tr){state.active=body});
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+def _run_fp(tmp_path, tail):
+    script = tmp_path / "fp.js"
+    script.write_text(
+        _FP_HARNESS + "\n" + _extract_fn("_acctFreeOffer") + "\n" + tail, encoding="utf-8")
+    res = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    return json.loads(res.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+def test_free_offer_background_decline_needs_press_and_release_on_overlay(tmp_path):
+    got = dict(_run_fp(tmp_path, _FP_MOUSE))
+    assert got["sfondo-sfondo"] == 1                         # un vero clic fuori vale "Non ora"
+    assert got["sfondo-riquadro"] == 0                       # trascinamento verso il riquadro: niente
+    assert got["riquadro-sfondo"] == 0                       # trascinamento verso lo sfondo: niente
+    assert got["sfondo-riquadro poi sfondo-sfondo"] == 1     # il flag non resta sporco
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+def test_free_offer_gives_focus_back_to_the_opener_only_if_visible(tmp_path):
+    got = _run_fp(tmp_path, _FP_FOCUS)
+    for case in ("visibile", "nascosto", "visibility", "rimosso", "nessuno"):
+        assert got[case + "_open"] == "fpPanel", case        # il focus si sposta sul riquadro
+    assert got["visibile"] == "trigger"                      # chiusura: torna a chi l'aveva
+    for case in ("nascosto", "visibility", "rimosso"):
+        assert got[case] != "trigger", case                  # mai su un elemento nascosto/rimosso
+    assert got["nessuno"] != "trigger"                       # senza un chiamante non si inventa nulla
+
+
+def test_free_offer_reads_the_opener_before_moving_focus():
+    offer = _extract_fn("_acctFreeOffer")
+    assert offer.index("document.activeElement") < offer.index("m.classList.add('open')")
+    assert offer.index("m.classList.add('open')") < offer.index("panel.focus()")
+    finish = offer[offer.index("function finish()"):offer.index("async function choose")]
+    assert finish.index("m.classList.remove('open')") < finish.index("refocusOpener()")
+    assert "isConnected" in offer and "getClientRects" in offer
+

@@ -7551,13 +7551,28 @@ function _acctFreeOffer(info){
   const bAct=document.getElementById('fpActivate'),bDec=document.getElementById('fpDecline');
   const bX=document.getElementById('fpClose'),panel=document.getElementById('fpPanel');
   _fpPending=new Promise(function(resolve){
-    let busy=false,downOnOverlay=false;
+    let busy=false,downOnOverlay=false,upOnOverlay=false;
+    // chi aveva il focus prima dell'apertura: si legge qui, prima di spostarlo
+    // sul riquadro (l'observer dei modali lo leggerebbe dopo e ridarebbe il
+    // focus al riquadro, ormai nascosto)
+    let opener=document.activeElement;
+    if(opener===document.body)opener=null;
+    function refocusOpener(){
+      const prev=opener;
+      opener=null;
+      // un elemento tolto dal documento o nascosto nel frattempo non riceve il focus
+      if(!prev||!prev.isConnected||!prev.getClientRects().length)return;
+      if(getComputedStyle(prev).visibility==='hidden')return;
+      try{prev.focus()}catch(e){}
+    }
     function onKey(ev){if(ev.key==='Escape')choose('decline')}
     function finish(){
       document.removeEventListener('keydown',onKey);
       m.classList.remove('open');
+      refocusOpener();
       m.onclick=null;
       m.onmousedown=null;
+      m.onmouseup=null;
       [bAct,bDec,bX].forEach(function(b){if(b){b.onclick=null;b.disabled=false}});
       _fpPending=null;
       resolve();
@@ -7590,10 +7605,12 @@ function _acctFreeOffer(info){
     if(bAct)bAct.onclick=function(){choose('activate')};
     if(bDec)bDec.onclick=function(){choose('decline')};
     if(bX)bX.onclick=function(){choose('decline')};
-    // "clic fuori" solo se anche la pressione e' partita dallo sfondo: una
-    // selezione di testo dal riquadro allo sfondo non e' un rifiuto
-    m.onmousedown=function(ev){downOnOverlay=(ev.target===m)};
-    m.onclick=function(ev){const out=(ev.target===m&&downOnOverlay);downOnOverlay=false;if(out)choose('decline')};
+    // "clic fuori" solo se pressione e rilascio sono entrambi sullo sfondo: una
+    // selezione di testo dal riquadro allo sfondo (o dallo sfondo al riquadro,
+    // dove il click nasce comunque sullo sfondo) non e' un rifiuto
+    m.onmousedown=function(ev){downOnOverlay=(ev.target===m);upOnOverlay=false};
+    m.onmouseup=function(ev){upOnOverlay=(ev.target===m)};
+    m.onclick=function(ev){const out=(ev.target===m&&downOnOverlay&&upOnOverlay);downOnOverlay=upOnOverlay=false;if(out)choose('decline')};
     document.addEventListener('keydown',onKey);
     m.classList.add('open');
     // il focus va al riquadro, non a un pulsante: nessuna scelta suggerita
