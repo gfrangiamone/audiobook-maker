@@ -126,6 +126,17 @@ _MY_JOBS_LIVE_STATUSES = (
 )
 
 
+def job_running_voice(job):
+    """Voce con cui il job genera (o generera') l'audio, per la pagina che si
+    riaggancia dopo un F5: e' lei a decidere se il cancel passa dal modale con
+    la quota trattenuta (job 2D9_8NHF, 21/10/2026). Nel flusso ottimizzazione +
+    generazione job["voice"] si allinea solo all'avvio dell'audio e puo' ancora
+    portare la voce di un run annullato."""
+    if job.get("status") == "optimizing" and job.get("opt_auto_generate"):
+        return job.get("opt_voice") or ""
+    return job.get("voice") or ""
+
+
 @bp.route("/api/my_jobs")
 def api_my_jobs():
     """Job del client chiamante: attivi (in-memory) + completati (token su disco).
@@ -181,6 +192,7 @@ def api_my_jobs():
             "total_chapters": int(job.get("total_chapters")
                                   or len(getattr(info, "chapters", None) or [])),
             "email_registered": bool(job.get("notify_email")),
+            "voice": job_running_voice(job),
         }
         if _is_admin_pending:
             entry["admin_copy"] = True

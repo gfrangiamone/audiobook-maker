@@ -89,6 +89,24 @@ def test_running_job_carries_everything_the_page_lost(client, seed_job):
     assert j["email_registered"] is True
 
 
+def test_running_job_reports_its_voice(client, seed_job):
+    # Dopo un F5 i selettori tornano alla voce standard di default: senza la
+    # voce del job il cancel di un libro PREMIUM saltava il modale con la
+    # quota trattenuta (job 2D9_8NHF, 21/10/2026).
+    seed_job("rjv", status="generating", voice="voxcpm:v2:en-GB/Colin",
+             info=_FakeInfo("Libro", 3), start_time=time.time())
+    assert _jobs(client)[0]["voice"] == "voxcpm:v2:en-GB/Colin"
+
+
+def test_optimizing_job_reports_the_voice_of_its_auto_generation(client, seed_job):
+    # Ottimizzazione + generazione in un passo: job["voice"] si allinea solo
+    # quando parte l'audio, e puo' ancora portare la voce di un run annullato.
+    seed_job("rjo", status="optimizing", voice="en-GB-RyanNeural",
+             opt_auto_generate=True, opt_voice="voxcpm:v2:en-GB/Colin",
+             info=_FakeInfo("Libro", 3), start_time=time.time())
+    assert _jobs(client)[0]["voice"] == "voxcpm:v2:en-GB/Colin"
+
+
 def test_optimizing_job_is_restorable_with_its_char_progress(client, seed_job):
     seed_job("rj2", status="optimizing", output_format="m4b",
              info=_FakeInfo("Libro", 3), opt_processed_chars=1500,
@@ -202,6 +220,7 @@ def test_reupload_of_a_running_job_returns_its_parameters(
     seed_job("rjrun", status="generating", file_hash=file_hash,
              output_format="zip_rss", single_file=False,
              notify_email="u@x.it", info=_FakeInfo("Libro in corso", 12),
+             voice="voxcpm:v2:en-GB/Colin",
              progress_current=5, progress_total=50, start_time=time.time())
     r = client.post(
         "/api/analyze", headers=HDR,
@@ -216,6 +235,7 @@ def test_reupload_of_a_running_job_returns_its_parameters(
     assert d["title"] == "Libro in corso"
     assert d["total_chapters"] == 12
     assert d["email_registered"] is True
+    assert d["voice"] == "voxcpm:v2:en-GB/Colin"
 
 
 # ------------------------------------------------------------ client (app.js)
@@ -294,6 +314,64 @@ def test_reset_clears_the_restore_notice():
     fn = _extract_fn("resetAll")
     assert "restoreNotice" in fn
     assert "_jobRestored=false" in fn
+
+
+def test_cancel_and_lock_follow_the_voice_of_the_running_job():
+    for name in ("cancelJob", "_updateGeminiCancelLockUI"):
+        fn = _extract_fn(name)
+        assert "_activeJobVoiceId()" in fn and "getCurrentVoiceId()" not in fn, name
+
+
+def test_reupload_branch_passes_the_job_voice():
+    i = APP.index("_rehydrateJobFromServer({job_id:d.existing_job_id")
+    assert "voice:d.voice" in APP[i:APP.index(");", i)]
+
+
+def test_a_new_generation_from_the_page_drops_the_restored_voice():
+    # Da qui in poi la voce del job e' quella scelta nei selettori.
+    for name in ("startGen", "startCombinedGeneration"):
+        assert "_restoredVoice=''" in _extract_fn(name), name
+
+
+_CANCEL_STUBS = """
+var window={}, document={getElementById:function(){return null}};
+var jobId=null, generating=false, wizMode='', outputFormat='m4b', singleFile=true,
+    emailRegistered=false, bookData=null, _jobRestored=false, _restoredVoice='';
+var calls=[];
+var navigator={sendBeacon:function(u){calls.push('beacon '+u)}};
+function fetch(u){calls.push('fetch '+u);return Promise.resolve({ok:false});}
+function getCurrentVoiceId(){return 'en-GB-RyanNeural'}
+function onOutputChange(){}
+function _completeCancelUI(){calls.push('ui')}
+function _showCancelLockedModal(){calls.push('locked')}
+function _confirmCancelGeminiModal(){calls.push('modal');return Promise.resolve(false)}
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+@pytest.mark.parametrize("voice,expected", [
+    # Job 2D9_8NHF (21/10/2026): F5 durante una generazione VoxCPM, la pagina
+    # si riaggancia ma i selettori dicono "voce standard" e il cancel partiva
+    # con un beacon diretto, senza cancel_preview ne' modale.
+    ("voxcpm:v2:en-GB/Colin", ["fetch /api/cancel_preview/J1", "modal"]),
+    ("en-GB-RyanNeural", ["beacon /api/cancel/J1?force=1", "ui"]),
+])
+def test_cancel_after_restore_behavior(tmp_path, voice, expected):
+    names = ["_isGeminiVoiceId", "_isSpeechifyVoiceId", "_isVoxcpmVoiceId",
+             "_rehydrateJobFromServer", "cancelJob"]
+    if "function _activeJobVoiceId(" in APP:
+        names.append("_activeJobVoiceId")
+    script = tmp_path / "cancel.js"
+    script.write_text(
+        _CANCEL_STUBS + "\n".join(_extract_fn(n) for n in names)
+        + "\n_rehydrateJobFromServer({job_id:'J1',status:'generating',"
+        + "output_format:'m4b',voice:" + json.dumps(voice) + "});"
+        + "\ngenerating=true;cancelJob();"
+        + "\nsetTimeout(function(){console.log(JSON.stringify(calls))},10);",
+        encoding="utf-8")
+    res = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    assert json.loads(res.stdout.strip()) == expected
 
 
 PCT_CASES = [

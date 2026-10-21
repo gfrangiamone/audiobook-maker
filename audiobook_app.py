@@ -3644,6 +3644,7 @@ def api_analyze():
                     existing_job.get("total_chapters")
                     or len(getattr(_info_run, "chapters", None) or [])),
                 "email_registered": bool(existing_job.get("notify_email")),
+                "voice": routes_mobile.job_running_voice(existing_job),
             })
         if status in ("analyzed", "optimized"):
             # Reuse existing analyzed/optimized job

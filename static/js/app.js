@@ -730,7 +730,8 @@ async function analyzeEpub(file){
       // bottoni sul formato di default invece che su quello del job.
       _rehydrateJobFromServer({job_id:d.existing_job_id,title:d.title,
         output_format:d.output_format,single_file:d.single_file,
-        total_chapters:d.total_chapters,email_registered:d.email_registered});
+        total_chapters:d.total_chapters,email_registered:d.email_registered,
+        voice:d.voice});
       lo.classList.remove('vis');hideUploadProgress();
       let pct=0;
       if(d.status==='optimizing'){
@@ -3987,6 +3988,7 @@ async function _validateLanguage() {
 
 async function startCombinedGeneration(combinedPaymentToken){
   if(!jobId||generating)return;
+  _restoredVoice='';
 
   // Check admin suspend
   try{
@@ -4622,6 +4624,7 @@ function openDonateFromFooter(){
 
 async function startGen(){
   // Direct TTS generation (called from startCombinedGeneration or from old optimize→proceed flow)
+  _restoredVoice='';
   try{const sr=await fetch('/api/admin/suspend');if(sr.ok){const sd=await sr.json();if(sd.suspended){alert('System under maintenance. Please try again in a few minutes.');return}}}catch(e){}
   if(!(await _validateLanguage()))return;
   let selectedChapters=_getSelectedChapterIndexes();
@@ -5283,6 +5286,15 @@ function listenProgress(){
 // del servizio la lista torna vuota e la pagina resta al form — in quel caso
 // il job o e' morto o prosegue in batch, e la consegna avviene per email.
 let _jobRestored=false;
+// Voce del job a cui la pagina si e' riagganciata. I selettori dopo il
+// reload tornano alla voce standard di default: il cancel di un libro
+// PREMIUM partiva come beacon diretto, senza modale ne' quota trattenuta
+// mostrata (job 2D9_8NHF, 21/10/2026).
+let _restoredVoice='';
+function _activeJobVoiceId(){
+  if(_jobRestored&&_restoredVoice)return _restoredVoice;
+  return (typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+}
 
 // Percentuale gia' raggiunta secondo lo snapshot della lista: serve solo a non
 // mostrare 0% nell'attesa del primo tick dello stream.
@@ -5312,6 +5324,7 @@ function _rehydrateJobFromServer(d){
   else{outputFormat=fmt;singleFile=(fmt==='m4b'||fmt==='mp3');}
   if(typeof d.single_file==='boolean')singleFile=d.single_file;
   if(d.email_registered)emailRegistered=true;
+  _restoredVoice=typeof d.voice==='string'?d.voice:'';
   if(!bookData){
     // Stub: il server manda titolo e numero di capitoli, non l'analisi
     // completa. `_restored` segnala che l'elenco dei capitoli non c'e': il
@@ -5647,7 +5660,7 @@ var _GEMINI_CANCEL_LOCK_PCT_CLIENT = 70;
 function _updateGeminiCancelLockUI(pct){
   var btnC = document.getElementById('btnC');
   if(!btnC) return;
-  var voice = (typeof getCurrentVoiceId==='function') ? getCurrentVoiceId() : '';
+  var voice = _activeJobVoiceId();
   if(!_isGeminiVoiceId(voice)){
     if(btnC.disabled && btnC.dataset.lockedByCancelFloor==='1'){
       btnC.disabled=false;
@@ -5692,7 +5705,7 @@ function _completeCancelUI(){
 
 function cancelJob(){
   if(!jobId||!generating)return;
-  var voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  var voice=_activeJobVoiceId();
   // Tutte le voci PREMIUM chiedono conferma: il cancel trattiene la quota
   // gia' sintetizzata (VoxCPM/Speechify compresi, senza audio parziale).
   if(_isGeminiVoiceId(voice)||_isSpeechifyVoiceId(voice)||_isVoxcpmVoiceId(voice)){
@@ -6103,7 +6116,7 @@ function resetAll(){
   _stopAnalyzedHeartbeat();
   // L'avviso di ripresa parla di un lavoro che da qui in poi non e' piu' quello
   // in pagina: va via insieme al resto dello stato.
-  _jobRestored=false;
+  _jobRestored=false;_restoredVoice='';
   const _rn=document.getElementById('restoreNotice');if(_rn)_rn.remove();
   if(hbInterval){clearInterval(hbInterval);hbInterval=null}
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
