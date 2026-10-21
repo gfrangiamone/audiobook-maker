@@ -121,17 +121,26 @@ def _pagination(default_limit, cap):
     return limit, offset
 
 
+def json_body():
+    """Il corpo JSON della richiesta come dict: assente, illeggibile o non un
+    oggetto (`[1]`, `"x"`) vale `{}`, cosi' `.get` non solleva e la validazione
+    della route risponde 400. Usata anche dalle route dell'account."""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
 def _day_epoch(raw, end=False):
     """`YYYY-MM-DD` (UTC) -> epoch della mezzanotte di quel giorno, o di quella
     del giorno dopo con `end=True` (estremo escluso di un intervallo, e fine di
-    un regalo "fino a tutto quel giorno"). None se manca o e' malformata."""
+    un regalo "fino a tutto quel giorno"). None se manca, e' malformata o il
+    giorno dopo esce dal range di `datetime` (`9999-12-31`)."""
     try:
         d = datetime.strptime(str(raw or "").strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
+        if end:
+            d += timedelta(days=1)
+        return int(d.timestamp())
+    except (ValueError, OverflowError):
         return None
-    if end:
-        d += timedelta(days=1)
-    return int(d.timestamp())
 
 
 @bp.route("/admin/audit-premium", methods=["GET"])
@@ -1395,7 +1404,7 @@ def admin_api_account_gift():
     "YYYY-MM-DD"}. 409 se c'e' un piano pagato attivo."""
     if not accounts.enabled():
         return jsonify({"error": "accounts disabled"}), 503
-    body = request.get_json(silent=True) or {}
+    body = json_body()
     account_id = str(body.get("account_id") or "").strip()
     if not account_id:
         return jsonify({"error": "account_id required"}), 400
@@ -1424,7 +1433,7 @@ def admin_api_account_gift_revoke():
     Body: {"account_id": ...}. 409 se il piano non e' un regalo."""
     if not accounts.enabled():
         return jsonify({"error": "accounts disabled"}), 503
-    body = request.get_json(silent=True) or {}
+    body = json_body()
     account_id = str(body.get("account_id") or "").strip()
     if not account_id:
         return jsonify({"error": "account_id required"}), 400

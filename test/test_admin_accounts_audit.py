@@ -118,6 +118,18 @@ def test_accounts_audit_api_bad_date_is_ignored(acct_env, monkeypatch):
     assert r.get_json()["count"] == 1
 
 
+def test_accounts_audit_api_max_date_is_ignored_like_a_bad_date(acct_env, monkeypatch):
+    """`date_to=9999-12-31` (il giorno dopo esce dal range) vale come una data malformata:
+    ignorata, non un falso "accounts unavailable" (503)."""
+    _login("api@example.com", T0)
+    c = _admin(monkeypatch)
+    h = {"X-Admin-Token": "secret"}
+    bad = c.get("/admin/api/accounts_audit?date_to=non-una-data", headers=h)
+    r = c.get("/admin/api/accounts_audit?date_to=9999-12-31", headers=h)
+    assert r.status_code == bad.status_code == 200
+    assert r.get_json()["count"] == 1
+
+
 def test_accounts_audit_api_filters_by_plan_and_origin(acct_env, monkeypatch):
     gifted = _login("gift@example.com", T0)
     _login("none@example.com", T0)

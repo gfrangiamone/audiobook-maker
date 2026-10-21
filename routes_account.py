@@ -31,6 +31,7 @@ import email_service
 import i18n as _i18n
 import payment
 import pending_jobs
+import routes_admin_audit
 import routes_mobile
 import routes_voice_clone
 import storage_backend
@@ -849,7 +850,7 @@ def api_account_free_plan():
     acct, err = _acct_required()
     if err:
         return err
-    data = request.get_json(silent=True) or {}
+    data = routes_admin_audit.json_body()
     action = str(data.get("action") or "")
     try:
         acct = accounts.free_plan_action(acct["id"], action, str(data.get("source") or "account"))
