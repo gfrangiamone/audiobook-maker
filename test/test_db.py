@@ -40,15 +40,17 @@ def test_migrate_is_idempotent(dbenv):
 
 def test_migrate_accepts_callables(tmp_path):
     db.init(tmp_path)
-    seen = []
-    assert db.migrate("m_call", ["CREATE TABLE t(x INTEGER)",
-                                 lambda c: c.execute("INSERT INTO t VALUES (7)"),
-                                 lambda c: seen.append(1)])
-    assert not db.migrate("m_call", [lambda c: seen.append(2)])
-    with db.tx() as c:
-        assert c.execute("SELECT x FROM t").fetchone()[0] == 7
-    assert seen == [1]
-    db.close()
+    try:
+        seen = []
+        assert db.migrate("m_call", ["CREATE TABLE t(x INTEGER)",
+                                     lambda c: c.execute("INSERT INTO t VALUES (7)"),
+                                     lambda c: seen.append(1)])
+        assert not db.migrate("m_call", [lambda c: seen.append(2)])
+        with db.tx() as c:
+            assert c.execute("SELECT x FROM t").fetchone()[0] == 7
+        assert seen == [1]
+    finally:
+        db.close()
 
 
 def test_migrate_rolls_back_on_error(dbenv):
