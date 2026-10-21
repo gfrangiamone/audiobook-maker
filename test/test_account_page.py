@@ -499,6 +499,16 @@ def test_delete_request_ignores_body_email(logged, env):
     assert env["codes"][-1][0] == "a@b.it"
 
 
+def test_free_plan_route_non_object_json_body_is_400(logged):
+    """Corpo JSON che non e' un oggetto: azione assente, quindi 400 (mai 500), e nessun consenso."""
+    c, acct = logged
+    for body in ([1], "x", 1, [], None):
+        r = c.post("/api/account/free_plan", json=body)
+        assert r.status_code == 400, body
+        assert r.get_json()["error_code"] == "bad_request", body
+    assert accounts.get(acct["id"])["free_consent_at"] is None
+
+
 def test_account_page_plan_header_route(logged):
     """/account passa quota gratuita e tolleranza alla testata: prima del consenso
     c'e' l'attivazione (con la quota nel popup), dopo il consenso il ritiro e la

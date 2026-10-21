@@ -36,6 +36,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.delenv("ABM_ARCHIVE_TOLERANCE_REMIND_DAYS", raising=False)
     accounts._archive_cache_clear()
     archive_tolerance._sweep_state["at"] = float("inf")     # i test non spazzano mai da soli: solo force=True
+    archive_tolerance._sweep_state["cursor"] = None
     user_archive._sweep_state["at"] = 0.0
     r2 = FakeR2()
     r2.install(monkeypatch)
@@ -249,13 +250,13 @@ def test_delete_account_clears_notice_ids(env):
 
 
 @pytest.mark.parametrize("raw", ["not json{", "", '{"job:j1": 1}', "[1, 2]", '"job:j1"', "7", '["job:j1", null]'])
-def test_malformed_notice_ids_is_treated_as_null_and_logged(env, monkeypatch, raw):
+def test_malformed_notice_ids_is_an_empty_set_and_logged(env, monkeypatch, raw):
     seen = []
     monkeypatch.setattr(accounts, "_log", seen.append)
     a = _login("a@b.it")
     with db.tx() as c:
         c.execute("UPDATE accounts SET archive_notice_ids=? WHERE id=?", (raw, a["id"]))
-    assert accounts.archive_notice_keys(accounts.get(a["id"])) is None        # mai un'eccezione
+    assert accounts.archive_notice_keys(accounts.get(a["id"])) == set()       # mai un'eccezione
     assert len(seen) == 1 and seen[0].startswith("WARNING accounts") and a["id"] in seen[0]
     seen.clear()
     with db.tx() as c:                                                        # NULL e' normale: nessun avviso
@@ -845,9 +846,10 @@ def test_reminder_narrows_the_announced_set(env, mails, monkeypatch):
     assert _state(a) == (None, 0, None)
 
 
-def test_malformed_notice_ids_skips_the_check_in_the_sweep(env, mails, monkeypatch):
-    """Chiavi annunciate illeggibili valgono NULL: niente confronto, niente avviso nuovo, vale la
-    scadenza (come per lo stato migrato); l'anomalia finisce nel log."""
+def test_malformed_notice_ids_force_a_new_notice_not_an_eviction(env, mails, monkeypatch):
+    """Chiavi annunciate illeggibili valgono "nessun libro elencato": a tolleranza scaduta non si
+    toglie niente (l'utente non sa cosa rischia), parte un nuovo avviso e la finestra riparte;
+    l'anomalia finisce nel log."""
     seen = []
     monkeypatch.setattr(accounts, "_log", seen.append)
     _small_quota(monkeypatch)
@@ -858,9 +860,11 @@ def test_malformed_notice_ids_skips_the_check_in_the_sweep(env, mails, monkeypat
     assert archive_tolerance.sweep(now=start, force=True)["started"] == 1
     with db.tx() as c:
         c.execute("UPDATE accounts SET archive_notice_ids='{rotto' WHERE id=?", (a["id"],))
-    out = archive_tolerance.sweep(now=start + 15 * DAY, force=True)
-    assert out["evicted"] == 1 and out["started"] == 0 and out["errors"] == 0 and len(mails.over) == 1
-    assert _protected("j_a", "j_b") == [False, True] and _state(a) == (None, 0, None)
+    later = start + 15 * DAY
+    out = archive_tolerance.sweep(now=later, force=True)
+    assert out["evicted"] == 0 and out["started"] == 1 and out["errors"] == 0 and len(mails.over) == 2
+    assert _protected("j_a", "j_b") == [True, True]
+    assert _state(a) == (later, 1, ["job:j_a"])               # elenco e scadenza ricalcolati
     assert any("archive_notice_ids" in m and a["id"] in m for m in seen)
 
 
@@ -890,6 +894,23 @@ def _open_two(monkeypatch):
         _archived(acct, f"j{i}", 150, at=T0)
         ids.append(acct["id"])
     return ids
+
+
+def test_notice_ids_cover_the_whole_plan_not_only_the_books_listed_in_the_email(env, mails, monkeypatch):
+    """Un piano piu' lungo di ARCHIVE_MAIL_MAX_BOOKS: l'email ne elenca solo i primi, ma le chiavi
+    salvate (e quindi cio' che a scadenza si puo' togliere) sono tutte quelle del piano."""
+    _small_quota(monkeypatch, 10)
+    a = _login("a@b.it"); _consent(a)
+    n = email_service.ARCHIVE_MAIL_MAX_BOOKS + 4
+    for i in range(n + 1):                                    # una voce in piu': resta in quota
+        _archived(a, f"j{i:02d}", 10, at=T0 + i)
+    start = T0 + 100
+    assert archive_tolerance.sweep(now=start, force=True)["started"] == 1
+    assert len(mails.over[0]["books"]) == n > email_service.ARCHIVE_MAIL_MAX_BOOKS
+    assert _state(a) == (start, 1, sorted(f"job:j{i:02d}" for i in range(n)))
+    out = archive_tolerance.sweep(now=start + 15 * DAY, force=True)    # a scadenza il piano e' ancora annunciato
+    assert out["evicted"] == n and out["started"] == 0 and out["errors"] == 0
+    assert _protected(f"j{n:02d}") == [True] and len(mails.over) == 1
 
 
 def test_notice_cap_defers_the_remaining_accounts(env, mails, monkeypatch):
@@ -923,6 +944,35 @@ def test_notice_cap_counts_failed_attempts_and_reminders(env, mails, monkeypatch
     out = archive_tolerance.sweep(now=deadline - 3 * DAY + 7200, force=True)
     assert len(mails.remind) == 3 and out["reminded"] == 1 and out["deferred"] == 0
     assert [accounts.get(i)["archive_notice_stage"] for i in ids] == [2, 2]
+
+
+def test_notice_cap_rotates_so_failing_accounts_do_not_starve_the_rest(env, mails, monkeypatch):
+    """I primi MAX_NOTICES_PER_SWEEP account (per id) hanno la posta che rifiuta: senza rotazione
+    i loro tentativi falliti occuperebbero tutti i posti a ogni giro e l'ultimo non riceverebbe
+    mai l'avviso."""
+    _small_quota(monkeypatch)
+    n = archive_tolerance.MAX_NOTICES_PER_SWEEP
+    accts = []
+    for i in range(n + 1):
+        a = _login(f"u{i}@b.it"); _consent(a)
+        _archived(a, f"j{i}", 150, at=T0)
+        accts.append(a)
+    last = max(accts, key=lambda a: a["id"])                  # il 21esimo nell'ordine del giro
+    attempts = []
+
+    def over(email, lang, **kw):
+        attempts.append(email)
+        return email == last["email"]                         # solo la sua posta funziona
+
+    monkeypatch.setattr(email_service, "send_archive_over", over)
+    out = archive_tolerance.sweep(now=T0 + 10, force=True)
+    assert out["deferred"] == 1 and out["errors"] == n and out["started"] == 0
+    assert len(attempts) == n and last["email"] not in attempts
+    assert accounts.get(last["id"])["archive_over_since"] is None
+    out = archive_tolerance.sweep(now=T0 + 3600, force=True)  # al giro dopo parte da dove si era fermato
+    assert last["email"] in attempts[n:]
+    assert out["started"] == 1 and out["deferred"] == 1 and out["errors"] == n - 1
+    assert accounts.get(last["id"])["archive_over_since"] == T0 + 3600
 
 
 def test_notice_cap_does_not_hold_back_evictions_without_email(env, mails, monkeypatch):

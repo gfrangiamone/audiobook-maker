@@ -267,8 +267,9 @@ def _migrate_plans_v2_data(c):
     _grant_migrated_consent(c, in_grace, now)
     c.execute("UPDATE accounts SET plan_until=NULL, archive_over_since=?, archive_notice_stage=2 "
               "WHERE plan=? AND plan_until IS NOT NULL", (now - tolerance_sec - 1, PLAN_FREE))
-    c.execute("UPDATE accounts SET plan_until=NULL WHERE plan_until IS NOT NULL AND plan NOT IN (?, ?)",
-              SPACE_PLANS)
+    space_marks = ",".join("?" * len(SPACE_PLANS))
+    c.execute("UPDATE accounts SET plan_until=NULL WHERE plan_until IS NOT NULL "
+              f"AND plan NOT IN ({space_marks})", SPACE_PLANS)
 
 
 def init_schema():
@@ -1039,6 +1040,12 @@ def format_bytes(n):
     return f"{n / GIB:.2f}".rstrip("0").rstrip(".") + " GB"
 
 
+def utc_day(epoch):
+    """Data UTC `YYYY-MM-DD` di un epoch: l'unico formato di giorno di email e
+    pagine dell'archivio (scadenze, ultimo giorno di un regalo)."""
+    return time.strftime("%Y-%m-%d", time.gmtime(int(epoch)))
+
+
 def _archive_cache_clear():
     with _archive_cache_lock:
         _archive_cache["at"] = 0.0
@@ -1119,14 +1126,17 @@ def archive_grace_until(account):
     return int(since) + archive_tolerance_days() * 86400
 
 
-def archive_state(account, now=None):
+def archive_state(account, now=None, quota=None):
     """"grace" (tolleranza aperta: quota persa con l'archivio oltre la nuova
-    quota), "active" (c'e' una quota) o "none"."""
+    quota), "active" (c'e' una quota) o "none". `quota`: la quota gia' calcolata
+    da `archive_quota_for`, per non ripeterne il calcolo."""
     if not account:
         return "none"
     if account.get("archive_over_since") is not None:
         return "grace"
-    return "active" if archive_quota_for(account, now) > 0 else "none"
+    if quota is None:
+        quota = archive_quota_for(account, now)
+    return "active" if quota > 0 else "none"
 
 
 def archive_status(account, now=None):
@@ -1141,7 +1151,7 @@ def archive_status(account, now=None):
     used, n = archive_usage(account["id"])
     items = archive_items_count(account["id"])
     quota = archive_quota_for(account, now)
-    state = archive_state(account, now)
+    state = archive_state(account, now, quota)
     if not (quota or used or n or items) and state != "grace":
         return None
     spaced = space_plan_active(account, now)
@@ -1295,8 +1305,11 @@ def set_archive_tolerance(account_id, over_since, stage, notice_ids=None):
 
 def archive_notice_keys(account):
     """Insieme delle chiavi dei libri elencati dall'ultima email di un account (riga di
-    `get`), o None se non c'e' niente da confrontare: colonna NULL (stato migrato) o
-    JSON illeggibile, che si registra come WARNING e non solleva mai."""
+    `get`), o None se non c'e' niente da confrontare: solo la colonna NULL (stato migrato,
+    nessuna email mai partita con un elenco). JSON illeggibile (o non una lista di stringhe)
+    vale l'insieme vuoto, cioe' "nessun libro e' stato elencato": chi chiama manda un nuovo
+    avviso invece di togliere un libro che l'utente non sa di rischiare. Si registra come
+    WARNING e non solleva mai."""
     raw = account.get("archive_notice_ids")
     if raw is None:
         return None
@@ -1307,8 +1320,8 @@ def archive_notice_keys(account):
     except (TypeError, ValueError):
         pass
     _log(f"WARNING accounts: archive_notice_ids illeggibile per l'account {account.get('id')}, "
-         f"trattato come assente")
-    return None
+         f"trattato come vuoto (nuovo avviso prima di togliere qualcosa)")
+    return set()
 
 
 def evict_archived_job(job_id, now=None):
@@ -1332,7 +1345,9 @@ ADMIN_ORIGINS = (*PLAN_SOURCES, "free", "none")
 def _admin_plan_where(plan, origin, now):
     """Condizioni SQL (alias `a`) dei filtri per piano effettivo e per origine
     della console admin, come ([sql, ...], [args]). Valori sconosciuti non
-    filtrano, come `state`."""
+    filtrano, come `state`. `plan=free`, `origin=free` e `origin=none` valgono
+    solo per gli account vivi (un account cancellato torna a `free`, ma non ha
+    piano ne' origine), come gli aggregati."""
     where, args = [], []
     if plan in SPACE_PLANS:
         sql, a = _space_plan_sql(now)
@@ -1340,7 +1355,7 @@ def _admin_plan_where(plan, origin, now):
         args += [*a, plan]
     elif plan == PLAN_FREE:
         sql, a = _space_plan_sql(now)
-        where.append("NOT (" + sql + ")")
+        where.append("a.deleted_at IS NULL AND NOT (" + sql + ")")
         args += a
     if origin in PLAN_SOURCES:
         sql, a = _space_plan_sql(now, origin)
@@ -1348,7 +1363,7 @@ def _admin_plan_where(plan, origin, now):
         args += a
     elif origin in ("free", "none"):
         sql, a = _space_plan_sql(now, PLAN_SOURCES)
-        where.append("NOT (" + sql + ") AND a.free_consent_at IS "
+        where.append("a.deleted_at IS NULL AND NOT (" + sql + ") AND a.free_consent_at IS "
                      + ("NOT NULL" if origin == "free" else "NULL"))
         args += a
     return where, args
@@ -1501,11 +1516,14 @@ FREE_CONSENT_SOURCES = ("prompt", "account")
 
 def free_offer_pending(account, now=None):
     """True se all'utente va proposto il piano gratuito: account vivo, mai
-    proposto, nessun consenso e nessun regalo attivo (con un regalo la proposta
-    non compare e ricompare, senza consenso, al primo accesso dopo la scadenza)."""
+    proposto, nessun consenso, quota gratuita maggiore di 0 e nessun regalo
+    attivo (con un regalo la proposta non compare e ricompare, senza consenso,
+    al primo accesso dopo la scadenza)."""
     if not account or account.get("deleted_at") is not None:
         return False
     if account.get("free_consent_at") is not None or account.get("free_offer_at") is not None:
+        return False
+    if plan_quota_bytes(PLAN_FREE) <= 0:      # quota azzerata da env: niente da offrire
         return False
     return not gift_active(account, now)
 
@@ -1516,17 +1534,18 @@ def free_plan_action(account_id, action, source, now=None):
 
     `activate` da' il consenso (riga `grant`), `decline` chiude la proposta senza
     consenso (riga `decline`), `deactivate` ritira il consenso (riga `withdraw`).
-    Le azioni che non cambiano nulla (attivare con il consenso gia' dato,
-    rifiutare con il consenso dato, ritirarlo quando manca) non scrivono righe.
-    Lettura e scrittura stanno nella stessa transazione: un doppio click non
-    duplica la riga. ValueError su azione o sorgente sconosciute."""
+    Le azioni che non cambiano nulla non scrivono righe: attivare con il consenso
+    gia' dato, ritirarlo quando manca, rifiutare con il consenso dato o a proposta
+    gia' chiusa (`free_offer_at`: la riga `decline` e' la prima risposta, non una
+    per ogni click). Lettura e scrittura stanno nella stessa transazione: un
+    doppio click non duplica righe. ValueError su azione o sorgente sconosciute."""
     if action not in FREE_PLAN_ACTIONS:
         raise ValueError(f"unknown free plan action: {action!r}")
     if source not in FREE_CONSENT_SOURCES:
         raise ValueError(f"unknown free plan source: {source!r}")
     now = _now(now)
     with db.tx() as c:
-        row = c.execute("SELECT free_consent_at, deleted_at FROM accounts WHERE id=?",
+        row = c.execute("SELECT free_consent_at, free_offer_at, deleted_at FROM accounts WHERE id=?",
                         (account_id,)).fetchone()
         if row is None or row["deleted_at"] is not None:
             return None
@@ -1536,9 +1555,8 @@ def free_plan_action(account_id, action, source, now=None):
                       "free_offer_at=COALESCE(free_offer_at, ?) WHERE id=?",
                       (now, FREE_TERMS_VERSION, now, account_id))
             _insert_consents(c, [(account_id, now, "grant", FREE_TERMS_VERSION, source)])
-        elif action == "decline" and not has_consent:
-            c.execute("UPDATE accounts SET free_offer_at=COALESCE(free_offer_at, ?) WHERE id=?",
-                      (now, account_id))
+        elif action == "decline" and not has_consent and row["free_offer_at"] is None:
+            c.execute("UPDATE accounts SET free_offer_at=? WHERE id=?", (now, account_id))
             _insert_consents(c, [(account_id, now, "decline", "", source)])
         elif action == "deactivate" and has_consent:
             c.execute("UPDATE accounts SET free_consent_at=NULL, free_consent_version='' WHERE id=?",
@@ -1570,15 +1588,17 @@ def gift_plan(account_id, plan, until, now=None):
     """Regala il piano di spazio `plan` fino a `until` (epoch intero, nel
     futuro). ValueError su piano sconosciuto o `until` non intero o non futuro.
 
-    Ritorna (esito, account): "ok" (account aggiornato), "not_found" (assente o
-    cancellato, None) o "paid" (c'e' un piano pagato attivo: non si
-    sovrascrive; account invariato). Lettura e scrittura nella stessa
-    transazione."""
+    Ritorna (esito, account): "ok" (account aggiornato), "not_found" (assente,
+    cancellato o account disattivati, None) o "paid" (c'e' un piano pagato
+    attivo: non si sovrascrive; account invariato). Lettura e scrittura nella
+    stessa transazione."""
     if plan not in SPACE_PLANS:
         raise ValueError(f"unknown space plan: {plan!r}")
     now = _now(now)
     if isinstance(until, bool) or not isinstance(until, int) or until <= now:
         raise ValueError(f"gift end must be a future epoch: {until!r}")
+    if not enabled():
+        return "not_found", None
     with db.tx() as c:
         acct = _live_account(c, account_id)
         if acct is None:
@@ -1594,8 +1614,10 @@ def gift_plan(account_id, plan, until, now=None):
 
 def revoke_gift(account_id, now=None):
     """Toglie il piano regalato e riporta l'account a `free`. Ritorna (esito,
-    account): "ok", "not_found" (assente o cancellato) o "not_gift" (il piano
-    non e' un regalo: un piano pagato non si revoca da qui)."""
+    account): "ok", "not_found" (assente, cancellato o account disattivati) o
+    "not_gift" (il piano non e' un regalo: un piano pagato non si revoca da qui)."""
+    if not enabled():
+        return "not_found", None
     with db.tx() as c:
         acct = _live_account(c, account_id)
         if acct is None:

@@ -2,6 +2,7 @@
 """Archivio dei lavori: quota del piano (gratuito con consenso), ingresso dei job
 in archivio entro quota, protezione da retention e cleanup, area personale."""
 import re
+import shutil
 from html import escape
 
 import pytest
@@ -293,6 +294,41 @@ def test_plan_header_states(acct_env):
     assert 'id="freePlanOn"' not in html and 'id="freePlanOff"' not in html
 
 
+def test_plan_header_gift_last_day_is_the_day_before_midnight(acct_env):
+    """`gift_plan` salva la scadenza a mezzanotte UTC del giorno dopo l'ultimo
+    giorno scelto: la testata mostra l'ultimo giorno, non la mezzanotte."""
+    t = _it()
+    acct = _login("a@b.it")
+    until = T0 + 16 * 3600                               # 2027-01-16T00:00Z
+    assert accounts.utc_day(until) == "2027-01-16" and accounts.utc_day(until - 1) == "2027-01-15"
+    st = {"plan": "sub_5", "plan_source": "gift", "plan_until": until, "free_active": False,
+          "quota_bytes": 5 * accounts.GIB, "used_bytes": 0, "jobs": 0, "items": 0,
+          "state": "active", "grace_until": None}
+    html = _render(t, acct, st)
+    assert "2027-01-15" in html and "2027-01-16" not in html
+
+
+def test_plan_header_quota_bar_is_an_accessible_progressbar(acct_env):
+    """La barra della quota non e' solo `width:N%`: ha ruolo e valori numerici per chi non la vede."""
+    t = _it()
+    acct = accounts.free_plan_action(_login("a@b.it")["id"], "activate", "account", now=T0)
+    st = {"plan": "free", "plan_source": "", "plan_until": None, "free_active": True,
+          "quota_bytes": 512 * accounts.MIB, "used_bytes": 380 * accounts.MIB, "jobs": 3,
+          "items": 0, "state": "active", "grace_until": None}
+    html = _render(t, acct, st)
+    bar = re.search(r'<div class="quota"([^>]*)>', html).group(1)
+    assert 'role="progressbar"' in bar
+    assert 'aria-valuemin="0"' in bar and 'aria-valuemax="100"' in bar and 'aria-valuenow="74"' in bar
+    assert 'aria-valuetext="380 MB' in bar and "512 MB" in bar
+    html = _render(t, acct, {**st, "quota_bytes": 0, "used_bytes": 200 * accounts.MIB, "state": "grace",
+                             "grace_until": T0 + 15 * 86400})       # senza quota l'archivio non vuoto e' pieno
+    assert 'aria-valuenow="100"' in re.search(r'<div class="quota"([^>]*)>', html).group(1)
+    t = dict(t)
+    t["archive_usage"] = '"><script>x</script> {used} {quota}'
+    bar = re.search(r'<div class="quota"([^>]*)>', _render(t, acct, st)).group(1)
+    assert "<script>" not in bar and '"><' not in bar and "&lt;script&gt;" in bar
+
+
 def test_plan_header_escapes(acct_env):
     import i18n
     t = dict(i18n.pick(i18n.load("account_pages"), "it"))
@@ -436,6 +472,30 @@ def test_admin_gift_route_validation(acct_env, monkeypatch):
     assert client.post(rv, json={"account_id": "nope"}).status_code == 401
 
 
+def test_admin_gift_route_until_max_date_is_400_not_500(acct_env, monkeypatch):
+    """`9999-12-31` + 1 giorno esce dal range di `datetime`: input non valido (400), mai 500."""
+    client = _admin(monkeypatch)
+    acct = _login("a@b.it")
+    h = {"X-Admin-Token": "secret"}
+    body = {"account_id": acct["id"], "plan": "sub_5", "until": "9999-12-31"}
+    r = client.post("/admin/api/accounts/gift", json=body, headers=h)
+    assert r.status_code == 400 and r.get_json()["error"]
+    assert accounts.get(acct["id"])["plan"] == "free"
+
+
+def test_admin_gift_routes_non_object_json_body_is_400(acct_env, monkeypatch):
+    """Un corpo JSON che non e' un oggetto (`[1]`, `"x"`, `1`) vale come `{}`: 400, mai 500."""
+    client = _admin(monkeypatch)
+    acct = _login("a@b.it")
+    h = {"X-Admin-Token": "secret"}
+    for url in ("/admin/api/accounts/gift", "/admin/api/accounts/gift_revoke"):
+        for body in ([1], "x", 1, [], None):
+            r = client.post(url, json=body, headers=h)
+            assert r.status_code == 400, (url, body)
+            assert r.get_json() == {"error": "account_id required"}, (url, body)
+    assert accounts.get(acct["id"])["plan"] == "free"
+
+
 def test_admin_gift_route_until_is_end_of_that_utc_day(acct_env, monkeypatch):
     monkeypatch.setattr(accounts, "_now", lambda now: T0 if now is None else int(now))   # 2027-01-15T08:00Z
     client = _admin(monkeypatch)
@@ -477,6 +537,51 @@ def test_admin_template_has_gift_controls():
               "Pagato", "Regalato", "In tolleranza"):
         assert s in html
     assert "/admin/api/accounts/plan\"" not in html and "archive_20" not in html
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+def test_admin_console_plan_cell_escapes_server_values(tmp_path):
+    """Si esegue davvero `accPlanCell` con valori ostili (id, piano, origine): il payload grezzo non
+    compare nel markup, ne' esce da un attributo; c'e' solo la forma escapata."""
+    import json
+    import pathlib
+    import subprocess
+    html = pathlib.Path(__file__).resolve().parent.parent.joinpath(
+        "templates", "pages", "admin_audit_premium.html").read_text(encoding="utf-8")
+
+    def fn(name):
+        start = html.index("function %s(" % name)
+        depth, i = 0, html.index("{", start)
+        for j in range(i, len(html)):
+            depth += {"{": 1, "}": -1}.get(html[j], 0)
+            if depth == 0:
+                return html[start:j + 1]
+        raise AssertionError(name)
+
+    block = html[html.index("const ACC_ORIGIN_LABEL"):html.index("async function accErrText")]
+    evil_id = 'x"><script>alert(1)</script>'
+    rows = [{"id": evil_id, "origin": "gift", "plan_effective": "<img src=x onerror=alert(1)>",
+             "plan_until": 1_800_057_600, "archive_bytes": 1, "archive_quota_bytes": 2,
+             "archive_grace_until": 1_800_057_600},
+            {"id": evil_id, "origin": "<svg onload=alert(1)>", "plan_effective": "free"}]
+    script = tmp_path / "cell.js"
+    script.write_text(
+        "const document={createElement(){let v='';return{set textContent(s){v=String(s)},"
+        "get innerHTML(){return v.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}}}};\n"
+        + fn("esc") + "\n" + fn("accDate") + "\n" + block + "\n"
+        + "console.log(JSON.stringify(" + json.dumps(rows) + ".map(accPlanCell)));", encoding="utf-8")
+    res = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    cells = json.loads(res.stdout.strip())
+    assert len(cells) == 2
+    for cell in cells:
+        assert "<script" not in cell and "<img" not in cell and "<svg" not in cell
+        assert 'onerror=alert(1)>' not in cell and 'onload=alert(1)>' not in cell
+        assert 'x"><' not in cell                                          # non esce dall'attributo
+        assert 'data-acc-gift="x&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"' in cell
+    assert "&lt;img src=x onerror=alert(1)&gt;" in cells[0]
+    assert "&lt;svg onload=alert(1)&gt;" in cells[1]
+    assert 'data-acc-gift-revoke="x&quot;' in cells[0]
 
 
 def test_admin_template_gift_ui_is_consistent():

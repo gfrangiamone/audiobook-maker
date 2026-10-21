@@ -333,11 +333,6 @@ def _usage_pct(used, quota):
     return min(100, used * 100 // quota)
 
 
-def _utc_day(epoch):
-    """`YYYY-MM-DD` UTC di un epoch."""
-    return time.strftime("%Y-%m-%d", time.gmtime(int(epoch)))
-
-
 def _txt(t, key, **vals):
     """Testo i18n con i segnaposto `{nome}` sostituiti, poi escapato per intero."""
     s = t[key]
@@ -399,14 +394,18 @@ def _plan_header(t, account, archive, *, free_quota_bytes, tolerance_days):
     rows = [f"<div class=\"row\"><p><strong>{_e(t['plan_title'])}</strong> &middot; {_e(name)}</p>{button}</div>"]
     if gift and archive.get("plan_until") is not None:
         rows.append("<p class=\"meta\">"
-                    + _txt(t, "plan_gift_until", date=_utc_day(int(archive["plan_until"]) - 1)) + "</p>")
+                    + _txt(t, "plan_gift_until", date=accounts.utc_day(int(archive["plan_until"]) - 1)) + "</p>")
     if archive and (quota or used or grace):
-        rows.append(f"<div class=\"quota\"><i style=\"width:{_usage_pct(used, quota)}%\"></i></div>")
-        rows.append("<p class=\"meta\">" + _txt(t, "archive_usage", used=accounts.format_bytes(used),
-                                                 quota=accounts.format_bytes(quota)) + "</p>")
+        pct = _usage_pct(used, quota)
+        usage = _txt(t, "archive_usage", used=accounts.format_bytes(used),
+                     quota=accounts.format_bytes(quota))
+        rows.append(f"<div class=\"quota\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\" "
+                    f"aria-valuenow=\"{int(pct)}\" aria-valuetext=\"{usage}\">"
+                    f"<i style=\"width:{int(pct)}%\"></i></div>")
+        rows.append("<p class=\"meta\">" + usage + "</p>")
     if grace and archive.get("grace_until") is not None:
         rows.append("<p class=\"warn\">"
-                    + _txt(t, "archive_tolerance_warn", date=_utc_day(archive["grace_until"])) + "</p>")
+                    + _txt(t, "archive_tolerance_warn", date=accounts.utc_day(archive["grace_until"])) + "</p>")
     return "<div class=\"planhead\">" + "".join(rows) + "</div>" + dialog
 
 
@@ -422,8 +421,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
     quando la funzione non e' attiva, cosi' il bottone non compare.
     `archive` come da `accounts.archive_status`; `free_quota_bytes` e
     `tolerance_days` servono al testo del popup del piano gratuito."""
-    import time as _time
-    now = now if now is not None else _time.time()
+    now = now if now is not None else time.time()
     voices = voices or []
     tab = "voices" if tab == "voices" else "books"
     n_sess = len(sessions or [])

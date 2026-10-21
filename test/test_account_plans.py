@@ -75,11 +75,18 @@ def test_plans_v2_migration(env, monkeypatch):
     assert g["free_offer_at"]
     r = accounts.get(grace["id"])
     assert (r["plan"], r["plan_until"]) == ("free", None) and r["free_consent_at"]
+    assert r["free_consent_version"] == accounts.FREE_TERMS_VERSION and r["free_offer_at"]
     o = accounts.get(gone["id"])
     assert o["free_consent_at"] is None and o["plan_until"] is None
-    assert o["archive_over_since"] <= now - 15 * 86400 and o["archive_notice_stage"] == 2
+    # tolleranza gia' scaduta (la vecchia regola aveva promesso la cancellazione), stadio 2
+    assert o["archive_notice_stage"] == 2 and o["archive_notice_ids"] is None
+    assert now - 1 <= accounts.archive_grace_until(o) < int(time.time())
+    assert o["archive_over_since"] <= now - accounts.archive_tolerance_days() * 86400 + 5
     p = accounts.get(plain["id"])
     assert p["free_consent_at"] is None and p["free_offer_at"] is None
+    # nessun'altra tolleranza: stadio 0 e niente apertura per chi non e' "gone"
+    for acct in (g, r, p, accounts.get(dead["id"])):
+        assert (acct["archive_over_since"], acct["archive_notice_stage"]) == (None, 0), acct["id"]
     with db.tx() as c:
         assert tuple(c.execute("SELECT plan, plan_source FROM accounts WHERE id=?",
                                (dead["id"],)).fetchone()) == ("free", "")
@@ -258,6 +265,19 @@ def test_tolerance_settings_and_states(env, monkeypatch):
     assert accounts.archive_state(None, T0) == "none"
 
 
+def test_archive_status_computes_the_quota_once(env, monkeypatch):
+    a = _login("a@b.it")
+    _consent(a)
+    calls = []
+    real = accounts.archive_quota_for
+    monkeypatch.setattr(accounts, "archive_quota_for",
+                        lambda account, now=None: calls.append(1) or real(account, now))
+    st = accounts.archive_status(accounts.get(a["id"]), T0)
+    assert st["quota_bytes"] == 512 * accounts.MIB and st["state"] == "active"
+    assert len(calls) == 1
+    assert accounts.archive_state(accounts.get(a["id"]), T0) == "active"      # chiamata diretta, come prima
+
+
 def test_purge_expired_keeps_archived_history(env):
     a = _login("a@b.it"); _consent(a, at=0)
     old = T0 - 30 * 31 * 86400
@@ -338,6 +358,35 @@ def test_no_offer_while_gift_active(env):
     assert accounts.free_offer_pending(accounts.get(g["id"]), now=T0 + 86400)
     with db.tx() as c:
         assert c.execute("SELECT COUNT(*) FROM plan_consents").fetchone()[0] == 0
+
+
+def test_free_plan_double_decline_writes_one_row(env):
+    """La riga `decline` registra la prima risposta alla proposta: doppio click, due
+    schede o retry di rete non ne aggiungono altre."""
+    a = _login("a@b.it")
+    acc = accounts.free_plan_action(a["id"], "decline", "prompt", now=T0)
+    assert acc["free_offer_at"] == T0
+    acc = accounts.free_plan_action(a["id"], "decline", "prompt", now=T0 + 3)
+    accounts.free_plan_action(a["id"], "decline", "account", now=T0 + 4)
+    assert acc["free_offer_at"] == T0 and acc["free_consent_at"] is None
+    assert _consent_rows() == [(T0, "decline", "", "prompt")]
+    # dopo un consenso ritirato la proposta e' gia' stata fatta: nemmeno il decline scrive
+    b = _login("b@b.it")
+    accounts.free_plan_action(b["id"], "activate", "prompt", now=T0)
+    accounts.free_plan_action(b["id"], "deactivate", "account", now=T0 + 1)
+    accounts.free_plan_action(b["id"], "decline", "prompt", now=T0 + 2)
+    assert [r[1] for r in _consent_rows()][1:] == ["grant", "withdraw"]
+
+
+def test_free_offer_not_pending_without_free_quota(env, monkeypatch):
+    """Con la quota gratuita a 0 non c'e' nulla da proporre ("0 MB"): niente proposta."""
+    a = _login("a@b.it")
+    assert accounts.free_offer_pending(accounts.get(a["id"]), now=T0)
+    monkeypatch.setenv("ABM_PLAN_FREE_MB", "0")
+    assert accounts.plan_quota_bytes("free") == 0
+    assert not accounts.free_offer_pending(accounts.get(a["id"]), now=T0)
+    monkeypatch.setenv("ABM_PLAN_FREE_MB", "512")
+    assert accounts.free_offer_pending(accounts.get(a["id"]), now=T0)
 
 
 def test_free_plan_noop_actions_write_nothing(env):
@@ -457,6 +506,15 @@ def test_gift_ignores_deleted_accounts_and_never_writes_consents(env):
     assert _consent_rows() == []
 
 
+def test_gift_and_revoke_do_nothing_when_accounts_disabled(env, monkeypatch):
+    a = _login("a@b.it")
+    monkeypatch.setattr(accounts, "ENABLE", False)
+    assert accounts.gift_plan(a["id"], "sub_5", T0 + 10, now=T0) == ("not_found", None)
+    assert accounts.revoke_gift(a["id"]) == ("not_found", None)
+    monkeypatch.setattr(accounts, "ENABLE", True)
+    assert accounts.get(a["id"])["plan"] == "free"
+
+
 def test_gift_and_revoke_clear_archive_cache(env):
     a = _login("a@b.it")
     accounts._archive_cache["at"] = 123.0
@@ -510,6 +568,24 @@ def test_admin_list_filters_by_plan_and_origin(env):
     assert (agg["gift"], agg["free_active"], agg["paid"], agg["in_tolerance"]) == (1, 1, 0, 0)
     rec = {r["id"]: r for r in accounts.admin_list(now=T0 + 1)["records"]}
     assert rec[g["id"]]["origin"] == "gift" and rec[g["id"]]["archive_quota_bytes"] == 10 * GIB
+
+
+def test_admin_list_plan_filters_leave_out_deleted_accounts(env):
+    """`plan=free`, `origin=free` e `origin=none` contano solo gli account vivi, come gli aggregati."""
+    live_none, live_free, gone_none, gone_free = (_login(f"{n}@x.it") for n in ("ln", "lf", "gn", "gf"))
+    accounts.free_plan_action(live_free["id"], "activate", "account", now=T0)
+    accounts.free_plan_action(gone_free["id"], "activate", "account", now=T0)
+    accounts.delete_account(gone_none["id"], now=T0)
+    accounts.delete_account(gone_free["id"], now=T0)
+    ids = lambda **kw: {r["id"] for r in accounts.admin_list(now=T0 + 1, **kw)["records"]}
+    assert ids(plan="free") == {live_none["id"], live_free["id"]}
+    assert ids(origin="none") == {live_none["id"]}
+    assert ids(origin="free") == {live_free["id"]}
+    assert ids(plan="free", origin="none") == {live_none["id"]}
+    assert ids(state="deleted") == {gone_none["id"], gone_free["id"]}      # il filtro di stato li trova ancora
+    assert ids() == {live_none["id"], live_free["id"], gone_none["id"], gone_free["id"]}
+    out = accounts.admin_list(now=T0 + 1, plan="free")
+    assert out["count"] == 2 and out["aggregates"]["free_active"] == 1
 
 
 def test_admin_list_origin_paid_expired_gift_and_combined_filters(env):

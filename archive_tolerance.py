@@ -15,11 +15,16 @@ Si toglie solo quello che l'ultima email ha elencato (`accounts.archive_notice_i
 riavvio o promemoria): se a tolleranza aperta il piano ricalcolato contiene un libro che
 quell'email non elencava (quota scesa, archivio cresciuto, libro elencato tolto dall'utente,
 upload chiuso) parte un nuovo avviso con elenco e scadenza ricalcolati e la finestra riparte da
-quell'istante, senza togliere niente finche' non e' partito; con le chiavi annunciate NULL o
-illeggibili (stato migrato) non c'e' niente da confrontare.
+quell'istante, senza togliere niente finche' non e' partito. Solo con le chiavi annunciate NULL
+(stato migrato) non c'e' niente da confrontare; se sono illeggibili valgono l'insieme vuoto
+(nessun libro elencato): nuovo avviso, mai lo sfratto di un libro che l'email non elencava.
 
 Un giro manda al piu' MAX_NOTICES_PER_SWEEP email (anche i tentativi falliti):
-gli account oltre il tetto aspettano il giro dopo, senza cambiare stato.
+gli account oltre il tetto aspettano il giro dopo, senza cambiare stato. Il giro dopo
+riparte dall'account successivo all'ultimo che ha preso un posto (cursore in memoria,
+`_sweep_state["cursor"]`): con la posta che rifiuta per i primi account in ordine di id i
+loro tentativi falliti non occupano tutti i posti a ogni giro lasciando gli altri senza
+avviso. Dopo un riavvio il cursore riparte dall'inizio.
 
 Un job tolto perde la protezione (i file tornano alla retention ordinaria), un
 libro caricato dall'app si cancella da R2 e poi dal DB: al primo errore si
@@ -36,13 +41,16 @@ import user_archive
 
 SWEEP_INTERVAL_SEC = 3600
 MAX_NOTICES_PER_SWEEP = 20      # email (avvisi, riavvii, promemoria) per giro; si legge a ogni giro
-_sweep_state = {"at": 0.0}
+_sweep_state = {"at": 0.0, "cursor": None}
 _DAY = 86400
 
 
-def _day(ts):
-    """Data UTC `YYYY-MM-DD` di un epoch, come la mostrano le email."""
-    return time.strftime("%Y-%m-%d", time.gmtime(ts))
+def _rotate(accts, cursor):
+    """`accts` (in ordine di id) ripartendo dal primo con id oltre `cursor`; senza cursore
+    l'ordine resta com'e'."""
+    if cursor is None:
+        return accts
+    return [a for a in accts if a["id"] > cursor] + [a for a in accts if a["id"] <= cursor]
 
 
 def _keys(plan):
@@ -64,7 +72,7 @@ def _plan(entries, excess):
 
 def _mail_args(plan, deadline, quota, used):
     return {"books": [(e["title"], accounts.format_bytes(e["bytes"])) for e in plan],
-            "deadline": _day(deadline), "quota": accounts.format_bytes(quota),
+            "deadline": accounts.utc_day(deadline), "quota": accounts.format_bytes(quota),
             "used": accounts.format_bytes(used),
             "manage_url": email_service.BASE_URL + "/account"}
 
@@ -159,7 +167,7 @@ def _check_account(acct, now, out, budget):
     if since is None:
         _start(acct, plan, quota, used, now, out, budget)
         return
-    announced = accounts.archive_notice_keys(acct)      # None (stato migrato, JSON rotto): niente da confrontare
+    announced = accounts.archive_notice_keys(acct)      # None (stato migrato): niente da confrontare; JSON rotto: set()
     if announced is not None and not _keys(plan) <= announced:
         _start(acct, plan, quota, used, now, out, budget, restart=True)
         return                              # mai cancellare (ne' aspettare la scadenza) con un elenco diverso
@@ -175,7 +183,9 @@ def sweep(now=None, force=False):
     SWEEP_INTERVAL_SEC; `force` salta l'attesa): riporta a `free` i regali
     scaduti e poi, per ogni account con archivio, avvisa, ricorda o toglie.
     Un errore su un account non ferma gli altri; oltre MAX_NOTICES_PER_SWEEP email
-    gli account che ne servono aspettano il giro dopo (`deferred`).
+    gli account che ne servono aspettano il giro dopo (`deferred`), che riparte
+    dall'account dopo l'ultimo che ha preso un posto (`_rotate`). Le cancellazioni
+    a scadenza non prendono posto.
     Ritorna {"gifts_expired", "started", "reminded", "evicted", "cleared", "errors", "deferred"}
     (`started` conta anche i riavvii per un elenco diverso)."""
     t = int(time.time() if now is None else now)
@@ -188,12 +198,15 @@ def sweep(now=None, force=False):
         return out
     out["gifts_expired"] = accounts.expire_gifts(t)
     budget = {"left": MAX_NOTICES_PER_SWEEP}
-    for acct in accounts.archive_accounts_to_check():
+    for acct in _rotate(accounts.archive_accounts_to_check(), _sweep_state["cursor"]):
+        slots = budget["left"]
         try:
             _check_account(acct, t, out, budget)
         except Exception as e:  # noqa: BLE001
             out["errors"] += 1
             print(f"[archive_tolerance] account {acct['id']}: {type(e).__name__}: {e}", flush=True)
+        if budget["left"] < slots:          # ha preso un posto (anche se l'invio e' fallito)
+            _sweep_state["cursor"] = acct["id"]
     if out["deferred"]:
         print(f"[archive_tolerance] tetto di {MAX_NOTICES_PER_SWEEP} email per giro: "
               f"{out['deferred']} account rinviati al giro dopo", flush=True)
