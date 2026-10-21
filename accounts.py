@@ -929,7 +929,7 @@ PLAN_FREE = "free"
 SPACE_PLANS = ("sub_5", "sub_10")
 # Origini di un piano di spazio (`plan_source`): 'paid' e' riservato alla fase 2.
 PLAN_SOURCES = ("paid", "gift")
-FREE_TERMS_VERSION = "2026-10-20"
+FREE_TERMS_VERSION = "2026-10-21"
 GIB = 1024 ** 3
 MIB = 1024 ** 2
 # Piano -> (variabile d'ambiente, default, unita'): letta a ogni chiamata.
