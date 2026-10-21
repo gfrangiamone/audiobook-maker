@@ -214,6 +214,9 @@ def seo_content_page(lang):
     head_extra = ""
     if canonical:
         head_extra += f'\n    <link rel="canonical" href="{canonical}" />'
+    # Stessi alternates della sitemap (x-default = /content/en/).
+    head_extra += "\n    " + page_brand.hreflang_links(
+        lambda lc: f"{base}/content/{lc}/", f"{base}/content/en/", sep="\n    ")
 
     page = _render_page("seo_content", {"__P0__": (html_lang), "__P1__": (title), "__P2__": (desc), "__P3__": (head_extra), "__P4__": (seo_block)})
     return page, 200, {"Content-Type": "text/html; charset=utf-8"}

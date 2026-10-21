@@ -27,17 +27,8 @@ from og_image_data import og_image_url
 from datetime import datetime
 from html import escape
 import json
-import re
 
 from version import get_formatted_date
-
-# Convert bare URLs in escaped text to clickable links
-_URL_RE = re.compile(r'(https?://[^\s)<>&]+/?)(?=[)\s.,;]|$)')
-
-
-def _linkify(text: str) -> str:
-    """Turn plain URLs in already-escaped HTML text into <a> links."""
-    return _URL_RE.sub(r"<a href='\1' target='_blank' rel='noopener'>\1</a>", text)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -92,14 +83,9 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         f"            <li>{escape(f)}</li>" for f in c["features"]
     )
 
-    # FAQ <details> items + JSON-LD (seo_ld.faq_ld dagli stessi dati)
-    faqs_html = ""
-    for q, a in c["faqs"]:
-        faqs_html += (
-            f'            <details class="seo-section"><summary>{escape(q)}</summary>\n'
-            f'                <p>{_linkify(escape(a))}</p>\n'
-            f'            </details>\n'
-        )
+    # FAQ: solo JSON-LD (seo_ld.faq_ld). Il testo vive su /faq/<lang>/ e qui
+    # c'e' solo il link: copiato anche in /content/<lang>/ lo vedeva Google su
+    # due URL e ne scartava uno ("Scansionata, ma non indicizzata").
     faq_ld_json = _seo_ld.ld_json(_seo_ld.faq_ld(c["faqs"]))
 
     # HowTo JSON-LD
@@ -151,11 +137,9 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
             </ol>
         </details>
 
-        <details class="seo-section">
-            <summary><h3>{escape(c["faq_heading"])}</h3></summary>
-            <div>
-{faqs_html}            </div>
-        </details>
+        <div class="seo-section" style="padding:0.8rem 0">
+            <h3><a href="/faq/{lang}/">{escape(c["faq_heading"])} &rarr;</a></h3>
+        </div>
 
         <details class="seo-section">
             <summary><strong>{escape(c["privacy_heading"])}</strong></summary>
@@ -185,21 +169,12 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     return article_html, faq_ld_json, howto_ld_json
 
 
-_ALL_LANGS = list(_CONTENT.keys())
+def build_seo_content_html(lang: str) -> str:
+    """Blocco HTML SEO di /content/<lang>/, solo nella lingua della pagina.
 
-
-def build_seo_content_html(initial_lang: str) -> str:
-    """Genera il blocco HTML SEO con tutte le lingue, mostrando solo quella iniziale.
-
-    Ogni lingua è racchiusa in un <article data-seo-lang="xx"> che viene
-    mostrato/nascosto via CSS inline + la funzione JS switchSeoLang().
-
-    I JSON-LD (FAQPage + HowTo) vengono emessi solo per la lingua iniziale
-    (quelli attivi per i crawler alla prima visita); il JS li aggiorna al
-    cambio lingua.
-
-    Questo blocco viene iniettato server-side nel body prima di </body>.
-    I crawler lo vedono immediatamente senza eseguire JavaScript.
+    Prima conteneva tutte le 7 lingue (6 nascoste, per lo switch della SPA,
+    che non lo include piu'): le 7 pagine /content/ risultavano quasi
+    identiche per Google. I crawler lo vedono senza eseguire JavaScript.
     """
 
     # CSS (emesso una sola volta)
@@ -259,31 +234,8 @@ def build_seo_content_html(initial_lang: str) -> str:
 #seoContent .share-copied.show { opacity:1!important }
 </style>"""
 
-    # Build all language blocks
-    articles = []
-
-    for lang in _ALL_LANGS:
-        article_html, _, _ = _build_seo_block(lang)
-        display = "block" if lang == initial_lang else "none"
-        articles.append(
-            f'    <article data-seo-lang="{lang}" style="display:{display}">'
-            f'{article_html}'
-            f'\n    </article>'
-        )
-
-    articles_html = "\n".join(articles)
-
-    # JS function to switch SEO content language (called from setLang)
-    switch_js = """
-<script>
-function switchSeoLang(l){
-  var sec=document.getElementById('seoContent');
-  if(!sec)return;
-  sec.querySelectorAll('article[data-seo-lang]').forEach(function(a){
-    a.style.display=a.getAttribute('data-seo-lang')===l?'block':'none';
-  });
-}
-</script>"""
+    article_html, _, _ = _build_seo_block(lang)
+    article = f'    <article data-seo-lang="{lang}">{article_html}\n    </article>'
 
     share_bar = """
     <div class="share-row" id="shareRow" style="margin-top:2rem;padding-top:1.2rem;border-top:1px solid var(--brd,#d5d0c8);text-align:center">
@@ -305,9 +257,8 @@ function switchSeoLang(l){
     return f"""
 <!-- ═══════════════════ SEO CONTENT (server-rendered, visible to crawlers) ═══════════════════ -->
 {css}
-{switch_js}
 <section id="seoContent">
-{articles_html}
+{article}
 {share_bar}
 </section>
 <!-- ═══════════════════ /SEO CONTENT ═══════════════════ -->
