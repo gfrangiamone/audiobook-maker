@@ -217,6 +217,27 @@ def test_speechify_quota_not_consumed_when_claim_denied(client, env, monkeypatch
     assert free_quota.used_eur(CID) == pytest.approx(0.0)
 
 
+def test_speechify_free_quota_job_counts_toward_global_cap(client, env, monkeypatch):
+    """Una voce PREMIUM in quota gratuita non paga: a tetto globale raggiunto
+    e' respinta come la corsia gratuita (solo chi paga passa sempre), e il
+    rifiuto al claim non brucia quota."""
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_GLOBAL", 1)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-spx-blocker"] = {"status": "generating", "client_id": "other"}
+    _mk_job("fq-spx-busy", 5000)
+    try:
+        r = _post_generate(client, "fq-spx-busy", SPEECHIFY_VOICE)
+        assert r.status_code == 429, r.get_data(as_text=True)
+        assert r.get_json()["error_code"] == "server_busy"
+        assert env["run_calls"] == []
+        assert free_quota.used_eur(CID) == pytest.approx(0.0)
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop("fq-spx-blocker", None)
+
+
 def test_speechify_stash_quota_non_sopravvive_alla_richiesta(client, env, monkeypatch):
     """C1: lo stash `_free_quota_charge` vale solo per la richiesta corrente.
 

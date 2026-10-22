@@ -891,8 +891,8 @@ MAX_CONCURRENT_LLM_PER_CLIENT = env_int("ABM_MAX_CONCURRENT_LLM_PER_CLIENT", 1)
 # Incidente 2026-08-21: il solo cap per-client non limita nulla lato server —
 # 19 generazioni contemporanee (77 avviate in 3 ore) da client diversi hanno
 # saturato RAM+swap fino al thrash livelock. Set via ABM_MAX_CONCURRENT_GLOBAL;
-# 0 = illimitato (comportamento pre-fix). Respinge solo i job gratuiti: i
-# PREMIUM passano sempre ma contano nel totale.
+# 0 = illimitato (comportamento pre-fix). Respinge solo chi non paga (anche
+# una voce PREMIUM in quota gratuita): chi paga passa sempre ma conta nel totale.
 MAX_CONCURRENT_GLOBAL = env_int("ABM_MAX_CONCURRENT_GLOBAL", 6)
 
 # Cookie name and max-age for client identification
@@ -1422,9 +1422,10 @@ def _server_busy_response(job_id="", where="", premium=False):
     """429 server_busy se l'istanza e' al tetto globale, altrimenti None.
 
     Il tetto vale solo per la corsia gratuita: un job PREMIUM (voce a
-    pagamento o pagamento incassato) non viene mai respinto per sovraccarico,
-    ma le sue generazioni restano nel conteggio e tolgono posti ai gratuiti.
-    Il controllo dentro il blocco atomico di /api/generate resta come guardia
+    pagamento o pagamento incassato) non viene respinto qui, ma le sue
+    generazioni restano nel conteggio e tolgono posti ai gratuiti. Se poi la
+    voce PREMIUM parte in quota gratuita, senza pagare, la ferma il controllo
+    dentro il blocco atomico di /api/generate, che resta anche la guardia
     finale sulla race fra questo gate anticipato e il claim dello slot.
     """
     if premium:
@@ -4583,8 +4584,9 @@ def api_generate():
 
     # Tetto globale d'istanza valutato PRIMA del preflight di pagamento: se il
     # server e' saturo l'utente gratuito viene avvisato subito ("server
-    # sovraccarico"); un job PREMIUM passa sempre. La verifica dentro il blocco
-    # atomico piu' sotto resta come guardia sulla race.
+    # sovraccarico"); un job PREMIUM passa, perche' qui non si sa ancora se
+    # paghera'. La verifica dentro il blocco atomico piu' sotto ferma la voce
+    # PREMIUM in quota gratuita e resta come guardia sulla race.
     _busy = _server_busy_response(
         job_id, "/api/generate",
         premium=generation_engine.is_premium_job(jobs.get(job_id) or {}))
@@ -5153,9 +5155,12 @@ def api_generate():
         # Tetto globale d'istanza: protegge RAM/CPU dal carico aggregato di
         # client diversi (incidente 2026-08-21). Va valutato DOPO il cap
         # per-client, così l'abuso di un singolo device resta attribuito a lui.
-        # Come il cap per-client vale solo per la corsia gratuita: chi paga
-        # passa anche a tetto raggiunto, ma resta nel conteggio.
-        if MAX_CONCURRENT_GLOBAL > 0 and not _premium_req:
+        # Chi paga passa anche a tetto raggiunto, ma resta nel conteggio. Una
+        # voce PREMIUM in quota gratuita (stash `_free_quota_charge` di questa
+        # richiesta) non paga: conta come la corsia gratuita, e il rifiuto
+        # arriva prima del consumo della quota.
+        if MAX_CONCURRENT_GLOBAL > 0 and (
+                not _premium_req or job.get("_free_quota_charge") is not None):
             _active_total = _active_generating_total_unlocked()
             if _active_total >= MAX_CONCURRENT_GLOBAL:
                 load_metrics.incr("rej_busy")
