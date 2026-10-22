@@ -226,8 +226,9 @@ def _edge_retry_wait(attempt, exc):
 
 
 # 22/10/2026: dalle 11:44 msedgeservices ha rifiutato con 429 quasi ogni
-# connessione per oltre un quarto d'ora, con 2 connessioni aperte su 40: il
-# limite e' sull'IP, non sulla concorrenza. L'alternanza riportava il terzo
+# connessione per oltre un quarto d'ora, con 2 connessioni aperte su 40: non
+# dipende dalla concorrenza ne' dal nostro IP (alle 15:41 un IP senza traffico,
+# una richiesta ogni 20 s, riceveva 429 come il server). L'alternanza riportava il terzo
 # tentativo su un endpoint che rifiutava, e un errore isolato del legacy
 # diventava un chunk muto (66 in un'ora). Dopo un 429 l'endpoint resta in pausa
 # per _EDGE_429_PAUSE_SEC su tutto il processo: i tentativi vanno sull'altro e,
