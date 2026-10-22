@@ -21,7 +21,7 @@ ciascuno N volte piu' lento — e quindi N job vivi in RAM N volte piu' a lungo,
 che e' esattamente la pressione che ha portato al freeze del 2026-08-21.
 
 Questa coda e' complementare a `ABM_MAX_CONCURRENT_GLOBAL`: quello RIFIUTA
-utenti in ingresso, questa AMMORTIZZA il picco senza rifiutare nessuno.
+utenti gratuiti in ingresso, questa AMMORTIZZA il picco senza rifiutare nessuno.
 
 Priorita'
 ---------

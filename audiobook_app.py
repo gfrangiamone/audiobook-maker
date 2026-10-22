@@ -891,7 +891,8 @@ MAX_CONCURRENT_LLM_PER_CLIENT = env_int("ABM_MAX_CONCURRENT_LLM_PER_CLIENT", 1)
 # Incidente 2026-08-21: il solo cap per-client non limita nulla lato server —
 # 19 generazioni contemporanee (77 avviate in 3 ore) da client diversi hanno
 # saturato RAM+swap fino al thrash livelock. Set via ABM_MAX_CONCURRENT_GLOBAL;
-# 0 = illimitato (comportamento pre-fix).
+# 0 = illimitato (comportamento pre-fix). Respinge solo i job gratuiti: i
+# PREMIUM passano sempre ma contano nel totale.
 MAX_CONCURRENT_GLOBAL = env_int("ABM_MAX_CONCURRENT_GLOBAL", 6)
 
 # Cookie name and max-age for client identification
@@ -1420,15 +1421,18 @@ def _server_at_capacity():
 def _server_busy_response(job_id="", where="", premium=False):
     """429 server_busy se l'istanza e' al tetto globale, altrimenti None.
 
-    Va invocata PRIMA di chiedere un pagamento: l'utente deve sapere che il
-    server e' sovraccarico prima di pagare, non dopo (incidente 2026-08-21).
+    Il tetto vale solo per la corsia gratuita: un job PREMIUM (voce a
+    pagamento o pagamento incassato) non viene mai respinto per sovraccarico,
+    ma le sue generazioni restano nel conteggio e tolgono posti ai gratuiti.
     Il controllo dentro il blocco atomico di /api/generate resta come guardia
-    finale sulla race fra il gate anticipato e il claim dello slot.
+    finale sulla race fra questo gate anticipato e il claim dello slot.
     """
+    if premium:
+        return None
     at_capacity, active, cap = _server_at_capacity()
     if not at_capacity:
         return None
-    load_metrics.incr("rej_busy_p" if premium else "rej_busy")
+    load_metrics.incr("rej_busy")
     print(f"[{job_id or '-'}] {where or 'richiesta'} rifiutata: tetto globale "
           f"raggiunto ({active}/{cap})", flush=True)
     return jsonify({
@@ -4578,8 +4582,8 @@ def api_generate():
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
 
     # Tetto globale d'istanza valutato PRIMA del preflight di pagamento: se il
-    # server e' saturo l'utente viene avvisato subito ("server sovraccarico"),
-    # senza che gli venga chiesto alcun pagamento. La verifica dentro il blocco
+    # server e' saturo l'utente gratuito viene avvisato subito ("server
+    # sovraccarico"); un job PREMIUM passa sempre. La verifica dentro il blocco
     # atomico piu' sotto resta come guardia sulla race.
     _busy = _server_busy_response(
         job_id, "/api/generate",
@@ -5149,11 +5153,12 @@ def api_generate():
         # Tetto globale d'istanza: protegge RAM/CPU dal carico aggregato di
         # client diversi (incidente 2026-08-21). Va valutato DOPO il cap
         # per-client, così l'abuso di un singolo device resta attribuito a lui.
-        if MAX_CONCURRENT_GLOBAL > 0:
+        # Come il cap per-client vale solo per la corsia gratuita: chi paga
+        # passa anche a tetto raggiunto, ma resta nel conteggio.
+        if MAX_CONCURRENT_GLOBAL > 0 and not _premium_req:
             _active_total = _active_generating_total_unlocked()
             if _active_total >= MAX_CONCURRENT_GLOBAL:
-                load_metrics.incr(
-                    "rej_busy_p" if generation_engine.is_premium_job(job) else "rej_busy")
+                load_metrics.incr("rej_busy")
                 _refund_payment_on_orphan(job_id, job, "server_busy")
                 try: gemini_tts.release_reservation(job_id)
                 except Exception: pass
@@ -6858,14 +6863,8 @@ def api_paypal_create_order_gemini():
     if _err is not None:
         return _err, _sc
 
-    # Server saturo: nessun ordine PayPal viene creato. Il gate esiste anche in
-    # /api/generate prima del preflight, ma la capacita` puo` esaurirsi mentre
-    # il modale di pagamento e` gia` aperto.
-    _busy = _server_busy_response(job_id, "/api/paypal_create_order_gemini",
-                                  premium=True)
-    if _busy is not None:
-        return _busy
-
+    # Nessun gate server_busy: i job PREMIUM non vengono mai respinti per
+    # sovraccarico (vedi _server_busy_response).
     info = job.get("info")
     if info is None or not getattr(info, "chapters", None):
         return jsonify({"error": "no chapters"}), 400

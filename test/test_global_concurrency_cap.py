@@ -108,7 +108,27 @@ _GEMINI_VOICE = "gemini:flash31:Zephyr"
 
 
 def test_server_busy_before_payment_preflight(client, clean_jobs):
-    """Server saturo + voce PREMIUM: 429 server_busy, preflight mai eseguito."""
+    """Server saturo + voce standard: 429 server_busy, preflight mai eseguito."""
+    _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
+    job = _seed_candidate()
+    with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
+         patch("audiobook_app._effective_max_text_chars") as preflight, \
+         patch("audiobook_app.threading.Thread"):
+        r = client.post("/api/generate", json={"job_id": "CAND",
+                                               "voice": "it-IT-DiegoNeural"})
+    assert r.status_code == 429, r.get_json()
+    assert r.get_json()["error_code"] == "server_busy"
+    assert preflight.call_count == 0
+    assert audiobook_app.jobs["CAND"]["status"] == "analyzed"
+
+
+# --- i libri PREMIUM non vengono mai respinti per sovraccarico ---------------
+# Il tetto globale protegge la macchina dalla corsia gratuita. Chi paga (voce
+# PREMIUM o pagamento incassato) passa anche a tetto raggiunto; le sue
+# generazioni restano nel conteggio, quindi a pagare il posto e' il gratuito.
+
+def test_premium_voice_reaches_preflight_when_server_busy(client, clean_jobs):
+    """Server saturo + voce PREMIUM: nessun server_busy, il preflight parte."""
     _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
     job = _seed_candidate()
     gem = type("G", (), {"is_available": staticmethod(lambda: True),
@@ -116,15 +136,44 @@ def test_server_busy_before_payment_preflight(client, clean_jobs):
                           "GEMINI_MODELS": {"flash31": {}}})
     with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
          patch("audiobook_app.gemini_tts", gem), \
-         patch("audiobook_app._effective_max_text_chars") as preflight, \
+         patch("audiobook_app._effective_max_text_chars",
+               return_value=10 ** 9) as preflight, \
+         patch("gemini_tts.estimate_book_cost",
+               side_effect=RuntimeError("stima non disponibile nel test")), \
          patch("audiobook_app.threading.Thread"):
         r = client.post("/api/generate", json={"job_id": "CAND",
                                                "voice": _GEMINI_VOICE})
+    assert (r.get_json() or {}).get("error_code") != "server_busy", r.get_json()
+    assert preflight.call_count >= 1
+
+
+def test_paid_job_claims_slot_when_server_busy(client, clean_jobs):
+    """Job gia' pagato (voce standard) a tetto raggiunto: passa entrambi i
+    controlli, il gate anticipato e la guardia dentro il claim atomico."""
+    _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
+    job = _seed_candidate()
+    job["payment_amount_eur"] = 1.5
+    with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
+         patch("audiobook_app.threading.Thread"):
+        r = client.post("/api/generate", json={"job_id": "CAND",
+                                               "voice": "it-IT-DiegoNeural"})
+    assert r.status_code == 200, r.get_json()
+    assert audiobook_app.jobs["CAND"]["status"] == "generating"
+
+
+def test_premium_generations_count_toward_the_free_cap(client, clean_jobs):
+    """Le generazioni PREMIUM occupano posti: un gratuito oltre il tetto e'
+    respinto anche se i job in corso sono tutti premium."""
+    _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
+    for j in audiobook_app.jobs.values():
+        j["voice"] = _GEMINI_VOICE
+    job = _seed_candidate()
+    with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
+         patch("audiobook_app.threading.Thread"):
+        r = client.post("/api/generate", json={"job_id": "CAND",
+                                               "voice": "it-IT-DiegoNeural"})
     assert r.status_code == 429, r.get_json()
     assert r.get_json()["error_code"] == "server_busy"
-    # nessun passaggio dal preflight premium -> nessun pagamento richiesto
-    assert preflight.call_count == 0
-    assert audiobook_app.jobs["CAND"]["status"] == "analyzed"
 
 
 def test_payment_preflight_runs_when_server_has_capacity(client, clean_jobs):
@@ -148,13 +197,14 @@ def test_payment_preflight_runs_when_server_has_capacity(client, clean_jobs):
     assert preflight.call_count >= 1
 
 
-def test_paypal_create_order_gemini_rejected_when_server_busy(client, clean_jobs):
-    """Server saturo: nessun ordine PayPal viene nemmeno creato."""
+def test_paypal_create_order_gemini_not_rejected_when_server_busy(client, clean_jobs):
+    """Server saturo: l'ordine PREMIUM prosegue (qui fino al controllo dei
+    capitoli, vuoti nel job di prova), nessun server_busy."""
     _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
     _seed_candidate()
     client.set_cookie("abm_cid", "mine")   # proprietario di CAND (E2: _check_job_owner)
     r = client.post("/api/paypal_create_order_gemini",
                     json={"job_id": "CAND", "voice_id": _GEMINI_VOICE,
                           "amount_eur": 1.0})
-    assert r.status_code == 429, r.get_json()
-    assert r.get_json()["error_code"] == "server_busy"
+    assert r.status_code == 400, r.get_json()
+    assert r.get_json() == {"error": "no chapters"}

@@ -186,52 +186,55 @@ def test_speechify_above_free_threshold_uses_generic_payment_required(client, en
     assert free_quota.used_eur(CID) == pytest.approx(0.0)
 
 
-def test_speechify_quota_not_consumed_when_concurrency_limit_denies(client, env, monkeypatch):
-    """Un job quota-free respinto dal limite di concorrenza (dopo il gate, prima
-    del claim atomico) non deve bruciare quota: il consumo e' differito al
-    claim riuscito, non al gate.
+def _race_claim_once(monkeypatch):
+    """Simula un secondo POST che reclama il job fra il gate quota e il claim
+    atomico: per una voce PREMIUM e' l'unico rifiuto rimasto in quel tratto
+    (tetto per-client e tetto globale valgono solo per la corsia gratuita)."""
+    real = audiobook_app._abuse_group_of
+    fired = []
 
-    Il blocco usato qui e' il tetto GLOBALE d'istanza: il tetto per-client non
-    si applica piu' alle voci PREMIUM (vedi test_gen_concurrency_policy.py).
+    def _racing(job):
+        if not fired:
+            fired.append(True)
+            job["status"] = "generating"
+        return real(job)
+
+    monkeypatch.setattr(audiobook_app, "_abuse_group_of", _racing)
+
+
+def test_speechify_quota_not_consumed_when_claim_denied(client, env, monkeypatch):
+    """Un job quota-free respinto dopo il gate e prima del claim atomico non
+    deve bruciare quota: il consumo e' differito al claim riuscito, non al gate.
     """
     monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
-    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_GLOBAL", 1)
-    with audiobook_app._jobs_lock:
-        audiobook_app.jobs["fq-spx-blocker"] = {"status": "generating", "client_id": "other"}
+    _race_claim_once(monkeypatch)
     _mk_job("fq-spx-blocked", 5000)
-    try:
-        r = _post_generate(client, "fq-spx-blocked", SPEECHIFY_VOICE)
-        assert r.status_code == 429, r.get_data(as_text=True)
-        assert r.get_json()["error_code"] == "server_busy"
-        assert env["run_calls"] == []
-        assert free_quota.used_eur(CID) == pytest.approx(0.0)
-    finally:
-        with audiobook_app._jobs_lock:
-            audiobook_app.jobs.pop("fq-spx-blocker", None)
+    r = _post_generate(client, "fq-spx-blocked", SPEECHIFY_VOICE)
+    assert r.status_code == 400, r.get_data(as_text=True)
+    assert "already running" in r.get_json()["error"]
+    assert env["run_calls"] == []
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
 
 
 def test_speechify_stash_quota_non_sopravvive_alla_richiesta(client, env, monkeypatch):
     """C1: lo stash `_free_quota_charge` vale solo per la richiesta corrente.
 
-    Un job quota-free respinto dal 429 concurrent_limit lascia(va) il residuo
-    sul job in memoria: la richiesta successiva sullo stesso job_id — qui con
-    voce STANDARD, che non attraversa alcun gate premium — arrivava comunque
-    alla pop incondizionata e consumava quota per un job che non usa premium.
+    Un job quota-free respinto dopo il gate lascia(va) il residuo sul job in
+    memoria: la richiesta successiva sullo stesso job_id — qui con voce
+    STANDARD, che non attraversa alcun gate premium — arrivava comunque alla
+    pop incondizionata e consumava quota per un job che non usa premium.
     """
     monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
-    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_GLOBAL", 1)
-    with audiobook_app._jobs_lock:
-        audiobook_app.jobs["fq-spx-blocker2"] = {"status": "generating", "client_id": "other"}
+    _race_claim_once(monkeypatch)
     _mk_job("fq-residuo", 5000)
-    try:
-        r = _post_generate(client, "fq-residuo", SPEECHIFY_VOICE)
-        assert r.status_code == 429, r.get_data(as_text=True)
-        assert free_quota.used_eur(CID) == pytest.approx(0.0)
-    finally:
-        with audiobook_app._jobs_lock:
-            audiobook_app.jobs.pop("fq-spx-blocker2", None)
+    r = _post_generate(client, "fq-residuo", SPEECHIFY_VOICE)
+    assert r.status_code == 400, r.get_data(as_text=True)
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
+    # La generazione concorrente e' stata annullata: il job torna disponibile.
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-residuo"]["status"] = "analyzed"
 
     # Seconda richiesta sullo stesso job con voce STANDARD: nessun gate premium,
     # quindi nessuna quota deve essere consumata. Lo stash della richiesta

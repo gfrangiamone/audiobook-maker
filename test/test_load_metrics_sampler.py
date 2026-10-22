@@ -81,9 +81,18 @@ def test_server_busy_counts_the_rejection(monkeypatch):
     monkeypatch.setattr(lm, "incr", lambda c, n=1, now=None: seen.append(c))
     monkeypatch.setattr(app, "_server_at_capacity", lambda: (True, 6, 6))
     with app.app.test_request_context("/api/generate"):
-        resp = app._server_busy_response("j3", "/api/generate", premium=True)
+        resp = app._server_busy_response("j3", "/api/generate")
     assert resp[1] == 429
-    assert seen == ["rej_busy_p"]
+    assert seen == ["rej_busy"]
+
+
+def test_server_busy_never_rejects_premium(monkeypatch):
+    seen = []
+    monkeypatch.setattr(lm, "incr", lambda c, n=1, now=None: seen.append(c))
+    monkeypatch.setattr(app, "_server_at_capacity", lambda: (True, 6, 6))
+    with app.app.test_request_context("/api/generate"):
+        assert app._server_busy_response("j5", "/api/generate", premium=True) is None
+    assert seen == []
 
 
 def test_server_busy_does_not_count_when_not_at_capacity(monkeypatch):
