@@ -3,7 +3,9 @@
 `generate_chunk_mp3` (async): testo -> MP3 via edge-tts con retry/backoff
 (`_edge_tts_call`), timeout per chiamata (`ABM_EDGE_TTS_TIMEOUT`), rilevamento
 dell'output troncato dalla sola dimensione del file e silenzio esplicito quando
-tutti i tentativi falliscono. NoAudioReceived ha piu' tentativi degli altri
+tutti i tentativi falliscono. I tentativi si alternano fra i due endpoint
+websocket (`_edge_endpoints`, `ABM_EDGE_TTS_ENDPOINT` sceglie il primo).
+NoAudioReceived ha piu' tentativi degli altri
 errori; poi una voce Multilingual ripiega su una standard della stessa lingua,
 una standard su una voce della stessa locale, prima del silenzio
 (`_fallback_voice`). Ogni tentativo e ogni esito finale vanno a
@@ -17,6 +19,7 @@ lo sostituiscono continuano a vederlo), `text_reflow` (`_sanitize_tts_text`),
 chiamate in volo, `ABM_EDGE_MAX_INFLIGHT`), `edge_tts`.
 """
 import asyncio
+import contextvars
 import os
 import tempfile
 import threading
@@ -24,6 +27,7 @@ import time
 
 import edge_tts
 import edge_tts.communicate as _edge_communicate
+import edge_tts.constants as _edge_constants
 from edge_tts.constants import TRUSTED_CLIENT_TOKEN
 from edge_tts.exceptions import NoAudioReceived
 
@@ -37,30 +41,52 @@ from text_reflow import _sanitize_tts_text
 from voice_utils import rate_speed_factor as _rate_speed_factor_vu
 
 # Endpoint websocket di edge-tts. Dal 10/10/2026 speech.platform.bing.com
-# risponde 403 a ~1 richiesta su 4 (rollout Microsoft, issue upstream
-# rany2/edge-tts#490): decine di migliaia di chunk al giorno finivano in
-# silenzio. api.msedgeservices.com da prod: 30/30 ok contro 22/30, ma limita i
-# burst con 429. edge-tts 7.3.0 (token Sec-MS-GEC v2) risolve i 403 sul
-# legacy: `ABM_EDGE_TTS_ENDPOINT=legacy` torna all'URL della libreria; un URL
-# completo lo sostituisce. Da togliere quando il legacy risulta stabile in prod
-# (scripts/edge_endpoint_probe.py).
+# (legacy) rispondeva 403 a ~1 richiesta su 4 (issue upstream
+# rany2/edge-tts#490), risolto da edge-tts 7.3.0 (token Sec-MS-GEC v2).
+# api.msedgeservices.com limita i burst con 429. 22/10/2026: sul legacy alcune
+# voci arrivano a velocita' di parlato (timeout a 120 s sui chunk da 2000
+# caratteri) o senza audio (en-US-EmmaNeural), mentre msedgeservices le serve in
+# pochi secondi. Ogni tentativo ripetuto va quindi sull'altro endpoint: un 429
+# di msedgeservices si ritenta sul legacy, un legacy lento su msedgeservices.
+# `ABM_EDGE_TTS_ENDPOINT` sceglie il primo (vuoto -> msedgeservices, `legacy`);
+# un URL `wss://` completo resta l'unico, senza alternanza.
 _EDGE_WSS_MSEDGE = ("wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
                     "?Ocp-Apim-Subscription-Key=" + TRUSTED_CLIENT_TOKEN)
-_EDGE_WSS_LEGACY = _edge_communicate.WSS_URL
+_EDGE_WSS_LEGACY = _edge_constants.WSS_URL
+
+
+def _edge_endpoints(setting):
+    """Endpoint (nome, URL) nell'ordine dei tentativi per `ABM_EDGE_TTS_ENDPOINT`."""
+    s = (setting or "").strip()
+    if s.lower().startswith("wss://"):
+        return [("custom", s)]
+    msedge, legacy = ("msedge", _EDGE_WSS_MSEDGE), ("legacy", _EDGE_WSS_LEGACY)
+    return [legacy, msedge] if s.lower() == "legacy" else [msedge, legacy]
 
 
 def _edge_wss_url(setting):
-    """URL websocket per `ABM_EDGE_TTS_ENDPOINT` (vuoto -> msedgeservices)."""
-    s = (setting or "").strip()
-    if s.lower() == "legacy":
-        return _EDGE_WSS_LEGACY
-    if s.lower().startswith("wss://"):
-        return s
-    return _EDGE_WSS_MSEDGE
+    """URL websocket del primo tentativo (vuoto -> msedgeservices)."""
+    return _edge_endpoints(setting)[0][1]
 
 
-# edge_tts.communicate legge WSS_URL dal proprio modulo a ogni connessione.
-_edge_communicate.WSS_URL = _edge_wss_url(env_str("ABM_EDGE_TTS_ENDPOINT"))
+# URL del tentativo in corso: ogni connessione vede quello del proprio
+# tentativo anche con piu' job in parallelo nello stesso processo.
+_edge_wss_ctx = contextvars.ContextVar("edge_wss_url", default=None)
+
+
+class _EdgeWssUrl:
+    """Sostituto di `edge_tts.communicate.WSS_URL`, che la libreria formatta in
+    una f-string a ogni connessione: rende l'URL del tentativo in corso o, fuori
+    da un tentativo, quello di `ABM_EDGE_TTS_ENDPOINT` letto in quel momento."""
+
+    def __str__(self):
+        return _edge_wss_ctx.get() or _edge_wss_url(env_str("ABM_EDGE_TTS_ENDPOINT"))
+
+    def __format__(self, spec):
+        return format(str(self), spec)
+
+
+_edge_communicate.WSS_URL = _EdgeWssUrl()
 
 # Timeout (secondi) per una singola chiamata edge-tts. edge-tts non applica
 # receive_timeout alla websocket (ws_connect senza timeout in aiohttp): su
@@ -165,8 +191,8 @@ class _EdgeTruncated(Exception):
     """L'MP3 di edge-tts e' arrivato troncato: si ritenta come un errore."""
 
 
-# Il nuovo endpoint limita i burst con 429 (issue #490): la pausa standard da
-# 1-2 s non basta a farlo rientrare.
+# msedgeservices limita i burst con 429 (issue #490): ritentando sullo stesso
+# endpoint la pausa standard da 1-2 s non basta a farlo rientrare.
 _EDGE_429_WAIT = 3.0
 
 # 16/10/2026: NoAudioReceived intermittente lato Microsoft su intere lingue
@@ -179,7 +205,9 @@ _EDGE_NOAUDIO_WAIT_CAP = 8.0
 
 
 def _edge_retry_wait(attempt, exc):
-    if getattr(exc, "status", None) == 429:
+    # Con due endpoint il tentativo dopo un 429 va sull'altro: niente pausa lunga.
+    if (getattr(exc, "status", None) == 429
+            and len(_edge_endpoints(env_str("ABM_EDGE_TTS_ENDPOINT"))) == 1):
         return _EDGE_429_WAIT * (attempt + 1)
     if isinstance(exc, NoAudioReceived):
         return _retry.backoff(attempt, base=1.0, cap=_EDGE_NOAUDIO_WAIT_CAP)
@@ -374,24 +402,32 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
     inosservato con failed_chunks=0 e job COMPLETE).
     """
     snippet = text[:60].replace('\n', ' ')
+    # Ogni tentativo ripetuto passa all'endpoint successivo (vedi _edge_endpoints).
+    endpoints = _edge_endpoints(env_str("ABM_EDGE_TTS_ENDPOINT"))
+
+    def _endpoint(attempt):
+        return endpoints[attempt % len(endpoints)]
 
     async def _synth(attempt):
+        name, url = _endpoint(attempt)
         communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
         # Il permesso copre la sola connessione: le pause fra i tentativi
         # non tengono occupato il tetto.
         await _edge_slot_acquire()
+        token = _edge_wss_ctx.set(url)
         try:
             await asyncio.wait_for(
                 communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
             )
         finally:
+            _edge_wss_ctx.reset(token)
             _edge_slot_release()
         if _edge_output_looks_truncated(output_path, text, rate):
             try:
                 size = os.path.getsize(output_path)
             except OSError:
                 size = 0
-            print(f"[tts] Attempt {attempt+1}/{max_retries} TRUNCATED output "
+            print(f"[tts] Attempt {attempt+1}/{max_retries} TRUNCATED output [{name}] "
                   f"({len(text)} chars -> {size}B ~{size/_EDGE_MP3_BYTES_PER_SEC:.1f}s: "
                   f"\"{snippet}...\"): retry")
             raise _EdgeTruncated("truncated_output (stream chiuso a meta')")
@@ -421,10 +457,15 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
     def _retryable(e):
         return isinstance(e, NoAudioReceived) or done[0] < max_retries
 
+    def _failed(attempt, e):
+        # TimeoutError ha il messaggio vuoto: se ne stampa il tipo.
+        print(f"[tts] Attempt {attempt+1}/{attempts} failed "
+              f"({len(text)} chars: \"{snippet}...\"): "
+              f"[{_endpoint(attempt)[0]}] {str(e) or type(e).__name__}")
+
     def _log(attempt, e, _wait):
         if not isinstance(e, _EdgeTruncated):
-            print(f"[tts] Attempt {attempt+1}/{attempts} failed "
-                  f"({len(text)} chars: \"{snippet}...\"): {e}")
+            _failed(attempt, e)
 
     try:
         await _retry.retry_call_async(_counted, attempts=attempts, is_retryable=_retryable,
@@ -433,8 +474,7 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
     except Exception as e:      # noqa: BLE001 - esauriti i tentativi: decide il chiamante
         if isinstance(e, _EdgeTruncated):
             return False, str(e)
-        print(f"[tts] Attempt {done[0]}/{attempts} failed "
-              f"({len(text)} chars: \"{snippet}...\"): {e}")
+        _failed(done[0] - 1, e)
         return False, e
 
 
