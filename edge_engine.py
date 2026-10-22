@@ -211,14 +211,54 @@ _EDGE_NOAUDIO_ATTEMPTS = 6
 _EDGE_NOAUDIO_WAIT_CAP = 8.0
 
 
+def _edge_is_429(exc):
+    return getattr(exc, "status", None) == 429
+
+
 def _edge_retry_wait(attempt, exc):
     # Con due endpoint il tentativo dopo un 429 va sull'altro: niente pausa lunga.
-    if (getattr(exc, "status", None) == 429
+    if (_edge_is_429(exc)
             and len(_edge_endpoints(env_str("ABM_EDGE_TTS_ENDPOINT"))) == 1):
         return _EDGE_429_WAIT * (attempt + 1)
     if isinstance(exc, NoAudioReceived):
         return _retry.backoff(attempt, base=1.0, cap=_EDGE_NOAUDIO_WAIT_CAP)
     return _retry.backoff(attempt, base=1.0)
+
+
+# 22/10/2026: dalle 11:44 msedgeservices ha rifiutato con 429 quasi ogni
+# connessione per oltre un quarto d'ora, con 2 connessioni aperte su 40: il
+# limite e' sull'IP, non sulla concorrenza. L'alternanza riportava il terzo
+# tentativo su un endpoint che rifiutava, e un errore isolato del legacy
+# diventava un chunk muto (66 in un'ora). Dopo un 429 l'endpoint resta in pausa
+# per _EDGE_429_PAUSE_SEC su tutto il processo: i tentativi vanno sull'altro e,
+# finche' ce n'e' uno libero, il 429 (rifiuto all'apertura, nessun audio) non
+# consuma un tentativo. Finita la pausa, il primo chunk che ci arriva lo riprova.
+_EDGE_429_PAUSE_SEC = 60.0
+_edge_paused_until = {}
+_edge_pause_lock = threading.Lock()
+
+
+def _edge_paused(name):
+    return _edge_paused_until.get(name, 0.0) > time.monotonic()
+
+
+def _edge_pause(name):
+    """Mette in pausa l'endpoint `name` dopo un 429; lo annuncia se non lo era."""
+    now = time.monotonic()
+    with _edge_pause_lock:
+        was_paused = _edge_paused_until.get(name, 0.0) > now
+        _edge_paused_until[name] = now + _EDGE_429_PAUSE_SEC
+    if not was_paused:
+        print(f"[edge] {name} in pausa per {_EDGE_429_PAUSE_SEC:.0f} s dopo un 429: "
+              f"i tentativi vanno sull'altro endpoint")
+
+
+def _edge_pick_endpoint(endpoints, attempt):
+    """Endpoint del tentativo: a rotazione, saltando quelli in pausa per un 429."""
+    first = endpoints[attempt % len(endpoints)]
+    if not _edge_paused(first[0]):
+        return first
+    return next((ep for ep in endpoints if not _edge_paused(ep[0])), first)
 
 
 # --- Ripiego per le voci Multilingual che Microsoft non serve ----------------
@@ -409,11 +449,15 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
     inosservato con failed_chunks=0 e job COMPLETE).
     """
     snippet = text[:60].replace('\n', ' ')
-    # Ogni tentativo ripetuto passa all'endpoint successivo (vedi _edge_endpoints).
+    # Ogni tentativo ripetuto passa all'endpoint successivo (vedi _edge_endpoints),
+    # saltando quelli in pausa per un 429 (vedi _EDGE_429_PAUSE_SEC).
     endpoints = _edge_endpoints(env_str("ABM_EDGE_TTS_ENDPOINT"))
+    used = {}
 
     def _endpoint(attempt):
-        return endpoints[attempt % len(endpoints)]
+        if attempt not in used:
+            used[attempt] = _edge_pick_endpoint(endpoints, attempt)
+        return used[attempt]
 
     async def _synth(attempt):
         name, url = _endpoint(attempt)
@@ -447,22 +491,30 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
             edge_health.record_attempt("truncated")
             raise
         except Exception as e:  # noqa: BLE001 - contato e rilanciato al retry
+            if _edge_is_429(e) and len(endpoints) > 1:
+                _edge_pause(_endpoint(attempt)[0])
             edge_health.record_attempt(edge_health.error_signature(e))
             raise
         edge_health.record_attempt()
         return ok
 
     # NoAudioReceived ha tentativi in piu' (vedi _EDGE_NOAUDIO_ATTEMPTS); gli
-    # altri errori si fermano a max_retries.
+    # altri errori si fermano a max_retries. Un 429 seguito da un endpoint
+    # libero non conta.
     attempts = max(max_retries, _EDGE_NOAUDIO_ATTEMPTS)
     done = [0]
+    free = [0]
 
     async def _counted(attempt):
         done[0] = attempt + 1
         return await _once(attempt)
 
     def _retryable(e):
-        return isinstance(e, NoAudioReceived) or done[0] < max_retries
+        if (_edge_is_429(e) and len(endpoints) > 1
+                and any(not _edge_paused(name) for name, _ in endpoints)):
+            free[0] += 1
+            return True
+        return isinstance(e, NoAudioReceived) or done[0] - free[0] < max_retries
 
     def _failed(attempt, e):
         # TimeoutError ha il messaggio vuoto: se ne stampa il tipo.

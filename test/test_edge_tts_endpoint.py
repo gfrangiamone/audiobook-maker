@@ -8,6 +8,12 @@ con cui il nuovo endpoint limita i burst.
 120 s sui chunk da 2000 caratteri) o senza audio (en-US-EmmaNeural), mentre
 msedgeservices le serve; msedgeservices a sua volta risponde 429 alle raffiche.
 Ogni tentativo ripetuto va sull'altro endpoint.
+
+Stesso giorno, dalle 11:44: msedgeservices rifiuta con 429 quasi ogni
+connessione. Con l'alternanza il terzo tentativo tornava su msedgeservices:
+429, timeout sul legacy, 429 e il chunk restava muto (66 in un'ora). Dopo un
+429 l'endpoint resta in pausa per tutti i chunk e il 429 non consuma un
+tentativo finche' c'e' un altro endpoint libero.
 """
 
 import asyncio
@@ -27,6 +33,12 @@ import edge_health
 
 MSEDGE = edge_engine._EDGE_WSS_MSEDGE
 LEGACY = edge_engine._EDGE_WSS_LEGACY
+
+
+@pytest.fixture(autouse=True)
+def _nessuna_pausa(monkeypatch):
+    """Le pause per i 429 valgono per tutto il processo: ogni test parte senza."""
+    monkeypatch.setattr(edge_engine, "_edge_paused_until", {}, raising=False)
 
 
 def _url():
@@ -157,3 +169,71 @@ def test_la_libreria_vera_si_connette_all_endpoint_del_tentativo(tmp_path, monke
         edge_health.reset()
     assert not ok and isinstance(err, _Refused)
     assert [u.split("&ConnectionId=")[0] for u in seen] == [MSEDGE, LEGACY, MSEDGE]
+
+
+def test_dopo_un_429_msedge_resta_in_pausa_per_gli_altri_chunk(fake_edge, tmp_path, monkeypatch):
+    monkeypatch.delenv("ABM_EDGE_TTS_ENDPOINT", raising=False)
+    fake_edge["errors"] = [_Handshake(429)]
+    assert _attempts(tmp_path)[0]
+    fake_edge["urls"].clear()
+    assert _attempts(tmp_path)[0]
+    assert fake_edge["urls"] == [LEGACY]
+
+
+def test_finita_la_pausa_si_torna_su_msedge(fake_edge, tmp_path, monkeypatch):
+    monkeypatch.delenv("ABM_EDGE_TTS_ENDPOINT", raising=False)
+    monkeypatch.setattr(edge_engine, "_EDGE_429_PAUSE_SEC", 0.0)
+    fake_edge["errors"] = [_Handshake(429)]
+    assert _attempts(tmp_path)[0]
+    fake_edge["urls"].clear()
+    assert _attempts(tmp_path)[0]
+    assert fake_edge["urls"] == [MSEDGE]
+
+
+def test_errore_del_legacy_dopo_un_429_non_torna_su_msedge(fake_edge, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ABM_EDGE_TTS_ENDPOINT", raising=False)
+    fake_edge["errors"] = [_Handshake(429), asyncio.TimeoutError()]
+    ok, _ = _attempts(tmp_path)
+    assert ok
+    assert fake_edge["urls"] == [MSEDGE, LEGACY, LEGACY]
+    assert "[legacy] TimeoutError" in capsys.readouterr().out
+
+
+def test_il_429_non_consuma_un_tentativo(fake_edge, tmp_path, monkeypatch):
+    monkeypatch.delenv("ABM_EDGE_TTS_ENDPOINT", raising=False)
+    fake_edge["errors"] = [_Handshake(429)] + [asyncio.TimeoutError()] * 2
+    ok, _ = _attempts(tmp_path)
+    assert ok
+    assert fake_edge["urls"] == [MSEDGE, LEGACY, LEGACY, LEGACY]
+
+
+def test_dal_legacy_un_429_di_msedge_rimanda_sul_legacy(fake_edge, tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_EDGE_TTS_ENDPOINT", "legacy")
+    fake_edge["errors"] = [asyncio.TimeoutError(), _Handshake(429), asyncio.TimeoutError()]
+    ok, _ = _attempts(tmp_path)
+    assert ok
+    assert fake_edge["urls"] == [LEGACY, MSEDGE, LEGACY, LEGACY]
+
+
+def test_429_su_entrambi_gli_endpoint_si_ferma(fake_edge, tmp_path, monkeypatch):
+    """Tutti in pausa: si torna alla rotazione e i 429 contano come tentativi."""
+    monkeypatch.delenv("ABM_EDGE_TTS_ENDPOINT", raising=False)
+    fake_edge["errors"] = [_Handshake(429)] * 10
+    ok, err = _attempts(tmp_path)
+    assert not ok and err.status == 429
+    assert fake_edge["urls"] == [MSEDGE, LEGACY, MSEDGE, LEGACY]
+
+
+def test_con_un_solo_endpoint_il_429_conta_come_tentativo(fake_edge, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("ABM_EDGE_TTS_ENDPOINT", "wss://x.example/v1?k=1")
+    fake_edge["errors"] = [_Handshake(429)] * 10
+    ok, _ = _attempts(tmp_path)
+    assert not ok
+    assert len(fake_edge["urls"]) == 3
+    assert "in pausa" not in capsys.readouterr().out
+
+
+def test_la_pausa_si_annuncia_una_volta(capsys):
+    edge_engine._edge_pause("msedge")
+    edge_engine._edge_pause("msedge")
+    assert capsys.readouterr().out.count("msedge in pausa") == 1
