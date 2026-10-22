@@ -211,6 +211,116 @@ def test_openrouter_moderation_rejects_the_chunk_without_tripping(tmp_path, monk
     assert st.state("flash38").get("consecutive_failures", 0) == 0
 
 
+# --- 429 di OpenRouter: pausa prima di contare (job mudQVE2U, 22/10/2026) -----
+
+def _or_429(monkeypatch, *, retry_after=None, ok_after=None, **env):
+    """flash38 su OpenRouter che risponde 429; dopo `ok_after` 429 risponde.
+
+    Restituisce le attese chiamate da synthesize() e le chiamate all'API key.
+    """
+    monkeypatch.setenv("ABM_GEMINI_BACKEND_FLASH38", "openrouter")
+    monkeypatch.setenv("ABM_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "g")
+    for name, default in (("ABM_OR_429_PAUSE_SEC", "60"),
+                          ("ABM_GEMINI_RETRY_MAX_WAIT_SEC", "180"),
+                          ("ABM_GEMINI_RETRY_HONOR_DELAY", "true"),
+                          ("ABM_GEMINI_SYNTH_MAX_ATTEMPTS", "5"),
+                          ("ABM_CF_TRIP_FAILURES", "3")):
+        monkeypatch.setenv(name, env.get(name, default))
+    sleeps, apikey_calls, or_calls = [], [], []
+
+    def _or(**kw):
+        or_calls.append(kw)
+        if ok_after is not None and len(or_calls) > ok_after:
+            return _pcm()
+        raise TransportError("OpenRouter rate limit: Provider returned 429",
+                             kind="rate_limited", http_status=429,
+                             retry_after_sec=retry_after)
+
+    monkeypatch.setattr(gemini_tts._transport, "openrouter_call", _or)
+    monkeypatch.setattr(gemini_tts, "_vertex_transport_call",
+                        lambda **kw: apikey_calls.append(kw) or _pcm())
+    monkeypatch.setattr(gemini_tts.time, "sleep", sleeps.append)
+    return sleeps, apikey_calls
+
+
+def test_an_isolated_openrouter_429_pauses_without_tripping(tmp_path, monkeypatch):
+    # Anche con il breaker al primo errore: il 429 isolato non conta.
+    sleeps, apikey_calls = _or_429(monkeypatch, ok_after=1,
+                                   ABM_CF_TRIP_FAILURES="1")
+    out = _synth(tmp_path)
+    assert out["backend"] == "openrouter" and out["attempts_used"] == 1
+    assert sleeps == [60.0]
+    assert apikey_calls == []
+    assert not st.is_tripped("flash38")
+    assert st.state("flash38").get("consecutive_failures", 0) == 0
+
+
+def test_a_persistent_openrouter_429_trips_after_the_pause(tmp_path, monkeypatch):
+    sleeps, apikey_calls = _or_429(monkeypatch)
+    out = _synth(tmp_path, job_id="j1")
+    assert out["backend"] == "apikey" and len(apikey_calls) == 1
+    # Una sola pausa lunga, poi il backoff di sempre fino al trip.
+    assert sleeps == [60.0, 2.0, 4.0]
+    assert st.state("flash38")["trip_reason"] == "or_consecutive_failures"
+
+
+def test_openrouter_429_pause_zero_restores_the_old_breaker(tmp_path, monkeypatch):
+    sleeps, apikey_calls = _or_429(monkeypatch, retry_after=5.0,
+                                   ABM_OR_429_PAUSE_SEC="0",
+                                   ABM_CF_TRIP_FAILURES="1")
+    out = _synth(tmp_path)
+    assert out["backend"] == "apikey" and sleeps == []
+    assert st.state("flash38")["trip_reason"] == "or_consecutive_failures"
+
+
+def test_the_preview_never_waits_on_an_openrouter_429(tmp_path, monkeypatch):
+    sleeps, _ = _or_429(monkeypatch)
+    with pytest.raises(RuntimeError):
+        _synth(tmp_path, max_attempts=1)
+    assert sleeps == []
+    assert st.state("flash38")["consecutive_failures"] == 1
+
+
+def test_a_retry_after_longer_than_the_pause_is_honoured(tmp_path, monkeypatch):
+    sleeps, _ = _or_429(monkeypatch, retry_after=90.0, ok_after=1)
+    assert _synth(tmp_path)["backend"] == "openrouter"
+    assert sleeps == [90.0]
+
+
+def test_the_pause_never_exceeds_max_wait(tmp_path, monkeypatch):
+    sleeps, _ = _or_429(monkeypatch, ok_after=1,
+                        ABM_GEMINI_RETRY_MAX_WAIT_SEC="30")
+    assert _synth(tmp_path)["backend"] == "openrouter"
+    assert sleeps == [30.0]
+
+
+def test_a_retry_after_beyond_max_wait_still_suspends(tmp_path, monkeypatch):
+    sleeps, _ = _or_429(monkeypatch, retry_after=300.0)
+    with pytest.raises(gemini_tts.GeminiQuotaExhausted) as ei:
+        _synth(tmp_path)
+    assert ei.value.reason == "retry_too_long"
+    assert sleeps == []
+
+
+def test_a_cloudflare_429_still_counts_at_once(tmp_path, monkeypatch):
+    _cf(monkeypatch)
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
+    monkeypatch.setenv("ABM_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("ABM_CF_TRIP_FAILURES", "1")
+    sleeps = []
+    monkeypatch.setattr(gemini_tts.time, "sleep", sleeps.append)
+    monkeypatch.setattr(gemini_tts._transport, "cloudflare_call",
+                        lambda **kw: (_ for _ in ()).throw(
+                            TransportError("429", kind="rate_limited",
+                                           http_status=429)))
+    monkeypatch.setattr(gemini_tts._transport, "openrouter_call",
+                        lambda **kw: _pcm())
+    out = _synth(tmp_path, voice="gemini:flash31:Kore")
+    assert out["backend"] == "openrouter" and sleeps == []
+    assert st.state("flash31")["trip_reason"] == "cf_consecutive_failures"
+
+
 def test_openrouter_tokens_are_derived_from_the_audio(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_BACKEND_FLASH38", "openrouter")
     monkeypatch.setenv("ABM_OPENROUTER_API_KEY", "k")

@@ -987,6 +987,18 @@ def _or_timeout_ms(model_key):
     return max(_i("ABM_OR_TIMEOUT_MS", 60000), _http_timeout_ms(model_key))
 
 
+def _or_429_pause_sec():
+    """Pausa sul primo 429 di OpenRouter in una chiamata (0 = spenta).
+
+    Job mudQVE2U287ipdYWV4jLcw (22/10/2026 20:12): tre 429 sullo stesso chunk
+    in 7 s, senza Retry-After, con il backoff di 2 e 4 s, hanno fatto scattare
+    il breaker e spostato flash38 sull'API key per i 16 minuti della sonda,
+    per un limite gia' passato. Il primo 429 si aspetta e non conta: conta
+    solo il 429 che persiste dopo la pausa.
+    """
+    return _f("ABM_OR_429_PAUSE_SEC", 60.0, floor=0.0)
+
+
 def _openrouter_transport_call(*, final_text, voice_name, model_key, model_id,
                                timeout_ms, temperature):
     """Adapter OpenRouter con lo stile nel posto giusto per il modello.
@@ -3538,6 +3550,10 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     usage_output = None
     backend_used = None
     attempt = 0
+    # Pausa sul 429 OpenRouter (vedi _or_429_pause_sec): una sola per
+    # chiamata, e mai quando il chiamante ha ridotto i tentativi (preview,
+    # timeout client 30 s), che con 60 s di attesa fallirebbe comunque.
+    or_429_pause_left = max_attempts is None or int(max_attempts) <= 0
     # max_attempts: il parametro funzione vince sull'env. Permette al caller
     # (es. preview_audio) di abbassare il numero di retry per non saturare il
     # timeout client su EMPTY-RESPONSE retryable ma di fatto deterministica.
@@ -3632,6 +3648,22 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                     # La stessa chiamata prosegue sul ripiego con i tentativi
                     # rimanenti: l'audio e' identico byte per byte, il job in
                     # corso non si accorge del cambio.
+                    attempt -= 1
+                    continue
+                # Un 429 isolato di OpenRouter non e' un backend guasto: si
+                # aspetta senza consumare tentativi ne' contare per il breaker.
+                # Un Retry-After oltre max_wait resta al percorso di sotto.
+                pause = (_or_429_pause_sec()
+                         if backend == "openrouter" and te.kind == "rate_limited"
+                         and or_429_pause_left else 0.0)
+                ra = te.retry_after_sec if honor_delay else None
+                if pause > 0 and (ra is None or ra <= max_wait):
+                    wait = max(min(pause, max_wait), ra or 0.0)
+                    or_429_pause_left = False
+                    print(f"[gemini-tts] 429 OpenRouter ({model_key}): "
+                          f"pausa {wait:.0f}s, non conta per il breaker. "
+                          f"Err: {last_err[:200]}")
+                    time.sleep(wait)
                     attempt -= 1
                     continue
                 failures = _backend_state.record_failure(model_key)
