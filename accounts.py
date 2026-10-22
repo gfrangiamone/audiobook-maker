@@ -8,6 +8,7 @@ Modulo foglia: dipende solo da `db` e dalla stdlib. Lo stato dell'app
 import hashlib
 import hmac
 import json
+import math
 from client_identity import email_hash as _ci_email_hash, norm_email as _norm
 from fileio import load_json
 from env_utils import env_int as _env_int, env_str
@@ -1340,6 +1341,8 @@ def evict_archived_job(job_id, now=None):
 
 ADMIN_PLAN_FILTERS = (PLAN_FREE, *SPACE_PLANS)
 ADMIN_ORIGINS = (*PLAN_SOURCES, "free", "none")
+# Ordinamenti dell'elenco: registrazione (piu' recenti prima) o riempimento dell'archivio.
+ADMIN_SORTS = ("recent", "fill")
 # Account vivo nella tolleranza del cleanup dell'archivio (alias `a`).
 _ADMIN_TOLERANCE_SQL = "a.deleted_at IS NULL AND a.archive_over_since IS NOT NULL"
 # Casella degli aggregati -> filtri di `_admin_where` che la console applica
@@ -1425,8 +1428,19 @@ def _admin_where(now, state="all", q="", date_from=None, date_to=None,
     return where, args
 
 
+def _admin_fill_key(rec):
+    """Chiave dell'ordinamento per riempimento: occupazione della quota; un
+    archivio senza quota (regalo revocato, consenso assente) vale piu' di ogni
+    quota piena, nessun archivio e nessuna quota va in fondo."""
+    used, quota = rec["archive_bytes"] or 0, rec["archive_quota_bytes"]
+    if quota:
+        return used / quota
+    return math.inf if used else -1.0
+
+
 def admin_list(state="all", q="", date_from=None, date_to=None,
-               limit=500, offset=0, now=None, plan="", origin="", tolerance=False):
+               limit=500, offset=0, now=None, plan="", origin="", tolerance=False,
+               sort="recent"):
     """Elenco account per la console admin: registrazione, ultimo accesso,
     cancellazione, sessioni attive e storico.
 
@@ -1440,6 +1454,10 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     attivo con quella `plan_source`, `free` = nessun piano attivo e consenso al
     piano gratuito, `none` = nessun piano attivo e nessun consenso.
     `tolerance` tiene solo gli account vivi nella tolleranza dell'archivio.
+    `sort`: recent (registrazione, piu' recenti prima; default) | fill
+    (riempimento dell'archivio, piu' pieni prima, vedi `_admin_fill_key`).
+    Ogni record porta `archive_fill_pct`, l'occupazione della quota in
+    percento (None senza quota).
 
     Ritorna {"records": [...], "count": <totale filtrato>, "plans": [...],
     "origins": [...], "aggregates": {...}, "last30_since": "YYYY-MM-DD"}: ogni
@@ -1466,19 +1484,23 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         "(SELECT COALESCE(SUM(j.archived_bytes),0) FROM account_jobs j WHERE j.account_id=a.id "
         " AND " + _JOB_IN_ARCHIVE + ") + "
         "(SELECT COALESCE(SUM(i.size_bytes),0) FROM archive_items i WHERE i.account_id=a.id "
-        " AND i.job_id='') AS archive_bytes, "
-        "(SELECT COUNT(*) FROM account_jobs j WHERE j.account_id=a.id "
-        " AND " + _JOB_IN_ARCHIVE + ") AS archive_jobs "
+        " AND i.job_id='') AS archive_bytes "
         "FROM accounts a " + sql_where +
-        " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
+        " ORDER BY a.created_at DESC, a.id DESC"
     )
+    # La quota viene da `archive_quota_for`, non dal DB: per riempimento si
+    # leggono tutte le righe filtrate e la pagina si taglia dopo l'ordinamento.
+    by_fill = sort == "fill"
+    page = [] if by_fill else [limit, offset]
+    if not by_fill:
+        sel += " LIMIT ? OFFSET ?"
     with db.tx() as c:
         def count(cond, cargs):
             sql = "SELECT COUNT(*) FROM accounts a" + (" WHERE " + " AND ".join(cond) if cond else "")
             return int(c.execute(sql, tuple(cargs)).fetchone()[0])
 
         total = count(where, args)
-        rows = c.execute(sel, tuple([now] + args + [limit, offset])).fetchall()
+        rows = c.execute(sel, tuple([now] + args + page)).fetchall()
         # Aggregati sull'intera anagrafica (non sul filtro): servono da
         # cruscotto e da filtri rapidi, non da conteggio della pagina mostrata.
         aggregates = {key: count(*_admin_where(now, **kw)) for key, kw in _ADMIN_AGGREGATES}
@@ -1502,12 +1524,17 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         else:
             d["state"] = "active"
         d["paid_eur"] = round(float(d.get("paid_eur") or 0), 2)
-        d["archive_quota_bytes"] = archive_quota_for(d, now)
+        d["archive_quota_bytes"] = quota = archive_quota_for(d, now)
+        d["archive_fill_pct"] = round((d["archive_bytes"] or 0) * 100 / quota, 1) if quota else None
         d["plan_effective"] = effective_plan(d, now)
         d["origin"] = plan_origin(d, now)
         d["archive_grace_until"] = archive_grace_until(d)
         d.pop("email_hash", None)
         recs.append(d)
+    if by_fill:
+        # sort stabile: a parita' resta l'ordine di registrazione della query.
+        recs.sort(key=_admin_fill_key, reverse=True)
+        recs = recs[offset:offset + limit]
     return {
         "records": recs,
         "count": total,

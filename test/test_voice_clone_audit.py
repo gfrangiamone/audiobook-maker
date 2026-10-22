@@ -224,8 +224,8 @@ def test_pagina_ha_la_tab_e_alimenta_il_margine_totale(admin):
     body = admin.get("/admin/audit-premium",
                      headers={"X-Admin-Token": "segreto-admin"}).get_data(as_text=True)
     assert 'data-tab="voices"' in body and 'id="tab_voices"' in body
-    assert "voices: null" in body and "netMarginByService.voices]" in body
-    assert "netMarginByService.voices = Number(a.net_margin_eur)" in body
+    assert "voices: null" in body
+    assert 'setServiceTotals("voices", a.revenue_eur, a.gpu_cost_eur, a.net_margin_eur)' in body
     assert '"optDateFrom","vcaDateFrom"' in body and '"optDateTo","vcaDateTo"' in body
     assert '_h === "#tab-voices"' in body and "window._vcaLoaded = true;\n  vcaFetch();" in body
     assert 'value="drafts"' in body and body.index('value="paid"') < body.index('value="drafts"')

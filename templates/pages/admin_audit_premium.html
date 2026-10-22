@@ -65,6 +65,10 @@
   .acc-modal .err{color:var(--err);margin:10px 0 0;font-size:.85rem}
   .acc-modal-x{position:absolute;top:10px;right:12px;background:transparent;color:var(--muted);padding:2px 8px;font-size:1.3rem;line-height:1}
   .acc-modal-btns{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
+  .top-totals{display:flex;gap:10px;flex-wrap:wrap}
+  .top-total{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:150px}
+  .top-total-label{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .top-total-value{font-size:1.5rem;font-weight:700;margin-top:2px}
 </style></head>
 <body>
 <div style="margin-bottom:16px">
@@ -73,9 +77,19 @@
   </div>
   <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
     <h1 style="margin:0">Admin - Audit Premium Services <span id="periodLabel" style="font-size:.85rem;color:var(--muted);font-weight:500"></span></h1>
-    <div title="Somma dei margini netti dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
-      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Margine netto totale</div>
-      <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
+    <div class="top-totals">
+      <div class="top-total" title="Somma dei ricavi dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti.">
+        <div class="top-total-label">Ricavi totali</div>
+        <div id="totalRevenueValue" class="top-total-value">-</div>
+      </div>
+      <div class="top-total" title="Somma dei margini netti dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti.">
+        <div class="top-total-label">Margine netto totale</div>
+        <div id="totalNetMarginValue" class="top-total-value">-</div>
+      </div>
+      <div class="top-total" title="Margine % medio = Margine netto totale / Costo provider totale dei servizi premium x 100, come il Margine % medio delle tab (pesato sul costo, non media delle percentuali delle tab).">
+        <div class="top-total-label">Margine % medio</div>
+        <div id="totalMarginPctValue" class="top-total-value">-</div>
+      </div>
     </div>
   </div>
   <label class="toggle-row" style="margin:12px 0 0;cursor:pointer"
@@ -450,6 +464,13 @@
         </label>
       </div>
       <div>
+        <label for="accSort">Ordina per</label>
+        <select id="accSort">
+          <option value="recent">Registrazione (piu' recenti)</option>
+          <option value="fill">Riempimento libreria</option>
+        </select>
+      </div>
+      <div>
         <label>&nbsp;</label>
         <button type="button" id="accRefreshBtn">Aggiorna</button>
       </div>
@@ -470,12 +491,12 @@
     </div>
   </div>
   <div class="panel">
-    <h2>Utenti (ultimi 500)</h2>
+    <h2>Utenti (<span id="accListScope">ultimi 500</span>)</h2>
     <table>
       <thead><tr>
         <th title="Data della prima registrazione">Registrato</th>
         <th>Email</th><th>Lingua</th>
-        <th title="Piano di spazio e sua origine: Pagato, Regalato (con scadenza), Gratuito attivo (consenso dato) o Nessun piano. I job conclusi entrano nell'archivio finche' ci stanno nella quota del piano. Se la quota cala (regalo scaduto o revocato) l'eccedenza resta durante il periodo di tolleranza, la cui fine e' indicata nella cella.">Piano / archivio</th>
+        <th title="Piano di spazio e sua origine: Pagato, Regalato (con scadenza), Gratuito attivo (consenso dato) o Nessun piano. I job conclusi entrano nell'archivio finche' ci stanno nella quota del piano; la percentuale e' l'occupazione della quota, in rosso oltre l'80%. Se la quota cala (regalo scaduto o revocato) l'eccedenza resta durante il periodo di tolleranza, la cui fine e' indicata nella cella.">Piano / archivio</th>
         <th title="Ultimo accesso completato (magic link o codice)">Ultimo accesso</th>
         <th title="Ultima attivita' vista su una sessione">Ultima attivita'</th>
         <th title="Sessioni non scadute ne' revocate">Sessioni</th>
@@ -621,19 +642,21 @@
     codes = codes.slice().sort((a,b) => langLabel(a).localeCompare(langLabel(b), "it"));
     fillSelect($("tts_auditLangFilter"), codes, langLabel);
   }
-  // ---- Totale margine netto: somma dei servizi premium ----
-  // Ogni tab, dopo il suo fetch, deposita qui il proprio net_margin_eur; il
-  // box in alto a destra mostra la somma dei valori gia' caricati.
-  const netMarginByService = { tts: null, translations: null, optimization: null, voices: null };
-  function updateTotalNetMargin(){
-    const el = $("totalNetMarginValue");
-    if (!el) return;
-    const loaded = [netMarginByService.tts, netMarginByService.translations,
-                    netMarginByService.optimization, netMarginByService.voices].filter(v => v != null);
-    if (!loaded.length) { el.textContent = "-"; el.style.color = ""; return; }
-    const total = loaded.reduce((s, v) => s + Number(v || 0), 0);
-    el.textContent = fmtEur(total);
-    el.style.color = total >= 0 ? "var(--ok)" : "var(--err)";
+  // ---- Totali in alto: somma dei servizi premium ----
+  // Ogni tab, dopo il suo fetch, deposita qui ricavi, costo provider e margine
+  // netto dei propri aggregati; i box in alto a destra mostrano le somme dei
+  // servizi gia' caricati. Il margine % medio segue la regola delle tab:
+  // margine netto / costo provider x 100, pesato sul costo.
+  const totalsByService = { tts: null, translations: null, optimization: null, voices: null };
+  function setServiceTotals(service, revenue, cost, net){
+    totalsByService[service] = {revenue: Number(revenue)||0, cost: Number(cost)||0, net: Number(net)||0};
+    const loaded = Object.values(totalsByService).filter(v => v != null);
+    const sum = (k) => loaded.reduce((s, v) => s + v[k], 0);
+    const netTot = sum("net"), costTot = sum("cost"), netEl = $("totalNetMarginValue");
+    $("totalRevenueValue").textContent = fmtEur(sum("revenue"));
+    netEl.textContent = fmtEur(netTot);
+    netEl.style.color = netTot >= 0 ? "var(--ok)" : "var(--err)";
+    $("totalMarginPctValue").innerHTML = fmtPct(costTot > 0 ? netTot / costTot * 100 : 0);
   }
 
   async function ttsFetch(){
@@ -669,7 +692,7 @@
       netEl.textContent = fmtEur(netMargin);
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
-    netMarginByService.tts = netMargin; updateTotalNetMargin();
+    setServiceTotals("tts", agg.revenue_eur, agg.google_cost_eur, netMargin);
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
       ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
@@ -1090,7 +1113,7 @@
       netEl.textContent = fmtEur(netMargin);
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
-    netMarginByService.translations = netMargin; updateTotalNetMargin();
+    setServiceTotals("translations", agg.revenue_eur, agg.google_cost_eur, netMargin);
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
       ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
@@ -1195,7 +1218,7 @@
     $("optAggMargin").textContent = fmtEur(a.margin_eur);
     $("optAggNet").textContent = fmtEur(a.net_margin_eur);
     $("optAggPct").innerHTML = fmtPct(a.margin_pct_avg);
-    netMarginByService.optimization = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
+    setServiceTotals("optimization", a.revenue_eur, a.provider_cost_eur, a.net_margin_eur);
     optRender(d.records||[], d.count||0);
   }
   function optRender(recs, total){
@@ -1284,7 +1307,7 @@
     $("vcaAggNet").textContent = fmtEur(a.net_margin_eur);
     $("vcaAggRefund").textContent = fmtEur(a.refund_eur);
     $("vcaAggBooks").textContent = a.books ?? 0;
-    netMarginByService.voices = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
+    setServiceTotals("voices", a.revenue_eur, a.gpu_cost_eur, a.net_margin_eur);
     vcaRender(d.records||[], d.count||0);
   }
   function vcaRender(recs, total){
@@ -1378,11 +1401,13 @@
     if (origin === "gift") {
       h += `<br><small>${r.plan_until ? "fino al "+accGiftLastDay(r.plan_until)+" (UTC)" : "senza scadenza"}</small>`;
     }
-    h += `<br><small>consenso al gratuito: ${r.free_consent_at ? "s&igrave;" : "no"}</small>`;
     const used = Number(r.archive_bytes||0), quota = Number(r.archive_quota_bytes||0);
     if (quota || used) {
-      const over = quota && used > quota ? ' class="delta-negative"' : "";
-      h += `<br><small${over}>${accGb(used)}${quota?" / "+accGb(quota):""} &middot; ${Number(r.archive_jobs||0)} job</small>`;
+      // archive_fill_pct: occupazione della quota calcolata dal server, null senza quota.
+      const pct = r.archive_fill_pct == null ? null : Number(r.archive_fill_pct);
+      const fill = pct == null ? ""
+        : ` &middot; <span${pct > 80 ? ' class="delta-negative"' : ""}>${pct}%</span>`;
+      h += `<br><small>${accGb(used)}${quota?" / "+accGb(quota):""}${fill}</small>`;
     }
     if (r.archive_grace_until) {
       h += `<br><small class="delta-negative">In tolleranza fino al ${accDate(r.archive_grace_until)}</small>`;
@@ -1539,6 +1564,9 @@
     if (pl) p.set("plan",pl);
     if (og) p.set("origin",og);
     if ($("accTolFilter").checked) p.set("tolerance","1");
+    const so=$("accSort").value;
+    if (so==="fill") p.set("sort",so);
+    $("accListScope").textContent = so==="fill" ? "i 500 con la libreria piu' piena" : "ultimi 500";
     p.set("limit","500");
     const r = await fetch("/admin/api/accounts_audit?"+p.toString(),
                           {headers:{"X-Admin-Token":ADMIN_TOKEN}});
@@ -1578,6 +1606,8 @@
     }).join("") + auditTruncNote(recs.length, total, 11);
   }
   $("accRefreshBtn").addEventListener("click", accFetch);
+  // L'ordinamento non e' un filtro: non spegne la casella attiva e rilegge subito.
+  $("accSort").addEventListener("change", accFetch);
   $("accRecordsBody").addEventListener("click", (e)=>{
     const btn = e.target.closest("button[data-acc-gift-open]");
     if (btn) accGiftOpen(btn.dataset.accGiftOpen);
@@ -1683,9 +1713,9 @@
   tbRefresh();
   gaRefresh();
   // Traduzioni e Optimization vengono caricate anche in background all'avvio,
-  // cosi' il "Margine netto totale" in alto somma tutti e tre i servizi senza
-  // dover aprire le rispettive tab. Le marchiamo come gia' caricate per non
-  // rifare il fetch al primo click.
+  // cosi' i totali in alto sommano tutti i servizi senza dover aprire le
+  // rispettive tab. Le marchiamo come gia' caricate per non rifare il fetch al
+  // primo click.
   window._trLoaded = true;
   trLoadFilters().finally(trFetch);
   window._optLoaded = true;

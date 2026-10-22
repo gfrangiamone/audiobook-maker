@@ -98,9 +98,51 @@ def test_archive_status_and_admin_list(acct_env):
     out = accounts.admin_list(now=T0 + 60)
     r = out["records"][0]
     assert r["plan"] == "free"
-    assert r["archive_bytes"] == 300 * accounts.MIB and r["archive_jobs"] == 1
+    assert r["archive_bytes"] == 300 * accounts.MIB and "archive_jobs" not in r
     assert r["archive_quota_bytes"] == 512 * accounts.MIB
+    assert r["archive_fill_pct"] == 58.6                     # 300 / 512 MiB
     assert out["plans"] == ["free", "sub_5", "sub_10"]
+
+
+def test_admin_list_sorts_by_archive_fill(acct_env):
+    """sort=fill: piu' piena prima su tutte le righe filtrate, poi la pagina; un archivio senza
+    quota sta in cima, nessun archivio senza quota in fondo; a parita' vale la registrazione."""
+    def acct(email, created, consent, mib):
+        a = _login(email, now=created)
+        if consent:
+            _consent(a)
+        if mib:
+            _done_job(a, email, created)
+            accounts.mark_archived(email, mib * accounts.MIB)
+        return email
+    half = acct("half@b.it", T0 + 5, True, 300)
+    full = acct("full@b.it", T0 + 1, True, 450)
+    lost = acct("lost@b.it", T0 + 2, False, 10)               # archivio rimasto senza quota
+    empty = acct("empty@b.it", T0 + 3, True, 0)
+    zero = acct("zero@b.it", T0 + 4, True, 0)
+    none = acct("none@b.it", T0 + 6, False, 0)
+
+    def emails(**kw):
+        return [r["email"] for r in accounts.admin_list(now=T0 + 60, **kw)["records"]]
+    assert emails() == [none, half, zero, empty, lost, full]
+    assert emails(sort="fill") == [lost, full, half, zero, empty, none]
+    assert emails(sort="fill", limit=2, offset=1) == [full, half]
+    assert emails(sort="boh") == emails()
+    out = accounts.admin_list(now=T0 + 60, sort="fill", limit=1)
+    assert out["count"] == 6 and out["records"][0]["archive_fill_pct"] is None
+    pct = {r["email"]: r["archive_fill_pct"] for r in accounts.admin_list(now=T0 + 60)["records"]}
+    assert (pct[full], pct[half], pct[empty], pct[none]) == (87.9, 58.6, 0.0, None)
+
+
+def test_accounts_audit_api_passes_sort(acct_env, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(accounts, "admin_list", lambda **kw: seen.update(kw) or {"records": []})
+    client = _admin(monkeypatch)
+    h = {"X-Admin-Token": "secret"}
+    client.get("/admin/api/accounts_audit?sort=%20FILL%20", headers=h)
+    assert seen["sort"] == "fill"
+    client.get("/admin/api/accounts_audit", headers=h)
+    assert seen["sort"] == ""
 
 
 # ------------------------------------------------------------ cleanup.py
@@ -669,6 +711,47 @@ def test_admin_console_plan_cell_escapes_server_values(tmp_path):
     assert "data-acc-gift-open" not in deleted
     for cell in cells:
         assert "<select" not in cell and "<input" not in cell and "Revoca" not in cell
+
+
+@needs_node
+def test_admin_plan_cell_shows_archive_fill(tmp_path):
+    """La cella mostra l'occupazione della quota del server (rossa oltre l'80%), non il consenso
+    al gratuito ne' il numero di job in archivio; senza quota niente percentuale."""
+    base = {"origin": "free", "plan_effective": "free", "free_consent_at": T0, "archive_jobs": 7}
+    rows = [dict(base, id="a", archive_bytes=GIB // 4, archive_quota_bytes=GIB, archive_fill_pct=25),
+            dict(base, id="b", archive_bytes=GIB, archive_quota_bytes=GIB, archive_fill_pct=80),
+            dict(base, id="c", archive_bytes=GIB, archive_quota_bytes=GIB, archive_fill_pct=80.1),
+            dict(base, id="d", archive_bytes=GIB, archive_quota_bytes=0, archive_fill_pct=None),
+            dict(base, id="e", archive_fill_pct='<img src=x onerror=alert(1)>',
+                 archive_bytes=1, archive_quota_bytes=1)]
+    low, edge, high, lost, odd = _run_admin_accounts_js(
+        tmp_path, {"ROWS": rows}, "console.log(JSON.stringify(ROWS.map(accPlanCell)));")
+    for cell in (low, edge, high, lost, odd):
+        assert "consenso" not in cell and " job" not in cell and "<img" not in cell
+    assert "0.25 GB / 1.00 GB &middot; <span>25%</span>" in low
+    assert "<span>80%</span>" in edge
+    assert '<span class="delta-negative">80.1%</span>' in high
+    assert "1.00 GB</small>" in lost and "%" not in lost
+
+
+@needs_node
+def test_admin_accounts_sort_select_reloads_with_sort(tmp_path):
+    """L'ordinamento va al server solo se non e' quello di default, rilegge subito al cambio e non
+    spegne la casella degli aggregati attiva; il titolo dice quale elenco si sta guardando."""
+    out = _run_admin_accounts_js(tmp_path, {"AUDIT": {"records": [], "count": 0}}, r"""
+      const q = () => Object.fromEntries(new URLSearchParams(_fetches[_fetches.length - 1].url.split("?")[1]));
+      const out = {};
+      $("accSort").value = "recent"; await accFetch();
+      out.recent = {q: q(), title: $("accListScope").textContent};
+      _box("gift")._fire("click"); await _tick();
+      $("accSort").value = "fill"; $("accSort")._fire("change"); await _tick();
+      out.fill = {q: q(), title: $("accListScope").textContent,
+                  marked: _boxes.filter(b => b.classList.contains("agg-active")).map(b => b.dataset.accAgg)};
+      console.log(JSON.stringify(out));
+    """)
+    assert out["recent"]["q"] == {"limit": "500"} and out["recent"]["title"] == "ultimi 500"
+    assert out["fill"]["q"] == {"origin": "gift", "sort": "fill", "limit": "500"}
+    assert out["fill"]["marked"] == ["gift"] and "piena" in out["fill"]["title"]
 
 
 @needs_node
