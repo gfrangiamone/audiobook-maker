@@ -21,6 +21,7 @@ chiamate in volo, `ABM_EDGE_MAX_INFLIGHT`), `edge_tts`.
 import asyncio
 import contextvars
 import os
+import re
 import tempfile
 import threading
 import time
@@ -155,6 +156,11 @@ _EDGE_MAX_CHARS_PER_SEC = 40
 # Sotto questa soglia di caratteri la durata e' dominata da pause/overhead
 # (attacco/coda, respiro): niente check, la varianza darebbe falsi positivi.
 _EDGE_SANITY_MIN_CHARS = 40
+# Un carattere ripetuto ("Nooooo...", "!!!!", "......") la voce lo legge come uno
+# solo, al piu' allungato: nel minimo atteso conta una volta. 22/10/2026: un chunk
+# di 219 caratteri "Nooo..." dava ~2,2 s, scartato come troncato a ogni tentativo
+# e consegnato come silenzio.
+_EDGE_REPEAT_RUN = re.compile(r"(.)\1{2,}", re.I | re.S)
 
 
 def _rate_speed_factor(rate):
@@ -173,9 +179,10 @@ def _edge_output_looks_truncated(output_path, text, rate="+0%"):
     Confronta la durata stimata dal file (CBR 48 kbps -> bytes/6000) con il
     minimo fisico per quel numero di caratteri alla massima velocita' plausibile
     (scalata per il rate). Conservativo: rifiuta solo file palesemente
-    incompleti. File assente/illeggibile => considerato troncato.
+    incompleti. File assente/illeggibile => considerato troncato. Le ripetizioni
+    di un carattere contano una volta sola.
     """
-    n = len((text or "").strip())
+    n = len(_EDGE_REPEAT_RUN.sub(r"\1", (text or "").strip()))
     if n < _EDGE_SANITY_MIN_CHARS:
         return False
     try:
