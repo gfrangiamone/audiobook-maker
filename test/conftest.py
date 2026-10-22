@@ -4,18 +4,32 @@ from unittest.mock import patch
 import importlib
 import os
 import sys
-import routes_admin_logs
 
 import pytest
 
-# Nessun invio SMTP vero: il profilo di sviluppo esporta le ABM_SMTP_* reali e
-# i fixture arrivano a `_send_email` (21/10/2026: tentativi verso u@x.it fino al
-# limite giornaliero della casella). Tolte prima della fotografia qui sotto e
-# prima che i moduli di test importino email_service, cosi' ne' l'import ne' i
-# reload di `fresh_app` le rivedono. Chi prova l'invio imposta le sue.
-for _k in ("ABM_SMTP_HOST", "ABM_SMTP_USER", "ABM_SMTP_PASS", "ABM_SMTP_FROM",
-           "ABM_SMTP_PORT", "ABM_ADMIN_EMAIL"):
+# Nessun servizio vero dai test: il profilo di sviluppo esporta SMTP, chiavi
+# LLM/TypeSafe/Gemini e PayPal live reali. I fixture arrivavano a `_send_email`
+# (21/10/2026: tentativi verso u@x.it fino al limite giornaliero della casella)
+# e la suite con rete bloccata ha visto chiamate a DeepSeek e a TypeSafe
+# (22/10/2026), queste ultime da un fixture di modulo che gira prima delle
+# delenv autouse. Tolte prima degli import di progetto (payment legge PayPal
+# all'import) e della fotografia qui sotto, cosi' ne' l'import ne' i reload di
+# `fresh_app` le rivedono. Chi prova un client imposta le sue chiavi finte.
+LIVE_SERVICE_ENV = (
+    "ABM_SMTP_HOST", "ABM_SMTP_USER", "ABM_SMTP_PASS", "ABM_SMTP_FROM",
+    "ABM_SMTP_PORT", "ABM_ADMIN_EMAIL",
+    "ABM_LLM_API_KEY", "ABM_TRANSLATE_API_KEY", "ABM_OPENROUTER_API_KEY",
+    "ABM_TYPESAFE_API_KEY", "ABM_GEMINI_API_KEY", "ABM_GOOGLE_CREDENTIALS_FILE",
+    "ABM_GCP_PROJECT_ID", "ABM_FCM_CREDENTIALS_FILE", "ABM_PAYPAL_CLIENT_ID",
+    "ABM_PAYPAL_SECRET", "ABM_PAYPAL_MODE", "ABM_RUNPOD_KEY", "ABM_VOXCPM_API_KEY",
+    "ABM_VOXCPM_ENDPOINT_ID", "ABM_S3_ENDPOINT", "ABM_S3_ACCESS_KEY",
+    "ABM_S3_SECRET_KEY", "ABM_SPEECHIFY_API_KEY", "ABM_CF_API_TOKEN",
+    "ABM_CF_ACCOUNT_ID",
+)
+for _k in LIVE_SERVICE_ENV:
     os.environ.pop(_k, None)
+
+import routes_admin_logs  # noqa: E402  (dopo la pulizia: payment legge l'env all'import)
 
 # M6: ambiente della sessione PRIMA di ogni test. `fresh_app` lo rimette al
 # momento del reload di ripristino, cosi' i moduli tornano ai default anche se

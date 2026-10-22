@@ -17,9 +17,14 @@ import ast
 import os
 from pathlib import Path
 
+import pytest
+
 import audiobook_app
 import email_service
 import generation_engine
+import llm_client
+import payment
+from test.conftest import LIVE_SERVICE_ENV
 
 TEST_DIR = Path(__file__).resolve().parent
 BANNED_RELOAD = {"audiobook_app", "generation_engine"}
@@ -86,12 +91,7 @@ def test_env_none_toglie_la_variabile(fresh_app, monkeypatch):
 
 # Le ABM_SMTP_* del profilo di sviluppo sono quelle vere: i test non devono
 # poter spedire, nemmeno dopo un reload che rilegge l'ambiente.
-_SMTP_ENV = ("ABM_SMTP_HOST", "ABM_SMTP_USER", "ABM_SMTP_PASS", "ABM_SMTP_FROM",
-             "ABM_SMTP_PORT", "ABM_ADMIN_EMAIL")
-
-
 def test_nessun_smtp_vero_nei_test():
-    assert [k for k in _SMTP_ENV if k in os.environ] == []
     assert not email_service._smtp_available()
 
 
@@ -102,3 +102,28 @@ def test_reload_di_email_service_resta_senza_smtp(fresh_app):
 
 def test_dopo_il_ripristino_di_fresh_app_resta_senza_smtp():
     assert not email_service._smtp_available()
+
+
+# Stesso discorso per le chiavi dei servizi a pagamento esportate dal profilo
+# (22/10/2026: suite con rete bloccata, chiamate a DeepSeek con la chiave vera
+# e a TypeSafe da un fixture di modulo, che gira prima delle delenv autouse).
+# I moduli che le leggono all'import (payment) le vedevano gia' dal conftest.
+
+
+@pytest.fixture(scope="module")
+def _env_di_modulo():
+    return {k for k in LIVE_SERVICE_ENV if k in os.environ}
+
+
+def test_nessuna_chiave_di_servizi_esterni_nei_fixture_di_modulo(_env_di_modulo):
+    assert _env_di_modulo == set()
+
+
+def test_nessuna_chiave_di_servizi_esterni_nei_test():
+    assert [k for k in LIVE_SERVICE_ENV if k in os.environ] == []
+    assert bool(llm_client.api_key()) is False
+
+
+def test_paypal_non_configurato_dall_import():
+    # Booleani: un fallimento non deve stampare le credenziali vere.
+    assert (bool(payment.PAYPAL_CLIENT_ID), bool(payment.PAYPAL_SECRET)) == (False, False)
