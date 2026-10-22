@@ -14,9 +14,11 @@ Piu' il comportamento di `fresh_app`: env applicate al reload, default
 ripristinati nel test successivo.
 """
 import ast
+import os
 from pathlib import Path
 
 import audiobook_app
+import email_service
 import generation_engine
 
 TEST_DIR = Path(__file__).resolve().parent
@@ -80,3 +82,23 @@ def test_env_none_toglie_la_variabile(fresh_app, monkeypatch):
     monkeypatch.setenv("ABM_MAX_VOXCPM_TEXT_CHARS", "999")
     fresh_app(env={"ABM_MAX_VOXCPM_TEXT_CHARS": None})
     assert audiobook_app.MAX_VOXCPM_TEXT_CHARS == _BEFORE["cap"]
+
+
+# Le ABM_SMTP_* del profilo di sviluppo sono quelle vere: i test non devono
+# poter spedire, nemmeno dopo un reload che rilegge l'ambiente.
+_SMTP_ENV = ("ABM_SMTP_HOST", "ABM_SMTP_USER", "ABM_SMTP_PASS", "ABM_SMTP_FROM",
+             "ABM_SMTP_PORT", "ABM_ADMIN_EMAIL")
+
+
+def test_nessun_smtp_vero_nei_test():
+    assert [k for k in _SMTP_ENV if k in os.environ] == []
+    assert not email_service._smtp_available()
+
+
+def test_reload_di_email_service_resta_senza_smtp(fresh_app):
+    fresh_app(leaves=("email_service",))
+    assert not email_service._smtp_available()
+
+
+def test_dopo_il_ripristino_di_fresh_app_resta_senza_smtp():
+    assert not email_service._smtp_available()

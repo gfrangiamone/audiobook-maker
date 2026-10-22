@@ -8,6 +8,15 @@ import routes_admin_logs
 
 import pytest
 
+# Nessun invio SMTP vero: il profilo di sviluppo esporta le ABM_SMTP_* reali e
+# i fixture arrivano a `_send_email` (21/10/2026: tentativi verso u@x.it fino al
+# limite giornaliero della casella). Tolte prima della fotografia qui sotto e
+# prima che i moduli di test importino email_service, cosi' ne' l'import ne' i
+# reload di `fresh_app` le rivedono. Chi prova l'invio imposta le sue.
+for _k in ("ABM_SMTP_HOST", "ABM_SMTP_USER", "ABM_SMTP_PASS", "ABM_SMTP_FROM",
+           "ABM_SMTP_PORT", "ABM_ADMIN_EMAIL"):
+    os.environ.pop(_k, None)
+
 # M6: ambiente della sessione PRIMA di ogni test. `fresh_app` lo rimette al
 # momento del reload di ripristino, cosi' i moduli tornano ai default anche se
 # un'altra fixture ha ancora le sue env attive.
