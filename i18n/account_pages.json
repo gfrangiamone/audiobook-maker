@@ -100,7 +100,8 @@
     "free_deactivate_title": "Turn off the cloud library?",
     "free_deactivate_p": "Your cloud library will stop keeping new books. The books already stored will be removed after {days} days; we will email you before that.",
     "free_deactivate_confirm": "Turn off",
-    "job_delete_archived_p": "This book is in your archive. Removing it from the list also removes it from the archive: the files will be deleted shortly and will no longer be downloadable."
+    "job_delete_archived_p": "This book is in your archive. Removing it from the list also removes it from the archive: the files will be deleted shortly and will no longer be downloadable.",
+    "job_delete_linked_p": "This book is also in the app's online archive: it will disappear from this list, but it stays archived and downloadable (also from the email link) until you delete it from the online archive in the app."
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -203,7 +204,8 @@
     "free_deactivate_title": "Disattivare la libreria cloud?",
     "free_deactivate_p": "La tua libreria cloud smetterà di conservare i nuovi libri. I libri già salvati verranno tolti dopo {days} giorni; ti scriveremo prima di farlo.",
     "free_deactivate_confirm": "Disattiva",
-    "job_delete_archived_p": "Questo libro è nel tuo archivio. Eliminandolo dall'elenco esce anche dall'archivio: i file verranno cancellati a breve e non saranno più scaricabili."
+    "job_delete_archived_p": "Questo libro è nel tuo archivio. Eliminandolo dall'elenco esce anche dall'archivio: i file verranno cancellati a breve e non saranno più scaricabili.",
+    "job_delete_linked_p": "Questo libro è anche nell'archivio online dell'app: sparirà da questo elenco, ma resterà archiviato e scaricabile (anche dal link dell'email) finché non lo elimini dall'archivio online nell'app."
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -306,7 +308,8 @@
     "free_deactivate_title": "Désactiver la bibliothèque cloud ?",
     "free_deactivate_p": "Votre bibliothèque cloud cessera de conserver les nouveaux livres. Les livres déjà enregistrés seront supprimés au bout de {days} jours ; nous vous écrirons avant.",
     "free_deactivate_confirm": "Désactiver",
-    "job_delete_archived_p": "Ce livre est dans votre archive. Le retirer de la liste le retire aussi de l'archive : les fichiers seront bientôt supprimés et ne pourront plus être téléchargés."
+    "job_delete_archived_p": "Ce livre est dans votre archive. Le retirer de la liste le retire aussi de l'archive : les fichiers seront bientôt supprimés et ne pourront plus être téléchargés.",
+    "job_delete_linked_p": "Ce livre est aussi dans l'archive en ligne de l'app : il disparaîtra de cette liste, mais restera archivé et téléchargeable (aussi depuis le lien de l'e-mail) jusqu'à ce que vous le supprimiez de l'archive en ligne dans l'app."
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -409,7 +412,8 @@
     "free_deactivate_title": "¿Desactivar la biblioteca en la nube?",
     "free_deactivate_p": "Tu biblioteca en la nube dejará de conservar libros nuevos. Los libros ya guardados se eliminarán pasados {days} días; te escribiremos antes de hacerlo.",
     "free_deactivate_confirm": "Desactivar",
-    "job_delete_archived_p": "Este libro está en tu archivo. Si lo eliminas de la lista también sale del archivo: los archivos se borrarán en breve y ya no se podrán descargar."
+    "job_delete_archived_p": "Este libro está en tu archivo. Si lo eliminas de la lista también sale del archivo: los archivos se borrarán en breve y ya no se podrán descargar.",
+    "job_delete_linked_p": "Este libro también está en el archivo en línea de la app: desaparecerá de esta lista, pero seguirá archivado y descargable (también desde el enlace del correo) hasta que lo elimines del archivo en línea en la app."
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -512,7 +516,8 @@
     "free_deactivate_title": "Cloud-Bibliothek ausschalten?",
     "free_deactivate_p": "Deine Cloud-Bibliothek speichert keine neuen Bücher mehr. Die bereits gespeicherten Bücher werden nach {days} Tagen entfernt; wir schreiben dir vorher eine E-Mail.",
     "free_deactivate_confirm": "Ausschalten",
-    "job_delete_archived_p": "Dieses Buch ist in deinem Archiv. Wenn du es aus der Liste entfernst, wird es auch aus dem Archiv entfernt: Die Dateien werden in Kürze gelöscht und können nicht mehr heruntergeladen werden."
+    "job_delete_archived_p": "Dieses Buch ist in deinem Archiv. Wenn du es aus der Liste entfernst, wird es auch aus dem Archiv entfernt: Die Dateien werden in Kürze gelöscht und können nicht mehr heruntergeladen werden.",
+    "job_delete_linked_p": "Dieses Buch ist auch im Online-Archiv der App: Es verschwindet aus dieser Liste, bleibt aber archiviert und herunterladbar (auch über den Link in der E-Mail), bis du es in der App aus dem Online-Archiv löschst."
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -615,7 +620,8 @@
     "free_deactivate_title": "关闭云端书库？",
     "free_deactivate_p": "您的云端书库将不再保存新书。已保存的书籍将在 {days} 天后删除，删除前我们会给您发送邮件。",
     "free_deactivate_confirm": "关闭",
-    "job_delete_archived_p": "这本书在你的归档中。从列表中删除也会将其移出归档：文件将很快被删除，且无法再下载。"
+    "job_delete_archived_p": "这本书在你的归档中。从列表中删除也会将其移出归档：文件将很快被删除，且无法再下载。",
+    "job_delete_linked_p": "这本书也在应用的在线归档中：它会从此列表中消失，但仍会保留在归档中并可下载（包括通过邮件中的链接），直到你在应用中将其从在线归档删除。"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -718,6 +724,7 @@
     "free_deactivate_title": "क्लाउड लाइब्रेरी बंद करें?",
     "free_deactivate_p": "आपकी क्लाउड लाइब्रेरी नई किताबें रखना बंद कर देगी। पहले से सहेजी गई किताबें {days} दिन बाद हटा दी जाएँगी; ऐसा करने से पहले हम आपको ईमेल करेंगे।",
     "free_deactivate_confirm": "बंद करें",
-    "job_delete_archived_p": "यह किताब आपके आर्काइव में है। इसे सूची से हटाने पर यह आर्काइव से भी हट जाएगी: फ़ाइलें जल्द ही हटा दी जाएँगी और फिर डाउनलोड नहीं की जा सकेंगी।"
+    "job_delete_archived_p": "यह किताब आपके आर्काइव में है। इसे सूची से हटाने पर यह आर्काइव से भी हट जाएगी: फ़ाइलें जल्द ही हटा दी जाएँगी और फिर डाउनलोड नहीं की जा सकेंगी।",
+    "job_delete_linked_p": "यह किताब ऐप के ऑनलाइन संग्रह में भी है: यह इस सूची से हट जाएगी, लेकिन तब तक आर्काइव में रहेगी और डाउनलोड की जा सकेगी (ईमेल के लिंक से भी), जब तक आप इसे ऐप में ऑनलाइन संग्रह से नहीं हटाते।"
   }
 }

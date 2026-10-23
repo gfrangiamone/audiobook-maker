@@ -603,10 +603,12 @@ def _account_rows_for(acct, page, q="", audio_only=False):
     _account_reconcile_running(rows, time.time())
     now = time.time()
     index = _download_tokens_index()
+    linked = user_archive.linked_job_ids(acct["id"])
     out = []
     for r in rows:
         d = dict(r)
         d["downloads"] = _account_downloads_for(d, now, index)
+        d["in_app_archive"] = d["job_id"] in linked
         out.append(d)
     return out, total
 
@@ -713,6 +715,9 @@ def api_account_jobs():
         "status": r.get("status"), "paid_eur": float(r.get("paid_eur") or 0),
         "engine": r.get("engine") or "", "model": r.get("model") or "",
         "downloads": r["downloads"],
+        # Collegato a un libro dell'archivio dell'app: eliminarlo dall'elenco
+        # non lo toglie dall'archivio (l'app lo dice nella conferma).
+        "in_app_archive": bool(r.get("in_app_archive")),
     } for r in rows]
     return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE,
                     "archive": _account_archive_for(acct)})

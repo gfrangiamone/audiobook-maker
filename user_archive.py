@@ -412,6 +412,15 @@ def purge_job_links(account_id, job_id):
     return all(purge_item(item) for item in rows)
 
 
+def linked_job_ids(account_id):
+    """I job dell'account a cui e' collegato un libro dell'archivio dell'app:
+    restano archiviati anche se eliminati dall'elenco (accounts.hide_job)."""
+    with db.tx() as c:
+        return {r["job_id"] for r in c.execute(
+            "SELECT DISTINCT job_id FROM archive_items WHERE account_id=? AND job_id<>''",
+            (account_id,)).fetchall()}
+
+
 def download_name(item):
     return item.get("filename") or f"{item['id']}{_ext(item.get('r2_key') or '') or '.m4b'}"
 

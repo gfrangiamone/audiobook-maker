@@ -232,11 +232,13 @@ _TRASH_SVG = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 def _job_delete_dialog(t):
     """Conferma dell'eliminazione di un job che ha ancora link vivi: il file
     non sparisce, resta scaricabile dall'email. Senza link si elimina subito.
-    Job archiviato: il secondo paragrafo avverte che esce dall'archivio."""
+    Job archiviato: il secondo paragrafo avverte che esce dall'archivio; se
+    e' collegato a un libro dell'archivio dell'app il terzo dice che ci resta."""
     return (
         f"<dialog id=\"acctJobDelDlg\"><h2>{_e(t['job_delete_title'])}</h2>"
         f"<p id=\"acctJobDelP\">{_e(t['job_delete_p'])}</p>"
         f"<p id=\"acctJobDelPArch\" hidden>{_e(t['job_delete_archived_p'])}</p>"
+        f"<p id=\"acctJobDelPLinked\" hidden>{_e(t['job_delete_linked_p'])}</p>"
         f"<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"acctJobDelConfirm\">"
         f"{_e(t['job_delete'])}</button>"
         f"<button type=\"button\" class=\"primary\" data-close autofocus>{_e(t['cancel_btn'])}</button></div></dialog>"
@@ -298,8 +300,9 @@ _HISTORY_JS = (
     ".then(function(r){if(r.ok||r.status===404){var tr=b.closest('tr');if(tr)tr.remove();}else{b.disabled=false;}})"
     ".catch(function(){b.disabled=false;});}"
     "document.querySelectorAll('[data-del]').forEach(function(b){b.addEventListener('click',function(){"
-    "var dl=b.getAttribute('data-dl');if(dl==='1'||dl==='2'){jb=b;var ar=dl==='2';"
-    "document.getElementById('acctJobDelP').hidden=ar;document.getElementById('acctJobDelPArch').hidden=!ar;"
+    "var dl=b.getAttribute('data-dl');if(dl==='1'||dl==='2'||dl==='3'){jb=b;var ar=dl==='2',ln=dl==='3';"
+    "document.getElementById('acctJobDelP').hidden=ar||ln;document.getElementById('acctJobDelPArch').hidden=!ar;"
+    "document.getElementById('acctJobDelPLinked').hidden=!ln;"
     "openDlg(jd);}else{delJob(b);}});});"
     "if(jc)jc.onclick=function(){closeDlg(jd);if(jb)delJob(jb);jb=null;};"
     "var live=document.querySelectorAll('[data-job]');"
@@ -491,11 +494,13 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
             else:
                 st_cell = f"<td>{st_cell}</span></td>"
             # Eliminazione dall'elenco: non per i job che stanno lavorando.
-            # data-dl=1 (link ancora vivi) chiede conferma prima.
+            # data-dl=1 (link ancora vivi), 2 (archiviato) e 3 (collegato a un
+            # libro dell'archivio dell'app, che ci resta) chiedono conferma prima.
             act = ""
             if status != "running":
+                dl_mode = '3' if r.get("in_app_archive") else ('2' if archived else ('1' if dls else '0'))
                 act = (f"<button type=\"button\" class=\"del\" data-del=\"{_e(job_id)}\" "
-                       f"data-dl=\"{'2' if archived else ('1' if dls else '0')}\" title=\"{_e(t['job_delete'])}\" "
+                       f"data-dl=\"{dl_mode}\" title=\"{_e(t['job_delete'])}\" "
                        f"aria-label=\"{_e(t['job_delete'])}\">{_TRASH_SVG}</button>")
             parts.append(
                 f"<tr><td>{_e(_fmt_date(r.get('created_at')))}</td><td class=\"bk\">{book}</td>"
