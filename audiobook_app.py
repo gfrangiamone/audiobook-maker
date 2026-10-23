@@ -6169,7 +6169,8 @@ routes_mobile.configure(
     _find_files_in_outputs=lambda *a, **k: _find_files_in_outputs(*a, **k),
     _job_original_filename=lambda *a, **k: _job_original_filename(*a, **k),
     _send_file_throttled=lambda *a, **k: _send_file_throttled(*a, **k),
-    _account_share=lambda *a, **k: routes_account.account_share(*a, **k))
+    _account_share=lambda *a, **k: routes_account.account_share(*a, **k),
+    _account_job_ids_since=lambda *a, **k: routes_account.account_job_ids_since(*a, **k))
 app.register_blueprint(routes_mobile.bp)
 
 

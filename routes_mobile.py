@@ -40,7 +40,7 @@ _cfg = {}
 _jobs_lock = None
 generation_engine = None
 
-FUNCS = ['_get_client_id', '_log_activity', 'client_ip', '_ip_rl_check','_client_platform', '_share_link_for', '_safe_share_filename', '_effective_retention_for_token_info', '_qr_data_uri', '_transfer_payload_for', '_check_job_owner', '_find_files_in_outputs', '_job_original_filename', '_send_file_throttled', '_account_share']
+FUNCS = ['_get_client_id', '_log_activity', 'client_ip', '_ip_rl_check','_client_platform', '_share_link_for', '_safe_share_filename', '_effective_retention_for_token_info', '_qr_data_uri', '_transfer_payload_for', '_check_job_owner', '_find_files_in_outputs', '_job_original_filename', '_send_file_throttled', '_account_share', '_account_job_ids_since']
 VALUES = ('jobs', 'upload_dir', 'share_ttl_sec', 'share_max_bytes', 'share_upload_ttl_sec', 'client_emails_map')
 
 
@@ -122,6 +122,13 @@ def _send_file_throttled(*a, **k):
 def _account_share(*a, **k):    # routes_account.account_share (share/create)
     return _cfg["_account_share"](*a, **k)
 
+def _account_job_ids_since(*a, **k):    # routes_account (my_jobs?account=1)
+    return _cfg["_account_job_ids_since"](*a, **k)
+
+
+# Da quanto indietro /api/my_jobs?account=1 prende i job dell'account: la tab
+# Attivita' dell'app nasconde da se' i terminali piu' vecchi di 7 giorni.
+MY_JOBS_ACCOUNT_HORIZON_SEC = 7 * 86400
 
 _MY_JOBS_LIVE_STATUSES = (
     "analyzed", "optimizing", "optimized", "translating", "generating",
@@ -145,12 +152,21 @@ def api_my_jobs():
     """Job del client chiamante: attivi (in-memory) + completati (token su disco).
 
     Usato dall'app mobile per ricostruire la tab Attivita' a ogni avvio.
+
+    Con `?account=1` e una sessione account aggiunge gli audiolibri che
+    l'account ha avviato negli ultimi giorni dal sito o da altri dispositivi,
+    marcati `account_job`: l'app li segue e li scarica ma non li annulla (il
+    cancel autorizza il cid che ha avviato il job). Le app che non mandano il
+    parametro vedono la lista di sempre.
     """
     cid = _get_client_id()
     if not cid:
         return jsonify({"jobs": []})
     now = time.time()
     out = {}
+    account_ids = (_account_job_ids_since(now - MY_JOBS_ACCOUNT_HORIZON_SEC)
+                   if request.args.get("account") == "1" else set())
+    via_cid = set()     # job del chiamante: niente flag account_job
 
     with _jobs_lock:
         snapshot = list(_jobs().items())
@@ -162,11 +178,19 @@ def api_my_jobs():
         # comparire subito; il download token admin-owned arriva al COMPLETE
         # (_materialize_admin_copies).
         _is_admin_pending = cid in (job.get("admin_copy_cids") or [])
-        if job.get("client_id") != cid and not _is_admin_pending:
+        mine = job.get("client_id") == cid or _is_admin_pending
+        if not mine and jid not in account_ids:
             continue
         status = job.get("status", "")
         if job.get("server_interrupted"):
             status = "interrupted"
+        elif not mine and status == "analyzed":
+            # Job dell'account annullato dal sito: il cancel lo riporta ad
+            # "analyzed". Per l'app e' annullato; sparire mentre era attivo
+            # vorrebbe dire "interrotto dal server".
+            if not job.get("cancelled"):
+                continue
+            status = "cancelled"
         if status == "partial":
             # Terminale e gia' consegnato (alcuni chunk saltati oltre soglia):
             # per chi legge questa lista e' un job pronto al download, non uno
@@ -216,15 +240,22 @@ def api_my_jobs():
                 "tr_progress_total": job.get("tr_progress_total", 0),
             })
         out[jid] = entry
+        if mine:
+            via_cid.add(jid)
 
     for token, tinfo in list(_tkstore.download_tokens.items()):
-        if not isinstance(tinfo, dict) or tinfo.get("client_id") != cid:
+        if not isinstance(tinfo, dict):
+            continue
+        jid = tinfo.get("job_id", "")
+        mine = tinfo.get("client_id") == cid
+        if not mine and jid not in account_ids:
             continue
         created = tinfo.get("created_at", 0)
         retention = _effective_retention_for_token_info(tinfo)
         if (now - created) > retention:
             continue
-        jid = tinfo.get("job_id", "")
+        if mine:
+            via_cid.add(jid)
         entry = out.setdefault(jid, {"job_id": jid, "created_at": created})
         entry.update({
             "status": "done",
@@ -244,6 +275,9 @@ def api_my_jobs():
             },
         })
 
+    for jid, entry in out.items():
+        if jid not in via_cid:
+            entry["account_job"] = True
     ordered = sorted(out.values(),
                      key=lambda e: -(e.get("created_at") or 0))
     return jsonify({"jobs": ordered})

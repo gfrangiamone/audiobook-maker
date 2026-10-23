@@ -1221,7 +1221,7 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 - **Registrazione device**: `POST /api/device/register` — il client mobile invia `{fcm_token, job_ids[]}`. Il server valida il token (regex `_FCM_TOKEN_RE`), deduplica per `(token, cid)`, mantiene al massimo `_MAX_DEVICES_PER_CLIENT` entry per client, persiste su `_device_tokens.json`.
 - **Identificazione client mobile**: header `X-ABM-Cid` (validato da `_MOBILE_CID_RE` a `audiobook_app.py:583`). Se presente e valido viene preferito al cookie `abm_cid`, così l'app mobile non dipende dalla gestione cookie del browser.
 - **Invio notifiche**: `_push_job_event(job_id, event, title)` (`audiobook_app.py:1428`) — chiamata al completamento (`COMPLETE`) o all'errore (`ERROR`) di un job; chiama `push_service.send_push()` per ogni device del client. Token che restituiscono `unregistered` (HTTP 404 FCM) vengono rimossi automaticamente da `_device_tokens.json`.
-- **Job del client**: `GET /api/my_jobs` — restituisce la lista dei job correnti associati al client_id (via header `X-ABM-Cid` o cookie), con stato e progresso. Usato dall'app mobile per aggiornare la UI al resume.
+- **Job del client**: `GET /api/my_jobs` — restituisce la lista dei job correnti associati al client_id (via header `X-ABM-Cid` o cookie), con stato e progresso. Usato dall'app mobile per aggiornare la UI al resume. Con `?account=1` e una sessione account aggiunge gli audiolibri che l'account ha avviato negli ultimi 7 giorni (`MY_JOBS_ACCOUNT_HORIZON_SEC` in `routes_mobile.py`, non configurabile) dal sito o da altri dispositivi, marcati `account_job: true`: l'app li segue e li scarica ma non li annulla. Senza il parametro (sito, app vecchie) la lista resta quella del solo client_id.
 
 ---
 

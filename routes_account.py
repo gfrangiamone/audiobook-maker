@@ -990,6 +990,21 @@ def account_share(fingerprint, job_id, cid, filename):
     return None
 
 
+def account_job_ids_since(since):
+    """Per /api/my_jobs: job_id degli audiolibri che l'account della richiesta
+    ha avviato da `since` in poi, anche dal sito o da altri dispositivi.
+    Insieme vuoto senza account; best-effort, la lista dell'app non si rompe
+    per un errore del DB."""
+    acct = _current_account()
+    if not acct:
+        return set()
+    try:
+        return accounts.audiobook_job_ids_since(acct["id"], since)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING account_job_ids_since: {e}", flush=True)
+        return set()
+
+
 @bp.route("/api/account/archive/download", methods=["GET"])
 def api_account_archive_download():
     """URL da cui l'app scarica un libro dell'archivio: presigned GET per i
