@@ -8,6 +8,8 @@ The template is assembled from modular fragments at startup:
   - _fragments/about_data.js          : "About the project" modal (per-language texts)
   - _fragments/seo_data.js            : SEO metadata per language + applySEO()
   - _fragments/html_tail.html         : Active jobs monitor, applyI18n, main app logic, closing tags
+  - _fragments/cookie_banner.js       : cookie consent banner, inlined at the top of <body>
+                                        (__COOKIE_BANNER_JS__ in html_head.html)
 
 Server-side SEO:
   Meta tags (title, description, OG, hreflang, canonical, JSON-LD) are injected
@@ -184,6 +186,10 @@ def build_html_template(
     except ValueError:
         _max_upload_mb = 50
     html = html.replace("__MAX_UPLOAD_MB__", str(_max_upload_mb))
+    # Banner cookie inline in cima al <body>: il suo testo e' l'LCP per chi
+    # arriva la prima volta, e da script defer compariva solo a fine parsing.
+    html = html.replace("__COOKIE_BANNER_JS__",
+                        (_FRAGMENTS_DIR / "cookie_banner.js").read_text(encoding="utf-8"))
 
     # ── 4. Inject version badge ──
     version_badge = ""

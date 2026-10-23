@@ -165,11 +165,15 @@ def test_home_senza_la_vecchia_guida_podcast():
     assert "/guide/podcast/it/" in html and "openAbout" in html
 
 
-def test_banner_cookie_primo_script_defer_e_fuori_da_app_js():
-    """Il testo del banner e' l'LCP per chi arriva la prima volta: non deve
-    aspettare il download di app.js."""
-    tail = (ROOT / "templates/_fragments/html_tail.html").read_text(encoding="utf-8")
-    defers = re.findall(r'<script defer src="/static/js/([\w.]+)\?', tail)
-    assert defers[0] == "cookie_banner.js"
+def test_banner_cookie_inline_in_cima_al_body():
+    """Il testo del banner e' l'LCP per chi arriva la prima volta. Da script
+    defer aspettava la fine del parsing: in lab (4G lento, CPU 4x) compariva
+    1,4 s dopo il primo paint. Inline in cima al body c'e' gia' al primo paint."""
+    from templates.index_page import build_html_template
+    html = build_html_template("it", {"title": "t"}, "", "1.0")
+    i = html.index("div.id='cookieBanner'")
+    assert html.index("<body>") < i < html.index('<main id="main"')
+    assert "cookie_banner.js" not in html
+    banner = (ROOT / "templates/_fragments/cookie_banner.js").read_text(encoding="utf-8")
+    assert "</script" not in banner.lower()
     assert "abm_cookie_consent" not in (ROOT / "static/js/app.js").read_text(encoding="utf-8")
-    assert "abm_cookie_consent" in (ROOT / "static/js/cookie_banner.js").read_text(encoding="utf-8")

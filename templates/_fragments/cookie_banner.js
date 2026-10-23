@@ -1,6 +1,7 @@
-// Banner di consenso cookie: file a se' e primo degli script defer, cosi'
-// compare senza aspettare app.js (per chi arriva la prima volta il suo testo
-// e' l'elemento LCP della home). Autonomo: usa solo <html lang> e gtag.
+// Banner di consenso cookie, inline in cima al <body> (index_page.py): per chi
+// arriva la prima volta il suo testo e' l'elemento LCP della home e deve esserci
+// gia' al primo paint. Autonomo: usa solo <html lang> e gtag. Mai il tag di
+// chiusura dello script qui dentro, nemmeno nei commenti: chiuderebbe l'inline.
 // ═══════════════════ COOKIE CONSENT BANNER (Consent Mode v2) ═══════════════════
 (function(){
   const STORAGE_KEY='abm_cookie_consent';
@@ -69,14 +70,18 @@
     if(saved!=='granted'&&saved!=='denied')show();
     // Riapertura del banner su richiesta dalla pagina Privacy (link ?cookies=1).
     try{if(/[?&]cookies=1(?:&|$)/.test(location.search))show();}catch(e){}
-    // Link footer unificato "Cookie e privacy": testo localizzato (tr().title),
-    // naviga a /privacy. La gestione del consenso vive nella pagina Privacy.
+  }
+  // Link footer unificato "Cookie e privacy": testo localizzato (tr().title),
+  // naviga a /privacy. La gestione del consenso vive nella pagina Privacy.
+  // Il footer viene dopo questo script: si aspetta la fine del parsing.
+  function privacyLink(){
     const link=document.getElementById('privacyLink');
     if(link)link.textContent=tr().title;
   }
+  init();
   if(document.readyState==='loading'){
-    document.addEventListener('DOMContentLoaded',init);
+    document.addEventListener('DOMContentLoaded',privacyLink);
   }else{
-    init();
+    privacyLink();
   }
 })();
