@@ -1,5 +1,19 @@
 """Sezione «Casi di abuso» del digest admin: solo hash e contatori."""
+import pytest
+
 import email_service as es
+
+
+@pytest.fixture(autouse=True)
+def _provider_isolati(monkeypatch):
+    # I provider del digest sono globali di email_service. L'import di
+    # audiobook_app (test_a4_client_ip lo fa gia' alla collection) aggancia
+    # quelli veri, che leggono ABM_DATA_DIR: con il data dir locale dello
+    # sviluppatore una voce rimborsata nelle ultime 24 ore faceva partire il
+    # digest che qui non deve partire. Ogni test parte da tutti a None.
+    for name in ("_funnel_provider", "_power_users_provider", "_abuse_provider",
+                 "_voice_clone_provider"):
+        monkeypatch.setattr(es, name, None)
 
 
 def _rows():
