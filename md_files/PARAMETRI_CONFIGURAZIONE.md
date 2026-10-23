@@ -40,9 +40,9 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 163 |
 | `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) — usato dal backend Vertex AI del motore Gemini TTS (e dalla traduzione libro via Vertex) quando `ABM_GEMINI_BACKEND` risolve a `vertex`. | `gemini_tts.py` | 221 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra; valorizzata anche automaticamente a partire da `ABM_GOOGLE_CREDENTIALS_FILE`) | `gemini_tts.py` | 2202 |
-| `ABM_PAYPAL_CLIENT_ID` | `""` (PayPal REST API client ID per pagamenti LLM; con auto-strip whitespace) | `audiobook_app.py` | 115 |
-| `ABM_PAYPAL_SECRET` | `""` (PayPal REST API secret; con auto-strip whitespace) | `audiobook_app.py` | 116 |
-| `ABM_PAYPAL_MODE` | `"sandbox"` (sandbox\|live) | `audiobook_app.py` | 117 |
+| `ABM_PAYPAL_CLIENT_ID` | `""` (PayPal REST API client ID per pagamenti e abbonamenti; con auto-strip whitespace) | `payment.py` | 42 |
+| `ABM_PAYPAL_SECRET` | `""` (PayPal REST API secret; con auto-strip whitespace) | `payment.py` | 43 |
+| `ABM_PAYPAL_MODE` | `"sandbox"` (sandbox\|live; obbligatoria se c'e' il client id) | `payment.py` | 47 |
 | `ABM_LLM_RATE_EUR_PER_MCHAR` | `1.10` (EUR per 1M char input, include markup + fee PayPal) | `audiobook_app.py` | 119 |
 | `ABM_LLM_FREE_THRESHOLD_EUR` | `0.50` (EUR sotto i quali l'ottimizzazione è gratuita e liberamente testabile) | `audiobook_app.py` | 120 |
 | `ABM_LLM_MIN_COST_EUR` | `1.0` (floor EUR sull'importo dovuto per l'ottimizzazione AI **standalone**, applicato solo quando la stima supera `ABM_LLM_FREE_THRESHOLD_EUR`; sotto soglia resta gratis; non si applica alla quota LLM dei pagamenti combinati con voci PREMIUM) | `payment.py` | 58–62 |
@@ -1463,6 +1463,26 @@ Login senza password: magic link `/auth/<token>` + codice a 6 cifre nella stessa
 | Adozione retroattiva | solo `_payments.json` (email+job_id) e `_voice_clones.json` (`owner_email`), alla creazione dell'account | `accounts.py` |
 | Notifica forzata | con sessione attiva ogni job (generate/optimize/translate) è in modalità email sull'indirizzo dell'account, esente da heartbeat; `/api/register_email` con altra email → 409 `logged_in_email_forced` | `audiobook_app.py` |
 | Log activity | `ACCOUNT_LOGIN`, `ACCOUNT_LOGOUT`, `ACCOUNT_LOGOUT_ALL`, `ACCOUNT_DELETE`, `ACCOUNT_ADOPT` con sid `acct-<hash8>`, mai l'email in chiaro | `audiobook_app.py` |
+
+### 19.1 Abbonamenti mensili (`subscriptions.py`, `billing_paypal.py`, `routes_subscriptions.py`)
+
+Abbonamenti `sub_5`/`sub_10` con PayPal Subscriptions (fase 2a, v3.155.0). Spazio cloud = quota del piano (`ABM_PLAN_SUB5_GB`/`ABM_PLAN_SUB10_GB`, §19), voucher mensile legato all'account a ogni pagamento confermato. Tabelle `subscriptions`, `subscription_events`, `subscription_payments` in `abm.db` (migrazione `subscriptions_v1`). Webhook `POST /api/billing/paypal/webhook` (unico percorso esente da CSRF); riconciliazione `subscriptions.sweep` nel loop di cleanup. Setup dei plan: `python -m billing_paypal setup`.
+
+| Variabile / costante | Default | Significato | File:riga |
+|---|---|---|---|
+| `ABM_SUBSCRIPTIONS_ENABLE` | `0` | Interruttore della vendita: spento, nessun pulsante e `checkout` 404. Webhook e riconciliazione lavorano comunque sugli abbonamenti esistenti. Serve anche `billing_paypal.available()` (credenziali, plan e webhook configurati). | `subscriptions.py:175` |
+| `ABM_PAYPAL_PLAN_SUB5` / `ABM_PAYPAL_PLAN_SUB10` | `""` | Id dei plan PayPal (`P-…`) creati da `python -m billing_paypal setup`, diversi fra sandbox e live. | `billing_paypal.py:30` |
+| `ABM_PAYPAL_WEBHOOK_ID` | `""` | Id del webhook registrato nel pannello PayPal: senza, la firma non si verifica e ogni webhook e' 400. | `billing_paypal.py:286` |
+| `ABM_SUB5_PRICE_EUR` / `ABM_SUB10_PRICE_EUR` | `5` / `10` (floor 0,5) | Canone mensile mostrato all'utente e usato dal setup dei plan; un pagamento di importo diverso si accetta con email admin `amount_mismatch`. | `subscriptions.py:121` |
+| `ABM_SUB5_VOUCHER_EUR` / `ABM_SUB10_VOUCHER_EUR` | `5` / `10` | Importo del voucher emesso a ogni periodo pagato (`kind="subscription"`, servizi `VOUCHER_DEFAULT_SERVICES`, spendibile solo dall'account). | `subscriptions.py:122` |
+| `ABM_SUB_VOUCHER_DAYS` | `30` (floor 1) | Validita' del voucher dall'emissione; nessun riporto. | `subscriptions.py:157` |
+| `ABM_SUB_PAST_DUE_DAYS` | `10` (floor 0) | Grazia oltre la fine del periodo mentre PayPal ritenta un rinnovo fallito (2 tentativi a 5 giorni, `payment_failure_threshold=1`); con la disdetta chiesta non si applica. | `subscriptions.py:153` |
+| `ABM_SUB_RECONCILE_SEC` | `900` (floor 60) | Intervallo minimo fra due giri di riconciliazione (stato remoto, pagamenti persi, disdette da confermare, voucher non emessi). | `subscriptions.py:165` |
+| `ABM_SUB_CHECKOUT_TTL_SEC` | `10800` (floor 600) | Un checkout non approvato entro questo tempo diventa `abandoned` (misura dell'attrito); il link vecchio resta sorvegliato 7 giorni (`ABANDONED_WATCH_SEC`) e un pagamento tardivo si rimborsa. | `subscriptions.py:161` |
+| `SWEEP_BATCH` | `50` | Righe controllate per giro di riconciliazione. | `subscriptions.py:123` |
+| `SUB_TERMS_VERSION` | `"2026-10-23"` | Versione delle condizioni accettate al checkout (registrata sulla riga con `withdrawal_waived_at`). | `subscriptions.py:41` |
+| Rate limit checkout | 10/min, 30/h per IP (`sub_checkout`) | | `routes_subscriptions.py` |
+| Rate limit webhook | 120/min, 3000/h per IP (`paypal_webhook`) | | `routes_subscriptions.py` |
 
 ---
 

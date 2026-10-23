@@ -14,8 +14,10 @@ LANGS = ["it", "en", "fr", "es", "de", "zh", "hi"]
 ARCHIVE_KEYS = ["archive_over_subject", "archive_over_body", "archive_off_subject",
                 "archive_off_body", "archive_remind_subject", "archive_remind_body",
                 "archive_books_more"]
+SUBSCRIPTION_KEYS = ["subscription_active_subject", "subscription_active_body",
+                     "subscription_cancelled_subject", "subscription_cancelled_body"]
 KEYS = ["brand", "login_subject", "login_body", "delete_subject", "delete_body",
-        "deleted_subject", "deleted_body", "footer", *ARCHIVE_KEYS]
+        "deleted_subject", "deleted_body", "footer", *ARCHIVE_KEYS, *SUBSCRIPTION_KEYS]
 
 
 @pytest.fixture
