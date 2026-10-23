@@ -14,7 +14,11 @@
     "archive_remind_subject": "Promemoria: il {deadline} toglieremo alcuni audiolibri",
     "archive_remind_body": "<p>Fra pochi giorni, il {deadline}, toglieremo questi audiolibri dalla tua libreria cloud:</p>{books_html}<p>La tua libreria cloud contiene {used} e ha {quota} di spazio. Per tenerli, apri la tua <a href=\"{manage_url}\">area personale</a> ed elimina altri libri, oppure attiva la libreria gratuita se è disattivata.</p>",
     "archive_books_more": "…e altri {n}",
-    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>",
+    "subscription_active_subject": "Il tuo abbonamento Audiobook Maker è attivo",
+    "subscription_active_body": "<p>Il tuo abbonamento è attivo: hai {space} di libreria cloud.</p><p>Il buono del mese da {voucher} € è già nel tuo account e vale fino al {voucher_until}: quando paghi un servizio PREMIUM dopo aver fatto l'accesso ti viene proposto in automatico.</p><p>Il prossimo rinnovo è il {renews_at}. Puoi disdire quando vuoi dalla tua <a href=\"{manage_url}\">area personale</a>.</p>",
+    "subscription_cancelled_subject": "Abbonamento disdetto",
+    "subscription_cancelled_body": "<p>Abbiamo registrato la disdetta del tuo abbonamento: non ci saranno altri addebiti.</p><p>L'abbonamento e i suoi {space} di libreria cloud restano attivi fino al {ends_at}. Dopo, lo spazio torna a quello del piano gratuito: se la libreria lo supera, i libri più vecchi restano {days} giorni e ti avvisiamo prima di toglierli.</p><p>Puoi abbonarti di nuovo quando vuoi dalla tua <a href=\"{manage_url}\">area personale</a>.</p>"
   },
   "en": {
     "brand": "Audiobook Maker",
@@ -31,7 +35,11 @@
     "archive_remind_subject": "Reminder: some audiobooks will be removed on {deadline}",
     "archive_remind_body": "<p>In a few days, on {deadline}, we will remove these audiobooks from your cloud library:</p>{books_html}<p>Your cloud library holds {used} and has {quota} of space. To keep them, open your <a href=\"{manage_url}\">personal area</a> and delete other books, or turn on the free library if it is off.</p>",
     "archive_books_more": "…and {n} more",
-    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>",
+    "subscription_active_subject": "Your Audiobook Maker subscription is active",
+    "subscription_active_body": "<p>Your subscription is active: you have {space} of cloud library.</p><p>This month's €{voucher} voucher is already in your account and is valid until {voucher_until}: it is offered automatically when you pay for a PREMIUM service while signed in.</p><p>The next renewal is on {renews_at}. You can cancel at any time from your <a href=\"{manage_url}\">personal area</a>.</p>",
+    "subscription_cancelled_subject": "Subscription cancelled",
+    "subscription_cancelled_body": "<p>We have recorded the cancellation of your subscription: there will be no further charges.</p><p>The subscription and its {space} of cloud library stay active until {ends_at}. After that, your space goes back to the free plan: if your library is over the limit, the oldest books stay for {days} days and we will let you know before removing them.</p><p>You can subscribe again at any time from your <a href=\"{manage_url}\">personal area</a>.</p>"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -48,7 +56,11 @@
     "archive_remind_subject": "Rappel : des livres audio seront supprimés le {deadline}",
     "archive_remind_body": "<p>Dans quelques jours, le {deadline}, nous supprimerons ces livres audio de votre bibliothèque cloud :</p>{books_html}<p>Votre bibliothèque cloud contient {used} et dispose de {quota} d'espace. Pour les conserver, ouvrez votre <a href=\"{manage_url}\">espace personnel</a> et supprimez d'autres livres, ou activez la bibliothèque gratuite si elle est désactivée.</p>",
     "archive_books_more": "…et {n} autres",
-    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>",
+    "subscription_active_subject": "Votre abonnement Audiobook Maker est actif",
+    "subscription_active_body": "<p>Votre abonnement est actif : vous disposez de {space} de bibliothèque cloud.</p><p>Le bon du mois de {voucher} € est déjà sur votre compte et reste valable jusqu'au {voucher_until} : il vous est proposé automatiquement lorsque vous payez un service PREMIUM en étant connecté.</p><p>Le prochain renouvellement aura lieu le {renews_at}. Vous pouvez résilier à tout moment depuis votre <a href=\"{manage_url}\">espace personnel</a>.</p>",
+    "subscription_cancelled_subject": "Abonnement résilié",
+    "subscription_cancelled_body": "<p>Nous avons enregistré la résiliation de votre abonnement : il n'y aura plus de prélèvement.</p><p>L'abonnement et ses {space} de bibliothèque cloud restent actifs jusqu'au {ends_at}. Ensuite, l'espace revient à celui de l'offre gratuite : si votre bibliothèque dépasse la limite, les livres les plus anciens restent {days} jours et nous vous prévenons avant de les retirer.</p><p>Vous pouvez vous réabonner à tout moment depuis votre <a href=\"{manage_url}\">espace personnel</a>.</p>"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -65,7 +77,11 @@
     "archive_remind_subject": "Recordatorio: el {deadline} eliminaremos algunos audiolibros",
     "archive_remind_body": "<p>Dentro de unos días, el {deadline}, eliminaremos estos audiolibros de tu biblioteca en la nube:</p>{books_html}<p>Tu biblioteca en la nube ocupa {used} y tiene {quota} de espacio. Para conservarlos, abre tu <a href=\"{manage_url}\">área personal</a> y elimina otros libros, o activa la biblioteca gratuita si está desactivada.</p>",
     "archive_books_more": "…y {n} más",
-    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>",
+    "subscription_active_subject": "Tu suscripción a Audiobook Maker está activa",
+    "subscription_active_body": "<p>Tu suscripción está activa: tienes {space} de biblioteca en la nube.</p><p>El bono del mes de {voucher} € ya está en tu cuenta y es válido hasta el {voucher_until}: se te propone automáticamente cuando pagas un servicio PREMIUM con la sesión iniciada.</p><p>La próxima renovación es el {renews_at}. Puedes cancelar cuando quieras desde tu <a href=\"{manage_url}\">área personal</a>.</p>",
+    "subscription_cancelled_subject": "Suscripción cancelada",
+    "subscription_cancelled_body": "<p>Hemos registrado la cancelación de tu suscripción: no habrá más cargos.</p><p>La suscripción y sus {space} de biblioteca en la nube siguen activos hasta el {ends_at}. Después, el espacio vuelve al del plan gratuito: si tu biblioteca supera el límite, los libros más antiguos se conservan {days} días y te avisaremos antes de retirarlos.</p><p>Puedes volver a suscribirte cuando quieras desde tu <a href=\"{manage_url}\">área personal</a>.</p>"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -82,7 +98,11 @@
     "archive_remind_subject": "Erinnerung: Am {deadline} werden einige Hörbücher entfernt",
     "archive_remind_body": "<p>In wenigen Tagen, am {deadline}, entfernen wir diese Hörbücher aus deiner Cloud-Bibliothek:</p>{books_html}<p>Deine Cloud-Bibliothek belegt {used} und hat {quota} Speicherplatz. Um sie zu behalten, öffne deinen <a href=\"{manage_url}\">persönlichen Bereich</a> und lösche andere Bücher, oder schalte die kostenlose Bibliothek ein, falls sie ausgeschaltet ist.</p>",
     "archive_books_more": "…und {n} weitere",
-    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>",
+    "subscription_active_subject": "Dein Audiobook-Maker-Abonnement ist aktiv",
+    "subscription_active_body": "<p>Dein Abonnement ist aktiv: Du hast {space} Cloud-Bibliothek.</p><p>Der Gutschein des Monats über {voucher} € ist bereits in deinem Konto und gilt bis {voucher_until}: Er wird dir automatisch angeboten, wenn du angemeldet einen PREMIUM-Dienst bezahlst.</p><p>Die nächste Verlängerung ist am {renews_at}. Du kannst jederzeit in deinem <a href=\"{manage_url}\">persönlichen Bereich</a> kündigen.</p>",
+    "subscription_cancelled_subject": "Abonnement gekündigt",
+    "subscription_cancelled_body": "<p>Wir haben die Kündigung deines Abonnements erfasst: Es gibt keine weiteren Abbuchungen.</p><p>Das Abonnement und seine {space} Cloud-Bibliothek bleiben bis {ends_at} aktiv. Danach fällt der Speicherplatz auf den des kostenlosen Tarifs zurück: Liegt deine Bibliothek darüber, bleiben die ältesten Bücher {days} Tage erhalten, und wir sagen dir Bescheid, bevor wir sie entfernen.</p><p>Du kannst jederzeit in deinem <a href=\"{manage_url}\">persönlichen Bereich</a> wieder abonnieren.</p>"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -99,7 +119,11 @@
     "archive_remind_subject": "提醒：部分有声书将于 {deadline} 被删除",
     "archive_remind_body": "<p>再过几天，即 {deadline}，我们将从您的云端书库中删除以下有声书：</p>{books_html}<p>您的云端书库已占用 {used}，空间为 {quota}。如需保留，请打开您的<a href=\"{manage_url}\">个人空间</a>删除其他书籍，或在免费书库已关闭时将其开启。</p>",
     "archive_books_more": "……还有 {n} 本",
-    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>",
+    "subscription_active_subject": "您的 Audiobook Maker 订阅已生效",
+    "subscription_active_body": "<p>您的订阅已生效：您拥有 {space} 云端书库。</p><p>本月 {voucher} € 的代金券已存入您的账户，有效期至 {voucher_until}：登录后支付 PREMIUM 服务时会自动为您使用。</p><p>下次续订日期为 {renews_at}。您可以随时在<a href=\"{manage_url}\">个人空间</a>中取消。</p>",
+    "subscription_cancelled_subject": "订阅已取消",
+    "subscription_cancelled_body": "<p>我们已登记您的订阅取消：之后不会再扣款。</p><p>订阅及其 {space} 云端书库将保持有效至 {ends_at}。之后空间将恢复为免费方案的空间：如果书库超出，最早的书籍会保留 {days} 天，删除前我们会通知您。</p><p>您可以随时在<a href=\"{manage_url}\">个人空间</a>中重新订阅。</p>"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -116,6 +140,10 @@
     "archive_remind_subject": "याद दिलाना: {deadline} को कुछ ऑडियोबुक हटा दिए जाएँगे",
     "archive_remind_body": "<p>कुछ ही दिनों में, {deadline} को, हम आपकी क्लाउड लाइब्रेरी से ये ऑडियोबुक हटा देंगे:</p>{books_html}<p>आपकी क्लाउड लाइब्रेरी में {used} भरा है और उसमें {quota} जगह है। उन्हें रखने के लिए अपना <a href=\"{manage_url}\">निजी क्षेत्र</a> खोलें और अन्य किताबें हटाएँ, या यदि मुफ़्त लाइब्रेरी बंद है तो उसे चालू करें।</p>",
     "archive_books_more": "…और {n} अन्य",
-    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>"
+    "footer": "<p style=\"color:#888;font-size:.9em\">Audiobook Maker</p>",
+    "subscription_active_subject": "आपका Audiobook Maker सब्सक्रिप्शन सक्रिय है",
+    "subscription_active_body": "<p>आपका सब्सक्रिप्शन सक्रिय है: आपके पास {space} क्लाउड लाइब्रेरी है।</p><p>इस महीने का {voucher} € का वाउचर आपके खाते में आ चुका है और {voucher_until} तक मान्य है: साइन इन करके PREMIUM सेवा का भुगतान करते समय यह अपने-आप सुझाया जाता है।</p><p>अगला नवीनीकरण {renews_at} को है। आप अपने <a href=\"{manage_url}\">निजी क्षेत्र</a> से कभी भी रद्द कर सकते हैं।</p>",
+    "subscription_cancelled_subject": "सब्सक्रिप्शन रद्द हुआ",
+    "subscription_cancelled_body": "<p>हमने आपका सब्सक्रिप्शन रद्द करने का अनुरोध दर्ज कर लिया है: अब कोई और शुल्क नहीं लगेगा।</p><p>सब्सक्रिप्शन और उसकी {space} क्लाउड लाइब्रेरी {ends_at} तक सक्रिय रहेंगी। उसके बाद जगह मुफ़्त प्लान जितनी हो जाएगी: अगर लाइब्रेरी सीमा से ऊपर है, तो सबसे पुरानी किताबें {days} दिन तक रहेंगी और हटाने से पहले हम आपको बताएँगे।</p><p>आप अपने <a href=\"{manage_url}\">निजी क्षेत्र</a> से कभी भी दोबारा सब्सक्राइब कर सकते हैं।</p>"
   }
 }

@@ -1041,6 +1041,13 @@ def format_bytes(n):
     return f"{n / GIB:.2f}".rstrip("0").rstrip(".") + " GB"
 
 
+def format_eur(value):
+    """Importo per email e pagine degli abbonamenti: due decimali, senza ".00"
+    per gli interi ("5", "5.50"); il simbolo lo mette il testo tradotto."""
+    s = f"{float(value or 0):.2f}"
+    return s[:-3] if s.endswith(".00") else s
+
+
 def utc_day(epoch):
     """Data UTC `YYYY-MM-DD` di un epoch: l'unico formato di giorno di email e
     pagine dell'archivio (scadenze, ultimo giorno di un regalo)."""

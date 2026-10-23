@@ -945,6 +945,21 @@ def send_archive_remind(email, lang, *, books, deadline, quota, used, manage_url
                            quota=quota, used=used, manage_url=manage_url)
 
 
+def send_subscription_active(email, lang, *, space, voucher, voucher_until, renews_at):
+    """Abbonamento attivo (primo pagamento confermato). Valori gia' formattati:
+    `space` ("5 GB"), `voucher` (importo), date YYYY-MM-DD in UTC."""
+    return _acct_send(email, lang, "subscription_active_subject", "subscription_active_body",
+                      space=space, voucher=voucher, voucher_until=voucher_until,
+                      renews_at=renews_at, manage_url=f"{BASE_URL}/account")
+
+
+def send_subscription_cancelled(email, lang, *, space, ends_at, days):
+    """Conferma della disdetta: attivo fino a `ends_at`, poi tolleranza di `days`
+    giorni sull'eccedenza."""
+    return _acct_send(email, lang, "subscription_cancelled_subject", "subscription_cancelled_body",
+                      space=space, ends_at=ends_at, days=days, manage_url=f"{BASE_URL}/account")
+
+
 def send_voice_clone_reminder(email, lang, *, resume_url, stage):
     stage_n = _vc_num(stage, kind="int")
     if stage_n is None:
@@ -1625,6 +1640,37 @@ def admin_notify_gemini_model_unavailable(model_key, detail, job_id, cooldown_se
         _send_email(ADMIN_EMAIL, subject, html_body)
     except Exception as e:
         print(f"[email] admin_notify_gemini_model_unavailable fallita: {e}")
+
+
+_SUB_ALERT_TITLES = {
+    "amount_mismatch": "Abbonamento: importo diverso dal canone",
+    "refund_failed": "Abbonamento: rimborso automatico fallito",
+    "rejected_payment": "Abbonamento: pagamento rifiutato e rimborsato",
+    "reversal": "Abbonamento: pagamento rimborsato o stornato",
+    "check_failures": "Abbonamento: riconciliazione in errore",
+    "cancel_failing": "Abbonamento: disdetta presso il fornitore in errore",
+}
+
+
+def admin_notify_subscription(kind, details):
+    """Notifica IMMEDIATA di un caso degli abbonamenti da guardare a mano
+    (`kind` in _SUB_ALERT_TITLES; `details`: coppie chiave/valore, escapate).
+    Un guasto SMTP non propaga."""
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+    title = _SUB_ALERT_TITLES.get(kind, f"Abbonamento: {kind}")
+    rows = "".join(
+        f"<tr><td><strong>{_esc_html(_sanitize_header(str(k), max_len=40))}</strong></td>"
+        f"<td><code>{_esc_html(_sanitize_header(str(v), max_len=300))}</code></td></tr>"
+        for k, v in (details or {}).items())
+    subject = _sanitize_header(f"[ABM-ADMIN] {title}", max_len=200)
+    html_body = _layout.admin_panel(title, "#b45309", f"""        <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">{rows}</table>
+        <p>Dettagli nel log del servizio (righe <code>[subscriptions]</code>) e nelle tabelle
+           <code>subscriptions</code>/<code>subscription_payments</code> di abm.db.</p>""")
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+    except Exception as e:
+        print(f"[email] admin_notify_subscription fallita: {e}")
 
 
 def admin_notify_edge_tts_degraded(snap):

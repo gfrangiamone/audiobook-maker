@@ -705,7 +705,8 @@ def account_page_view():
         sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab,
         link_lang=link_lang, new_voice_url=new_voice_url, archive=_account_archive_for(acct),
         free_quota_bytes=accounts.plan_quota_bytes(accounts.PLAN_FREE),
-        tolerance_days=accounts.archive_tolerance_days()))
+        tolerance_days=accounts.archive_tolerance_days(),
+        subscription=subscriptions.status_for(acct), sub_notice=request.args.get("sub") or ""))
 
 
 @bp.route("/api/account/jobs", methods=["GET"])

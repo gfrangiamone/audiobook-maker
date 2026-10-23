@@ -24,6 +24,10 @@ _CSS = page_brand.BASE_CSS + (
     ".quota{height:6px;border-radius:3px;background:var(--srf2);margin:.7em 0 .3em;overflow:hidden}"
     ".quota i{display:block;height:100%;background:var(--ac)}"
     ".planhead .warn{margin-top:.5em;font-size:.9em;color:var(--err)}"
+    ".subplans{display:flex;gap:.8em;flex-wrap:wrap;margin-top:.6em}"
+    ".subplan{flex:1 1 14em;padding:.6em .8em;border:1px solid var(--brd);border-radius:10px}"
+    ".subplan button{margin-top:.5em}"
+    "dialog label{display:flex;gap:.5em;align-items:flex-start;font-size:.92em}"
     ".cnt{display:inline-block;min-width:1.4em;text-align:center;font-size:.85em;border-radius:1em;"
     "padding:0 .4em;background:var(--ac);color:#fff;margin-left:.3em}"
     "button.primary .cnt{background:#fff;color:var(--ac)}"
@@ -288,6 +292,22 @@ _HISTORY_JS = (
     "if(fc)fc.onclick=function(){fc.disabled=true;post('/api/account/free_plan',"
     "{action:fc.getAttribute('data-action'),source:'account'}).then(function(r){"
     "if(r.ok){location.reload();}else{fc.disabled=false;}}).catch(function(){fc.disabled=false;});};"
+    "document.querySelectorAll('[data-subplan]').forEach(function(b){b.onclick=function(){"
+    "openDlg(document.getElementById('subDlg_'+b.getAttribute('data-subplan')));};});"
+    "document.querySelectorAll('[data-subgo]').forEach(function(b){var d=b.closest('dialog'),"
+    "cb=d.querySelector('[data-subwaive]'),er=d.querySelector('[data-suberr]');"
+    "function fail(){if(er)er.hidden=false;b.disabled=!(cb&&cb.checked);}"
+    "if(cb)cb.onchange=function(){b.disabled=!cb.checked;};"
+    "b.onclick=function(){if(!cb||!cb.checked)return;b.disabled=true;if(er)er.hidden=true;"
+    "post('/api/subscription/checkout',{plan:b.getAttribute('data-subgo'),accept_terms:true,"
+    "waive_withdrawal:true}).then(function(r){return r.json().then(function(j){return r.ok&&j&&j.approve_url?j:null;});})"
+    ".then(function(j){if(j){location.href=j.approve_url;}else{fail();}}).catch(fail);};});"
+    "var sc=document.getElementById('subCancel'),scd=document.getElementById('subCancelDlg'),"
+    "scc=document.getElementById('subCancelConfirm');"
+    "if(sc)sc.onclick=function(){openDlg(scd);};"
+    "if(scc)scc.onclick=function(){scc.disabled=true;post('/api/subscription/cancel',{confirm:true})"
+    ".then(function(r){if(r.ok){location.href='/account?sub=cancel_ok';}else{scc.disabled=false;}})"
+    ".catch(function(){scc.disabled=false;});};"
     "var del=document.getElementById('acctDelete'),ddl=document.getElementById('acctDeleteDlg'),"
     "dc=document.getElementById('acctDeleteConfirm');"
     "if(del)del.onclick=function(){openDlg(ddl);};"
@@ -369,11 +389,13 @@ def _plan_header(t, account, archive, *, free_quota_bytes, tolerance_days):
     consenso `archive_status` dice comunque "free", ma la quota e' 0. Senza
     consenso ne' regalo, con libri ancora in archivio (tolleranza), il nome e'
     «non attiva» e la barra e' piena. Con un regalo attivo il consenso l'ha
-    raccolto l'admin: nessun pulsante attiva/disattiva."""
+    raccolto l'admin, con un abbonamento fa parte dell'abbonamento: nessun
+    pulsante attiva/disattiva."""
     archive = archive or {}
     plan = archive.get("plan") or ""
     spaced = plan in accounts.SPACE_PLANS
     gift = spaced and archive.get("plan_source") == "gift"
+    paid = spaced and archive.get("plan_source") == "paid"
     consent = account.get("free_consent_at") is not None
     quota = int(archive.get("quota_bytes") or 0)
     used = int(archive.get("used_bytes") or 0)
@@ -385,7 +407,7 @@ def _plan_header(t, account, archive, *, free_quota_bytes, tolerance_days):
     else:
         name = t["plan_inactive"]
     button = dialog = ""
-    if not gift:
+    if not gift and not paid:
         bid, label = ("freePlanOff", t["free_deactivate_btn"]) if consent else ("freePlanOn", t["free_activate_btn"])
         button = (f"<button type=\"button\" class=\"small{'' if consent else ' primary'}\" "
                   f"id=\"{bid}\">{_e(label)}</button>")
@@ -409,9 +431,86 @@ def _plan_header(t, account, archive, *, free_quota_bytes, tolerance_days):
     return "<div class=\"planhead\">" + "".join(rows) + "</div>" + dialog
 
 
+_SUB_NOTICES = {"ok": "sub_notice_ok", "pending": "sub_notice_pending",
+                "cancelled": "sub_notice_cancelled", "cancel_ok": "sub_notice_cancel_ok"}
+
+
+def _sub_checkout_dialog(t, pid, plan_name, vals):
+    """Popup di un piano: condizioni e casella obbligatoria (non preselezionata)
+    sul recesso; il pulsante resta spento finche' la casella non e' spuntata."""
+    return (f"<dialog id=\"subDlg_{_e(pid)}\"><h2>{_txt(t, 'sub_dlg_title', plan=plan_name)}</h2>"
+            f"<p>{_txt(t, 'sub_terms_p', **vals)}</p>"
+            f"<p><label><input type=\"checkbox\" data-subwaive required> "
+            f"<span>{_e(t['sub_waive_label'])}</span></label></p>"
+            f"<p class=\"warn\" data-suberr hidden>{_e(t['sub_err'])}</p>"
+            f"<div class=\"actions\"><button type=\"button\" class=\"primary\" data-subgo=\"{_e(pid)}\" "
+            f"disabled>{_e(t['sub_go_btn'])}</button>"
+            f"<button type=\"button\" data-close>{_e(t['cancel_btn'])}</button></div></dialog>")
+
+
+def _sub_cancel_dialog(t, end, tolerance_days):
+    return (f"<dialog id=\"subCancelDlg\"><h2>{_e(t['sub_cancel_title'])}</h2>"
+            f"<p>{_txt(t, 'sub_cancel_p', date=end, days=tolerance_days)}</p>"
+            f"<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"subCancelConfirm\">"
+            f"{_e(t['sub_cancel_confirm'])}</button>"
+            f"<button type=\"button\" class=\"primary\" data-close autofocus>{_e(t['cancel_btn'])}</button>"
+            f"</div></dialog>")
+
+
+def _subscription_block(t, status, *, notice="", tolerance_days=0):
+    """Riquadro dell'abbonamento: i piani in vendita con il popup delle
+    condizioni, oppure l'abbonamento in corso con il buono del mese e il
+    pulsante «Disdici» ben visibile. `status` come da `subscriptions.status_for`
+    (con i prezzi); vuoto se la vendita e' spenta e non c'e' un abbonamento."""
+    status = status or {}
+    sub = status.get("subscription")
+    if not status.get("enabled") and not sub:
+        return ""
+    rows = [f"<p><strong>{_e(t['sub_title'])}</strong></p>"]
+    if notice in _SUB_NOTICES:
+        rows.append(f"<p class=\"meta\">{_e(t[_SUB_NOTICES[notice]])}</p>")
+    dialogs = []
+    st = (sub or {}).get("status")
+    if st in ("active", "past_due", "cancelled"):
+        name = t["plan_name_" + sub["plan"]]
+        end = accounts.utc_day(sub["period_end"]) if sub.get("period_end") else ""
+        if sub.get("ends_at"):
+            key = "sub_cancelled_until" if st == "cancelled" else "sub_cancel_pending"
+            rows.append(f"<p class=\"meta\">{_txt(t, key, plan=name, date=end)}</p>")
+        else:
+            rows.append(f"<div class=\"row\"><p class=\"meta\">{_txt(t, 'sub_active', plan=name, date=end)}</p>"
+                        f"<button type=\"button\" class=\"small danger\" id=\"subCancel\">"
+                        f"{_e(t['sub_cancel_btn'])}</button></div>")
+            dialogs.append(_sub_cancel_dialog(t, end, tolerance_days))
+        if st == "past_due":
+            rows.append(f"<p class=\"warn\">{_e(t['sub_past_due'])}</p>")
+        v = sub.get("voucher")
+        if v:
+            rows.append("<p class=\"meta\">" + _txt(t, "sub_voucher_line",
+                                                   amount=accounts.format_eur(v["remaining_eur"]),
+                                                   date=accounts.utc_day(v["expires_at"])) + "</p>")
+    elif st == "activating":
+        rows.append(f"<p class=\"meta\">{_e(t['sub_activating'])}</p>")
+    elif status.get("enabled"):
+        cards = []
+        for p in status.get("plans") or []:
+            name = t["plan_name_" + p["plan"]]
+            vals = {"price": accounts.format_eur(p["price_eur"]),
+                    "voucher": accounts.format_eur(p["voucher_eur"]),
+                    "space": accounts.format_bytes(p["quota_bytes"])}
+            cards.append(f"<div class=\"subplan\"><p><strong>{_e(name)}</strong></p>"
+                         f"<p class=\"meta\">{_txt(t, 'sub_plan_card', **vals)}</p>"
+                         f"<button type=\"button\" class=\"small primary\" data-subplan=\"{_e(p['plan'])}\">"
+                         f"{_e(t['sub_choose_btn'])}</button></div>")
+            dialogs.append(_sub_checkout_dialog(t, p["plan"], name, vals))
+        rows.append("<div class=\"subplans\">" + "".join(cards) + "</div>")
+    return "<div class=\"planhead\">" + "".join(rows) + "</div>" + "".join(dialogs)
+
+
 def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None,
                    now=None, sessions=None, current_sid="", tab="books", link_lang="",
-                   new_voice_url="", archive=None, free_quota_bytes=0, tolerance_days=0):
+                   new_voice_url="", archive=None, free_quota_bytes=0, tolerance_days=0,
+                   subscription=None, sub_notice=""):
     """Area personale: intestazione con il bottone «I tuoi dispositivi», testata
     del piano (occupazione dell'archivio e attivazione del gratuito), tab
     audiolibri / voci campionate, azioni in fondo e i popup (dispositivi,
@@ -420,7 +519,9 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
     `new_voice_url` e' il link che riapre l'app sul campionamento: vuoto
     quando la funzione non e' attiva, cosi' il bottone non compare.
     `archive` come da `accounts.archive_status`; `free_quota_bytes` e
-    `tolerance_days` servono al testo del popup del piano gratuito."""
+    `tolerance_days` servono al testo del popup del piano gratuito.
+    `subscription` come da `subscriptions.status_for`, `sub_notice` l'esito
+    del ritorno dal pagamento (`?sub=`)."""
     now = now if now is not None else time.time()
     voices = voices or []
     tab = "voices" if tab == "voices" else "books"
@@ -432,6 +533,7 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
         f"<span class=\"cnt\">{n_sess}</span></button></div>",
         _plan_header(t, account, archive, free_quota_bytes=free_quota_bytes,
                      tolerance_days=tolerance_days),
+        _subscription_block(t, subscription, notice=sub_notice, tolerance_days=tolerance_days),
         "<nav class=\"tabs\" role=\"tablist\">"
         f"<button type=\"button\" role=\"tab\" data-tab=\"books\" aria-selected=\"{'true' if tab == 'books' else 'false'}\">"
         f"{_e(t['tab_books'])}</button>"

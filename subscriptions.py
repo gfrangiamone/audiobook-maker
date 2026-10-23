@@ -294,15 +294,25 @@ def _account_email(account_id):
     return acct["email"], acct.get("lang") or "en"
 
 
-def _mail(kind, sub, **values):
+def _day(ts):
+    return accounts.utc_day(int(ts)) if ts else ""
+
+
+def _mail(kind, sub, *, voucher_until=None, renews_at=None, ends_at=None):
+    """Email all'utente (`kind`: active | cancelled), best-effort."""
     email, lang = _account_email(sub["account_id"])
     if not email:
         return
-    fn = getattr(email_service, f"send_subscription_{kind}", None)
+    space = accounts.format_bytes(accounts.plan_quota_bytes(sub["plan"]))
     try:
-        if fn is None:
-            raise AttributeError(f"send_subscription_{kind}")
-        fn(email, lang, plan=sub["plan"], **values)
+        if kind == "active":
+            email_service.send_subscription_active(
+                email, lang, space=space, voucher=accounts.format_eur(voucher_eur(sub["plan"])),
+                voucher_until=_day(voucher_until), renews_at=_day(renews_at))
+        else:
+            email_service.send_subscription_cancelled(
+                email, lang, space=space, ends_at=_day(ends_at),
+                days=accounts.archive_tolerance_days())
     except Exception as e:  # noqa: BLE001 - email best-effort
         print(f"[subscriptions] email {kind} per {sub['id']}: {type(e).__name__}: {e}", flush=True)
 
@@ -547,8 +557,8 @@ def record_payment(sub_id, pay, now=None):
                amount=pay.amount_eur, currency=pay.currency, expected=price_eur(sub["plan"]))
     if first:
         v = payment.voucher_info(code) if code else None
-        _mail("active", sub, voucher_eur=voucher_eur(sub["plan"]),
-              voucher_until=int(v["expires_at"]) if v else None, renews_at=sub["period_end"])
+        _mail("active", sub, voucher_until=int(v["expires_at"]) if v else None,
+              renews_at=sub["period_end"])
         _log(f"SUB_ACTIVE:{sub['plan']}", sub_id)
     else:
         _log(f"SUB_RENEWED:{sub['plan']}", sub_id)
