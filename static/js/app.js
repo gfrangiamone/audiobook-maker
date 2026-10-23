@@ -2796,6 +2796,7 @@ async function validateVoucherForPayment(opts) {
         expired: (typeof t === 'function' && t('pay_err_expired')) || 'Buono scaduto',
         used: (typeof t === 'function' && t('pay_err_used')) || 'Buono già utilizzato',
         not_applicable: (typeof t === 'function' && t('pay_err_not_applicable')) || 'Buono non valido per questo servizio',
+        account_only: (typeof t === 'function' && t('pay_err_account_only')) || 'This voucher belongs to another account',
       };
       errEl.textContent = map[d.reason] || ((typeof t === 'function' && t('pay_err_unknown')) || 'Errore validazione');
       return;

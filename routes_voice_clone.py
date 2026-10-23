@@ -419,7 +419,7 @@ def api_vc_commit():
         out, created = voice_clone.commit(
             rec["id"], cid, email=e1, extra_id=extra["id"], extra_text=extra["text"],
             common_text=testi["common"]["text"], payment_token=(data.get("payment_token") or "").strip(),
-            price_eur=price)
+            price_eur=price, account_id=(_current_account() or {}).get("id"))
     except voice_clone.EmailHasVoice:
         return _vc_err("email_has_voice", "This email already has a voice sample", 409)
     except voice_clone.VoiceGone:

@@ -1219,8 +1219,9 @@ def unlink_account(clone_id):
 
 
 def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
-           payment_token, price_eur, now=None):
-    """Dal campione alla voce pagata (`paid`).
+           payment_token, price_eur, now=None, account_id=None):
+    """Dal campione alla voce pagata (`paid`). `account_id` e' l'account della
+    richiesta (None se anonima): un voucher legato a un altro account e' rifiutato.
 
     Sotto il lock di modulo: un doppio click trova la voce gia' oltre
     `sample_ok` e riceve `(rec, False)`; un cid estraneo riceve
@@ -1251,7 +1252,8 @@ def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
             try:
                 method = payment.consume_payment_token(payment_token, price, job_id,
                                                        purpose="voice_clone",
-                                                       service="voice_clone")
+                                                       service="voice_clone",
+                                                       account_id=account_id)
             except ValueError as e:
                 raise PaymentInvalid(str(e)) from e
             pay = {"type": method, "token": payment_token, "amount_eur": price, "paid_at": t}

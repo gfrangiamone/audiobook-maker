@@ -4905,7 +4905,8 @@ def api_generate():
             try:
                 _pay_method = payment.consume_payment_token(
                     payment_token, total_eur_pre, job_id, purpose="gemini",
-                    service=payment.voucher_service_for_voice(voice)
+                    service=payment.voucher_service_for_voice(voice),
+                    account_id=routes_account.current_account_id()
                 )
             except ValueError as _pay_err:
                 try: gemini_tts.release_reservation(job_id)
@@ -5065,7 +5066,8 @@ def api_generate():
                 _pay_method = payment.consume_payment_token(
                     payment_token, total_eur_pre, job_id,
                     purpose=("voxcpm" if _is_vox else "speechify"),
-                    service=payment.voucher_service_for_voice(voice)
+                    service=payment.voucher_service_for_voice(voice),
+                    account_id=routes_account.current_account_id()
                 )
             except ValueError as _pay_err:
                 return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
@@ -6499,6 +6501,8 @@ def api_voucher_validate():
             outcome, status, body = "EXPIRED", 400, {"error": "Voucher expired", "valid": False, "reason": "expired"}
         elif v.get("email", "").lower() != email:
             outcome, status, body = "EMAIL_MISMATCH", 400, {"error": "Email does not match voucher", "valid": False, "reason": "email_mismatch"}
+        elif not payment.voucher_usable_by(v, routes_account.current_account_id()):
+            outcome, status, body = "ACCOUNT_ONLY", 400, {"error": "Voucher belongs to another account", "valid": False, "reason": "account_only"}
         elif service and not payment.voucher_covers(v, service):
             outcome, status, body = "NOT_APPLICABLE", 400, {
                 "error": "Voucher not valid for this service", "valid": False,
@@ -7314,7 +7318,8 @@ def api_optimize():
             if v.get("expires_at", 0) > time.time() and remaining >= _due - 0.01:
                 try:
                     new_remaining = _voucher_consume(payment_token, _due, job_id=job_id,
-                                                     service="llm")
+                                                     service="llm",
+                                                     account_id=routes_account.current_account_id())
                 except ValueError as _ve:
                     _release_opt_claim()
                     return jsonify({
@@ -7471,7 +7476,8 @@ def api_optimize():
                 try:
                     payment._voucher_consume(_combined_token, _expected_total,
                                              job_id=job_id,
-                                             service=payment.voucher_service_for_voice(_voice_in))
+                                             service=payment.voucher_service_for_voice(_voice_in),
+                                             account_id=routes_account.current_account_id())
                     _v = payment.voucher_info(_combined_token) or {}
                     _consumed_method = "voucher"
                     _consumed_email = _v.get("email", "") or ""
@@ -7641,7 +7647,8 @@ def api_optimize():
             elif payment.voucher_info(_combined_token_spx) is not None:
                 try:
                     payment._voucher_consume(_combined_token_spx, _expected_total_spx,
-                                             job_id=job_id, service="speechify")
+                                             job_id=job_id, service="speechify",
+                                             account_id=routes_account.current_account_id())
                     _v_spx = payment.voucher_info(_combined_token_spx) or {}
                     _consumed_method_spx = "voucher"
                     _consumed_email_spx = _v_spx.get("email", "") or ""
@@ -7798,7 +7805,8 @@ def api_optimize():
             elif payment.voucher_info(_combined_token_vox) is not None:
                 try:
                     payment._voucher_consume(_combined_token_vox, _expected_total_vox,
-                                             job_id=job_id, service="voxcpm")
+                                             job_id=job_id, service="voxcpm",
+                                             account_id=routes_account.current_account_id())
                     _v_vox = payment.voucher_info(_combined_token_vox) or {}
                     _consumed_method_vox = "voucher"
                     _consumed_email_vox = _v_vox.get("email", "") or ""
@@ -8152,7 +8160,7 @@ def api_translate():
                 try:
                     new_remaining = _voucher_consume(
                         payment_token, est["due_eur"], job_id=job_id,
-                        service="translate")
+                        service="translate", account_id=routes_account.current_account_id())
                 except ValueError as _ve:
                     _release_claim()
                     return jsonify({"error": f"Voucher not spendable: {_ve}"}), 402

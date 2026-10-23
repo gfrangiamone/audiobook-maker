@@ -268,7 +268,8 @@ _PAID_JOBS_DONE_FILE = _DATA_DIR / "_paid_jobs_done.json"
 # ---------------------------------------------------------------------------
 
 _payments = {}   # order_id -> {amount_eur, email, job_id, captured_at, used, used_at?}
-_vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id}
+_vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id,
+                 #          account_id?, key?}  (account_id: spendibile solo da quell'account)
 _payments_lock = threading.RLock()
 _vouchers_lock = threading.RLock()
 
@@ -518,13 +519,22 @@ def voucher_covers(v: dict, service) -> bool:
     return bool(service) and service in services
 
 
-def best_voucher_for(email, service, amount_eur) -> dict | None:
-    """Voucher di `email` che puo' pagare subito `amount_eur` per `service`
-    (stessi controlli di /api/voucher_validate), o None. Fra piu' candidati
-    sceglie quello in scadenza prima, a parita' il saldo piu' basso: si
-    spendono per primi i buoni che altrimenti andrebbero persi."""
+def voucher_usable_by(v: dict, account_id) -> bool:
+    """True se il voucher puo' essere speso dall'account `account_id` (None =
+    utente anonimo). Un voucher con `account_id` (quelli degli abbonamenti) e'
+    solo di quell'account: non basta conoscerne il codice."""
+    owner = v.get("account_id")
+    return not owner or owner == account_id
+
+
+def best_voucher_for(email, service, amount_eur, account_id=None) -> dict | None:
+    """Voucher di `email` o dell'account `account_id` che puo' pagare subito
+    `amount_eur` per `service` (stessi controlli di /api/voucher_validate), o
+    None. Fra piu' candidati sceglie quello in scadenza prima, a parita' il
+    saldo piu' basso: si spendono per primi i buoni che altrimenti andrebbero
+    persi."""
     email = _norm_email(email)
-    if not email:
+    if not email and not account_id:
         return None
     try:
         amount = max(0.0, float(amount_eur or 0))
@@ -534,7 +544,11 @@ def best_voucher_for(email, service, amount_eur) -> dict | None:
     best = None
     with _vouchers_lock:
         for code, v in _vouchers.items():
-            if not isinstance(v, dict) or _norm_email(v.get("email")) != email:
+            if not isinstance(v, dict):
+                continue
+            mine = (email and _norm_email(v.get("email")) == email) or \
+                (account_id and v.get("account_id") == account_id)
+            if not mine or not voucher_usable_by(v, account_id):
                 continue
             if v.get("revoked") or v.get("expires_at", 0) <= now:
                 continue
@@ -552,17 +566,21 @@ def best_voucher_for(email, service, amount_eur) -> dict | None:
 
 def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
                     kind="refund", note="", created_by="auto_refund",
-                    expiry_days=None, apply_bonus=True, code=None, services=None):
+                    expiry_days=None, apply_bonus=True, code=None, services=None,
+                    account_id=None, key=None):
     """Create a voucher.
 
     kind: "refund" (auto-emesso dopo fallimento pagato), "promo" (generato da admin),
-          "gift" (regalo admin). Solo "refund" applica il bonus % predefinito.
+          "gift" (regalo admin), "subscription" (mensile di un abbonamento).
+          Solo "refund" applica il bonus % predefinito.
     note: testo libero amministrativo (motivo/causale).
     created_by: "auto_refund" per l'emissione automatica, "admin" per CLI.
     expiry_days: None  ->  usa VOUCHER_EXPIRY_DAYS (refund). Gli admin possono passare un valore custom.
     apply_bonus: se False salva l'importo nominale (usato per promo/gift).
     code: se fornito, usa quel codice invece di generarne uno (utile per PROMO- prefix).
     services: elenco da `normalize_voucher_services`; None = tutti i servizi.
+    account_id: se dato, il voucher e' spendibile solo da quell'account.
+    key: chiave di idempotenza dell'emissione (vedi `issue_subscription_voucher`).
     """
     if code is None:
         code = _generate_voucher_code()
@@ -585,14 +603,37 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
         "used_at": None,
         "origin_order_id": origin_order_id,
         "origin_job_id": origin_job_id,
-        "kind": kind,                # "refund" | "promo" | "gift"
+        "kind": kind,                # "refund" | "promo" | "gift" | "subscription"
         "note": (note or "")[:500],
-        "created_by": created_by,    # "auto_refund" | "admin"
+        "created_by": created_by,    # "auto_refund" | "admin" | "subscription"
     }
     if services is not None:
         _vouchers[code]["services"] = list(services)
+    if account_id:
+        _vouchers[code]["account_id"] = account_id
+    if key:
+        _vouchers[code]["key"] = key
     _save_vouchers()
     return code, bonus_amount
+
+
+def issue_subscription_voucher(*, key, account_id, email, amount_eur, days) -> str:
+    """Voucher mensile di un abbonamento: importo nominale, scadenza a `days`
+    giorni dall'emissione, servizi premium "propri" (VOUCHER_DEFAULT_SERVICES),
+    spendibile solo da `account_id`. Idempotente su `key` (un pagamento, un
+    voucher): se esiste gia' un voucher con quella chiave ne ritorna il codice."""
+    if not key or not account_id:
+        raise ValueError("subscription voucher needs key and account_id")
+    with _vouchers_lock:
+        for code, v in _vouchers.items():
+            if isinstance(v, dict) and v.get("key") == key:
+                return code
+        code, _ = _create_voucher(email, round(float(amount_eur), 2), kind="subscription",
+                                  created_by="subscription", expiry_days=days,
+                                  apply_bonus=False, code="SUB-" + _generate_voucher_code(),
+                                  services=list(VOUCHER_DEFAULT_SERVICES),
+                                  account_id=account_id, key=key)
+    return code
 
 
 def _voucher_remaining(v: dict) -> float:
@@ -614,11 +655,12 @@ def _voucher_remaining(v: dict) -> float:
 
 
 def _voucher_consume(code: str, amount: float, job_id: str = "",
-                     service: str = "") -> float:
+                     service: str = "", account_id=None) -> float:
     """Scala ``amount`` EUR dal saldo del voucher ``code``. Ritorna il nuovo saldo
     residuo. Se il saldo scende sotto 0.01 EUR il voucher viene marcato ``used=True``.
     Solleva ``ValueError`` se il voucher non e spendibile, non copre ``service``
-    (vedi `voucher_covers`) o il saldo e insufficiente.
+    (vedi `voucher_covers`), appartiene a un altro account (`voucher_usable_by`)
+    o il saldo e insufficiente.
 
     Money-critical: the entire read-modify-write of ``remaining_eur`` must run
     under ``_vouchers_lock`` to prevent concurrent overspend of the pool.
@@ -631,6 +673,8 @@ def _voucher_consume(code: str, amount: float, job_id: str = "",
             raise ValueError("voucher expired")
         if not voucher_covers(v, service):
             raise ValueError(f"voucher not valid for service {service or '?'}")
+        if not voucher_usable_by(v, account_id):
+            raise ValueError("voucher reserved to another account")
         remaining = _voucher_remaining(v)
         # Arrotondamenti: se la differenza e <= 0.01 permettiamo lo spend (evita errori di 1 cent)
         if amount > remaining + 0.01:
@@ -1041,11 +1085,13 @@ def _mark_paid_job_done(job_id: str, purpose: str = "gemini"):
 
 
 def consume_payment_token(token: str, amount_eur: float, job_id: str,
-                          purpose: str = "gemini", service: str = "") -> str:
+                          purpose: str = "gemini", service: str = "",
+                          account_id=None) -> str:
     """Consume a payment token (voucher or captured PayPal order).
 
-    `service` (VOUCHER_SERVICES) vale solo per i voucher: uno ristretto che
-    non lo copre e' rifiutato.
+    `service` (VOUCHER_SERVICES) e `account_id` (account della richiesta, None
+    se anonima) valgono solo per i voucher: uno ristretto che non copre il
+    servizio, o di un altro account, e' rifiutato.
     Returns the method used ("voucher" or "paypal").
     Raises ValueError if invalid / insufficient.
     """
@@ -1053,7 +1099,8 @@ def consume_payment_token(token: str, amount_eur: float, job_id: str,
         raise ValueError("missing payment_token")
     # Try voucher first
     if token in _vouchers:
-        _voucher_consume(token, amount_eur, job_id=job_id, service=service)
+        _voucher_consume(token, amount_eur, job_id=job_id, service=service,
+                         account_id=account_id)
         _mark_paid_job_done(job_id, purpose=purpose)
         return "voucher"
     # Then PayPal captured order — atomic check-and-set under _payments_lock

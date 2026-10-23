@@ -23,7 +23,7 @@ import hmac
 import secrets
 import time
 
-from flask import Blueprint, Response, abort, g, jsonify, redirect, request
+from flask import Blueprint, Response, abort, g, has_request_context, jsonify, redirect, request
 
 import account_page
 import accounts
@@ -138,6 +138,16 @@ def _current_account():
         print(f"WARNING _current_account: {e}", flush=True)
     g._acct = acct
     return acct
+
+
+def current_account_id():
+    """Id dell'account della richiesta corrente; None se anonima o fuori da una
+    richiesta (thread di lavoro). Serve ai consumi dei voucher legati a un
+    account (`payment.voucher_usable_by`)."""
+    if not has_request_context():
+        return None
+    acct = _current_account()
+    return acct["id"] if acct else None
 
 
 def _acct_cookie_secure():
@@ -482,7 +492,8 @@ def api_account_voucher_suggest():
         return _acct_err("unauthorized", "Sign in required", 401)
     service = payment.voucher_service_for_purpose(
         request.args.get("purpose") or "", request.args.get("voice") or "")
-    v = payment.best_voucher_for(acct["email"], service, request.args.get("amount_eur"))
+    v = payment.best_voucher_for(acct["email"], service, request.args.get("amount_eur"),
+                                 account_id=acct["id"])
     if not v:
         return jsonify({"voucher": None})
     return jsonify({"voucher": {"code": v["code"], "email": acct["email"],
