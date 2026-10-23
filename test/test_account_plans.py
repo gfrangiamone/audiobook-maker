@@ -595,6 +595,89 @@ def test_expire_gifts_scope_and_cache(env):
         "plain": ("free", "", None)}
 
 
+# ------------------------------------------------------------ piani pagati
+
+def _consents_of(acct):
+    with db.tx() as c:
+        return [tuple(r) for r in c.execute(
+            "SELECT action, source FROM plan_consents WHERE account_id=? ORDER BY id", (acct["id"],))]
+
+
+def test_set_paid_plan_overrides_gift_and_grants_consent(env):
+    acct = _login("p@x.it")
+    _gift(acct, "sub_10", T0 + 9 * 86400)
+    assert accounts.set_paid_plan(acct["id"], "sub_5", T0 + 40 * 86400, now=T0) == "ok"
+    a = accounts.get(acct["id"])
+    assert (a["plan"], a["plan_source"], a["plan_until"]) == ("sub_5", "paid", T0 + 40 * 86400)
+    assert a["free_consent_at"] == T0 and a["free_offer_at"] == T0
+    assert _consents_of(acct) == [("grant", "subscription")]
+    assert accounts.plan_origin(a, T0) == "paid"
+    assert accounts.archive_quota_for(a, T0) == accounts.plan_quota_bytes("sub_5")
+    assert accounts.set_paid_plan(acct["id"], "sub_10", T0 + 70 * 86400, now=T0 + 1) == "ok"
+    assert _consents_of(acct) == [("grant", "subscription")]           # consenso gia' dato: nessuna riga
+    assert accounts.end_paid_plan(acct["id"]) is True
+    a = accounts.get(acct["id"])
+    assert (a["plan"], a["plan_source"], a["plan_until"]) == ("free", "", None)
+    assert a["free_consent_at"] == T0                                    # il gratuito resta attivo
+
+
+def test_set_paid_plan_keeps_existing_consent_and_validates(env):
+    acct = _login("k@x.it")
+    accounts.free_plan_action(acct["id"], "activate", "account", now=T0 - 5)
+    assert accounts.set_paid_plan(acct["id"], "sub_10", T0 + 30 * 86400, now=T0) == "ok"
+    assert accounts.get(acct["id"])["free_consent_at"] == T0 - 5
+    assert _consents_of(acct) == [("grant", "account")]
+    with pytest.raises(ValueError):
+        accounts.set_paid_plan(acct["id"], "archive_10", T0 + 1, now=T0)
+    with pytest.raises(ValueError):
+        accounts.set_paid_plan(acct["id"], "sub_5", float(T0 + 1), now=T0)
+    with pytest.raises(ValueError):
+        accounts.set_paid_plan(acct["id"], "sub_5", True, now=T0)
+    assert accounts.set_paid_plan("nope", "sub_5", T0 + 1, now=T0) == "not_found"
+
+
+def test_set_paid_plan_ignores_deleted_and_disabled(env, monkeypatch):
+    dead = _login("dead@x.it")
+    accounts.delete_account(dead["id"])
+    assert accounts.set_paid_plan(dead["id"], "sub_5", T0 + 86400, now=T0) == "not_found"
+    assert accounts.end_paid_plan(dead["id"]) is False
+    alive = _login("alive@x.it")
+    monkeypatch.setattr(accounts, "ENABLE", False)
+    assert accounts.set_paid_plan(alive["id"], "sub_5", T0 + 86400, now=T0) == "not_found"
+    monkeypatch.setattr(accounts, "ENABLE", True)
+    assert accounts.get(alive["id"])["plan"] == "free"
+
+
+def test_end_paid_plan_leaves_gift_and_free(env):
+    gifted, plain = _login("g@x.it"), _login("f@x.it")
+    _gift(gifted, "sub_10", T0 + 9 * 86400)
+    assert accounts.end_paid_plan(gifted["id"]) is False
+    assert accounts.get(gifted["id"])["plan_source"] == "gift"
+    assert accounts.end_paid_plan(plain["id"]) is False
+
+
+def test_paid_plan_changes_clear_archive_cache(env):
+    acct = _login("c@x.it")
+    accounts._archive_cache["at"] = 123.0
+    accounts.set_paid_plan(acct["id"], "sub_5", T0 + 86400, now=T0)
+    assert accounts._archive_cache["at"] == 0.0
+    accounts._archive_cache["at"] = 123.0
+    accounts.end_paid_plan(acct["id"])
+    assert accounts._archive_cache["at"] == 0.0
+
+
+def test_free_deactivate_ignored_while_paid(env):
+    acct = _login("d@x.it")
+    accounts.set_paid_plan(acct["id"], "sub_5", T0 + 40 * 86400, now=T0)
+    got = accounts.free_plan_action(acct["id"], "deactivate", "account", now=T0 + 1)
+    assert got["free_consent_at"] == T0
+    assert _consents_of(acct) == [("grant", "subscription")]
+    # finito il periodo pagato il ritiro torna possibile
+    got = accounts.free_plan_action(acct["id"], "deactivate", "account", now=T0 + 41 * 86400)
+    assert got["free_consent_at"] is None
+    assert _consents_of(acct) == [("grant", "subscription"), ("withdraw", "account")]
+
+
 def test_admin_list_filters_by_plan_and_origin(env):
     g, f, n = _login("g@x.it"), _login("f@x.it"), _login("n@x.it")
     accounts.gift_plan(g["id"], "sub_10", T0 + 86400, now=T0)

@@ -187,6 +187,7 @@ import transcript_judge
 import pending_jobs
 import db
 import accounts
+import subscriptions
 import account_page
 import page_brand
 import tts_backend_state
@@ -442,6 +443,7 @@ voice_denoise.init(_DATA_DIR)
 try:
     db.init(_DATA_DIR)
     accounts.init_schema()
+    subscriptions.init_schema()
     accounts.configure(
         payments_path=Path(_DATA_DIR) / "_payments.json",
         voice_clone_ids_for_email_fn=voice_clone.ids_for_email,

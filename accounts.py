@@ -195,7 +195,7 @@ ARCHIVE_ITEMS_ORPHAN_MIGRATION = [
 
 # Piani v2: archivio gratuito con consenso + piani di spazio regalati dall'admin.
 # `plan_source` dice da dove viene `plan` ('' = nessuno, 'gift' = regalo admin,
-# 'paid' = riservato); `free_consent_*` il consenso al piano gratuito (versione
+# 'paid' = abbonamento, scritto da `set_paid_plan`); `free_consent_*` il consenso al piano gratuito (versione
 # dei termini accettata), `free_offer_at` quando gli e' stato proposto;
 # `archive_over_since`/`archive_notice_stage` la tolleranza dopo la perdita della
 # quota, `archive_notice_ids` l'array JSON delle chiavi `job:<id>`/`item:<id>` dei
@@ -1549,8 +1549,10 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
 
 # Il piano gratuito (archivio da `plan_quota_bytes(PLAN_FREE)`) si attiva solo
 # con il consenso dell'utente: lo si propone una volta (`free_offer_at`) e ogni
-# scelta resta nel registro `plan_consents`. `migration` e' una sorgente valida
-# nel registro ma la scrive solo la migrazione dei dati, mai questa funzione.
+# scelta resta nel registro `plan_consents`. `migration` e `subscription` sono
+# sorgenti valide nel registro ma le scrivono solo la migrazione dei dati e
+# `set_paid_plan` (sottoscrivere un abbonamento vale come consenso), mai questa
+# funzione.
 FREE_PLAN_ACTIONS = ("activate", "decline", "deactivate")
 FREE_CONSENT_SOURCES = ("prompt", "account")
 
@@ -1590,19 +1592,23 @@ def free_plan_action(account_id, action, source, now=None):
     Le azioni che non cambiano nulla non scrivono righe: attivare con il consenso
     gia' dato, ritirarlo quando manca, rifiutare con il consenso dato o a proposta
     gia' chiusa (`free_offer_at`: la riga `decline` e' la prima risposta, non una
-    per ogni click). Lettura e scrittura stanno nella stessa transazione: un
-    doppio click non duplica righe. ValueError su azione o sorgente sconosciute."""
+    per ogni click). Con un abbonamento attivo (`plan_origin` "paid") `deactivate`
+    non fa nulla: il consenso fa parte dell'abbonamento e ritirarlo azzererebbe la
+    quota di chi sta pagando. Lettura e scrittura stanno nella stessa
+    transazione: un doppio click non duplica righe. ValueError su azione o
+    sorgente sconosciute."""
     if action not in FREE_PLAN_ACTIONS:
         raise ValueError(f"unknown free plan action: {action!r}")
     if source not in FREE_CONSENT_SOURCES:
         raise ValueError(f"unknown free plan source: {source!r}")
     now = _now(now)
     with db.tx() as c:
-        row = c.execute("SELECT free_consent_at, free_offer_at, deleted_at FROM accounts WHERE id=?",
-                        (account_id,)).fetchone()
-        if row is None or row["deleted_at"] is not None:
+        row = _live_account(c, account_id)
+        if row is None:
             return None
         has_consent = row["free_consent_at"] is not None
+        if action == "deactivate" and plan_origin(row, now) == "paid":
+            return row
         if action == "activate" and not has_consent:
             c.execute("UPDATE accounts SET free_consent_at=?, free_consent_version=?, "
                       "free_offer_at=COALESCE(free_offer_at, ?) WHERE id=?",
@@ -1701,3 +1707,52 @@ def expire_gifts(now=None):
     if ids:
         _archive_cache_clear()
     return len(ids)
+
+
+# ---------------------------------------------------------------- piani pagati
+
+# Il piano di un abbonamento lo scrive solo `subscriptions` attraverso queste due
+# funzioni: `plan_until` e' la fine del periodo pagato (piu' la grazia per i
+# rinnovi in corso), quindi quota e tolleranza seguono le stesse regole dei
+# regali. Il pagato sovrascrive un regalo attivo (il regalo non torna).
+
+def set_paid_plan(account_id, plan, until, now=None):
+    """Mette l'account sul piano pagato `plan` fino a `until` (epoch intero).
+    Sottoscrivere vale come consenso alla conservazione: se il consenso al
+    piano gratuito manca lo registra (riga `grant`, sorgente `subscription`)
+    nella stessa transazione. Ritorna "ok" o "not_found" (assente, cancellato o
+    account disattivati). ValueError su piano sconosciuto o `until` non intero."""
+    if plan not in SPACE_PLANS:
+        raise ValueError(f"unknown space plan: {plan!r}")
+    if isinstance(until, bool) or not isinstance(until, int):
+        raise ValueError(f"paid plan end must be an epoch: {until!r}")
+    if not enabled():
+        return "not_found"
+    now = _now(now)
+    with db.tx() as c:
+        acct = _live_account(c, account_id)
+        if acct is None:
+            return "not_found"
+        c.execute("UPDATE accounts SET plan=?, plan_source='paid', plan_until=? WHERE id=?",
+                  (plan, until, account_id))
+        if acct["free_consent_at"] is None:
+            c.execute("UPDATE accounts SET free_consent_at=?, free_consent_version=?, "
+                      "free_offer_at=COALESCE(free_offer_at, ?) WHERE id=?",
+                      (now, FREE_TERMS_VERSION, now, account_id))
+            _insert_consents(c, [(account_id, now, "grant", FREE_TERMS_VERSION, "subscription")])
+    _archive_cache_clear()
+    return "ok"
+
+
+def end_paid_plan(account_id):
+    """Riporta a `free` un piano pagato (fine dell'abbonamento). False se il
+    piano in colonna non e' pagato: un regalo arrivato dopo resta com'e'."""
+    if not enabled():
+        return False
+    with db.tx() as c:
+        acct = _live_account(c, account_id)
+        if acct is None or acct["plan_source"] != "paid":
+            return False
+        _reset_plan(c, account_id)
+    _archive_cache_clear()
+    return True
