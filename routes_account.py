@@ -35,6 +35,7 @@ import routes_admin_audit
 import routes_mobile
 import routes_voice_clone
 import storage_backend
+import subscriptions
 import token_store as _tkstore
 import user_archive
 import voice_clone
@@ -272,7 +273,14 @@ def _acct_send_code(email, purpose, lang):
 
 
 def _acct_do_delete(acct, lang):
-    """Cancellazione confermata: DB, log, email di cortesia (best-effort)."""
+    """Cancellazione confermata: disdetta dell'abbonamento (prima: dopo la
+    cancellazione non resta nessun addebito), DB, log, email di cortesia
+    (best-effort). Se il fornitore non risponde la disdetta resta registrata e
+    la riconciliazione la ritenta."""
+    try:
+        subscriptions.request_cancel(acct["id"], "account_deleted")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING disdetta abbonamento alla cancellazione: {e}", flush=True)
     accounts.delete_account(acct["id"])
     _acct_log("ACCOUNT_DELETE", acct["email"])
     try:
@@ -650,12 +658,14 @@ def _account_archive_for(acct):
 def _acct_plan_info(acct):
     """Stato del piano di archivio esposto da login e `/api/auth/me`: se
     proporre il piano gratuito o ricordarlo, la sua quota, i giorni di
-    tolleranza e il riepilogo dell'archivio (None se non c'e' nulla da mostrare)."""
+    tolleranza, il riepilogo dell'archivio (None se non c'e' nulla da mostrare)
+    e l'abbonamento senza prezzi (lo legge anche l'app mobile)."""
     return {"free_offer": accounts.free_offer_pending(acct),
             "free_nudge": accounts.free_nudge_pending(acct),
             "free_quota_bytes": accounts.plan_quota_bytes(accounts.PLAN_FREE),
             "tolerance_days": accounts.archive_tolerance_days(),
-            "archive": _account_archive_for(acct)}
+            "archive": _account_archive_for(acct),
+            "subscription": subscriptions.status_for(acct, for_app=True)}
 
 
 @bp.route("/account", methods=["GET"])

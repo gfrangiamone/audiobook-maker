@@ -188,6 +188,7 @@ import pending_jobs
 import db
 import accounts
 import subscriptions
+import routes_subscriptions
 import account_page
 import page_brand
 import tts_backend_state
@@ -316,9 +317,9 @@ except ImportError:
     pass
 
 # Endpoint esenti da CSRF check (whitelist esplicita).
-# Da aggiungere SOLO endpoint che ricevono webhook server-to-server (es. PayPal
-# webhook firmato): attualmente nessuno.
-_CSRF_EXEMPT_PATHS: set[str] = set()
+# Da aggiungere SOLO endpoint che ricevono webhook server-to-server firmati:
+# oggi il webhook PayPal degli abbonamenti.
+_CSRF_EXEMPT_PATHS: set[str] = {routes_subscriptions.WEBHOOK_PATH}
 
 
 @app.before_request
@@ -3465,6 +3466,17 @@ routes_account.configure(
     _get_client_id=lambda *a, **k: _get_client_id(*a, **k),
     _log_activity=lambda *a, **k: _log_activity(*a, **k))
 app.register_blueprint(routes_account.bp)
+
+# Abbonamenti mensili (fase 2a): logica in `subscriptions`, route nel blueprint.
+subscriptions.configure(
+    log_activity=lambda op, detail: _log_activity("", "", op, "", "", str(detail)[:40], ""))
+routes_subscriptions.configure(
+    current_account=lambda: routes_account._current_account(),
+    account_gate=lambda: routes_account._acct_gate(),
+    client_ip=lambda *a, **k: client_ip(*a, **k),
+    ip_rl_check=lambda *a, **k: _ip_rl_check(*a, **k),
+    base_url=lambda: BASE_URL)
+app.register_blueprint(routes_subscriptions.bp)
 
 
 

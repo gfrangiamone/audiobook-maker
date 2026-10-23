@@ -35,6 +35,7 @@ import payment
 import pending_jobs
 import storage_backend
 import storage_tiering
+import subscriptions
 import token_store as _tkstore
 import user_archive
 import voice_clone
@@ -1505,6 +1506,10 @@ def _cleanup_loop():
             archive_tolerance.sweep(now)
         except Exception as e:  # noqa: BLE001
             print(f"[archive_tolerance] sweep error (non-fatal): {e}")
+        try:
+            subscriptions.sweep(now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[subscriptions] sweep error (non-fatal): {e}")
         try:
             archived = accounts.archived_job_ids()
         except Exception as e:  # noqa: BLE001

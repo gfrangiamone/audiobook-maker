@@ -104,6 +104,16 @@ def init_schema():
     db.migrate("subscriptions_v1", SCHEMA_V1)
 
 
+def _ready():
+    """True se il DB e' aperto e ha le tabelle degli abbonamenti (la app le
+    crea all'avvio; un DB con il solo schema degli account non ha abbonamenti)."""
+    if not db.is_ready():
+        return False
+    with db.tx() as c:
+        return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscriptions'"
+                         ).fetchone() is not None
+
+
 # ---------------------------------------------------------------- configurazione
 
 PROVIDERS = {"paypal": billing_paypal}      # i test sostituiscono la voce
@@ -638,6 +648,8 @@ def request_cancel(account_id, reason, now=None):
     fine del periodo pagato. Con `account_deleted` si abbandonano anche i
     checkout aperti. Ritorna {status, ends_at, confirmed} o None."""
     now = _now(now)
+    if not _ready():
+        return None
     with db.tx() as c:
         if reason == "account_deleted":
             for p in [dict(r) for r in c.execute(
@@ -703,6 +715,19 @@ def _sweep_row(sub, now, out):
     out["checked"] += 1
 
 
+def reconcile_one(sub_id, now=None):
+    """Stato remoto e pagamenti di una riga subito (ritorno dal checkout):
+    l'attivazione non aspetta il giro di riconciliazione. Ritorna la riga."""
+    now = _now(now)
+    try:
+        sub = refresh(sub_id, now)
+        if sub and sub["external_id"] and sub["status"] not in ("pending", "abandoned"):
+            _collect_payments(sub, now)
+    except Exception as e:  # noqa: BLE001 - ci pensano webhook e riconciliazione
+        print(f"[subscriptions] riconciliazione di {sub_id}: {type(e).__name__}: {e}", flush=True)
+    return get(sub_id)
+
+
 def _note_failure(sub, now, err):
     with db.tx() as c:
         cur = _get(c, sub["id"])
@@ -723,7 +748,7 @@ def sweep(now=None, force=False):
     if not force and t - _sweep_state["at"] < _reconcile_sec():
         return out
     _sweep_state["at"] = t
-    if not accounts.enabled():
+    if not accounts.enabled() or not _ready():
         return out
     with db.tx() as c:
         rows = [dict(r) for r in c.execute(
@@ -772,7 +797,7 @@ def status_for(account, *, for_app=False, now=None):
     out = {"enabled": enabled(), "subscription": None}
     if not for_app:
         out["plans"] = plan_offer()
-    if not account or not db.is_ready():
+    if not account or not _ready():
         return out
     sub = current(account["id"], now)
     if sub:
