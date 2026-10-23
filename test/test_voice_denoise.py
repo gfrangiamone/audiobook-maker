@@ -194,6 +194,24 @@ def test_clean_figlio_fallito_solleva(tmp_path, monkeypatch):
         voice_denoise.clean(str(tmp_path / "in.wav"), str(tmp_path / "out.wav"))
 
 
+def test_clean_il_figlio_scrive_solo_nel_data_dir(tmp_path, monkeypatch):
+    # In prod il servizio gira con ProtectHome e ProtectSystem: la home e
+    # /usr/local/lib sono in sola lettura. Dal 5/10/2026 il figlio si fermava
+    # su ~/.modelscope (E1022) e, passato quello, sulla cache numba di librosa.
+    visto = {}
+
+    def figlio(cmd, **kw):
+        visto.update(kw["env"])
+        return subprocess.CompletedProcess(cmd, 1, "", "fermo qui")
+    monkeypatch.setattr(subprocess, "run", figlio)
+    monkeypatch.setattr(voice_denoise, "_data_dir", str(tmp_path))
+    with pytest.raises(voice_denoise.DenoiseFailed):
+        voice_denoise.clean(str(tmp_path / "in.wav"), str(tmp_path / "out.wav"))
+    casa = os.path.join(str(tmp_path), "modelscope")
+    for k in ("MODELSCOPE_CACHE", "MODELSCOPE_HOME", "NUMBA_CACHE_DIR"):
+        assert k in visto and visto[k].startswith(casa), k
+
+
 def test_denoise_backfill_pulisce_le_voci_gia_registrate(tmp_path, monkeypatch):
     p = PuliziaFinta()
     monkeypatch.setattr(voice_denoise, "clean", p)

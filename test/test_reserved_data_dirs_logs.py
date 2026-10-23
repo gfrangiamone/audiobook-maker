@@ -4,6 +4,8 @@ In prod il business log si sposta in `data/logs` (ABM_ACTIVITY_LOG_DIR): file
 mensili + activity.db dentro il data dir, accanto alle cartelle dei job. Lo
 sweep delle cartelle orfane la scambierebbe per una job dir abbandonata e la
 cancellerebbe da disco e da cold, come successo alle voci il 12/09/2026.
+Lo stesso vale per `modelscope/`, la cache della pulizia dei campioni
+(voice_denoise): pesi del modello, config di modelscope e cache numba.
 """
 import cleanup
 
@@ -21,6 +23,18 @@ def test_data_logs_non_e_una_job_dir(fresh_app, tmp_path):
     (tmp_path / "jobABC").mkdir()
     assert cleanup._is_job_dir(tmp_path / "logs") is False
     assert cleanup._is_job_dir(tmp_path / "jobABC") is True
+
+
+def test_la_cache_della_pulizia_campioni_non_e_una_job_dir(fresh_app, monkeypatch, tmp_path):
+    import storage_backend
+    app = _app(fresh_app, tmp_path)
+    (tmp_path / "modelscope").mkdir()
+    assert cleanup._is_job_dir(tmp_path / "modelscope") is False
+    cancellati = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
+    cleanup._delete_cold_for_job("modelscope")
+    assert cancellati == []
 
 
 def test_logs_resta_riservata_anche_senza_env(fresh_app, tmp_path):

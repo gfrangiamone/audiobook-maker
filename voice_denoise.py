@@ -33,6 +33,9 @@ import time
 
 MODEL = "iic/speech_zipenhancer_ans_multiloss_16k_base"
 DENOISE_RATE = 16000
+# La cartella del data dir con i pesi del modello, la config di modelscope e la
+# cache numba. Non e' una job dir: e' fra le riservate di cleanup.
+DIRNAME = "modelscope"
 _data_dir = None
 # Una pulizia alla volta: ognuna occupa i thread che le si danno, e due voci
 # pagate nello stesso minuto possono aspettare l'una l'altra.
@@ -63,7 +66,7 @@ def _timeout():
 
 
 def _cache_dir():
-    return os.path.join(_data_dir, "modelscope") if _data_dir else None
+    return os.path.join(_data_dir, DIRNAME) if _data_dir else None
 
 
 def _child_env():
@@ -73,7 +76,14 @@ def _child_env():
         env[k] = n
     cache = _cache_dir()
     if cache:
+        # In prod il servizio ha ProtectHome e ProtectSystem: la home e
+        # /usr/local/lib sono in sola lettura. modelscope si ferma se non puo'
+        # creare ~/.modelscope (E1022, dal 5/10/2026 la pulizia non era mai
+        # riuscita) e librosa, via numba, vuole scrivere la cache dei JIT
+        # accanto ai suoi sorgenti o sotto la home: tutto nel data dir.
         env["MODELSCOPE_CACHE"] = cache
+        env["MODELSCOPE_HOME"] = os.path.join(cache, "_config")
+        env["NUMBA_CACHE_DIR"] = os.path.join(cache, "_numba")
     return env
 
 

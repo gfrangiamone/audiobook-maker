@@ -38,6 +38,7 @@ import storage_tiering
 import token_store as _tkstore
 import user_archive
 import voice_clone
+import voice_denoise
 import voxcpm_tts
 import retry_util as _retry
 from env_utils import env_int
@@ -156,8 +157,10 @@ CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 # ABM_ACTIVITY_LOG_DIR che cada dentro il data dir e' riservata col suo nome,
 # qualunque esso sia (vedi _reserved_data_dir_names).
 # "user_archive" e' il prefisso cold dei libri archiviati dall'app (user_archive.ROOT).
+# "modelscope" (voice_denoise.DIRNAME) e' la cache della pulizia dei campioni:
+# pesi del modello, config di modelscope e cache numba, solo su disco.
 _RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices", "accounts", "logs",
-                                 "user_archive"})
+                                 "user_archive", voice_denoise.DIRNAME})
 
 
 def _reserved_data_dir_names():

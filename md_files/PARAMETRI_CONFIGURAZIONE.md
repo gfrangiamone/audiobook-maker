@@ -511,6 +511,9 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_EUR_CLONED_VOICE` | Prezzo fisso in EUR della voce campione (§7.1); virgola decimale ammessa; `<= 0` = gratis (pannello pagamento saltato, `payment.type="free"`). | `payment.py` | `EUR_CLONED_VOICE`, 64 |
 | `ABM_VOICE_CLONE_MAX_UPLOAD_MB` | Dimensione massima del campione caricato (413 `too_large` oltre). Minimo 1. | `voice_clone.py` | `max_upload_mb`, 145 |
 | `ABM_VOICE_CLONE_DEMO_RETRIES` | Tentativi per ogni frase demo sul worker prima di `demo_failed` (pausa 2^n s, tetto 30 s). Minimo 1. | `voice_clone.py` | `demo_retries`, 141 |
+| `ABM_VOICE_CLONE_DENOISE` | `1` — pulizia ZipEnhancer del campione sul server, una volta per voce (all'avvio delle demo, e all'avvio del processo per l'arretrato: thread `vc-denoise-backfill`). Gira in un processo figlio a `nice 10`; pesi del modello (19 MB), config di modelscope (`_config/`) e cache numba (`_numba/`) stanno in `ABM_DATA_DIR/modelscope/`, cartella riservata (mai job dir). In prod non era mai riuscita fino alla v3.154.2: con `ProtectHome`/`ProtectSystem` del servizio modelscope non poteva creare `~/.modelscope` (E1022). Misura in prod del 23/10/2026: campione da 26 s pulito in 89 s, picco 1,3 GB di RAM. `0` la spegne. | `voice_denoise.py` | `enabled`, 55 |
+| `ABM_VOICE_CLONE_DENOISE_THREADS` | `2` — thread torch/OMP/MKL del figlio della pulizia. Minimo 1. | `voice_denoise.py` | `_threads`, 60 |
+| `ABM_VOICE_CLONE_DENOISE_TIMEOUT` | `900` s — oltre, la pulizia fallisce (`DenoiseFailed`) e il campione resta com'era. | `voice_denoise.py` | `_timeout`, 64 |
 
 **Costanti interne (non configurabili):**
 
@@ -557,6 +560,7 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 | `CLEANUP_HEARTBEAT_TIMEOUT_SEC` | `60` (heartbeat perso = browser chiuso) | `audiobook_app.py` | 3899 |
 | `CLEANUP_INTERVAL_SEC` | `60` (check ogni 60 secondi) | `audiobook_app.py` | 3900 |
 | `CLEANUP_ORPHAN_DIR_AGE_SEC` | `7200` (2 ore, cartelle orfane rimosse) | `audiobook_app.py` | 3901 |
+| `_RESERVED_DATA_DIRS` | `user_voices`, `voices`, `accounts`, `logs`, `user_archive`, `modelscope` (piu' la cartella di `ABM_ACTIVITY_LOG_DIR` se sta nel data dir): mai job dir, ne' su disco ne' sul cold. Le cartelle che iniziano con `_` sono escluse a prescindere | `cleanup.py` | 162 |
 
 **Retention per stato (stato job → politica di conservazione):**
 
