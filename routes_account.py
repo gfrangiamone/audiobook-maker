@@ -966,6 +966,25 @@ def api_account_archive_share():
                     "ttl_sec": info["ttl_sec"]})
 
 
+def account_share(fingerprint, job_id, cid, filename):
+    """Per /api/share/create: share del libro che l'account della richiesta ha
+    gia' sul server (nell'archivio online o fra i job archiviati), cercato per
+    impronta come in archive/create. (token, ttl_sec), o None se non c'e' un
+    account o il libro va caricato."""
+    acct = _current_account()
+    if not acct:
+        return None
+    kind, hit = user_archive.server_copy(acct["id"], fingerprint,
+                                         _archive_job_candidates(acct, job_id))
+    if kind == "item":
+        stok, info = routes_mobile.create_archive_share(acct["id"], hit, cid)
+        return stok, info["ttl_sec"]
+    if kind == "job":
+        stok = routes_mobile.create_ready_share(hit[2], cid, filename, fingerprint)
+        return stok, routes_mobile._share_ttl_sec()
+    return None
+
+
 @bp.route("/api/account/archive/download", methods=["GET"])
 def api_account_archive_download():
     """URL da cui l'app scarica un libro dell'archivio: presigned GET per i

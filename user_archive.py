@@ -202,12 +202,7 @@ def create(account, *, fingerprint, size, filename, title="", author="", duratio
         return "linked", existing
 
     if not existing:
-        link = _candidate_link(aid, fingerprint, job_candidates, now)
-        if link is None:
-            # L'app non sa (piu') da quale job viene il libro, per esempio dopo
-            # una reinstallazione: si cerca fra i job archiviati dell'account.
-            link = (archived_job_files(aid, now, compute=False).get(fingerprint)
-                    or archived_job_files(aid, now).get(fingerprint))
+        link = job_link(aid, fingerprint, job_candidates, now)
         if link is not None:
             job_id, kind, token = link
             try:
@@ -260,6 +255,32 @@ def _job_of_token_path(path):
     if not key or "/" not in key:
         return ""
     return key.split("/", 1)[0]
+
+
+def server_copy(account_id, fingerprint, job_candidates=(), now=None):
+    """Il libro con impronta `fingerprint` che l'account ha gia' sul server,
+    cercato come in `create` ma senza scrivere nulla: ("item", riga pronta
+    dell'archivio), ("job", (job_id, link_kind, token)) del file di un job
+    archiviato, o (None, None)."""
+    fingerprint = str(fingerprint or "").strip().lower()
+    if not _FP_RE.match(fingerprint):
+        return None, None
+    item = _by_fingerprint(account_id, fingerprint)
+    if item and item["state"] == "ready":
+        return "item", item
+    link = job_link(account_id, fingerprint, job_candidates, now)
+    return ("job", link) if link is not None else (None, None)
+
+
+def job_link(account_id, fingerprint, job_candidates=(), now=None):
+    """(job_id, link_kind, token) del file di un job archiviato dell'account
+    con impronta `fingerprint`, o None: prima fra i `job_candidates`, poi fra
+    tutti i job archiviati (l'app puo' non sapere piu' da quale job viene il
+    libro, per esempio dopo una reinstallazione)."""
+    now = _now(now)
+    return (_candidate_link(account_id, fingerprint, job_candidates, now)
+            or archived_job_files(account_id, now, compute=False).get(fingerprint)
+            or archived_job_files(account_id, now).get(fingerprint))
 
 
 def _candidate_link(aid, fingerprint, job_candidates, now):

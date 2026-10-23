@@ -482,6 +482,59 @@ def test_archive_share_requires_owner_and_ready_item(client, env, monkeypatch):
                   json={"item_id": pending["item"]["id"]}).status_code == 404
 
 
+CID = {"X-ABM-Cid": "mobile-cid-12345"}
+
+
+@pytest.fixture
+def shares(monkeypatch):
+    import token_store
+    monkeypatch.setattr(token_store, "share_tokens", {})
+    monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
+    return token_store.share_tokens
+
+
+def test_share_create_of_book_in_archive_needs_no_upload(client, env, shares):
+    """Libro in libreria che l'account ha gia' nell'archivio online (caricato
+    da un altro dispositivo, o il legame col libro perso): la condivisione
+    punta all'archivio invece di chiedere l'upload."""
+    c, acct, item_id = _ready_item(client, env)
+    body = {"filename": "Libro.m4b", "fingerprint": FP}
+    j = c.post("/api/share/create", headers=CID, json=body).get_json()
+    assert j["mode"] == "ready" and j["link"]
+    info = shares[j["share_token"]]
+    assert info["kind"] == "archive" and info["archive_item_id"] == item_id
+    assert c.post("/api/share/create", headers=CID, json=body).get_json()["share_token"] == j["share_token"]
+
+
+def test_share_create_of_archived_job_needs_no_upload(client, env, shares, tmp_path, monkeypatch):
+    """Audiolibro di un job archiviato dell'account, il cui download token non
+    e' del cid del telefono (creato sul sito o su un altro dispositivo)."""
+    c, holder, acct = client
+    holder["acct"] = acct
+    data = b"job-audio" * 20
+    _job_with_token(monkeypatch, tmp_path, acct, "j1", data, "tok1")
+    for body in ({"filename": "L.m4b", "fingerprint": _dart_fp(data), "job_id": "j1"},
+                 {"filename": "L.m4b", "fingerprint": _dart_fp(data)}):
+        j = c.post("/api/share/create", headers=CID, json=body).get_json()
+        assert j["mode"] == "ready"
+        info = shares[j["share_token"]]
+        assert info["kind"] == "ready" and info["download_token"] == "tok1"
+        shares.clear()
+
+
+def test_share_create_uploads_what_the_account_does_not_have(client, env, shares):
+    c, holder, acct = client
+    _ready_item(client, env)
+    body = {"filename": "Libro.m4b", "fingerprint": FP}
+    holder["acct"] = None                                   # non loggato
+    assert c.post("/api/share/create", headers=CID, json=body).get_json()["mode"] == "upload"
+    holder["acct"] = _login("o@b.it")                       # archivio di un altro account
+    assert c.post("/api/share/create", headers=CID, json=body).get_json()["mode"] == "upload"
+    holder["acct"] = acct                                 # libro diverso
+    body["fingerprint"] = "b" * 64
+    assert c.post("/api/share/create", headers=CID, json=body).get_json()["mode"] == "upload"
+
+
 def test_expired_archive_share_keeps_archive_file(env, monkeypatch):
     import cleanup
     import token_store

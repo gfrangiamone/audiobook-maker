@@ -40,7 +40,7 @@ _cfg = {}
 _jobs_lock = None
 generation_engine = None
 
-FUNCS = ['_get_client_id', '_log_activity', 'client_ip', '_ip_rl_check','_client_platform', '_share_link_for', '_safe_share_filename', '_effective_retention_for_token_info', '_qr_data_uri', '_transfer_payload_for', '_check_job_owner', '_find_files_in_outputs', '_job_original_filename', '_send_file_throttled']
+FUNCS = ['_get_client_id', '_log_activity', 'client_ip', '_ip_rl_check','_client_platform', '_share_link_for', '_safe_share_filename', '_effective_retention_for_token_info', '_qr_data_uri', '_transfer_payload_for', '_check_job_owner', '_find_files_in_outputs', '_job_original_filename', '_send_file_throttled', '_account_share']
 VALUES = ('jobs', 'upload_dir', 'share_ttl_sec', 'share_max_bytes', 'share_upload_ttl_sec', 'client_emails_map')
 
 
@@ -118,6 +118,9 @@ def _job_original_filename(*a, **k):
 
 def _send_file_throttled(*a, **k):
     return _cfg["_send_file_throttled"](*a, **k)
+
+def _account_share(*a, **k):    # routes_account.account_share (share/create)
+    return _cfg["_account_share"](*a, **k)
 
 
 _MY_JOBS_LIVE_STATUSES = (
@@ -440,6 +443,14 @@ def api_share_create():
             return jsonify({"mode": "ready", "share_token": stok,
                             "link": _share_link_for(stok),
                             "ttl_sec": _share_ttl_sec()})
+
+    # Libro che l'account (Authorization) ha gia' sul server, nell'archivio
+    # online o fra i job archiviati: niente upload, come per l'archiviazione.
+    found = _account_share(fingerprint, job_id, cid, filename)
+    if found:
+        stok, ttl = found
+        return jsonify({"mode": "ready", "share_token": stok,
+                        "link": _share_link_for(stok), "ttl_sec": ttl})
 
     if not storage_backend.is_enabled():
         return jsonify({"error": "upload_unavailable",
