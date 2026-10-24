@@ -178,6 +178,31 @@ def test_api_download_cold_redirect_keeps_premium_no_download_retention(app_env,
             == base * audiobook_app.GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER)
 
 
+def test_api_download_zip_cold_redirect_is_logged_as_cold(app_env, monkeypatch):
+    """Zip evacuato servito da cold (incidente 2026-10-24): evento _COLD, non DOWNLOAD_ZIP."""
+    audiobook_app, tmp_path, log_dir = app_env
+    job_id = "jobApiZipCold"
+    _patch_cold(monkeypatch, "jobApiZipCold/output_1/book.zip")
+
+    class _Info:
+        title = "Il Libro"
+
+    audiobook_app.jobs[job_id] = {
+        "status": "done",
+        "voice": "en-US-AndrewNeural",
+        "output_zip": str(tmp_path / "data" / job_id / "output_1" / "book.zip"),
+        "output_name": "book.zip",
+        "original_filename": "book.epub",
+        "info": _Info(),
+    }
+
+    resp = audiobook_app.app.test_client().get(f"/api/download/{job_id}?type=zip",
+                                               follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert _logged_ops(log_dir, job_id) == ["DOWNLOAD_ZIP_COLD"]
+
+
 def test_api_download_local_serving_marks_job_downloaded(app_env, monkeypatch):
     """Serving locale da /api/download: consegna reale, protezione disattivata."""
     audiobook_app, tmp_path, log_dir = app_env

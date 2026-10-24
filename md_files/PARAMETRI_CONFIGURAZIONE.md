@@ -1070,6 +1070,10 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 **Default voluti:** la finestra calda parte uguale alla retention attuale (18h/48h),
 così all'inizio i file vivono in locale esattamente come oggi; nessuna eviction
 anticipata. Si restringe `ABM_HOT_WINDOW_*` man mano per liberare disco prima.
+In prod (drop-in `override.conf`, almeno dal 23/08/2026) valgono `7200` (2 h) e
+`21600` (6 h). Restringere e' sicuro solo perche' ogni download segue il cold:
+fino alla v3.154.6 il bottone della SPA (`/api/download` zip, mp3, kit, ripiego
+MP3) dava 404 dopo la finestra calda (incidente 2026-10-24, 39 libri persi).
 
 **Retention totale (disponibilità utente):** base `ABM_JOB_RETENTION_SEC` (18h) /
 `ABM_GEMINI_JOB_RETENTION_SEC` (48h), **indipendente dal cold storage**. Il cold
