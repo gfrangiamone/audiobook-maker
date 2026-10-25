@@ -97,6 +97,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_MODERATION_MIN_THREAT` | `0.60` (minacce, violenza, molestie; piu' bassa delle altre perche' il falso negativo costa piu' del falso positivo) | `community_moderator.py` | 130–142 |
 | `ABM_MODERATION_MIN_SEXUAL` | `0.70` (contenuto sessuale esplicito) | `community_moderator.py` | 130–142 |
 | `ABM_MODERATION_MIN_GIBBERISH` | `0.90` (testo privo di significato; la piu' alta: un rifiuto sbagliato qui colpisce le recensioni vere brevissime — «top!», «👌» — che alimentano i rich snippet di `seo_reviews`) | `community_moderator.py` | 130–142 |
+| `ABM_PAREN_STRIP_MAX_CHARS` | `400` (lunghezza massima, in caratteri e parentesi comprese, di uno span tondo o quadro che `text_reflow._strip_parenthetical` toglie quando la lettura delle parentesi e' spenta. Si misura sul testo di partenza, contando anche le coppie interne gia' tolte. Uno span piu' lungo, o che contiene una riga vuota, resta nel testo parentesi comprese: non e' un inciso ma una parentesi OCR spaiata che la regex chiuderebbe molto piu' avanti (incidente 25/10/2026: meta' libro fatturata e non letta). `0` o negativo toglie il limite di lunghezza; il criterio della riga vuota resta. Letta a ogni chiamata, dalla v3.155.0) | `text_reflow.py` | 268-276 |
 
 ---
 

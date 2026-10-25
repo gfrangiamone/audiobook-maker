@@ -1,6 +1,6 @@
 """text_reflow.py — Ricomposizione di righe e paragrafi spezzati, comune a PDF, EPUB e TXT.
 
-Modulo foglia: non importa nulla dal progetto.
+Modulo foglia: dal progetto importa solo la foglia `env_utils`.
 
 Da F1c (2026-10-10) ospita anche le regole di testo pre-TTS che stavano in
 `tts_split` (parentesi, maiuscole urlate, pausa dopo heading, `prepare_tts_text`,
@@ -24,6 +24,8 @@ così versi, dialoghi e titoli dei libri ben composti non vengono toccati.
 
 import re
 import unicodedata
+
+from env_utils import env_int
 
 # Fine frase (o chiusura di citazione/parentesi) in coda alla riga.
 TERMINAL_RE = re.compile(r"[.!?…:;\"'»«“”’)\]。！？」』）]\s*$")
@@ -256,6 +258,24 @@ def _flatten_ws(text):
     return text.strip()
 
 
+# Guardia sugli incisi (incidente 25/10/2026): in un PDF OCR una parentesi
+# letta male ("[hr" per "Ihr", "Pal]" per "Fall") apre uno span che la regex
+# chiude decine di migliaia di caratteri dopo; tolto quello, una tonda senza
+# chiusa si accoppiava con la successiva. Il libro e' stato fatturato intero e
+# letto per meta'. Uno span piu' lungo della soglia, misurato sul testo di
+# partenza (coppie interne gia' tolte comprese), o che attraversa una riga
+# vuota non e' un inciso: resta nel testo, parentesi comprese.
+PAREN_STRIP_MAX_CHARS_DEFAULT = 400
+_ROUND_SPAN_RE = re.compile(r'\([^()]*\)')
+_SQUARE_SPAN_RE = re.compile(r'\[[^\[\]]*\]')
+_BLANK_LINE_RE = re.compile(r'\n\s*\n')
+
+
+def _paren_strip_max_chars():
+    """Soglia letta a ogni chiamata; <= 0 toglie il limite di lunghezza."""
+    return env_int("ABM_PAREN_STRIP_MAX_CHARS", PAREN_STRIP_MAX_CHARS_DEFAULT)
+
+
 def _strip_parenthetical(text, strip_round=True, strip_square=True, flatten=True):
     """Rimuove il contenuto tra parentesi tonde e/o quadre (anche annidate).
 
@@ -273,15 +293,31 @@ def _strip_parenthetical(text, strip_round=True, strip_square=True, flatten=True
         (`_normalize_shouting`, `_ensure_heading_pause`) ragionano per riga e
         hanno bisogno degli a-capo: appiattisce lui alla fine. Con False gli
         spazi DENTRO la riga vengono comunque collassati, gli a-capo no.
+
+    Uno span oltre `ABM_PAREN_STRIP_MAX_CHARS` caratteri, o con una riga vuota
+    dentro, resta intatto (vedi la guardia qui sopra). Gli span tolti diventano
+    un carattere segnaposto ripetuto per la loro lunghezza, cosi' la coppia che
+    li contiene si misura sul testo di partenza; i segnaposto spariscono alla
+    fine. Una coppia tenuta non fa da ancora: `[^()]*` non la attraversa.
     """
     if strip_round or strip_square:
+        max_chars = _paren_strip_max_chars()
+        hole = next(chr(c) for c in range(0xE000, 0xF900) if chr(c) not in text)
+
+        def _drop(m):
+            span = m.group(0)
+            if (max_chars > 0 and len(span) > max_chars) or _BLANK_LINE_RE.search(span):
+                return span
+            return hole * len(span)
+
         prev = None
         while prev != text:
             prev = text
             if strip_round:
-                text = re.sub(r'\([^()]*\)', '', text)
+                text = _ROUND_SPAN_RE.sub(_drop, text)
             if strip_square:
-                text = re.sub(r'\[[^\[\]]*\]', '', text)
+                text = _SQUARE_SPAN_RE.sub(_drop, text)
+        text = text.replace(hole, '')
     if flatten:
         return _flatten_ws(text)
     text = re.sub(r'[^\S\n]+', ' ', text)

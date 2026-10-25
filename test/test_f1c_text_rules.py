@@ -23,7 +23,9 @@ def test_rules_defined_once_in_text_reflow_and_reexported():
         assert not re.search(rf"^def {n}\(", src_split, flags=re.M), n
     assert "def _plan_chunks(" in src_split                         # il piano resta nello splitter
     reflow = inspect.getsource(text_reflow)
-    assert not re.search(r"^\s*(import|from) (?!re\b|unicodedata\b)\w+", reflow, flags=re.M)
+    # Dal progetto solo la foglia env_utils (soglia ABM_PAREN_STRIP_MAX_CHARS,
+    # 25/10/2026): resta una foglia senza dipendenze oltre la stdlib.
+    assert not re.search(r"^\s*(import|from) (?!re\b|unicodedata\b|env_utils\b)\w+", reflow, flags=re.M)
 
 
 def test_engines_do_not_import_tts_split():
