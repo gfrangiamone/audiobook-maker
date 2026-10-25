@@ -36,6 +36,8 @@ import semantic_judge as sj
 _lock = threading.RLock()
 
 KINDS = ("generate", "quota_gate", "quota_block", "email")
+# Eventi di /api/generate che consumano o toccano la quota voci standard.
+_QUOTA_KINDS = ("generate", "quota_gate", "quota_block")
 VERDICTS = ("abuse", "clean", "inconclusive")
 
 # Motivo dominante del verdetto. Sostituisce la frase libera che scriveva il
@@ -259,11 +261,15 @@ def _apply(bucket, kind, data, now):
             _add_unique(bucket["emails"], _hash(email), _EMAILS_KEEP)
     # Richiesta con sessione: l'email dell'account e' un'identita' come quella
     # del gate (due account sullo stesso gruppo restano rotazione), e il cid
-    # resta marcato come dispositivo di un account (vedi `_evasion_features`).
+    # resta marcato come dispositivo di un account (vedi `_account_device`).
+    # Lo stesso cid usato anche senza sessione (prima del login o dopo il
+    # logout) lascia `anon`: li' la quota tornava al cookie.
     account = str(data.get("account_email") or "").strip().lower()
     if account:
         _add_unique(bucket["emails"], _hash(account), _EMAILS_KEEP)
         bucket["account"] = True
+    elif kind in _QUOTA_KINDS:
+        bucket["anon"] = True
     fn = str(data.get("filename") or "")
     if fn:
         _add_unique(bucket["files"], _hash(fn), _FILES_KEEP)
@@ -394,12 +400,22 @@ def _reactive_birth(first, last_block):
                 and last_block < first <= last_block + _REACTIVE_WINDOW_SEC)
 
 
+def _account_device(b):
+    """Vero se il cid ha toccato la quota solo con la sessione di un account.
+
+    Basta una volta senza sessione per perdere l'esenzione: altrimenti un
+    login con un cookie nuovo, un job minuscolo e un logout darebbero un cid
+    che genera anonimo su una quota da cookie fresca senza mai contare come
+    rotazione (review di sicurezza del 25/10/2026)."""
+    return bool(b.get("account")) and not b.get("anon")
+
+
 def _born_after_last_block(g, cid):
     """Vero se `cid` e' comparso a ridosso dell'ultimo blocco del gruppo: e' il
     profilo del cookie creato per ripartire da zero, non quello del vicino di
     NAT che era gia' li'."""
     b = (((g or {}).get("cids") or {}).get(cid) or {})
-    if b.get("account"):
+    if _account_device(b):
         return False
     try:
         first = float(b.get("first_ts") or 0)
@@ -445,7 +461,7 @@ def _evasion_features(g, now):
         if not first:
             continue
         ages.append(now - first)
-        if c.get("account"):
+        if _account_device(c):
             # Dispositivo di un account: la quota segue l'email dell'account,
             # non il cookie, quindi un cid nuovo non riparte da zero e non e'
             # rotazione. Un account *diverso* resta visibile in `emails`.
@@ -657,14 +673,15 @@ def _covered_by_group_scope(v, g, cid):
         return False
 
 
-def _blocks_cid(g, cid, now, threshold):
+def _blocks_cid(g, cid, now, threshold, group_scope=True):
     """Vero se il verdetto valido del gruppo `g` e' `abuse` sopra soglia e
-    `cid` ricade nel suo scope."""
+    `cid` ricade nel suo scope. Con `group_scope=False` conta solo la lista
+    dei cid giudicati, senza i cookie arrivati sul gruppo dopo il verdetto."""
     v = _valid_verdict(g, now) if g else None
     return bool(v and v["verdict"] == "abuse"
                 and float(v.get("confidence") or 0) >= threshold
                 and (cid in (v.get("cids") or [])
-                     or _covered_by_group_scope(v, g, cid)))
+                     or (group_scope and _covered_by_group_scope(v, g, cid))))
 
 
 def is_blocked(group, cid):
@@ -675,7 +692,12 @@ def is_blocked(group, cid):
     gli altri gruppi con un verdetto. Il 25/10/2026 un cid fermato due volte
     sul /24 di casa e' stato servito cinque ore dopo da un altro /24, giudicato
     `clean` perche' li' nessuno l'aveva mai visto. L'email non si segue: quella
-    del gate non e' verificata, e chi la scrive potrebbe far bloccare altri."""
+    del gate non e' verificata, e chi la scrive potrebbe far bloccare altri.
+
+    Fuori dal gruppo di origine segue solo i cid nella lista del verdetto, non
+    quelli coperti da `scope=group` perche' arrivati dopo: su una CGNAT mobile
+    puo' essere un vicino capitato su quel /24, e verrebbe fermato ovunque per
+    tutta la durata del verdetto."""
     if not cid or not kill_enabled():
         return False
     now = time.time()
@@ -684,7 +706,7 @@ def is_blocked(group, cid):
         groups = _load()["groups"]
     if _blocks_cid(groups.get(group), cid, now, threshold):
         return True
-    return any(_blocks_cid(g, cid, now, threshold)
+    return any(_blocks_cid(g, cid, now, threshold, group_scope=False)
                for key, g in groups.items() if key != group)
 
 
@@ -811,7 +833,7 @@ The offence is EVADING THE QUOTA, not consuming it. High volume alone is not abu
 - "distinct_emails": how many identities this group has ever used. Evading the gate in series requires fresh ones; ONE email behind any number of gate acceptances is one person using the service as designed.
 - "identity_rotation" / "stable_identity": the summary of the three lines above — whether the group has ever swapped the identity it passes the gate with.
 - "admin_cleared_recently": a human operator has already reviewed this group and declared it legitimate.
-- per cid, "signed_in": the cookie belongs to a signed-in account, whose quota follows the account and not the cookie. A new signed-in cookie is the same person on another device, not a rotated cookie, and is left out of the rotation counts above; a second account shows up in "distinct_emails".
+- per cid, "signed_in": the cookie has only ever been used signed in to an account, whose quota follows the account and not the cookie. A new signed-in cookie is the same person on another device, not a rotated cookie, and is left out of the rotation counts above; a second account shows up in "distinct_emails".
 
 HARD RULE: if "quota_gate_ever" is false AND "cids_born_after_last_block" is 0 AND "disposable_cids" is below 2, you MUST NOT answer "abuse", however large the volume. Answer "clean" or "inconclusive".
 HARD RULE: if "stable_identity" is true, you MUST NOT answer "abuse" either — however large the volume, and however many times the quota gate was accepted. A user who exhausts the quota over and over with one stable email and long-lived cookies is a heavy user paying the price the gate asks, not an evader. Answer "clean" or "inconclusive".
@@ -851,7 +873,7 @@ def _bucket_features(b, now):
         "active_hours_utc": sorted({time.gmtime(t).tm_hour for t in recent}),
         "span_hours": round((last - first) / 3600, 1) if first and last else 0,
         "median_gap_minutes": round(sorted(gaps)[len(gaps) // 2] / 60, 1) if gaps else None,
-        "signed_in": bool(b.get("account")),
+        "signed_in": _account_device(b),
     }
 
 

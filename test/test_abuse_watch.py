@@ -612,7 +612,10 @@ def test_verdict_follows_the_cid_onto_another_network(env):
     assert aw.is_blocked(aw.group_key("7.7.7.7", "z"), "a") is True, "anche su un gruppo mai visto"
 
 
-def test_group_scope_rotation_follows_onto_another_network(env, monkeypatch):
+def test_group_scope_follows_only_the_judged_cids_onto_another_network(env, monkeypatch):
+    """Fuori dal gruppo condannato contano solo i cid giudicati: un cookie
+    arrivato su quel /24 dopo il verdetto puo' essere un vicino di CGNAT, e
+    altrove non va fermato per tutta la durata del verdetto."""
     casa, altrove = aw.group_key("9.9.9.9", "a"), aw.group_key("8.8.8.8", "x")
     real_time = time.time
     _gen(casa, "a")
@@ -621,7 +624,9 @@ def test_group_scope_rotation_follows_onto_another_network(env, monkeypatch):
     monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
     _gen(casa, "rotated")                                # rotazione coperta dallo scope
     _gen(altrove, "solo-altrove")                        # mai passato dal gruppo condannato
-    assert aw.is_blocked(altrove, "rotated") is True
+    assert aw.is_blocked(casa, "rotated") is True, "sul gruppo condannato lo scope vale"
+    assert aw.is_blocked(altrove, "a") is True, "il cid giudicato segue su altre reti"
+    assert aw.is_blocked(altrove, "rotated") is False
     assert aw.is_blocked(altrove, "solo-altrove") is False
 
 
@@ -667,6 +672,37 @@ def test_anonymous_cookie_after_the_gate_is_still_rotation(env, monkeypatch):
     assert aw.evasion_for(g)["cids_born_after_last_block"] == 1
 
 
+def test_login_then_anonymous_use_loses_the_account_exemption(env, monkeypatch):
+    """Review del 25/10/2026: cookie nuovo, login, job minuscolo, logout e poi
+    generazioni anonime sulla quota del cookie. Il cid resta rotazione."""
+    g = aw.group_key("9.9.9.9", "app")
+    real_time = time.time
+    _gen(g, "app")
+    aw.record_event(g, "app", "quota_gate", {})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    aw.record_event(g, "nuovo", "generate", {"chars": 10, "account_email": "uno@example.com"})
+    assert aw.evasion_for(g)["cids_born_after_last_block"] == 0
+    aw.record_event(g, "nuovo", "generate", {"chars": 900000})        # dopo il logout
+    assert aw.evasion_for(g)["cids_born_after_last_block"] == 1
+    assert aw.dossier(g)["cids"]["nuovo"]["anon"] is True
+
+
+def test_always_signed_in_device_keeps_the_exemption(env, monkeypatch):
+    """Un'email di notifica registrata senza sessione non tocca la quota: non
+    fa perdere l'esenzione al dispositivo dell'account."""
+    g = aw.group_key("9.9.9.9", "app")
+    real_time = time.time
+    _gen(g, "app")
+    aw.record_event(g, "app", "quota_gate", {})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    for _ in range(3):
+        aw.record_event(g, "web", "generate", {"chars": 1000, "account_email": "uno@example.com"})
+        aw.record_event(g, "web", "quota_gate", {"account_email": "uno@example.com"})
+    aw.record_event(g, "web", "email", {"email": "uno@example.com"})
+    assert aw.evasion_for(g)["cids_born_after_last_block"] == 0
+    assert "anon" not in aw.dossier(g)["cids"]["web"]
+
+
 def test_a_second_account_is_still_identity_rotation(env, monkeypatch):
     g = aw.group_key("9.9.9.9", "app")
     real_time = time.time
@@ -695,8 +731,11 @@ def test_signed_in_flag_reaches_the_judge_without_the_email(env):
     g = aw.group_key("9.9.9.9", "web")
     aw.record_event(g, "web", "generate", {"chars": 10, "account_email": "uno@example.com"})
     _gen(g, "anon")
+    aw.record_event(g, "misto", "generate", {"chars": 10, "account_email": "uno@example.com"})
+    _gen(g, "misto")
     payload, alias = aw.build_prompt(g)
     assert "uno@example.com" not in payload
     cids = json.loads(payload)["cids"]
     by_cid = {alias[a]: f for a, f in cids.items()}
     assert by_cid["web"]["signed_in"] is True and by_cid["anon"]["signed_in"] is False
+    assert by_cid["misto"]["signed_in"] is False, "usato anche senza sessione"

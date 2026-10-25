@@ -1424,22 +1424,31 @@ quindi un `abuse` declassato a `inconclusive` non allarga nulla. Motivo: il
 vecchio e ha completato il libro con quello nuovo.
 
 **Il verdetto segue il cid** (`abuse_watch.is_blocked`, dalla v3.154.8): oltre al
-gruppo corrente, un cid nello scope di un verdetto `abuse` valido e sopra soglia
-in **qualunque** altro gruppo viene rifiutato con 403 (`_blocks_cid`): cambiare
-rete o VPN non lo libera. L'email non si segue, di proposito: quella del gate non
-e' verificata e chi la scrive potrebbe far bloccare altri. Le kill in corsa
+gruppo corrente, un cid nella **lista** (`cids`) di un verdetto `abuse` valido e
+sopra soglia di **qualunque** altro gruppo viene rifiutato con 403
+(`_blocks_cid(..., group_scope=False)`): cambiare rete o VPN non lo libera. Fuori
+dal gruppo di origine non vale invece l'estensione `scope=group` ai cid arrivati
+dopo il verdetto (`_covered_by_group_scope`): su una CGNAT mobile puo' essere un
+vicino capitato su quel /24, che verrebbe fermato ovunque per tutto il TTL del
+verdetto. Quei cid restano fermi sul gruppo condannato e li contengono quota e
+cap per email. L'email non si segue, di proposito: quella del gate non e'
+verificata e chi la scrive potrebbe far bloccare altri. Le kill in corsa
 (`_abuse_apply_verdict`) restano limitate al gruppo giudicato. Motivo: il
 25/10/2026 un cid condannato sul suo /24 ha generato un libro intero da un'altra
 rete giudicata `clean`.
 
-**Cid con sessione** (`account_email` nella nota, `bucket["account"]`): un cid
-che ha generato loggato e' un dispositivo dell'account, non un cookie nuovo.
-Non conta per `_born_after_last_block` ne' per i segnali di rotazione
-(nascita dopo il blocco, usa-e-getta, vite brevi); la sua email entra fra le
-`emails` del gruppo, cosi' un secondo account resta `identity_rotation`. Al
-giudice arriva solo `signed_in` per cid, mai l'indirizzo. Motivo: il ticket del
-25/10/2026, dove il secondo dispositivo dello stesso account risultava «nato
-dopo il blocco».
+**Cid con sessione** (`account_email` nella nota, `bucket["account"]`,
+`_account_device`): un cid che ha toccato la quota **solo** da loggato e' un
+dispositivo dell'account, non un cookie nuovo. Non conta per
+`_born_after_last_block` ne' per i segnali di rotazione (nascita dopo il blocco,
+usa-e-getta, vite brevi); la sua email entra fra le `emails` del gruppo, cosi' un
+secondo account resta `identity_rotation`. Basta un `generate`, `quota_gate` o
+`quota_block` senza sessione (`bucket["anon"]`) per perdere l'esenzione per
+sempre: altrimenti cookie nuovo, login, job minuscolo e logout darebbero un cid
+che genera anonimo sulla quota del cookie senza contare come rotazione. Le
+note `email` non tolgono l'esenzione. Al giudice arriva solo `signed_in` per
+cid, mai l'indirizzo. Motivo: il ticket del 25/10/2026, dove il secondo
+dispositivo dello stesso account risultava «nato dopo il blocco».
 
 **Finestra fra due giudizi** (`_JUDGE_COOLDOWN_SEC`, 300 s): con un verdetto
 valido più recente della finestra, `needs_judgement` risponde sempre `False`.
