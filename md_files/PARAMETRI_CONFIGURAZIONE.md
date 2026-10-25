@@ -1295,6 +1295,7 @@ Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi cl
 
 - **Cosa conta**: caratteri dei capitoli selezionati di ogni job avviato da `/api/generate` con voce STANDARD (non Gemini/Speechify). Le voci PREMIUM restano sotto `ABM_FREE_QUOTA_EUR_PER_MONTH`.
 - **Identita'**: cookie `abm_cid` (web) o header `X-ABM-Cid` (app); client senza identificativo condividono un unico bucket anonimo. Per l'app l'identificativo e' legato all'**installazione**: `/api/device/register` chiama `free_tts_quota.link_device(sha256(fcm_token)[:16], cid)`, il primo cid che registra quel device resta canonico e i successivi diventano suoi alias (consumo del mese in corso fuso nel bucket canonico). Registro in `ABM_DATA_DIR/_free_tts_quota_ids.json` — `{"devices": {hash: {cid, ts}}, "aliases": {cid: {cid, ts}}}`, retention `_IDS_KEEP_DAYS` (120 giorni, `free_tts_quota.py:35`). Il token push non viene mai scritto: solo il suo digest. Conseguenza: ripulire i dati dell'app **non** azzera il contatore mensile, cosa che cancellare il cookie fa ancora.
+- **Chiave email** (dalla v3.154.8): gate e cap contano sulla piu' consumata fra la chiave cid e `mail:<hash>` (`free_tts_quota._quota_keys`/`_worst_usage`; a parita' vince il cid, il retry gia' addebitato su una qualunque delle due passa). L'email e' quella dell'account se la richiesta ha una sessione (`routes_account.current_account_email()`), altrimenti `notify_email` del job: ogni dispositivo loggato pesca dallo stesso contatore invece di avere una quota fresca per cookie. Ticket del 25/10/2026: un secondo dispositivo dello stesso account partiva con la quota intera.
 - **Chiave di addebito**: `job_id:gen_epoch+1` → la rigenerazione dello stesso job (altra voce/formato) conta come nuovo libro; il retry dello stesso avvio e' idempotente.
 - **Gate**: oltre quota `/api/generate` risponde `402 free_tts_quota_exhausted` (`quota_used_chars`, `quota_limit_chars`, `chars_selected`, `email_required`, `push_ack_possible`), ripristina lo stato del job e logga `QUOTA_BLOCK`. Il frontend apre `#ttsQuotaModal`: l'utente registra un'email (`/api/register_email`) e rimanda `quota_ack=true`; il job parte, la quota viene comunque addebitata (`gated`) e il log riporta `QUOTA_GATE`. **Nessuno sblocco mensile**: il gate si ripresenta a ogni libro oltre quota. Senza SMTP configurato il gate e' impraticabile e il job passa senza marcatura.
 - **Ack via push (app mobile)**: l'email del gate non e' un'identita' (non e' verificata da nessuno): il suo ruolo e' garantire la consegna di un job che l'utente non attende a schermo. Nell'app quel ruolo lo copre la notifica, quindi `_push_ack_possible` (`audiobook_app.py:2594`) accetta `quota_ack=true` **senza email** quando: richiesta dall'app (`X-ABM-Platform` + `X-ABM-Cid` validi), `push_service.is_available()`, device registrato da meno di `ABM_QUOTA_DEVICE_MAX_AGE_DAYS`, deroga non spenta da `ABM_FREE_TTS_QUOTA_APP_PUSH_ACK`. Il ramo forza il batch (`email_registered=True`, nessuna `notify_email`): senza quello l'heartbeat ucciderebbe il job a schermo spento e la notifica arriverebbe per un audiolibro mai prodotto. Addebito e log restano quelli del gate (`gated`, `QUOTA_GATE`, nota `quota_gate` ad `abuse_watch`). Il campo `push_ack_possible` del 402 dice all'app quale schermata mostrare al primo rifiuto (notifica o email) senza un secondo giro.
@@ -1307,7 +1308,7 @@ Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi cl
 
 - **Perche'**: il gate email non e' un soffitto. Caso `0e82f064` (settembre 2026): 42,4 Mchars in un mese, 4,2x la quota, con **una sola** email registrata su ~101 passaggi del gate e un solo cid — quindi `stable_identity` per `abuse_watch` e nessun verdetto di abuso possibile. Il gate rallenta, non limita.
 - **Cosa fa**: `free_tts_quota.cap_decision()` e' valutata in `/api/generate` **prima** del gate. Oltre il cap la risposta e' `402 free_tts_cap_reached` (`quota_used_chars`, `quota_cap_chars`, `chars_selected`), lo stato del job e' ripristinato, nulla viene consumato, il log riporta `QUOTA_CAP` e parte una nota `quota_block` ad `abuse_watch`. **Nessun ack lo supera**: ne' l'email registrata ne' la push. Le voci PREMIUM restano disponibili.
-- **Su cosa e' contato**: due chiavi nello stesso file del mese — l'identita' di quota canonica (cid, con gli alias delle installazioni) **e** `mail:<sha256(ABM_IP_SALT + email del gate)[:16]>`. Blocca se sfonda una delle due: cancellare il cookie non azzera il contatore (la scappatoia del caso `36e901e8`). L'indirizzo non e' mai scritto in chiaro; le chiavi `mail:` sono escluse da `month_table()` (non sono client).
+- **Su cosa e' contato**: due chiavi nello stesso file del mese — l'identita' di quota canonica (cid, con gli alias delle installazioni) **e** `mail:<sha256(ABM_IP_SALT + email)[:16]>`, con l'email dell'account se c'e' sessione, altrimenti quella del gate. Blocca se sfonda una delle due: cancellare il cookie non azzera il contatore (la scappatoia del caso `36e901e8`). L'indirizzo non e' mai scritto in chiaro; le chiavi `mail:` sono escluse da `month_table()` (non sono client).
 - **Consumo e storno**: `consume(..., email=...)` somma sulle due chiavi con la stessa chiave di addebito, `refund(..., email=...)` le libera entrambe (il riferimento sul job e' `(cid, chiave, email)`, i descrittori a 2 elementi delle versioni precedenti restano validi). Il consumo avviene se quota **o** cap sono attivi: col solo cap acceso il contatore si riempie comunque, altrimenti il tetto non avrebbe nulla da misurare.
 - **Frontend**: `_handleTtsCapReached` in `static/js/app.js` mostra `tts_cap_msg` (7 lingue) nell'errore di step 3, senza aprire il modale del gate.
 - **Env**: `ABM_FREE_TTS_CAP_CHARS_PER_MONTH` (default 25M, `0` = off, letta a ogni chiamata). Deve restare > `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH`, altrimenti il gate email non viene mai raggiunto.
@@ -1421,6 +1422,24 @@ blocco è un vicino di NAT e resta fuori. La guardia di evasione viene prima,
 quindi un `abuse` declassato a `inconclusive` non allarga nulla. Motivo: il
 07/09/2026 un gruppo ha ruotato da app a web, si è visto condannare il cookie
 vecchio e ha completato il libro con quello nuovo.
+
+**Il verdetto segue il cid** (`abuse_watch.is_blocked`, dalla v3.154.8): oltre al
+gruppo corrente, un cid nello scope di un verdetto `abuse` valido e sopra soglia
+in **qualunque** altro gruppo viene rifiutato con 403 (`_blocks_cid`): cambiare
+rete o VPN non lo libera. L'email non si segue, di proposito: quella del gate non
+e' verificata e chi la scrive potrebbe far bloccare altri. Le kill in corsa
+(`_abuse_apply_verdict`) restano limitate al gruppo giudicato. Motivo: il
+25/10/2026 un cid condannato sul suo /24 ha generato un libro intero da un'altra
+rete giudicata `clean`.
+
+**Cid con sessione** (`account_email` nella nota, `bucket["account"]`): un cid
+che ha generato loggato e' un dispositivo dell'account, non un cookie nuovo.
+Non conta per `_born_after_last_block` ne' per i segnali di rotazione
+(nascita dopo il blocco, usa-e-getta, vite brevi); la sua email entra fra le
+`emails` del gruppo, cosi' un secondo account resta `identity_rotation`. Al
+giudice arriva solo `signed_in` per cid, mai l'indirizzo. Motivo: il ticket del
+25/10/2026, dove il secondo dispositivo dello stesso account risultava «nato
+dopo il blocco».
 
 **Finestra fra due giudizi** (`_JUDGE_COOLDOWN_SEC`, 300 s): con un verdetto
 valido più recente della finestra, `needs_judgement` risponde sempre `False`.
@@ -1922,7 +1941,7 @@ prima di questo modulo.
 
 | Variabile | Default | Effetto |
 |---|---|---|
-| `ABM_ACTIVITY_LOG_DIR` | `SCRIPT_DIR` | Cartella di `activity_YYYY-MM.log` e di `activity.db`. In prod `/opt/audiobook-maker/data` dopo lo spostamento (a servizio fermo, vedi l'addendum della spec `docs/superpowers/specs/2026-09-24-activity-log-db-design.md`). |
+| `ABM_ACTIVITY_LOG_DIR` | `SCRIPT_DIR` | Cartella di `activity_YYYY-MM.log` e di `activity.db`. In prod `/opt/audiobook-maker/data/logs` dopo lo spostamento (a servizio fermo, vedi l'addendum della spec `docs/superpowers/specs/2026-09-24-activity-log-db-design.md`). |
 | `ABM_ACTIVITY_DB` | `off` | `off`: solo file. `dual`: file piu' copia in `activity.db`, letture dal file. `db`: dedup e letture su `activity.db`, file sempre scritto. Valore ignoto = `off`. Letta a ogni scrittura; il cambio passa dall'unit systemd e da un restart. |
 
 Il file resta il registro completo fino alla fase 4: all'avvio, con `dual` o `db`, un thread

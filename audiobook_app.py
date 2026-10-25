@@ -2996,6 +2996,7 @@ def _abuse_note(job_id, job, kind, **data):
         group = _abuse_group_of(job)
         data.setdefault("filename", job.get("original_filename", ""))
         data.setdefault("lang", getattr(job.get("info"), "language", "") or "")
+        data.setdefault("account_email", routes_account.current_account_email())
         group_data = abuse_watch.record_event(group, cid, kind, data)
         if abuse_watch.needs_judgement(group, cid, group_data=group_data):
             abuse_watch.enqueue(group, cid)
@@ -5282,7 +5283,10 @@ def api_generate():
             free_tts_quota.limit_chars() > 0 or free_tts_quota.cap_chars() > 0):
         _ftq_cid = _quota_client_id(job)
         _ftq_key = f"{job_id}:{job.get('gen_epoch', 0) + 1}"
-        _ftq_mail = job.get("notify_email") or ""
+        # Con sessione conta l'email dell'account (la consegna viene forzata li'
+        # da _apply_account_to_job): ogni dispositivo loggato pesca dallo
+        # stesso contatore, invece di avere una quota fresca per cookie.
+        _ftq_mail = routes_account.current_account_email() or job.get("notify_email") or ""
         _ftq_gated = False
         # Tetto duro (ABM_FREE_TTS_CAP_CHARS_PER_MONTH): qui, PRIMA del gate
         # email, perche' nessun ack lo supera. Contato sull'identita' di quota
@@ -5312,7 +5316,8 @@ def api_generate():
                 "quota_cap_chars": _ftq_cap["cap_chars"],
                 "chars_selected": selected_chars,
             }), 402
-        _ftq_dec = (free_tts_quota.decision(_ftq_cid, selected_chars, _ftq_key)
+        _ftq_dec = (free_tts_quota.decision(_ftq_cid, selected_chars, _ftq_key,
+                                            email=_ftq_mail)
                     if free_tts_quota.limit_chars() > 0 else {"allowed": True})
         if not _ftq_dec["allowed"]:
             _ftq_ack = (bool(data.get("quota_ack")) and bool(job.get("notify_email"))

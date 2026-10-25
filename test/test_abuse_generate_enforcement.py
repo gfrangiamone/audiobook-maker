@@ -10,6 +10,7 @@ import cleanup
 import free_tts_quota as ftq
 import generation_engine
 import payment
+import routes_account
 from epub_to_tts import BookInfo, Chapter
 
 CID = "cid_abuse_enf_test"
@@ -200,6 +201,26 @@ def test_generate_records_dossier_and_resets_markers(env, client):
     assert d["cids"][CID]["generate"] == 1 and d["cids"][CID]["chars"] == 100
     assert d["all"]["voices"] == {VOICE: 1} and d["all"]["langs"] == {"en": 1}
     assert len(d["all"]["files"]) == 1
+
+
+def test_403_follows_the_cid_onto_another_network(env, client):
+    """Il cid condannato sul gruppo IP resta fermo anche da un altro /24."""
+    _abuse_verdict([CID])
+    job = _mk_job("abz-net")
+    job["client_ip"] = "8.8.4.4"
+    r = _post(client, "abz-net")
+    assert r.status_code == 403 and r.get_json()["error_code"] == "job_terminated"
+    assert env["run"] == []
+
+
+def test_signed_in_generate_marks_the_cid_as_account_device(env, client, monkeypatch):
+    monkeypatch.setattr(routes_account, "_current_account",
+                        lambda: {"id": 3, "email": "lettore@example.com", "lang": "en"})
+    _mk_job("abz-acct")
+    assert _post(client, "abz-acct").status_code == 200
+    d = aw.dossier(aw.group_key(IP, CID))
+    assert d["cids"][CID]["account"] is True
+    assert d["cids"][CID]["emails"] == [aw._hash("lettore@example.com")]
 
 
 def test_abuse_reset_recovery_markers_clears_stale_flags(env):

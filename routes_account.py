@@ -23,7 +23,7 @@ import hmac
 import secrets
 import time
 
-from flask import Blueprint, Response, abort, g, jsonify, redirect, request
+from flask import Blueprint, Response, abort, g, has_request_context, jsonify, redirect, request
 
 import account_page
 import accounts
@@ -138,6 +138,16 @@ def _current_account():
         print(f"WARNING _current_account: {e}", flush=True)
     g._acct = acct
     return acct
+
+
+def current_account_email():
+    """Email dell'account della richiesta corrente; "" senza sessione o fuori
+    da una richiesta (worker, recovery). Per i loggati e' la chiave della
+    quota voci standard e l'identita' che vede l'anti-abuso: un secondo
+    dispositivo dello stesso account non e' un'identita' nuova."""
+    if not has_request_context():
+        return ""
+    return (_current_account() or {}).get("email") or ""
 
 
 def _acct_cookie_secure():
