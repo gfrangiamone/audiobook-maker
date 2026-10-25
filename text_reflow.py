@@ -302,7 +302,9 @@ def _strip_parenthetical(text, strip_round=True, strip_square=True, flatten=True
     """
     if strip_round or strip_square:
         max_chars = _paren_strip_max_chars()
-        hole = next(chr(c) for c in range(0xE000, 0xF900) if chr(c) not in text)
+        used = set(text)  # una scansione sola, non una per candidato PUA
+        # PUA piena: hole '' toglie gli span a vuoto e replace('', '') e' neutro (misura storica).
+        hole = next((chr(c) for c in range(0xE000, 0xF900) if chr(c) not in used), '')
 
         def _drop(m):
             span = m.group(0)

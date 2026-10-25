@@ -10,7 +10,7 @@ Testi sintetici: nessun libro reale.
 import pytest
 
 from text_reflow import _strip_parenthetical, prepare_tts_text
-from tts_split import _plan_chunks
+from tts_split import CHUNK_MAX_CHARS, _plan_chunks
 
 
 class _FakeCh:
@@ -26,7 +26,7 @@ class _FakeInfo:
 
 
 @pytest.fixture(autouse=True)
-def _default_threshold(monkeypatch):
+def soglia_di_default(monkeypatch):
     monkeypatch.delenv("ABM_PAREN_STRIP_MAX_CHARS", raising=False)
 
 
@@ -72,7 +72,7 @@ def test_prepare_tts_text_and_plan_keep_ocr_span():
     txt = ("Anfang [hr Brief.\n\n" + _filler(8, "p") + "\n\nIm Pal] Ende.")
     out = prepare_tts_text(txt, strip_round=True, strip_square=True)
     assert out.count("Absatz p") == 8
-    plan = _plan_chunks(_FakeInfo([_FakeCh(0, "Kapitel", txt)]))
+    plan = _plan_chunks(_FakeInfo([_FakeCh(0, "Kapitel", txt)]), max_chars=CHUNK_MAX_CHARS)
     planned = sum(b["chars"] for b in plan)
     assert planned >= len(" ".join(txt.split())) * 0.95
 
@@ -166,3 +166,19 @@ def test_flags_still_select_bracket_type():
 def test_private_use_chars_in_text_survive():
     txt = "Alfa  (x) beta ."
     assert _strip_parenthetical(txt) == "Alfa  beta ."
+
+
+def test_full_private_use_area_keeps_guard():
+    # Tutti i 6400 code point PUA occupati: niente segnaposto libero, nessuna
+    # eccezione, misura sul testo gia' ripulito e guardia di lunghezza attiva.
+    pua = "".join(chr(c) for c in range(0xE000, 0xF900))
+    long_aside = "(" + "n" * 500 + ")"
+    out = _strip_parenthetical(f"{pua} a (x) b {long_aside} c [y] d")
+    assert out == f"{pua} a b {long_aside} c d"
+
+
+def test_first_private_use_chars_taken_still_strip():
+    taken = "".join(chr(c) for c in range(0xE000, 0xE000 + 50))
+    long_aside = "[" + " ".join(["w"] * 300) + "]"
+    out = _strip_parenthetical(f"{taken} Alfa (tonda) beta [quadra] {long_aside} fine.")
+    assert out == f"{taken} Alfa beta {long_aside} fine."
