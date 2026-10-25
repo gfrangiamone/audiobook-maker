@@ -188,16 +188,21 @@ def set_abuse_provider(fn):
     _abuse_provider = fn
 
 
-def _abuse_provider_data():
-    """Interroga il provider abuso una sola volta. Fail-open: `None` se il
-    provider manca o fallisce (equivale a 'nessuna riga')."""
-    fn = _abuse_provider
+def _digest_provider_data(fn, label):
+    """Interroga un provider del digest una sola volta. Fail-open: `None` se
+    il provider manca, non ha dati o fallisce (equivale a 'nessuna riga')."""
     if not fn:
         return None
     try:
-        return fn() or {}
-    except Exception:
+        return fn() or None
+    except Exception as e:      # noqa: BLE001
+        print(f"[email] {label} provider fallito: {e}", flush=True)
         return None
+
+
+def _abuse_provider_data():
+    """Interroga il provider abuso una sola volta (vedi `_digest_provider_data`)."""
+    return _digest_provider_data(_abuse_provider, "abuse")
 
 
 def _abuse_block_html(data=None):
@@ -265,13 +270,7 @@ def set_voice_clone_provider(fn):
 
 
 def _voice_clone_provider_data():
-    if _voice_clone_provider is None:
-        return None
-    try:
-        return _voice_clone_provider() or None
-    except Exception as e:      # noqa: BLE001
-        print(f"[email] voice clone provider fallito: {e}", flush=True)
-        return None
+    return _digest_provider_data(_voice_clone_provider, "voice clone")
 
 
 def _voice_clone_block_html(data=None):
@@ -287,6 +286,59 @@ def _voice_clone_block_html(data=None):
     return (f"<h3>Voci campionate (ultime {hours} h)</h3>"
             f"<table>{righe}</table>"
             f"<p>Voci attive: <strong>{int(d.get('active_ready') or 0)}</strong></p>")
+
+
+# ---------------------------------------------------------------------------
+# Testo fatturato e non letto: provider hook (iniettato da audiobook_app —
+# nessun import circolare)
+# ---------------------------------------------------------------------------
+
+_text_drop_provider = None  # callable() -> {"rows": [...], "window_hours": int} | None
+
+
+def set_text_drop_provider(fn):
+    global _text_drop_provider
+    _text_drop_provider = fn
+
+
+def _text_drop_provider_data():
+    return _digest_provider_data(_text_drop_provider, "text drop")
+
+
+def _text_drop_block_html(data=None):
+    """Sezione «Testo fatturato e non letto» del digest: job PREMIUM il cui
+    piano TTS copre meno della soglia dei caratteri quotati (evento
+    TEXT_DROP, generation_engine._check_text_coverage). Il job e' andato
+    avanti: va controllato a mano. '' se il provider manca, fallisce o non
+    ha righe. `data`, se fornito, evita di richiamare il provider."""
+    d = _text_drop_provider_data() if data is None else data
+    if not d or not (d.get("rows") or []):
+        return ""
+    hours = int(d.get("window_hours") or 24)
+    th = "padding:6px 8px;text-align:left;font-size:12px;color:#555;white-space:nowrap"
+    td = "padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;vertical-align:top"
+    trs = ""
+    for r in d["rows"]:
+        opt = " (AI)" if str(r.get("opt", "")) == "1" else ""
+        trs += (
+            f"<tr><td style='{td};white-space:nowrap'>{_esc_html(r.get('ts', ''), 19)}</td>"
+            f"<td style='{td};font-family:monospace'>{_esc_html(r.get('job_id', ''), 40)}</td>"
+            f"<td style='{td}'>{_esc_html(r.get('filename', ''), 80)}</td>"
+            f"<td style='{td};text-align:right'>{_esc_html(r.get('plan', ''), 12)}</td>"
+            f"<td style='{td};text-align:right'>{_esc_html(r.get('billed', ''), 12)}</td>"
+            f"<td style='{td};text-align:right'><b>{_esc_html(r.get('pct', ''), 8)}%</b></td>"
+            f"<td style='{td}'>{_esc_html(r.get('engine', ''), 16)}{opt}</td></tr>"
+        )
+    return f"""
+<h3 style="margin:24px 0 8px;font-size:15px;color:#b91c1c">Testo fatturato e non letto (ultime {hours}h)</h3>
+<table style="width:100%;border-collapse:collapse;background:white;border:1px solid #ddd">
+<thead><tr style="background:#fef2f2">
+<th style="{th}">Ora</th><th style="{th}">Job</th><th style="{th}">File</th>
+<th style="{th};text-align:right">Car. piano</th><th style="{th};text-align:right">Car. fatturati</th>
+<th style="{th};text-align:right">%</th><th style="{th}">Motore</th>
+</tr></thead><tbody>{trs}</tbody></table>
+<p style="color:#888;font-size:11px;margin:6px 0 0">Il job non e' stato fermato. Soglia: ABM_TEXT_COVERAGE_ALERT_PCT.
+(AI) = testo ottimizzato: la stima puo' riferirsi al testo prima dell'ottimizzazione.</p>"""
 
 
 # ---------------------------------------------------------------------------
@@ -564,8 +616,10 @@ def _try_send_admin_digest():
     _abuse_rows = (_abuse_data or {}).get("rows") or []
     _vc_data = _voice_clone_provider_data()
     _vc_rows = (_vc_data or {}).get("rows") or []
+    _drop_data = _text_drop_provider_data()
+    _drop_rows = (_drop_data or {}).get("rows") or []
     with _admin_queue_lock:
-        if not _admin_queue and not _abuse_rows and not _vc_rows:
+        if not _admin_queue and not _abuse_rows and not _vc_rows and not _drop_rows:
             return
         now = time.time()
         if (now - _admin_last_sent) < ADMIN_DIGEST_INTERVAL_SEC:
@@ -580,16 +634,21 @@ def _try_send_admin_digest():
     count = len(events)
     n_abuse = len(_abuse_rows)
     abuse_tag = f"{n_abuse} cas{'o' if n_abuse == 1 else 'i'} di abuso"
+    n_drop = len(_drop_rows)
+    drop_tag = f"{n_drop} job con testo non letto"
+    tags = [t for t, n in ((abuse_tag, n_abuse), (drop_tag, n_drop)) if n]
     if count == 0:
-        # Invio abuse-only: l'oggetto dice il motivo reale, non "0 nuovi libri".
-        subject = f"\u26a0\ufe0f Audiobook Maker: {abuse_tag}"
-        intro = f"Nessuna elaborazione avviata \u2014 {abuse_tag}"
+        # Invio senza libri in coda: l'oggetto dice il motivo reale, non "0
+        # nuovi libri" (abuso, testo non letto; nessuno dei due: il tag abuso).
+        head = " \u00b7 ".join(tags) or abuse_tag
+        subject = f"\u26a0\ufe0f Audiobook Maker: {head}"
+        intro = f"Nessuna elaborazione avviata \u2014 {head}"
     else:
         subject = f"\U0001f4da Audiobook Maker: {count} nuov{'o' if count == 1 else 'i'} libr{'o' if count == 1 else 'i'} in elaborazione"
         intro = f"{count} elaborazion{'e' if count == 1 else 'i'} avviat{'a' if count == 1 else 'e'}"
-        if n_abuse:
-            subject += f" \u00b7 {abuse_tag}"
-            intro += f" \u00b7 {abuse_tag}"
+        for tag in tags:
+            subject += f" \u00b7 {tag}"
+            intro += f" \u00b7 {tag}"
 
     rows = ""
     for e in events:
@@ -608,6 +667,7 @@ def _try_send_admin_digest():
     power_block = _power_users_block_html()
     abuse_block = _abuse_block_html(_abuse_data or {})
     voice_clone_block = _voice_clone_block_html(_vc_data or {})
+    text_drop_block = _text_drop_block_html(_drop_data or {})
     html = _layout.digest_page(
         "\U0001f3a7 Audiobook Maker \u2014 Activity Digest",
         f"{intro} \u2014 {datetime.now().strftime('%d/%m/%Y %H:%M')}",
@@ -625,6 +685,7 @@ def _try_send_admin_digest():
 </table>
 {funnel_block}
 {power_block}
+{text_drop_block}
 {abuse_block}
 {voice_clone_block}""",
         ["Questo messaggio è generato automaticamente da Audiobook Maker.\n"

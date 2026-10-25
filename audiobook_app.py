@@ -2855,7 +2855,8 @@ _PREMIUM_START_OPS = frozenset({"GENERATE", "OPTIMIZE"})
 # righe M4B_START/M4B_PROGRESS/M4B_END. Queste righe non devono aggiornare
 # voice/lang/ip della sessione ("ultimo valore non vuoto vince" altrimenti
 # sovrascrive la voce reale con il payload): vedi item 1 del final-fix-brief.
-_M4B_OP_PREFIX = "M4B_"
+# Lo stesso vale per TEXT_DROP: l'elenco sta in user_stats, unico.
+_M4B_OP_PREFIX = user_stats.VOICE_PAYLOAD_OPS
 
 
 def _parse_log_sessions(ym):
@@ -3093,6 +3094,7 @@ try:
     _email_service.set_funnel_provider(lambda: routes_admin_logs._funnel_data(routes_admin_logs._last_n_days(30)))
     _email_service.set_power_users_provider(routes_admin_logs._power_users_data)
     _email_service.set_abuse_provider(_abuse_digest_data)
+    _email_service.set_text_drop_provider(routes_admin_logs._text_drop_data)
 except Exception:
     pass
 

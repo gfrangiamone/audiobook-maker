@@ -223,6 +223,23 @@ def _power_users_data():
             "quota_limit_chars": free_tts_quota.limit_chars(), "window_hours": 24}
 
 
+def _text_drop_data():
+    """Righe del blocco «testo fatturato e non letto» del digest: eventi
+    TEXT_DROP delle ultime 24h (generation_engine._check_text_coverage), uno
+    per job (l'ultimo), col payload `plan=... billed=... pct=...` della
+    colonna voice gia' scomposto. None se nella finestra non ce ne sono."""
+    since = datetime.now() - timedelta(hours=24)
+    by_job = {}
+    for r in activity_log.iter_rows(since, ops={"TEXT_DROP"}):
+        if not r.job_id:
+            continue
+        kv = dict(p.split("=", 1) for p in r.voice.split() if "=" in p)
+        by_job[r.job_id] = {"job_id": r.job_id, "ts": r.ts, "filename": r.filename, **kv}
+    if not by_job:
+        return None
+    return {"rows": list(by_job.values()), "window_hours": 24}
+
+
 _LOG_EVENT_ICONS: dict[str, str] = {
     "ANALYZE": "🔍", "GENERATE": "⚙️", "COMPLETE": "✅",
     "DOWNLOAD": "📥", "DOWNLOAD_EMAIL": "📧📥",
@@ -235,6 +252,7 @@ _LOG_EVENT_ICONS: dict[str, str] = {
     "TRANSLATE": "🌍", "TR_COMPLETE": "🌍✅", "TR_CANCEL": "🌍🚫",
     "TRANSLATE_ADOPT": "🌍📖", "DOWNLOAD_TRANSLATION": "🌍📥",
     "TR_EMAIL_SENT": "🌍📨",
+    "TEXT_DROP": "✂️",
 }
 _LOG_OP_COLORS = {
     "ANALYZE": ("#6b7280", "#f3f4f6"), "GENERATE": ("#2563eb", "#eff6ff"),
@@ -256,6 +274,7 @@ _LOG_OP_COLORS = {
     "TRANSLATE_ADOPT": ("#0284c7", "#e0f2fe"),
     "DOWNLOAD_TRANSLATION": ("#0369a1", "#e0f2fe"),
     "TR_EMAIL_SENT": ("#0d9488", "#f0fdfa"),
+    "TEXT_DROP": ("#dc2626", "#fef2f2"),
 }
 
 

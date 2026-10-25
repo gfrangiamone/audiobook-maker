@@ -12,7 +12,7 @@ def _provider_isolati(monkeypatch):
     # sviluppatore una voce rimborsata nelle ultime 24 ore faceva partire il
     # digest che qui non deve partire. Ogni test parte da tutti a None.
     for name in ("_funnel_provider", "_power_users_provider", "_abuse_provider",
-                 "_voice_clone_provider"):
+                 "_voice_clone_provider", "_text_drop_provider"):
         monkeypatch.setattr(es, name, None)
 
 

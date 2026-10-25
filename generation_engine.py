@@ -5025,13 +5025,63 @@ def _rate_audit_fields(job):
     return {"rate_pct": int(_parse_rate_pct(rate_raw)), "rate_step": _rate_step(rate_raw)}
 
 
+# Copertura del testo: caratteri del piano TTS contro quelli quotati nella
+# stima PREMIUM. Il prezzo si calcola su `pricing_common.billable_text`
+# (parentesi comprese), la sintesi su `prepare_tts_text`: nessun controllo li
+# confrontava, e il job sLRx3imAutQ0nHWhuJTyuQ (25/10/2026) e' stato fatturato
+# per 481k caratteri e letto per 220k. Sotto soglia il job prosegue: evento
+# TEXT_DROP nell'activity log (che alimenta il digest admin) e campi nell'audit.
+TEXT_COVERAGE_ALERT_PCT_DEFAULT = 85.0
+
+
+def _check_text_coverage(job_id, job, engine, plan_chars):
+    """Confronta i caratteri del piano con `chars_total` della stima del
+    motore e salva `job["text_coverage"]`. Ritorna quel dict, None per Edge,
+    senza stima o su errore. Mai fatale: il job non si ferma."""
+    try:
+        eng = _tts_engines.ENGINES.get(engine)
+        if eng is None:
+            return None
+        billed = int((job.get(eng.estimate_key) or {}).get("chars_total") or 0)
+        if billed <= 0:
+            return None
+        plan_chars = int(plan_chars or 0)
+        pct = round(plan_chars * 100.0 / billed, 1)
+        threshold = _env_float("ABM_TEXT_COVERAGE_ALERT_PCT", TEXT_COVERAGE_ALERT_PCT_DEFAULT,
+                               floor=0.0, ceil=100.0)
+        drop = pct < threshold
+        cov = {"chars_billed": billed, "plan_chars": plan_chars, "pct": pct, "drop": drop}
+        job["text_coverage"] = cov
+        if drop:
+            # Con l'ottimizzazione AI la stima puo' essere sul testo prima
+            # dell'LLM (wizard combinato): `opt=1` lo dice al lettore.
+            opt = 1 if (job.get("optimized_chapters") or job.get("optimized_abm_path")) else 0
+            print(f"[{job_id}] TEXT DROP: piano {plan_chars:,} car. su {billed:,} "
+                  f"fatturati ({pct}% < {threshold:g}%), engine={engine}", flush=True)
+            _log_activity(job_id, job.get("original_filename", ""), "TEXT_DROP",
+                          job.get("client_id", ""), job.get("client_ip", ""),
+                          f"plan={plan_chars} billed={billed} pct={pct} engine={engine} opt={opt}",
+                          job.get("browser_lang", ""), epoch=job.get("gen_epoch"))
+        return cov
+    except Exception as e:
+        print(f"[{job_id}] text coverage check error (non-fatal): {e}", flush=True)
+        return None
+
+
 def _common_audit_tail(rec, job):
     """Campi condivisi in coda al record: chunk riusati da un tentativo
     precedente (senza, il costo reale di un job recuperato appare
-    inspiegabilmente sotto stima) e i numeri dell'annullamento."""
+    inspiegabilmente sotto stima), i numeri dell'annullamento e la copertura
+    del testo fatturato (`_check_text_coverage`)."""
     reused = int(job.get("chunks_reused", 0) or 0)
     if reused:
         rec["chunks_reused"] = reused
+    cov = job.get("text_coverage")
+    if isinstance(cov, dict):
+        rec["chars_billed"] = int(cov.get("chars_billed", 0) or 0)
+        rec["plan_chars"] = int(cov.get("plan_chars", 0) or 0)
+        rec["text_coverage_pct"] = float(cov.get("pct", 0.0) or 0.0)
+        rec["text_drop"] = bool(cov.get("drop", False))
     cancel = job.get("cancel_meta")
     if isinstance(cancel, dict):
         rec["cancel_paid_eur"] = round(float(cancel.get("paid_eur", 0) or 0), 2)
@@ -6733,6 +6783,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
         job["total_chars"] = total_chars
         job["total_chunks"] = total_chunks
+        _check_text_coverage(job_id, job, engine, total_chars)
 
         # Riuso dei chunk gia' su disco (resume dopo crash/restart). I file
         # `chunk_XXXXXX.*` di un tentativo precedente sono gia' sintetizzati e,
