@@ -6802,15 +6802,24 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         try:
             _reusable_chunks = chunk_reuse.reusable_indices(
                 work_dir, _reuse_fp, total_chunks, _chunk_ext, plan=plan)
+            # Ramo multi-file: i capitoli gia' codificati in output_N/ non hanno
+            # piu' i chunk su disco. I loro blocchi contano come riusati
+            # (preflight RPD, pre-pass VoxCPM, audit) e il loop li salta.
+            _reusable_chapters = ({} if single_file else
+                                  chunk_reuse.reusable_chapters(work_dir, _reuse_fp, output_dir))
+            _reusable_chunks |= {i for i, b in enumerate(plan)
+                                 if b["chapter_index"] in _reusable_chapters}
         except Exception as _reuse_err:
             print(f"[{job_id}] Chunk reuse scan error (non-fatal): {_reuse_err}")
             _reusable_chunks = set()
+            _reusable_chapters = {}
         chunk_reuse.write_manifest(work_dir, _reuse_fp)
         job["chunks_reused"] = len(_reusable_chunks)
         if _reusable_chunks:
             print(f"[{job_id}] Chunk reuse: {len(_reusable_chunks)}/{total_chunks} chunk "
                   f"gia' sintetizzati riusati da un tentativo precedente "
-                  f"({total_chunks - len(_reusable_chunks)} da generare)")
+                  f"({total_chunks - len(_reusable_chunks)} da generare, "
+                  f"{len(_reusable_chapters)} capitoli gia' codificati)")
 
         # Pre-flight RPD check: per job Gemini, se i chunk previsti superano
         # la quota giornaliera residua (cap - used - reserve), abortire ANTE
@@ -7627,25 +7636,31 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if os.path.exists(p) and p != silence_path:
                         os.remove(p)
 
+            def _add_chapter_mp3(ch_idx, mp3_path):
+                nonlocal current_ms
+                mp3_files.append(mp3_path)
+                duration = _get_audio_duration_ms(mp3_path)
+                m4b_chapters.append({"title": chapter_by_idx[ch_idx].title,
+                                     "start": current_ms, "end": current_ms + duration})
+                current_ms += duration
+
             def _flush_chapter(ch_idx, parts, *, reset_attempts):
                 """Chiude il capitolo `ch_idx`: concatena/encoda le parti in un MP3
-                numerato, aggiorna i capitoli M4B e cancella le parti (non quelle
-                di un capitolo con chunk falliti, che servono al ripasso). Con
+                numerato, aggiorna i capitoli M4B, lo segna come codificato per
+                un eventuale restart e cancella le parti (non quelle di un
+                capitolo con chunk falliti, che servono al ripasso). Con
                 `reset_attempts`, al primo capitolo scritto di un job recuperato
                 azzera i tentativi (progresso reale, anti-burn del cap)."""
-                nonlocal current_ms
                 ch = chapter_by_idx[ch_idx]
                 safe_title = _safe_filename(ch.title)[:50] or f"ch_{ch_idx}"
                 out_num = output_num_by_idx.get(ch_idx, ch_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 _encode_chapter(ch_idx, parts, mp3_path)
-                mp3_files.append(mp3_path)
-                duration = _get_audio_duration_ms(mp3_path)
-                m4b_chapters.append({"title": ch.title, "start": current_ms, "end": current_ms + duration})
-                current_ms += duration
+                _add_chapter_mp3(ch_idx, mp3_path)
                 if any(plan[j]["chapter_index"] == ch_idx for j in _failed_idx):
                     _kept_chapters[ch_idx] = (list(parts), mp3_path)
                 else:
+                    chunk_reuse.mark_chapter_done(work_dir, ch_idx, mp3_path)
                     _remove_parts(parts)
                 if reset_attempts and job.get("recovered") and not job.get("_attempts_reset"):
                     job["_attempts_reset"] = True
@@ -7664,9 +7679,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         _flush_chapter(current_chapter_idx, current_chapter_parts, reset_attempts=True)
                     current_chapter_parts = []
                     current_chapter_idx = block["chapter_index"]
-                    # Silenzio all'inizio del capitolo
-                    if os.path.exists(silence_path):
+                    if current_chapter_idx in _reusable_chapters:
+                        # Codificato da un tentativo precedente: niente sintesi.
+                        _add_chapter_mp3(current_chapter_idx,
+                                         _reusable_chapters[current_chapter_idx])
+                    elif os.path.exists(silence_path):
+                        # Silenzio all'inizio del capitolo
                         current_chapter_parts.append(silence_path)
+                if current_chapter_idx in _reusable_chapters:
+                    _carry_tick(i)
+                    job["processed_chars"] += block["chars"]
+                    continue
 
                 result, part_path = _synthesize_chunk(i, block)
                 _carry_tick(i)
@@ -7835,7 +7858,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # quindi una glob non-ricorsiva sul livello di work_dir non li tocca.
         try:
             for _pattern in ("chunk_*", "prompt*.txt", "*.filelist.txt",
-                             chunk_reuse.MANIFEST_NAME, chunk_reuse.FAILED_NAME):
+                             chunk_reuse.MANIFEST_NAME, chunk_reuse.FAILED_NAME,
+                             chunk_reuse.CHAPTERS_NAME):
                 for _leftover in work_dir.glob(_pattern):
                     if _leftover.is_file():
                         try:
