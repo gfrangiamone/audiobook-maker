@@ -228,3 +228,59 @@ def test_auth_me_exposes_subscription_without_prices(web):
     sub = me["subscription"]
     assert sub["subscription"]["plan"] == "sub_5" and sub["subscription"]["voucher"]["remaining_eur"] == 5.0
     assert "plans" not in sub and "price" not in json.dumps(sub)
+
+
+# ------------------------------------------------------------------ fase 2b: cambi di piano
+
+def _paid_via_routes(c, fake, acct):
+    ext = _ext(_checkout(c))
+    fake.pay(ext, "SALE1", T0 + 60)
+    sid = subscriptions.current(acct["id"])["id"]
+    subscriptions.reconcile_one(sid, now=T0 + 61)
+    return ext, sid
+
+
+def test_change_route_upgrade_and_cancel_change(web):
+    c, holder, acct, fake, _mails = web
+    holder["acct"] = acct
+    assert c.post("/api/subscription/change", json={"plan": "sub_10", "accept_terms": True,
+                                                     "waive_withdrawal": True}).status_code == 404
+    _ext_old, _sid = _paid_via_routes(c, fake, acct)
+    body = {"plan": "sub_10", "accept_terms": True, "waive_withdrawal": True}
+    r = c.post("/api/subscription/change", json=body)
+    assert r.status_code == 200 and r.get_json()["approve_url"].startswith("https://pp.test/approve/")
+    new = r.get_json()["approve_url"].rsplit("/", 1)[1]
+    assert fake.created[new]["setup_fee_eur"] == 10.0
+    r = c.post("/api/subscription/change", json=body)
+    assert r.status_code == 409 and r.get_json()["error_code"] == "change_pending"
+    st = c.get("/api/subscription").get_json()
+    assert st["change"]["plan"] == "sub_10" and all(p["change"] is None for p in st["plans"])
+    assert c.post("/api/subscription/change_cancel", json={}).status_code == 400
+    assert c.post("/api/subscription/change_cancel", json={"confirm": True}).status_code == 200
+    assert c.post("/api/subscription/change_cancel", json={"confirm": True}).status_code == 404
+
+
+def test_change_route_refusals(web):
+    c, holder, acct, fake, _mails = web
+    holder["acct"] = acct
+    _paid_via_routes(c, fake, acct)
+    r = c.post("/api/subscription/change", json={"plan": "sub_5", "accept_terms": True,
+                                                  "waive_withdrawal": True})
+    assert r.status_code == 409 and r.get_json()["error_code"] == "same_plan"
+    r = c.post("/api/subscription/change", json={"plan": "sub_10", "accept_terms": True})
+    assert r.status_code == 400 and r.get_json()["error_code"] == "terms_required"
+
+
+def test_return_route_for_scheduled_change(web):
+    c, holder, acct, fake, _mails = web
+    holder["acct"] = acct
+    _paid_via_routes(c, fake, acct)
+    subscriptions.request_cancel(acct["id"], "user")
+    r = c.post("/api/subscription/change", json={"plan": "sub_5", "accept_terms": True,
+                                                  "waive_withdrawal": True})
+    new = r.get_json()["approve_url"].rsplit("/", 1)[1]
+    fake.set(new, status="ACTIVE")
+    with db.tx() as cx:
+        sid = cx.execute("SELECT id FROM subscriptions WHERE external_id=?", (new,)).fetchone()[0]
+    r = c.get(f"/account/subscription/return?sid={sid}")
+    assert r.headers["Location"].endswith("/account?sub=scheduled")

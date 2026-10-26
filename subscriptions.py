@@ -1083,7 +1083,27 @@ def status_for(account, *, for_app=False, now=None):
         }
     with db.tx() as c:
         nxt = _next_row(c, account["id"])
+        live = _live_row(c, account["id"])
     if nxt is not None:
         out["change"] = {"kind": nxt["change_kind"], "plan": nxt["plan"], "status": nxt["status"],
                          "start_at": nxt["start_at"], "approved": bool(nxt["approved_at"])}
+    if not for_app:
+        for p in out["plans"]:
+            p["change"] = None if nxt is not None else _change_preview(live, p["plan"], now)
     return out
+
+
+def _change_preview(old, plan, now):
+    """Cosa comporta passare a `plan` dall'abbonamento vivo `old` (None se non
+    si puo'): tipo, addebito di oggi e date, per il testo del popup."""
+    if old is None or old["status"] == "activating":
+        return None
+    status, start_at, fee, kind = _change_shape(old, plan, now)
+    if kind != "resume" and (old["status"] == "past_due" or plan == old["plan"]):
+        return None
+    if status == "switching":
+        frm = max(int(old["period_end"] or now), now)
+        return {"kind": kind, "mode": "prepaid", "charge_today_eur": fee, "period_from": frm,
+                "period_to": start_at}
+    return {"kind": kind, "mode": "scheduled", "charge_today_eur": 0.0, "period_from": start_at,
+            "period_to": None}

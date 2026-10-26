@@ -1,6 +1,7 @@
 """routes_subscriptions — abbonamenti mensili (fase 2a).
 
 Blueprint `subscriptions`: `/api/subscription` (stato), `/api/subscription/checkout`,
+`/api/subscription/change` e `/change_cancel` (passaggi di piano e ripresa, fase 2b),
 `/account/subscription/return` (ritorno dall'approvazione), `/api/subscription/cancel`
 e il webhook firmato di PayPal (`WEBHOOK_PATH`, l'unico percorso esente da CSRF).
 La logica vive in `subscriptions`; il fornitore si raggiunge da
@@ -28,6 +29,10 @@ _CHECKOUT_ERRORS = {
     "exists": ("subscription_exists", "A subscription is already active", 409),
     "disabled": ("subscriptions_disabled", "Subscriptions are not available", 404),
     "error": ("provider_error", "Payment provider unavailable, please retry", 502),
+    "no_subscription": ("no_subscription", "No active subscription", 404),
+    "change_pending": ("change_pending", "A plan change is already in progress", 409),
+    "same_plan": ("same_plan", "This is already your plan", 409),
+    "past_due": ("past_due", "Renewal pending: change the plan after the payment", 409),
 }
 
 
@@ -100,8 +105,47 @@ def account_subscription_return():
     if ext and ext != sub["external_id"]:
         abort(404)
     sub = subscriptions.reconcile_one(sub["id"])
-    notice = {"active": "ok", "activating": "pending", "pending": "pending"}.get(sub["status"])
+    notice = {"active": "ok", "activating": "pending", "pending": "pending", "switching": "pending",
+              "scheduled": "scheduled"}.get(sub["status"])
     return redirect("/account" + (f"?sub={notice}" if notice else ""))
+
+
+@bp.route("/api/subscription/change", methods=["POST"])
+def api_subscription_change():
+    """Passaggio fra 5 e 10 GB o ripresa dopo una disdetta: nuovo abbonamento
+    da approvare presso il fornitore (body come `checkout`)."""
+    acct, err = _account()
+    if err:
+        return err
+    if not subscriptions.enabled():
+        return _err(*_CHECKOUT_ERRORS["disabled"])
+    allowed, retry = _cfg["ip_rl_check"]("sub_checkout", _cfg["client_ip"](), 10, 30)
+    if not allowed:
+        return _err("rate_limited", "Too many requests", 429, retry_after=retry)
+    data = request.get_json(silent=True) or {}
+    base = (_cfg["base_url"]() or "").rstrip("/")
+    status, url = subscriptions.change_plan(
+        acct, str(data.get("plan") or ""),
+        accepted_terms=data.get("accept_terms") is True,
+        waived_withdrawal=data.get("waive_withdrawal") is True,
+        return_url=f"{base}/account/subscription/return",
+        cancel_url=f"{base}/account?sub=cancelled")
+    if status != "ok":
+        return _err(*_CHECKOUT_ERRORS[status])
+    return jsonify({"approve_url": url})
+
+
+@bp.route("/api/subscription/change_cancel", methods=["POST"])
+def api_subscription_change_cancel():
+    acct, err = _account()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    if data.get("confirm") is not True:
+        return _err("confirm_required", "Confirmation required", 400)
+    if not subscriptions.cancel_change(acct["id"]):
+        return _err("no_change", "No plan change in progress", 404)
+    return jsonify({"ok": True})
 
 
 @bp.route("/api/subscription/cancel", methods=["POST"])

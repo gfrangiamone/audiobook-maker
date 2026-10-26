@@ -128,3 +128,67 @@ def test_admin_alert_escapes_details(monkeypatch):
     email_service.admin_notify_subscription("refund_failed", {"payment": "<b>x</b>", "amount": 5.0})
     to, subject, body = sent[0]
     assert to == "admin@x.it" and "rimborso" in subject and "<b>x</b>" not in body
+
+
+# ------------------------------------------------------------------ fase 2b: schede e cambi
+
+def _prev(mode, kind):
+    return {"kind": kind, "mode": mode, "charge_today_eur": 10.0 if mode == "prepaid" else 0.0,
+            "period_from": 1_800_000_000, "period_to": 1_802_678_400 if mode == "prepaid" else None}
+
+
+def _status2(sub, changes, change=None, enabled=True):
+    st = _status(sub, enabled)
+    for p in st["plans"]:
+        p["change"] = changes.get(p["plan"])
+    if change:
+        st["change"] = change
+    return st
+
+
+_ACTIVE5 = {"plan": "sub_5", "status": "active", "period_end": 1_800_000_000, "renews": True,
+            "ends_at": None, "voucher": None}
+
+
+def test_cards_show_switch_on_the_other_plan():
+    t = _t()
+    html = account_page._subscription_block(
+        t, _status2(_ACTIVE5, {"sub_10": _prev("prepaid", "upgrade")}),
+        tolerance_days=15, free_quota_bytes=512 * accounts.MIB, free_active=True)
+    assert html.count(account_page._e(t["sub_current_badge"])) == 1           # solo sul 5 GB
+    assert 'data-subchange="sub_10"' in html and 'id="subChgDlg_sub_10"' in html
+    assert 'id="subCancel"' in html and "data-subplan" not in html
+    assert "10 €" in html and "2027-01-15" in html and "2027-02-15" in html  # addebito e periodo
+    box = re.findall(r"<button[^>]*data-subchgo[^>]*>", html)
+    assert box and all("disabled" in b for b in box)
+
+
+def test_cards_after_cancel_offer_reactivate_same_and_other_plan():
+    t = _t()
+    gone = dict(_ACTIVE5, status="cancelled", ends_at=1_800_000_000, renews=False)
+    html = account_page._subscription_block(
+        t, _status2(gone, {"sub_5": _prev("scheduled", "resume"), "sub_10": _prev("prepaid", "resume")}))
+    assert 'data-subchange="sub_5"' in html and 'data-subchange="sub_10"' in html
+    assert account_page._e(t["sub_resume_btn"]) in html
+    assert account_page._e(t["sub_resume_other_btn"]) in html
+    assert 'id="subCancel"' not in html
+
+
+def test_cards_with_pending_change_hide_reactivate_and_show_cancel_change():
+    t = _t()
+    gone = dict(_ACTIVE5, status="cancelled", ends_at=1_800_000_000, renews=False)
+    change = {"kind": "resume", "plan": "sub_5", "status": "scheduled", "start_at": 1_800_000_000,
+              "approved": True}
+    html = account_page._subscription_block(t, _status2(gone, {}, change))
+    assert "data-subchange" not in html and 'id="subChangeCancel"' in html
+    paying = dict(change, kind="upgrade", plan="sub_10", status="switching")
+    html = account_page._subscription_block(t, _status2(_ACTIVE5, {}, paying))
+    assert 'data-subpoll="change"' in html
+
+
+def test_downgrade_dialog_says_no_charge_today():
+    t = _t()
+    ten = dict(_ACTIVE5, plan="sub_10")
+    html = account_page._subscription_block(
+        t, _status2(ten, {"sub_5": _prev("scheduled", "downgrade")}), tolerance_days=15)
+    assert account_page._e(t["sub_change_down_p"].split(".")[0]) in html and "15" in html
