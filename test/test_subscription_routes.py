@@ -36,7 +36,7 @@ def web(tmp_path, monkeypatch):
     fake.parse_webhook = billing_paypal.parse_webhook
     monkeypatch.setitem(subscriptions.PROVIDERS, "paypal", fake)
     mails = []
-    for kind in ("active", "cancelled"):
+    for kind in ("active", "cancelled", "voucher", "reminder"):
         monkeypatch.setattr(email_service, f"send_subscription_{kind}",
                             lambda email, lang, _k=kind, **kw: mails.append((_k, email)), raising=False)
     monkeypatch.setattr(email_service, "admin_notify_subscription", lambda kind, details: None,

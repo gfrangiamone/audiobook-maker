@@ -357,7 +357,7 @@ def _day(ts):
 
 
 def _mail(kind, sub, *, voucher_until=None, renews_at=None, ends_at=None):
-    """Email all'utente (`kind`: active | cancelled), best-effort."""
+    """Email all'utente (`kind`: active | voucher | cancelled), best-effort."""
     email, lang = _account_email(sub["account_id"])
     if not email:
         return
@@ -367,6 +367,10 @@ def _mail(kind, sub, *, voucher_until=None, renews_at=None, ends_at=None):
             email_service.send_subscription_active(
                 email, lang, space=space, voucher=accounts.format_eur(voucher_eur(sub["plan"])),
                 voucher_until=_day(voucher_until), renews_at=_day(renews_at))
+        elif kind == "voucher":
+            email_service.send_subscription_voucher(
+                email, lang, space=space, voucher=accounts.format_eur(voucher_eur(sub["plan"])),
+                voucher_until=_day(voucher_until))
         else:
             email_service.send_subscription_cancelled(
                 email, lang, space=space, ends_at=_day(ends_at),
@@ -738,15 +742,16 @@ def record_payment(sub_id, pay, now=None):
     if abs(float(pay.amount_eur) - price_eur(sub["plan"])) > 0.01 or (pay.currency or "EUR") != "EUR":
         _alert("amount_mismatch", subscription=sub_id, payment=pay.payment_id,
                amount=pay.amount_eur, currency=pay.currency, expected=price_eur(sub["plan"]))
-    if first and sub["change_kind"]:
-        _log(f"SUB_CHANGE:{sub['change_kind']}:{sub['plan']}", sub_id)
-    elif first:
-        v = payment.voucher_info(code) if code else None
+    v = payment.voucher_info(code) if code else None
+    if first and not sub["change_kind"]:
         _mail("active", sub, voucher_until=int(v["expires_at"]) if v else None,
               renews_at=sub["period_end"])
         _log(f"SUB_ACTIVE:{sub['plan']}", sub_id)
     else:
-        _log(f"SUB_RENEWED:{sub['plan']}", sub_id)
+        if v:                           # buono di un rinnovo o del primo periodo dopo un cambio
+            _mail("voucher", sub, voucher_until=int(v["expires_at"]))
+        _log(f"SUB_CHANGE:{sub['change_kind']}:{sub['plan']}" if first
+             else f"SUB_RENEWED:{sub['plan']}", sub_id)
     return "issued"
 
 
@@ -1000,6 +1005,35 @@ def poke(account, now=None):
     return reconcile_one(sub["id"], now)
 
 
+REMINDERS_PER_SWEEP = 20
+
+
+def _send_reminders(now):
+    """Promemoria dei buoni in scadenza entro `ABM_SUB_VOUCHER_REMIND_DAYS`, al
+    piu' una volta al giorno e REMINDERS_PER_SWEEP per giro; uno per buono
+    (`reminded_at`, annotato anche se l'invio fallisce: niente raffiche)."""
+    if now - _sweep_state.get("reminded_at", 0) < _DAY:
+        return 0
+    _sweep_state["reminded_at"] = now
+    days = env_int("ABM_SUB_VOUCHER_REMIND_DAYS", 5, floor=0)
+    if not days:
+        return 0
+    sent = 0
+    for code, v in payment.subscription_vouchers_to_remind(days * _DAY, now)[:REMINDERS_PER_SWEEP]:
+        payment.mark_voucher_reminded(code, now)
+        email, lang = _account_email(v["account_id"])
+        if not email:
+            continue
+        try:
+            email_service.send_subscription_reminder(
+                email, lang, remaining=accounts.format_eur(payment._voucher_remaining(v)),
+                voucher_until=_day(v["expires_at"]))
+            sent += 1
+        except Exception as e:  # noqa: BLE001 - email best-effort
+            print(f"[subscriptions] promemoria {payment.mask_code(code)}: {e}", flush=True)
+    return sent
+
+
 def _note_failure(sub, now, err):
     with db.tx() as c:
         cur = _get(c, sub["id"])
@@ -1040,11 +1074,15 @@ def sweep(now=None, force=False):
             _note_failure(sub, t, e)
     for row in missing:
         try:
-            if _issue_voucher(row, row["payment_id"]):
+            code = _issue_voucher(row, row["payment_id"])
+            if code:
                 out["vouchers"] += 1
+                v = payment.voucher_info(code)
+                _mail("voucher", row, voucher_until=int(v["expires_at"]) if v else None)
         except Exception as e:  # noqa: BLE001
             out["errors"] += 1
             print(f"[subscriptions] voucher {row['payment_id']}: {type(e).__name__}: {e}", flush=True)
+    out["reminded"] = _send_reminders(t)
     if any(out.values()):
         print(f"[subscriptions] sweep: {out}", flush=True)
     return out

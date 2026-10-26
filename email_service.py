@@ -1014,6 +1014,21 @@ def send_subscription_active(email, lang, *, space, voucher, voucher_until, rene
                       renews_at=renews_at, manage_url=f"{BASE_URL}/account")
 
 
+def send_subscription_voucher(email, lang, *, space, voucher, voucher_until):
+    """Buono di un nuovo periodo pagato (rinnovi e passaggi di piano; il primo
+    sta nell'email di attivazione)."""
+    return _acct_send(email, lang, "subscription_voucher_subject", "subscription_voucher_body",
+                      space=space, voucher=voucher, voucher_until=voucher_until,
+                      manage_url=f"{BASE_URL}/account")
+
+
+def send_subscription_reminder(email, lang, *, remaining, voucher_until):
+    """Promemoria pochi giorni prima della scadenza del buono non speso."""
+    return _acct_send(email, lang, "subscription_reminder_subject", "subscription_reminder_body",
+                      remaining=remaining, voucher_until=voucher_until,
+                      manage_url=f"{BASE_URL}/")
+
+
 def send_subscription_cancelled(email, lang, *, space, ends_at, days):
     """Conferma della disdetta: attivo fino a `ends_at`, poi tolleranza di `days`
     giorni sull'eccedenza."""

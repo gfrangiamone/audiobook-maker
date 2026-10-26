@@ -519,6 +519,30 @@ def voucher_covers(v: dict, service) -> bool:
     return bool(service) and service in services
 
 
+def subscription_vouchers_to_remind(within_sec, now=None) -> list:
+    """Voucher di abbonamento da ricordare: non revocati, con saldo, in scadenza
+    entro `within_sec` e senza promemoria gia' mandato. Ritorna (codice, copia)."""
+    now = time.time() if now is None else now
+    with _vouchers_lock:
+        return [(code, dict(v)) for code, v in _vouchers.items()
+                if isinstance(v, dict) and v.get("kind") == "subscription" and v.get("account_id")
+                and not v.get("revoked") and not v.get("reminded_at")
+                and now < v.get("expires_at", 0) <= now + within_sec
+                and _voucher_remaining(v) >= 0.01]
+
+
+def mark_voucher_reminded(code, now=None) -> bool:
+    """Annota il promemoria di scadenza mandato (`reminded_at`). False se il
+    codice non esiste."""
+    with _vouchers_lock:
+        v = _vouchers.get(code)
+        if not v:
+            return False
+        v["reminded_at"] = time.time() if now is None else now
+        _save_vouchers()
+    return True
+
+
 def voucher_usable_by(v: dict, account_id) -> bool:
     """True se il voucher puo' essere speso dall'account `account_id` (None =
     utente anonimo). Un voucher con `account_id` (quelli degli abbonamenti) e'

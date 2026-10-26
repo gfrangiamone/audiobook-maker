@@ -99,6 +99,11 @@ def sub_env(tmp_path, monkeypatch):
     mails, alerts = [], []
     monkeypatch.setattr(email_service, "send_subscription_active",
                         lambda email, lang, **kw: mails.append(("active", email)), raising=False)
+    monkeypatch.setattr(email_service, "send_subscription_voucher",
+                        lambda email, lang, **kw: mails.append(("voucher", email)), raising=False)
+    monkeypatch.setattr(email_service, "send_subscription_reminder",
+                        lambda email, lang, **kw: mails.append(("reminder", email)), raising=False)
+    monkeypatch.setitem(subscriptions._sweep_state, "reminded_at", 0)
     monkeypatch.setattr(email_service, "send_subscription_cancelled",
                         lambda email, lang, **kw: mails.append(("cancelled", email)), raising=False)
     monkeypatch.setattr(email_service, "admin_notify_subscription",
@@ -259,7 +264,7 @@ def test_renewal_extends_and_issues_second_voucher(sub_env):
     sub = _sub_of(ext)
     assert sub["period_start"] == end1 + 120 and sub["period_end"] > end1 + 25 * DAY
     assert len(_vouchers_of(acct)) == 2
-    assert sub_env.mails == [("active", "w@x.it")]                          # una sola email di attivazione
+    assert sub_env.mails == [("active", "w@x.it"), ("voucher", "w@x.it")]  # attivazione, poi buono
 
 
 def test_amount_mismatch_alerts_but_issues(sub_env):
@@ -765,3 +770,45 @@ def test_resume_upgrade_prepaid(sub_env):
     new, row = _change(sub_env, acct, "sub_10", T0 + 2 * DAY)
     assert (row["status"], row["change_kind"]) == ("switching", "resume")
     assert sub_env.fake.created[new]["setup_fee_eur"] == 10.0
+
+
+# ------------------------------------------------------------------ fase 2b: email del buono
+
+def test_deferred_voucher_sends_one_voucher_email(sub_env):
+    acct, old = _paid(sub_env, "mailv@x.it")
+    e1 = _sub_of(old)["period_end"]
+    new, _row = _change(sub_env, acct, "sub_10", T0 + 2 * DAY)
+    subscriptions.handle_event("paypal", sub_env.fake.pay(new, "FEE9", T0 + 2 * DAY + 9, amount=10.0,
+                                                          next_at=subscriptions._add_month(e1)),
+                               now=T0 + 2 * DAY + 10)
+    assert sub_env.mails == [("active", "mailv@x.it")]
+    subscriptions.sweep(now=e1 + 1, force=True)
+    subscriptions.sweep(now=e1 + 2, force=True)
+    assert sub_env.mails == [("active", "mailv@x.it"), ("voucher", "mailv@x.it")]
+
+
+def test_voucher_reminder_once(sub_env):
+    acct, _ext = _paid(sub_env, "remind@x.it")
+    code = _vouchers_of(acct)[0]["code"]
+    now = int(time.time())
+    payment._vouchers[code]["expires_at"] = now + 3 * DAY
+    assert subscriptions.sweep(now=now, force=True)["reminded"] == 1
+    assert sub_env.mails[-1] == ("reminder", "remind@x.it")
+    assert payment.voucher_info(code)["reminded_at"] == now
+    assert subscriptions.sweep(now=now + 2 * DAY, force=True)["reminded"] == 0      # gia' ricordato
+    # un buono speso o revocato non si ricorda
+    other = payment.issue_subscription_voucher(key="paypal:X2", account_id=acct["id"],
+                                               email="remind@x.it", amount_eur=5.0, days=30)
+    payment._vouchers[other]["expires_at"] = now + 5 * DAY
+    payment.revoke_voucher(other, "test")
+    assert subscriptions.sweep(now=now + 4 * DAY, force=True)["reminded"] == 0
+
+
+def test_reminder_runs_at_most_once_a_day(sub_env):
+    acct, _ext = _paid(sub_env, "daily@x.it")
+    now = int(time.time())
+    subscriptions.sweep(now=now, force=True)
+    code = _vouchers_of(acct)[0]["code"]
+    payment._vouchers[code]["expires_at"] = now + DAY
+    assert subscriptions.sweep(now=now + 3600, force=True)["reminded"] == 0           # stesso giorno
+    assert subscriptions.sweep(now=now + DAY + 1, force=True)["reminded"] == 0        # scaduto nel frattempo

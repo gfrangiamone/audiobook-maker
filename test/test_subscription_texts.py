@@ -192,3 +192,15 @@ def test_downgrade_dialog_says_no_charge_today():
     html = account_page._subscription_block(
         t, _status2(ten, {"sub_5": _prev("scheduled", "downgrade")}), tolerance_days=15)
     assert account_page._e(t["sub_change_down_p"].split(".")[0]) in html and "15" in html
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_voucher_and_reminder_emails_compose(lang, monkeypatch):
+    sent = []
+    monkeypatch.setattr(email_service, "_send_email",
+                        lambda to, subject, body, **k: sent.append((subject, body)) or True)
+    assert email_service.send_subscription_voucher("a@x.it", lang, space="10 GB", voucher="10",
+                                                   voucher_until="2027-01-15")
+    assert email_service.send_subscription_reminder("a@x.it", lang, remaining="3.50",
+                                                    voucher_until="2027-01-15")
+    assert len(sent) == 2 and all(s and "{" not in b and "2027-01-15" in b for s, b in sent)
