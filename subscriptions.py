@@ -755,8 +755,9 @@ def record_payment(sub_id, pay, now=None):
     return "issued"
 
 
-def reverse_payment(provider, pay, now=None):
-    """Rimborso o storno di un pagamento: revoca il voucher che aveva generato."""
+def reverse_payment(provider, pay, now=None, alert=True):
+    """Rimborso o storno di un pagamento: revoca il voucher che aveva generato.
+    `alert=False` quando il rimborso lo fa l'admin dalla console."""
     now = _now(now)
     if pay is None or not pay.payment_id:
         return "ignored"
@@ -773,8 +774,9 @@ def reverse_payment(provider, pay, now=None):
         payment.revoke_voucher(row["voucher_code"], f"subscription payment {pay.state}")
     if row["state"] == "rejected":          # il rimborso l'abbiamo fatto noi
         return "refund_confirmed"
-    _alert("reversal", subscription=row["subscription_id"], payment=pay.payment_id,
-           state=pay.state, voucher=payment.mask_code(row["voucher_code"]))
+    if alert:
+        _alert("reversal", subscription=row["subscription_id"], payment=pay.payment_id,
+               state=pay.state, voucher=payment.mask_code(row["voucher_code"]))
     return "reversed"
 
 
@@ -1145,3 +1147,136 @@ def _change_preview(old, plan, now):
                 "period_to": start_at}
     return {"kind": kind, "mode": "scheduled", "charge_today_eur": 0.0, "period_from": start_at,
             "period_to": None}
+
+
+# ---------------------------------------------------------------- console admin
+
+_ADMIN_SUB_COLS = ("id", "plan", "status", "external_id", "created_at", "approved_at", "activated_at",
+                   "period_start", "period_end", "cancel_requested_at", "cancel_reason",
+                   "cancel_confirmed_at", "ended_at", "replaces", "replaced_by", "start_at",
+                   "change_kind")
+_ADMIN_PAY_COLS = ("payment_id", "subscription_id", "amount_eur", "paid_at", "period_start",
+                   "period_end", "state", "kind", "voucher_due_at")
+
+
+def admin_view(account_id, now=None):
+    """Tutto quello che l'admin vede di un account (spec §8): righe di
+    abbonamento con sostituzioni, pagamenti, voucher di abbonamento con saldo,
+    archivio. Codici voucher mascherati. None se l'account non esiste."""
+    now = _now(now)
+    acct = accounts.get(account_id)
+    if not acct or not _ready():
+        return None
+    with db.tx() as c:
+        subs = [dict(r) for r in c.execute(
+            "SELECT * FROM subscriptions WHERE account_id=? ORDER BY created_at DESC", (account_id,))]
+        ids = [s["id"] for s in subs]
+        pays = [dict(r) for r in c.execute(
+            f"SELECT * FROM subscription_payments WHERE subscription_id IN "
+            f"({','.join('?' * len(ids)) or 'NULL'}) ORDER BY paid_at DESC", ids)] if ids else []
+    vouchers = [{"code": payment.mask_code(code), "amount_eur": v.get("amount_eur"),
+                 "remaining_eur": payment._voucher_remaining(v), "expires_at": v.get("expires_at"),
+                 "revoked": bool(v.get("revoked")), "expired": v.get("expires_at", 0) <= now}
+                for code, v in payment.iter_vouchers()
+                if v.get("kind") == "subscription" and v.get("account_id") == account_id]
+    vouchers.sort(key=lambda v: v["expires_at"] or 0, reverse=True)
+    return {"account": {"id": acct["id"], "email": acct["email"] if not acct["deleted_at"] else "",
+                        "plan": acct["plan"], "plan_source": acct["plan_source"],
+                        "plan_until": acct["plan_until"], "deleted_at": acct["deleted_at"]},
+            "subscriptions": [{k: s[k] for k in _ADMIN_SUB_COLS} for s in subs],
+            "payments": [{**{k: p[k] for k in _ADMIN_PAY_COLS},
+                          "voucher_code": payment.mask_code(p["voucher_code"])} for p in pays],
+            "vouchers": vouchers,
+            "archive": accounts.archive_status(acct, now)}
+
+
+def _end_now(sub, reason, now):
+    """Chiude subito un abbonamento (azione admin): disdetta presso il fornitore
+    e fine dei benefici, piano dell'account dal regalo/gratuito in poi."""
+    with db.tx() as c:
+        nxt = _end_next(c, sub["account_id"], reason, now)     # anche un passaggio in corso
+        _update(c, sub["id"], now, status="ended", ended_at=now,
+                cancel_requested_at=sub["cancel_requested_at"] or now,
+                cancel_reason=sub["cancel_reason"] or reason,
+                next_check_at=0 if sub["cancel_confirmed_at"] else now + 600)
+        cur = _get(c, sub["id"])
+    for row in (nxt, cur):
+        if row is not None and not row["cancel_confirmed_at"] and row["external_id"]:
+            _try_cancel(row, reason, now)
+    _project(get(sub["id"]))
+
+
+def admin_refund(sub_id, payment_id, *, end_now, now=None):
+    """Rimborso di un pagamento dalla console (casi eccezionali, spec §3):
+    rimborso presso il fornitore, voucher del pagamento revocato e, con
+    `end_now`, abbonamento chiuso subito (lo spazio torna al gratuito con la
+    tolleranza della fase 1). Ritorna (esito, dettaglio): ok | not_found |
+    not_refundable | refund_failed."""
+    now = _now(now)
+    with db.tx() as c:
+        sub = _get(c, sub_id)
+        row = _one(c, "SELECT * FROM subscription_payments WHERE payment_id=? AND subscription_id=?",
+                   (payment_id, sub_id)) if sub else None
+    if sub is None or row is None:
+        return "not_found", None
+    if row["state"] != "completed":
+        return "not_refundable", row["state"]
+    try:
+        _provider(sub["provider"]).refund_payment(payment_id, row["amount_eur"])
+    except Exception as e:  # noqa: BLE001
+        return "refund_failed", f"{type(e).__name__}: {e}"[:200]
+    reverse_payment(sub["provider"], billing_paypal.Payment(
+        payment_id=payment_id, amount_eur=row["amount_eur"], paid_at=row["paid_at"],
+        state="refunded", currency="EUR"), now, alert=False)
+    if end_now and sub["status"] not in CLOSED:
+        _end_now(sub, "admin_refund", now)
+    _log("SUB_ADMIN_REFUND", f"{sub_id} {payment_id} end_now={bool(end_now)}")
+    return "ok", None
+
+
+def admin_cancel_now(sub_id, now=None):
+    """Disdetta immediata dalla console, senza rimborso: "ok" | "not_found" | "closed"."""
+    now = _now(now)
+    sub = get(sub_id)
+    if sub is None:
+        return "not_found"
+    if sub["status"] in CLOSED:
+        return "closed"
+    _end_now(sub, "admin", now)
+    _log("SUB_ADMIN_CANCEL", sub_id)
+    return "ok"
+
+
+def admin_stats(now=None):
+    """Aggregati della console: abbonamenti vivi per piano e checkout degli
+    ultimi 30 giorni avviati e abbandonati (misura dell'attrito, spec §6.2)."""
+    now = _now(now)
+    if not _ready():
+        return {}
+    since = now - 30 * _DAY
+    marks = ",".join("?" * len(LIVE))
+    with db.tx() as c:
+        live = {r[0]: r[1] for r in c.execute(
+            f"SELECT plan, COUNT(*) FROM subscriptions WHERE status IN ({marks}) GROUP BY plan", LIVE)}
+        started = c.execute("SELECT COUNT(*) FROM subscriptions WHERE external_id IS NOT NULL "
+                            "AND created_at>=?", (since,)).fetchone()[0]
+        abandoned = c.execute("SELECT COUNT(*) FROM subscriptions WHERE external_id IS NOT NULL "
+                              "AND status='abandoned' AND created_at>=?", (since,)).fetchone()[0]
+    return {"live": sum(live.values()), "live_sub_5": live.get("sub_5", 0),
+            "live_sub_10": live.get("sub_10", 0), "checkouts_30d": started,
+            "abandoned_30d": abandoned}
+
+
+def admin_status_map(account_ids):
+    """{account_id: stato dell'abbonamento piu' recente} per la tabella Utenti."""
+    ids = [a for a in account_ids if a]
+    if not ids or not _ready():
+        return {}
+    out = {}
+    with db.tx() as c:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for r in c.execute(f"SELECT account_id, status FROM subscriptions WHERE account_id IN "
+                               f"({','.join('?' * len(chunk))}) ORDER BY created_at", chunk):
+                out[r[0]] = r[1]
+    return out

@@ -488,6 +488,8 @@
       <div class="agg-box" data-acc-agg="gift" role="button" tabindex="0"><div class="agg-label" title="Account vivi con un piano regalato dall'admin e ancora attivo.">Regalati</div><div class="agg-value">-</div></div>
       <div class="agg-box" data-acc-agg="free_active" role="button" tabindex="0"><div class="agg-label" title="Account vivi senza piano pagato o regalato attivo, con il consenso al piano gratuito.">Gratuito attivo</div><div class="agg-value">-</div></div>
       <div class="agg-box" data-acc-agg="in_tolerance" role="button" tabindex="0"><div class="agg-label" title="Account vivi con l'archivio oltre la quota: il periodo di tolleranza e' aperto.">In tolleranza</div><div class="agg-value">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Abbonamenti PayPal vivi (attivi, in rinnovo, disdetti fino a fine periodo, in attivazione): 5 GB / 10 GB.">Abbonamenti vivi</div><div class="agg-value" id="accSubLive">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Checkout di abbonamento avviati negli ultimi 30 giorni e mai approvati (misura dell'attrito: chi non ha un conto PayPal deve aprirlo).">Checkout abbandonati 30 gg</div><div class="agg-value" id="accSubAbandoned">-</div></div>
     </div>
   </div>
   <div class="panel">
@@ -509,6 +511,15 @@
         <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare gli utenti.</td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<div class="acc-modal-overlay" id="accSubModal" hidden>
+  <div class="acc-modal" role="dialog" aria-modal="true" aria-labelledby="accSubTitle" style="max-width:760px">
+    <button type="button" class="acc-modal-x" data-acc-sub-act="close" aria-label="Chiudi" title="Chiudi">&times;</button>
+    <h3 id="accSubTitle">Abbonamento</h3>
+    <div id="accSubBody"></div>
+    <div class="err" id="accSubErr" role="alert" hidden></div>
   </div>
 </div>
 
@@ -1418,9 +1429,82 @@
       const off = origin === "paid"
         ? ' disabled title="Piano pagato attivo: il regalo non si sovrappone a un abbonamento pagato."' : "";
       h += `<div style="margin-top:4px"><button type="button" class="${cls}"${off}`
-        + ` data-acc-gift-open="${escAttr(r.id)}">Regalo</button></div>`;
+        + ` data-acc-gift-open="${escAttr(r.id)}">Regalo</button>`
+        + (r.sub_status ? ` <button type="button" class="btn-sm secondary" data-acc-sub-open="${escAttr(r.id)}"`
+           + ` title="Ultimo abbonamento: ${escAttr(ACC_SUB_STATUS[r.sub_status]||r.sub_status)}">Abbonamento</button>` : "")
+        + `</div>`;
     }
     return h;
+  }
+  // ===================== Abbonamenti di un account =====================
+  const ACC_SUB_STATUS = {
+    "pending": "checkout aperto", "activating": "in attivazione", "active": "attivo",
+    "past_due": "rinnovo non riuscito", "cancelled": "disdetto (fino a fine periodo)",
+    "ended": "chiuso", "abandoned": "checkout abbandonato", "switching": "passaggio a 10 GB in corso",
+    "scheduled": "passaggio programmato", "replaced": "sostituito da un cambio di piano",
+  };
+  const ACC_SUB_LIVE = ["activating", "active", "past_due", "cancelled", "switching", "scheduled"];
+  let accSubAccount = "";
+  function accDay(ts){ return ts ? new Date(Number(ts)*1000).toISOString().slice(0, 10) : "-"; }
+  function accSubRender(v){
+    const a = v.account||{};
+    let h = `<p style="margin:0 0 6px">${a.email ? esc(a.email) : "(email rimossa)"}<br><code>${esc(a.id||"")}</code>`
+      + ` &middot; piano ${esc(ACC_PLAN_LABEL[a.plan]||a.plan||"-")} ${esc(a.plan_source||"")}`
+      + (a.plan_until ? ` fino al ${accDay(a.plan_until)}` : "") + `</p>`;
+    h += `<h4 style="margin:8px 0 4px">Righe</h4><table><thead><tr><th>Stato</th><th>Piano</th><th>Periodo</th>`
+      + `<th>Disdetta</th><th>PayPal</th><th></th></tr></thead><tbody>`
+      + (v.subscriptions||[]).map(s => `<tr><td>${esc(ACC_SUB_STATUS[s.status]||s.status)}`
+          + (s.change_kind ? `<br><small>${esc(s.change_kind)}${s.start_at ? " dal "+accDay(s.start_at) : ""}</small>` : "")
+          + `</td><td>${esc(ACC_PLAN_LABEL[s.plan]||s.plan)}</td>`
+          + `<td>${accDay(s.period_start)} &rarr; ${accDay(s.period_end)}</td>`
+          + `<td>${s.cancel_requested_at ? accDay(s.cancel_requested_at)+" "+esc(s.cancel_reason||"")+(s.cancel_confirmed_at?" &#10003;":" (da confermare)") : "-"}</td>`
+          + `<td><code>${esc(s.external_id||"-")}</code></td>`
+          + `<td>${ACC_SUB_LIVE.includes(s.status) ? `<button type="button" class="btn-sm" data-acc-sub-act="cancel" data-sub="${escAttr(s.id)}">Disdici subito</button>` : ""}</td></tr>`).join("")
+      + `</tbody></table>`;
+    h += `<h4 style="margin:8px 0 4px">Pagamenti</h4><table><thead><tr><th>Data</th><th>Importo</th><th>Stato</th>`
+      + `<th>Periodo</th><th>Voucher</th><th></th></tr></thead><tbody>`
+      + ((v.payments||[]).map(p => `<tr><td>${accDay(p.paid_at)}</td><td>${fmtEur(p.amount_eur)}</td>`
+          + `<td>${esc(p.state)}${p.kind === "prepaid" ? " (prepagato)" : ""}</td>`
+          + `<td>${accDay(p.period_start)} &rarr; ${accDay(p.period_end)}</td>`
+          + `<td>${p.voucher_due_at && !p.voucher_code ? "dal "+accDay(p.voucher_due_at) : ""}</td>`
+          + `<td>${p.state === "completed" ? `<button type="button" class="btn-sm" data-acc-sub-act="refund" data-sub="${escAttr(p.subscription_id)}" data-pay="${escAttr(p.payment_id)}">Rimborsa</button>` : ""}</td></tr>`).join("")
+        || `<tr><td colspan="6" class="empty-msg">Nessun pagamento.</td></tr>`)
+      + `</tbody></table>`;
+    h += `<p style="margin:8px 0 4px"><label><input type="checkbox" id="accSubEndNow" checked> `
+      + `con il rimborso chiudi subito l'abbonamento (lo spazio torna al gratuito con la tolleranza)</label></p>`;
+    h += `<h4 style="margin:8px 0 4px">Voucher</h4>`
+      + ((v.vouchers||[]).map(x => `<div><code>${esc(x.code)}</code> ${fmtEur(x.remaining_eur)} / ${fmtEur(x.amount_eur)}`
+          + ` &middot; scade ${accDay(x.expires_at)}${x.revoked ? " &middot; revocato" : ""}${x.expired ? " &middot; scaduto" : ""}</div>`).join("")
+        || `<div class="empty-msg">Nessun voucher di abbonamento.</div>`);
+    const ar = v.archive;
+    if (ar) h += `<p style="margin:8px 0 0">Archivio ${accGb(ar.used_bytes)} / ${accGb(ar.quota_bytes)}`
+      + (ar.state === "grace" ? ` &middot; <span class="delta-negative">in tolleranza fino al ${accDay(ar.grace_until)}</span>` : "") + `</p>`;
+    return h;
+  }
+  function accSubError(msg){ const e = $("accSubErr"); e.textContent = msg; e.hidden = !msg; }
+  async function accSubOpen(id){
+    accSubAccount = id;
+    accSubError("");
+    $("accSubBody").innerHTML = '<p class="empty-msg">Caricamento...</p>';
+    $("accSubModal").hidden = false;
+    const r = await fetch("/admin/api/accounts/subscription?account_id="+encodeURIComponent(id),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (accSubAccount !== id) return;
+    if (!r.ok) { $("accSubBody").innerHTML = ""; accSubError("Errore "+r.status+": "+await accErrText(r)); return; }
+    $("accSubBody").innerHTML = accSubRender(await r.json());
+  }
+  async function accSubPost(btn, url, body, question){
+    if (!confirm(question)) return;
+    const id = accSubAccount;
+    btn.disabled = true;
+    accSubError("");
+    try {
+      const r = await fetch(url, {method:"POST",
+        headers:{"X-Admin-Token":ADMIN_TOKEN, "Content-Type":"application/json"}, body: JSON.stringify(body)});
+      if (!r.ok) { accSubError("Errore "+r.status+": "+await accErrText(r)); btn.disabled = false; return; }
+      if (accSubAccount === id) await accSubOpen(id);
+      accFetch();
+    } catch (e) { accSubError("Errore di rete: "+e.message); btn.disabled = false; }
   }
   // Popup del regalo: un solo modale, riempito all'apertura con la riga della tabella.
   // Con un regalo attivo taglio e data restano in sola lettura: si puo' solo revocare.
@@ -1577,6 +1661,9 @@
     const a = d.aggregates||{};
     accLast30Since = d.last30_since||"";
     accAggBoxes().forEach(b => { b.querySelector(".agg-value").textContent = a[b.dataset.accAgg] ?? 0; });
+    const ss = d.subscriptions||{};
+    $("accSubLive").textContent = `${ss.live ?? 0} (${ss.live_sub_5 ?? 0} / ${ss.live_sub_10 ?? 0})`;
+    $("accSubAbandoned").textContent = `${ss.abandoned_30d ?? 0} su ${ss.checkouts_30d ?? 0}`;
     accRender(d.records||[], d.count||0);
   }
   function accRender(recs, total){
@@ -1611,6 +1698,23 @@
   $("accRecordsBody").addEventListener("click", (e)=>{
     const btn = e.target.closest("button[data-acc-gift-open]");
     if (btn) accGiftOpen(btn.dataset.accGiftOpen);
+    const sb = e.target.closest("button[data-acc-sub-open]");
+    if (sb) accSubOpen(sb.dataset.accSubOpen);
+  });
+  $("accSubModal").addEventListener("click", (e)=>{
+    if (e.target === e.currentTarget) { $("accSubModal").hidden = true; accSubAccount = ""; return; }
+    const btn = e.target.closest("button[data-acc-sub-act]");
+    if (!btn) return;
+    const act = btn.dataset.accSubAct;
+    if (act === "close") { $("accSubModal").hidden = true; accSubAccount = ""; }
+    else if (act === "cancel") accSubPost(btn, "/admin/api/subscriptions/cancel_now", {sub_id: btn.dataset.sub},
+      "Disdire subito l'abbonamento? Nessun rimborso, lo spazio torna al gratuito con la tolleranza.");
+    else if (act === "refund") {
+      const endNow = $("accSubEndNow").checked;
+      accSubPost(btn, "/admin/api/subscriptions/refund",
+        {sub_id: btn.dataset.sub, payment_id: btn.dataset.pay, end_now: endNow},
+        "Rimborsare questo pagamento" + (endNow ? " e chiudere subito l'abbonamento?" : " lasciando l'abbonamento attivo?"));
+    }
   });
   $("accGiftModal").addEventListener("click", (e)=>{
     if (e.target === e.currentTarget) { accGiftClose(); return; }   // clic sull'overlay
@@ -1623,6 +1727,7 @@
   });
   document.addEventListener("keydown", (e)=>{
     if (e.key === "Escape" && !$("accGiftModal").hidden) accGiftClose();
+    if (e.key === "Escape" && !$("accSubModal").hidden) { $("accSubModal").hidden = true; accSubAccount = ""; }
   });
   accAggBoxes().forEach(b => {
     b.addEventListener("click", () => accAggApply(b.dataset.accAgg));

@@ -7,7 +7,8 @@ Blueprint `admin_audit`: `/admin/audit-premium` (+ i due redirect storici),
 `/admin/api/gemini_model_availability`, `/admin/api/translation_cost_audit
 [/languages]`, `/admin/api/optimization_cost_audit[/languages]`,
 `/admin/api/voice_clone_audit`, `/admin/api/accounts_audit` (+ i piani regalati:
-`/admin/api/accounts/gift` e `/gift_revoke`), con i record
+`/admin/api/accounts/gift` e `/gift_revoke`; gli abbonamenti:
+`/admin/api/accounts/subscription`, `/admin/api/subscriptions/{refund,cancel_now}`), con i record
 sintetici dei job in corso, la trattenuta effettiva dei cancel, la sonda
 manuale del backend Cloudflare. Spostato pari pari da `audiobook_app`.
 
@@ -32,6 +33,7 @@ import gemini_tts
 import i18n as _i18n
 import payment
 import speechify_tts
+import subscriptions
 import tts_backend_state
 import voice_clone
 import voxcpm_tts
@@ -1399,7 +1401,46 @@ def admin_api_accounts_audit():
         )
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"accounts unavailable: {e}"}), 503
+    status = subscriptions.admin_status_map([r.get("id") for r in out.get("records") or []])
+    for r in out.get("records") or []:
+        r["sub_status"] = status.get(r.get("id"), "")
+    out["subscriptions"] = subscriptions.admin_stats()
     return jsonify(out)
+
+
+@bp.route("/admin/api/accounts/subscription", methods=["GET"])
+@admin_required
+def admin_api_account_subscription():
+    """Abbonamenti di un account: righe, pagamenti, voucher, archivio (spec §8)."""
+    view = subscriptions.admin_view((request.args.get("account_id") or "").strip())
+    if view is None:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(view)
+
+
+@bp.route("/admin/api/subscriptions/refund", methods=["POST"])
+@admin_required
+def admin_api_subscription_refund():
+    """Rimborsa un pagamento di abbonamento. Body: {"sub_id", "payment_id",
+    "end_now": bool}; con `end_now` l'abbonamento si chiude subito."""
+    body = json_body()
+    status, detail = subscriptions.admin_refund(str(body.get("sub_id") or ""),
+                                                str(body.get("payment_id") or ""),
+                                                end_now=body.get("end_now") is True)
+    codes = {"not_found": 404, "not_refundable": 409, "refund_failed": 502}
+    if status != "ok":
+        return jsonify({"error": status, "detail": detail}), codes[status]
+    return jsonify({"ok": True})
+
+
+@bp.route("/admin/api/subscriptions/cancel_now", methods=["POST"])
+@admin_required
+def admin_api_subscription_cancel_now():
+    """Disdetta immediata di un abbonamento, senza rimborso. Body: {"sub_id"}."""
+    status = subscriptions.admin_cancel_now(str(json_body().get("sub_id") or ""))
+    if status != "ok":
+        return jsonify({"error": status}), 404 if status == "not_found" else 409
+    return jsonify({"ok": True})
 
 
 @bp.route("/admin/api/accounts/gift", methods=["POST"])
