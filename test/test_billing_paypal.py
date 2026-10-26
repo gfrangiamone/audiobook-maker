@@ -237,3 +237,26 @@ def test_setup_plans_creates_missing_and_checks_existing(pp, monkeypatch):
     assert plan_body["billing_cycles"][0]["pricing_scheme"]["fixed_price"] == \
         {"value": "5.00", "currency_code": "EUR"}
     assert plan_body["payment_preferences"]["payment_failure_threshold"] == 1
+
+
+def test_create_checkout_with_start_and_setup_fee(pp):
+    calls, queue = pp
+    queue.append(_Resp(201, {"id": "I-SCHED1", "links": [{"rel": "approve", "href": "https://pp/a"}]}))
+    bp.create_checkout(sub_id="sub_s", plan="sub_10", email="", lang="it", return_url="r",
+                       cancel_url="c", start_at=1_800_000_000, setup_fee_eur=10)
+    body = calls[0]["json"]
+    assert body["start_time"] == "2027-01-15T08:00:00.000Z"
+    assert body["plan"] == {"payment_preferences": {
+        "setup_fee": {"value": "10.00", "currency_code": "EUR"}, "setup_fee_failure_action": "CANCEL"}}
+    queue.append(_Resp(201, {"id": "I-PLAIN1", "links": [{"rel": "approve", "href": "https://pp/a"}]}))
+    bp.create_checkout(sub_id="sub_p", plan="sub_5", email="", lang="it", return_url="r", cancel_url="c")
+    assert "start_time" not in calls[1]["json"] and "plan" not in calls[1]["json"]
+
+
+def test_fetch_reads_start_time(pp):
+    _calls, queue = pp
+    queue.append(_Resp(200, {"id": "I-0003", "status": "ACTIVE", "plan_id": "P-FIVE",
+                             "start_time": "2026-10-27T16:31:51Z",
+                             "billing_info": {"next_billing_time": "2026-10-27T10:00:00Z"}}))
+    r = bp.fetch("I-0003")
+    assert r.start_at == bp._epoch("2026-10-27T16:31:51Z") and r.last_payment_at is None

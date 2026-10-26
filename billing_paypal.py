@@ -62,6 +62,7 @@ class Remote:
     last_payment_at: int | None
     last_payment_eur: float | None
     failed_payments: int
+    start_at: int | None = None      # `start_time` dell'abbonamento (inizio programmato)
 
 
 @dataclass(frozen=True)
@@ -184,10 +185,14 @@ def available():
 
 # ------------------------------------------------------------------ interfaccia
 
-def create_checkout(*, sub_id, plan, email, lang, return_url, cancel_url):
+def create_checkout(*, sub_id, plan, email, lang, return_url, cancel_url, start_at=None,
+                    setup_fee_eur=None):
     """Crea l'abbonamento in attesa di approvazione; ritorna (id esterno, URL di
     approvazione). `sub_id` (id interno) e' anche `custom_id` e chiave di
-    idempotenza della richiesta."""
+    idempotenza della richiesta. `start_at` (epoch) programma il primo canone
+    (PayPal lo sposta alle 10:00 UTC di quel giorno); `setup_fee_eur` e' un
+    addebito unico all'approvazione, con l'abbonamento annullato se non passa
+    (verificato in sandbox il 2026-10-26: piano 2b, Task 1)."""
     pid = plan_id(plan)
     if not pid:
         raise ProviderError(f"no PayPal plan configured for {plan}")
@@ -207,6 +212,12 @@ def create_checkout(*, sub_id, plan, email, lang, return_url, cancel_url):
     }
     if email:
         body["subscriber"] = {"email_address": email}
+    if start_at:
+        body["start_time"] = _iso(start_at)
+    if setup_fee_eur:
+        body["plan"] = {"payment_preferences": {
+            "setup_fee": {"value": f"{float(setup_fee_eur):.2f}", "currency_code": "EUR"},
+            "setup_fee_failure_action": "CANCEL"}}
     data = _request("POST", "/v1/billing/subscriptions", body=body, request_id=sub_id,
                     timeout=20, ok=(200, 201))
     ext = str(data.get("id") or "")
@@ -234,7 +245,8 @@ def fetch(external_id):
                   next_billing_at=_epoch(info.get("next_billing_time")),
                   last_payment_at=_epoch(last.get("time")),
                   last_payment_eur=_money((last.get("amount") or {}).get("value")),
-                  failed_payments=failed)
+                  failed_payments=failed,
+                  start_at=_epoch(data.get("start_time")))
 
 
 _TX_STATES = {"COMPLETED": "completed", "REFUNDED": "refunded", "PARTIALLY_REFUNDED": "refunded"}

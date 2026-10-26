@@ -35,9 +35,19 @@ from env_utils import env_bool, env_float, env_int
 # - past_due: rinnovo non riuscito, il fornitore ritenta (benefici per la grazia);
 # - cancelled: disdetto, benefici fino alla fine del periodo pagato;
 # - ended: chiuso (scaduto, sospeso dal fornitore, disdetto e finito);
-# - abandoned: checkout mai approvato, o sostituito da un altro checkout.
-STATUSES = ("pending", "activating", "active", "past_due", "cancelled", "ended", "abandoned")
+# - abandoned: checkout mai approvato, o sostituito da un altro checkout;
+# - switching: passaggio a 10 GB con il periodo successivo pagato in anticipo,
+#   in attesa della conferma del pagamento (la riga vecchia resta viva);
+# - scheduled: abbonamento che parte alla fine del periodo in corso (passaggio a
+#   5 GB, ripresa dopo una disdetta): approvato, nessun addebito fino a `start_at`;
+# - replaced: abbonamento sostituito da un cambio di piano (riga `replaced_by`).
+# `switching` e `scheduled` stanno fuori dall'indice "un solo vivo": convivono con
+# la riga che sostituiranno, una per account.
+STATUSES = ("pending", "activating", "active", "past_due", "cancelled", "ended", "abandoned",
+            "switching", "scheduled", "replaced")
 LIVE = ("activating", "active", "past_due", "cancelled")
+NEXT = ("switching", "scheduled")
+CHANGE_KINDS = ("upgrade", "downgrade", "resume")
 SUB_TERMS_VERSION = "2026-10-23"
 
 # `subscription_events` rende idempotenti i webhook (id evento del fornitore);
@@ -99,9 +109,26 @@ SCHEMA_V1 = [
     "CREATE INDEX IF NOT EXISTS ix_subscription_payments_sub ON subscription_payments(subscription_id)",
 ]
 
+# Cambi di piano (fase 2b): la riga nuova punta a quella che sostituisce
+# (`replaces`, e la vecchia a lei con `replaced_by`); `start_at` e' l'inizio
+# programmato presso il fornitore; `change_kind` upgrade | downgrade | resume.
+# Un pagamento `prepaid` (la setup fee del passaggio a 10 GB) paga un periodo che
+# comincia piu' tardi: il suo voucher nasce a `voucher_due_at`, non al pagamento.
+SCHEMA_V2 = [
+    "ALTER TABLE subscriptions ADD COLUMN replaces TEXT",
+    "ALTER TABLE subscriptions ADD COLUMN replaced_by TEXT",
+    "ALTER TABLE subscriptions ADD COLUMN start_at INTEGER",
+    "ALTER TABLE subscriptions ADD COLUMN change_kind TEXT NOT NULL DEFAULT ''",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_subscriptions_one_next ON subscriptions(account_id) "
+    "WHERE status IN ('switching','scheduled')",
+    "ALTER TABLE subscription_payments ADD COLUMN voucher_due_at INTEGER",
+    "ALTER TABLE subscription_payments ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'",
+]
+
 
 def init_schema():
     db.migrate("subscriptions_v1", SCHEMA_V1)
+    db.migrate("subscriptions_v2", SCHEMA_V2)
 
 
 def _ready():

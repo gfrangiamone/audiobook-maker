@@ -555,3 +555,21 @@ def test_reconcile_detects_refund_without_webhook(sub_env):
 def test_reconcile_interval_default_is_one_minute(monkeypatch):
     monkeypatch.delenv("ABM_SUB_RECONCILE_SEC", raising=False)
     assert subscriptions._reconcile_sec() == 60
+
+
+# ------------------------------------------------------------------ fase 2b: schema
+
+def test_schema_v2_one_next_row_per_account_beside_the_live_one(sub_env):
+    acct = sub_env.login("next@x.it")
+    with db.tx() as c:
+        _insert(c, **_row(acct["id"], "s1", "I-1", "active"))
+        _insert(c, **_row(acct["id"], "s2", "I-2", "switching", plan="sub_10"))   # accanto al vivo
+        _insert(c, **_row(acct["id"], "s0", "I-0", "replaced"))
+    with pytest.raises(sqlite3.IntegrityError):
+        with db.tx() as c:
+            _insert(c, **_row(acct["id"], "s3", "I-3", "scheduled"))
+    with db.tx() as c:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(subscriptions)")}
+        pcols = {r[1] for r in c.execute("PRAGMA table_info(subscription_payments)")}
+    assert {"replaces", "replaced_by", "start_at", "change_kind"} <= cols
+    assert {"voucher_due_at", "kind"} <= pcols
