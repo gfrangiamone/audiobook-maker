@@ -7351,6 +7351,27 @@ def api_optimize():
                 "error_code": "invalid_payment",
             }), 402
 
+    def _combined_tts_estimate(engine, chs, *args, **kwargs):
+        # Stima TTS dei tre rami combinati qui sotto, in un punto solo (il ramo
+        # VoxCPM aveva perso `_pricing_chapters`). Su un job gia' terminale i
+        # testi sono spillati su disco e `ch.text` e' vuoto in RAM: senza
+        # rilettura la stima vale ~0 e la voce PREMIUM parte gratis. Se il
+        # testo manca comunque, errore invece di un prezzo finto.
+        chs = _pricing_chapters(job_id, job, chs)
+        est = tts_engines.estimate(engine, chs, *args, **kwargs)
+        if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
+            raise ValueError("price computed on empty text")
+        return est
+
+    def _combined_estimate_failed(engine, err):
+        # FAIL-CLOSED. Azzerare la stima mandava il listino sotto soglia -> la
+        # voce PREMIUM partiva GRATIS (stesso esito dell'incidente
+        # Q9lQN3RrapCvGLSonVnzmA). /api/generate rifiuta gia' in questo caso.
+        print(f"[{job_id}] combined-payment {engine} estimate failed: {err}", flush=True)
+        _release_opt_claim()
+        return jsonify({"error": "Cost estimate unavailable, please retry.",
+                        "error_code": "estimate_failed"}), 500
+
     # ----- Combined payment (LLM + Gemini in auto_generate flow) -----
     # Il flusso combinato usa UN unico token (PayPal order o voucher) che
     # copre entrambe le quote LLM + Gemini. Il branch standalone LLM sopra
@@ -7380,11 +7401,8 @@ def api_optimize():
             _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
         else:
             _chs_for_est = _all_chs
-        # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in
-        # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
-        _chs_for_est = _pricing_chapters(job_id, job, _chs_for_est)
         try:
-            _est_gemini = tts_engines.estimate("gemini", 
+            _est_gemini = _combined_tts_estimate("gemini",
                 _chs_for_est, _voice_for_est,
                 language=_lang_for_est, rate_pct=_rate_for_est,
                 **paren_strip_flags(data),
@@ -7392,14 +7410,7 @@ def api_optimize():
             _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
             _gemini_list_quota = round(_est_gemini.get("list_price_eur", 0.0), 2)
         except Exception as _e_est:
-            # FAIL-CLOSED. Azzerare la stima qui mandava il listino sotto
-            # soglia -> la voce PREMIUM partiva GRATIS (stesso esito
-            # dell'incidente Q9lQN3RrapCvGLSonVnzmA). /api/generate rifiuta
-            # gia' in questo caso: qui allineato.
-            print(f"[{job_id}] combined-payment estimate failed: {_e_est}", flush=True)
-            _release_opt_claim()
-            return jsonify({"error": "Cost estimate unavailable, please retry.",
-                            "error_code": "estimate_failed"}), 500
+            return _combined_estimate_failed("gemini", _e_est)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _quota_cid = _quota_client_id(job)
         _fq_key_gem = _free_quota_key(job_id, _voice_for_est, _chs_for_est, _all_chs)
@@ -7579,20 +7590,13 @@ def api_optimize():
             _chs_for_est_spx = [_by_idx_spx[i] for i in _sel_list_spx if i in _by_idx_spx]
         else:
             _chs_for_est_spx = _all_chs_spx
-        # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in
-        # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
-        _chs_for_est_spx = _pricing_chapters(job_id, job, _chs_for_est_spx)
         try:
-            _est_spx = tts_engines.estimate("speechify", _chs_for_est_spx, language="en",
-                                            **paren_strip_flags(data))
+            _est_spx = _combined_tts_estimate("speechify", _chs_for_est_spx, language="en",
+                                              **paren_strip_flags(data))
             _speechify_eur_quota = round(_est_spx.get("user_price_eur", 0.0), 2)
             _speechify_list_quota = round(_est_spx.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_spx:
-            # FAIL-CLOSED: vedi nota nel ramo Gemini.
-            print(f"[{job_id}] combined-payment speechify estimate failed: {_e_est_spx}", flush=True)
-            _release_opt_claim()
-            return jsonify({"error": "Cost estimate unavailable, please retry.",
-                            "error_code": "estimate_failed"}), 500
+            return _combined_estimate_failed("speechify", _e_est_spx)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_spx = data.get("voice", "")
         _quota_cid_spx = _quota_client_id(job)
@@ -7741,15 +7745,12 @@ def api_optimize():
         else:
             _chs_for_est_vox = _all_chs_vox
         try:
-            _est_vox = tts_engines.estimate("voxcpm", _chs_for_est_vox, language=_lang_for_vox,
-                                            **paren_strip_flags(data))
+            _est_vox = _combined_tts_estimate("voxcpm", _chs_for_est_vox, language=_lang_for_vox,
+                                              **paren_strip_flags(data))
             _voxcpm_eur_quota = round(_est_vox.get("user_price_eur", 0.0), 2)
             _voxcpm_list_quota = round(_est_vox.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_vox:
-            print(f"[{job_id}] combined-payment voxcpm estimate failed: {_e_est_vox}")
-            _est_vox = None
-            _voxcpm_eur_quota = 0.0
-            _voxcpm_list_quota = 0.0
+            return _combined_estimate_failed("voxcpm", _e_est_vox)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_vox = data.get("voice", "")
         _quota_cid_vox = _quota_client_id(job)

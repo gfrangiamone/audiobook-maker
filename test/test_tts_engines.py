@@ -82,7 +82,9 @@ def test_no_direct_estimate_dispatch_left_in_app_and_engine():
     for mod in (app, ge, recovery):
         src = inspect.getsource(mod)
         assert not re.search(r"\b(gemini_tts|_gemini_tts_mod|speechify_tts|voxcpm_tts)\.estimate_book_cost\(", src), mod.__name__
-    assert sum(inspect.getsource(m).count('tts_engines.estimate("') for m in (app, recovery)) >= 14
+    src = "".join(inspect.getsource(m) for m in (app, recovery))
+    # i rami combinati di /api/optimize passano dal dispatcher via _combined_tts_estimate
+    assert src.count('tts_engines.estimate("') + src.count('_combined_tts_estimate("') >= 14
     assert inspect.getsource(ge).count('_tts_engines.estimate("') == 3        # auto-gen: stima mancante
 
 
