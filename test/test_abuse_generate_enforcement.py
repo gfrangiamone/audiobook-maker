@@ -344,7 +344,7 @@ def test_abuse_cleanup_decision_hold_remove_pass(env):
     assert audiobook_app._abuse_cleanup_decision(expired_with_token, now, True) == "pass"
 
 
-def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path, monkeypatch):
+def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path, monkeypatch, sleeps):
     """Integrazione: il ramo 'analyzed' di _cleanup_loop passa davvero dalla
     decisione pura _abuse_cleanup_decision (issue #10) invece di duplicarne la
     logica inline. Tutto cio' che e' fuori dal ramo abuso e' no-op: il target
@@ -377,14 +377,7 @@ def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path,
     expired["abuse_kept_until"] = now - 10
     expired["_tag"] = "expired"
 
-    n_sleeps = [0]
-
-    def _sleep(_sec):
-        n_sleeps[0] += 1
-        if n_sleeps[0] >= 2:
-            raise SystemExit("stop after one _cleanup_loop pass")
-
-    monkeypatch.setattr(audiobook_app.time, "sleep", _sleep)
+    sleeps.stop_after(2, SystemExit("stop after one _cleanup_loop pass"))
 
     with pytest.raises(SystemExit):
         cleanup._cleanup_loop()

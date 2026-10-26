@@ -4,6 +4,8 @@ from unittest.mock import patch
 import importlib
 import os
 import sys
+import threading
+import time
 
 import pytest
 
@@ -160,6 +162,43 @@ def _no_gemini_silence_check(monkeypatch):
     Lo scarto dell'audio muto e' spento qui e riacceso da chi lo prova
     (test_gemini_silence_check.py)."""
     monkeypatch.setenv("ABM_GEMINI_SILENCE_MAX_GAP_SEC", "0")
+
+
+_REAL_SLEEP = time.sleep
+
+
+class _TestThreadSleeps(list):
+    """Attese chieste dal thread del test (fixture `sleeps`)."""
+
+    stop = None                     # (n, eccezione): sollevata alla n-esima attesa
+
+    def stop_after(self, n, exc):
+        """Ferma un ciclo senza fine (supervisori, cleanup) alla n-esima attesa."""
+        self.stop = (n, exc)
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    """`time.sleep` finto per il solo thread del test, che ne registra le attese.
+
+    `<modulo>.time` e' il modulo `time` di tutto il processo, e l'import
+    dell'app avvia supervisori che dormono 30 s (campionatore di carico,
+    cleanup, sonda Cloudflare). Un sostituto globale li fa girare a vuoto e le
+    loro attese finiscono nella lista del test a seconda dello scheduling: il
+    26/10/2026 422 attese da 30 s in test_a_cloudflare_429_still_counts_at_once.
+    Gli altri thread dormono davvero.
+    """
+    calls, mine = _TestThreadSleeps(), threading.get_ident()
+
+    def _sleep(sec):
+        if threading.get_ident() != mine:
+            return _REAL_SLEEP(sec)
+        calls.append(sec)
+        if calls.stop and len(calls) >= calls.stop[0]:
+            raise calls.stop[1]
+
+    monkeypatch.setattr(time, "sleep", _sleep)
+    return calls
 
 
 @pytest.fixture

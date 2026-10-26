@@ -9,6 +9,9 @@ import gemini_tts
 import tts_backend_state as st
 from gemini_transport import TransportError
 
+# Attese finte per il solo thread del test (conftest): nessun supervisore a vuoto.
+pytestmark = pytest.mark.usefixtures("sleeps")
+
 
 @pytest.fixture(autouse=True)
 def _env(tmp_path, monkeypatch):
@@ -25,7 +28,6 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(gemini_tts, "_check_rpd_cap", lambda mk: None)
     monkeypatch.setattr(gemini_tts, "_throttle_rpm", lambda mk: None)
     monkeypatch.setattr(gemini_tts, "_rpd_increment", lambda mk: None)
-    monkeypatch.setattr(gemini_tts.time, "sleep", lambda s: None)
     gemini_tts.set_backend_switch_notifier(None)
     yield
     gemini_tts._BACKEND = {}
@@ -216,7 +218,8 @@ def test_openrouter_moderation_rejects_the_chunk_without_tripping(tmp_path, monk
 def _or_429(monkeypatch, *, retry_after=None, ok_after=None, **env):
     """flash38 su OpenRouter che risponde 429; dopo `ok_after` 429 risponde.
 
-    Restituisce le attese chiamate da synthesize() e le chiamate all'API key.
+    Restituisce le chiamate all'API key; le attese di synthesize() le registra
+    la fixture `sleeps`.
     """
     monkeypatch.setenv("ABM_GEMINI_BACKEND_FLASH38", "openrouter")
     monkeypatch.setenv("ABM_OPENROUTER_API_KEY", "k")
@@ -227,7 +230,7 @@ def _or_429(monkeypatch, *, retry_after=None, ok_after=None, **env):
                           ("ABM_GEMINI_SYNTH_MAX_ATTEMPTS", "5"),
                           ("ABM_CF_TRIP_FAILURES", "3")):
         monkeypatch.setenv(name, env.get(name, default))
-    sleeps, apikey_calls, or_calls = [], [], []
+    apikey_calls, or_calls = [], []
 
     def _or(**kw):
         or_calls.append(kw)
@@ -240,14 +243,13 @@ def _or_429(monkeypatch, *, retry_after=None, ok_after=None, **env):
     monkeypatch.setattr(gemini_tts._transport, "openrouter_call", _or)
     monkeypatch.setattr(gemini_tts, "_vertex_transport_call",
                         lambda **kw: apikey_calls.append(kw) or _pcm())
-    monkeypatch.setattr(gemini_tts.time, "sleep", sleeps.append)
-    return sleeps, apikey_calls
+    return apikey_calls
 
 
-def test_an_isolated_openrouter_429_pauses_without_tripping(tmp_path, monkeypatch):
+def test_an_isolated_openrouter_429_pauses_without_tripping(tmp_path, monkeypatch, sleeps):
     # Anche con il breaker al primo errore: il 429 isolato non conta.
-    sleeps, apikey_calls = _or_429(monkeypatch, ok_after=1,
-                                   ABM_CF_TRIP_FAILURES="1")
+    apikey_calls = _or_429(monkeypatch, ok_after=1,
+                           ABM_CF_TRIP_FAILURES="1")
     out = _synth(tmp_path)
     assert out["backend"] == "openrouter" and out["attempts_used"] == 1
     assert sleeps == [60.0]
@@ -256,8 +258,8 @@ def test_an_isolated_openrouter_429_pauses_without_tripping(tmp_path, monkeypatc
     assert st.state("flash38").get("consecutive_failures", 0) == 0
 
 
-def test_a_persistent_openrouter_429_trips_after_the_pause(tmp_path, monkeypatch):
-    sleeps, apikey_calls = _or_429(monkeypatch)
+def test_a_persistent_openrouter_429_trips_after_the_pause(tmp_path, monkeypatch, sleeps):
+    apikey_calls = _or_429(monkeypatch)
     out = _synth(tmp_path, job_id="j1")
     assert out["backend"] == "apikey" and len(apikey_calls) == 1
     # Una sola pausa lunga, poi il backoff di sempre fino al trip.
@@ -265,51 +267,49 @@ def test_a_persistent_openrouter_429_trips_after_the_pause(tmp_path, monkeypatch
     assert st.state("flash38")["trip_reason"] == "or_consecutive_failures"
 
 
-def test_openrouter_429_pause_zero_restores_the_old_breaker(tmp_path, monkeypatch):
-    sleeps, apikey_calls = _or_429(monkeypatch, retry_after=5.0,
-                                   ABM_OR_429_PAUSE_SEC="0",
-                                   ABM_CF_TRIP_FAILURES="1")
+def test_openrouter_429_pause_zero_restores_the_old_breaker(tmp_path, monkeypatch, sleeps):
+    apikey_calls = _or_429(monkeypatch, retry_after=5.0,
+                           ABM_OR_429_PAUSE_SEC="0",
+                           ABM_CF_TRIP_FAILURES="1")
     out = _synth(tmp_path)
     assert out["backend"] == "apikey" and sleeps == []
     assert st.state("flash38")["trip_reason"] == "or_consecutive_failures"
 
 
-def test_the_preview_never_waits_on_an_openrouter_429(tmp_path, monkeypatch):
-    sleeps, _ = _or_429(monkeypatch)
+def test_the_preview_never_waits_on_an_openrouter_429(tmp_path, monkeypatch, sleeps):
+    _or_429(monkeypatch)
     with pytest.raises(RuntimeError):
         _synth(tmp_path, max_attempts=1)
     assert sleeps == []
     assert st.state("flash38")["consecutive_failures"] == 1
 
 
-def test_a_retry_after_longer_than_the_pause_is_honoured(tmp_path, monkeypatch):
-    sleeps, _ = _or_429(monkeypatch, retry_after=90.0, ok_after=1)
+def test_a_retry_after_longer_than_the_pause_is_honoured(tmp_path, monkeypatch, sleeps):
+    _or_429(monkeypatch, retry_after=90.0, ok_after=1)
     assert _synth(tmp_path)["backend"] == "openrouter"
     assert sleeps == [90.0]
 
 
-def test_the_pause_never_exceeds_max_wait(tmp_path, monkeypatch):
-    sleeps, _ = _or_429(monkeypatch, ok_after=1,
-                        ABM_GEMINI_RETRY_MAX_WAIT_SEC="30")
+def test_the_pause_never_exceeds_max_wait(tmp_path, monkeypatch, sleeps):
+    _or_429(monkeypatch, ok_after=1,
+            ABM_GEMINI_RETRY_MAX_WAIT_SEC="30")
     assert _synth(tmp_path)["backend"] == "openrouter"
     assert sleeps == [30.0]
 
 
-def test_a_retry_after_beyond_max_wait_still_suspends(tmp_path, monkeypatch):
-    sleeps, _ = _or_429(monkeypatch, retry_after=300.0)
+def test_a_retry_after_beyond_max_wait_still_suspends(tmp_path, monkeypatch, sleeps):
+    _or_429(monkeypatch, retry_after=300.0)
     with pytest.raises(gemini_tts.GeminiQuotaExhausted) as ei:
         _synth(tmp_path)
     assert ei.value.reason == "retry_too_long"
     assert sleeps == []
 
 
-def test_a_cloudflare_429_still_counts_at_once(tmp_path, monkeypatch):
+def test_a_cloudflare_429_still_counts_at_once(tmp_path, monkeypatch, sleeps):
     _cf(monkeypatch)
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
     monkeypatch.setenv("ABM_OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ABM_CF_TRIP_FAILURES", "1")
-    sleeps = []
-    monkeypatch.setattr(gemini_tts.time, "sleep", sleeps.append)
     monkeypatch.setattr(gemini_tts._transport, "cloudflare_call",
                         lambda **kw: (_ for _ in ()).throw(
                             TransportError("429", kind="rate_limited",
