@@ -510,6 +510,11 @@ def test_status_for_shapes(sub_env):
     app = subscriptions.status_for(acct, for_app=True, now=T0 + 120)
     assert "plans" not in app and "price" not in str(app)
     assert subscriptions.status_for(None)["subscription"] is None
+    import voxcpm_catalog
+    assert st["voucher_model"] == voxcpm_catalog.MODEL_LABEL and "voucher_model" not in app
+    # il buono copre quel modello e non le altre voci PREMIUM
+    assert "voxcpm" in payment.VOUCHER_DEFAULT_SERVICES
+    assert not {"flash31", "flash38", "speechify"} & set(payment.VOUCHER_DEFAULT_SERVICES)
 
 
 def test_archive_nudge_thresholds(sub_env, monkeypatch):

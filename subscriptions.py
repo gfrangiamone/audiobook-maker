@@ -25,6 +25,7 @@ import db
 import email_service
 import payment
 import retry_util
+import voxcpm_catalog
 from env_utils import env_bool, env_float, env_int
 
 
@@ -366,11 +367,12 @@ def _mail(kind, sub, *, voucher_until=None, renews_at=None, ends_at=None):
         if kind == "active":
             email_service.send_subscription_active(
                 email, lang, space=space, voucher=accounts.format_eur(voucher_eur(sub["plan"])),
-                voucher_until=_day(voucher_until), renews_at=_day(renews_at))
+                voucher_until=_day(voucher_until), renews_at=_day(renews_at),
+                model=voxcpm_catalog.MODEL_LABEL)
         elif kind == "voucher":
             email_service.send_subscription_voucher(
                 email, lang, space=space, voucher=accounts.format_eur(voucher_eur(sub["plan"])),
-                voucher_until=_day(voucher_until))
+                voucher_until=_day(voucher_until), model=voxcpm_catalog.MODEL_LABEL)
         else:
             email_service.send_subscription_cancelled(
                 email, lang, space=space, ends_at=_day(ends_at),
@@ -1029,7 +1031,7 @@ def _send_reminders(now):
         try:
             email_service.send_subscription_reminder(
                 email, lang, remaining=accounts.format_eur(payment._voucher_remaining(v)),
-                voucher_until=_day(v["expires_at"]))
+                voucher_until=_day(v["expires_at"]), model=voxcpm_catalog.MODEL_LABEL)
             sent += 1
         except Exception as e:  # noqa: BLE001 - email best-effort
             print(f"[subscriptions] promemoria {payment.mask_code(code)}: {e}", flush=True)
@@ -1110,6 +1112,9 @@ def status_for(account, *, for_app=False, now=None):
     out = {"enabled": enabled(), "subscription": None}
     if not for_app:
         out["plans"] = plan_offer()
+        # Il buono copre le voci PREMIUM di un solo modello (VOUCHER_DEFAULT_SERVICES):
+        # i popup lo dicono con l'etichetta del selettore MODELLO.
+        out["voucher_model"] = voxcpm_catalog.MODEL_LABEL
     if not account or not _ready():
         return out
     sub = current(account["id"], now)

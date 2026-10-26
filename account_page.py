@@ -24,6 +24,8 @@ _CSS = page_brand.BASE_CSS + (
     ".quota{height:6px;border-radius:3px;background:var(--srf2);margin:.7em 0 .3em;overflow:hidden}"
     ".quota i{display:block;height:100%;background:var(--ac)}"
     ".quota.near i{background:var(--err)}"
+    ".subplan .subv{margin:.3em 0;font-size:.9em;color:var(--ac)}"
+    "dialog .subscope{font-weight:600}"
     ".planhead .warn{margin-top:.5em;font-size:.9em;color:var(--err)}"
     ".subplans{display:flex;gap:.8em;flex-wrap:wrap;margin-top:.6em}"
     ".subplan{flex:1 1 11em;padding:.6em .8em;border:1px solid var(--brd);border-radius:10px}"
@@ -456,11 +458,19 @@ _SUB_NOTICES = {"ok": "sub_notice_ok", "pending": "sub_notice_pending",
                 "scheduled": "sub_notice_scheduled", "change_cancelled": "sub_notice_change_cancelled"}
 
 
+def _sub_voucher_scope(t, vals):
+    """«Il buono PREMIUM comprende solo: …», prima di ogni conferma (richiesta
+    dell'utente del 26/10/2026): il buono non vale per tutte le voci PREMIUM."""
+    return f"<p class=\"subscope\">{_txt(t, 'sub_voucher_scope', model=vals['model'])}</p>"
+
+
 def _sub_checkout_dialog(t, pid, plan_name, vals):
-    """Popup di un piano: condizioni e casella obbligatoria (non preselezionata)
-    sul recesso; il pulsante resta spento finche' la casella non e' spuntata."""
+    """Popup di un piano: condizioni, cosa comprende il buono e casella
+    obbligatoria (non preselezionata) sul recesso; il pulsante resta spento
+    finche' la casella non e' spuntata."""
     return (f"<dialog id=\"subDlg_{_e(pid)}\"><h2>{_txt(t, 'sub_dlg_title', plan=plan_name)}</h2>"
             f"<p>{_txt(t, 'sub_terms_p', **vals)}</p>"
+            + _sub_voucher_scope(t, vals) +
             f"<p><label><input type=\"checkbox\" data-subwaive required> "
             f"<span>{_e(t['sub_waive_label'])}</span></label></p>"
             f"<p class=\"warn\" data-suberr hidden>{_e(t['sub_err'])}</p>"
@@ -493,8 +503,10 @@ def _sub_change_dialog(t, pid, name, vals, prev, tolerance_days):
         body = _txt(t, "sub_change_down_p", **{"from": frm}, days=tolerance_days, **vals)
     else:
         body = _txt(t, "sub_resume_p", **{"from": frm}, **vals)
-    return (f"<dialog id=\"subChgDlg_{_e(pid)}\"><h2>{_txt(t, 'sub_change_title', plan=name)}</h2>"
+    title = "sub_resume_title" if prev["kind"] == "resume" else "sub_change_title"   # come il pulsante
+    return (f"<dialog id=\"subChgDlg_{_e(pid)}\"><h2>{_txt(t, title, plan=name)}</h2>"
             f"<p>{body}</p>"
+            + _sub_voucher_scope(t, vals) +
             f"<p><label><input type=\"checkbox\" data-subwaive required> "
             f"<span>{_e(t['sub_waive_label'])}</span></label></p>"
             f"<p class=\"warn\" data-suberr hidden>{_e(t['sub_err'])}</p>"
@@ -510,7 +522,11 @@ def _sub_current_card(t, sub, p, change, enabled, dialogs, tolerance_days):
     if st == "activating":
         return [f"<p class=\"meta\" data-subpoll>{_e(t['sub_activating'])}</p>"]
     if sub.get("ends_at"):
-        out.append(f"<p class=\"meta\">{_txt(t, 'sub_cancelled_card', date=end)}</p>")
+        # Con un passaggio programmato gia' approvato gli addebiti continuano
+        # sul piano nuovo: «senza altri addebiti» sarebbe falso.
+        follows = bool(change and change.get("approved") and change.get("status") == "scheduled")
+        key = "sub_until_card" if follows else "sub_cancelled_card"
+        out.append(f"<p class=\"meta\">{_txt(t, key, date=end)}</p>")
         if enabled and not change and p.get("change"):
             out.append(f"<button type=\"button\" class=\"small primary\" data-subchange=\"{_e(p['plan'])}\">"
                        f"{_e(t['sub_resume_btn'])}</button>")
@@ -537,7 +553,8 @@ def _sub_change_line(t, change):
     elif change["status"] == "switching":
         text, poll = _txt(t, "sub_change_paying", plan=name), " data-subpoll=\"change\""
     else:
-        text, poll = _txt(t, "sub_change_scheduled", plan=name, date=_day(change.get("start_at"))), ""
+        key = "sub_resume_scheduled" if change.get("kind") == "resume" else "sub_change_scheduled"
+        text, poll = _txt(t, key, plan=name, date=_day(change.get("start_at"))), ""
     return (f"<div class=\"row\"><p class=\"meta\"{poll}>{text}</p><button type=\"button\" "
             f"class=\"small\" id=\"subChangeCancel\">{_e(t['sub_change_cancel_btn'])}</button></div>")
 
@@ -571,10 +588,12 @@ def _subscription_block(t, status, *, notice="", tolerance_days=0, free_quota_by
         pid, name = p["plan"], t["plan_name_" + p["plan"]]
         vals = {"price": accounts.format_eur(p["price_eur"]),
                 "voucher": accounts.format_eur(p["voucher_eur"]),
-                "space": accounts.format_bytes(p["quota_bytes"])}
+                "space": accounts.format_bytes(p["quota_bytes"]),
+                "model": status.get("voucher_model") or ""}
         current = live and sub["plan"] == pid
         body = [f"<p><strong>{_e(name)}</strong>{badge if current else ''}</p>",
-                f"<p class=\"meta\">{_txt(t, 'sub_plan_card', **vals)}</p>"]
+                f"<p class=\"meta\">{_txt(t, 'sub_plan_card', **vals)}</p>",
+                f"<p class=\"subv\">{_txt(t, 'sub_plan_voucher', **vals)}</p>"]
         if current:
             body += _sub_current_card(t, sub, p, change, enabled, dialogs, tolerance_days)
         elif not live and enabled:

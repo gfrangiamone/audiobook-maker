@@ -22,7 +22,8 @@
     "subscription_voucher_subject": "Il buono del mese da {voucher} € è nel tuo account",
     "subscription_voucher_body": "<p>È iniziato un nuovo periodo del tuo abbonamento ({space} di libreria cloud).</p><p>Il buono del mese da {voucher} € è già nel tuo account e vale fino al {voucher_until}: quando paghi un servizio PREMIUM dopo aver fatto l'accesso ti viene proposto in automatico.</p><p>Gestisci l'abbonamento dalla tua <a href=\"{manage_url}\">area personale</a>.</p>",
     "subscription_reminder_subject": "Il tuo buono scade il {voucher_until}",
-    "subscription_reminder_body": "<p>Ti restano {remaining} € sul buono del mese del tuo abbonamento, valido fino al {voucher_until}. Dopo quella data il saldo non speso non si recupera.</p><p>Puoi usarlo per le voci PREMIUM, le voci campionate, l'ottimizzazione del testo e la traduzione: <a href=\"{manage_url}\">crea un audiolibro</a> dopo aver fatto l'accesso e il buono ti viene proposto in automatico.</p>"
+    "subscription_reminder_body": "<p>Ti restano {remaining} € sul buono del mese del tuo abbonamento, valido fino al {voucher_until}. Dopo quella data il saldo non speso non si recupera.</p><p><a href=\"{manage_url}\">Crea un audiolibro</a> dopo aver fatto l'accesso e il buono ti viene proposto in automatico.</p>",
+    "subscription_voucher_scope": "<p>Il buono PREMIUM comprende solo: voci PREMIUM del modello {model} (anche le voci campionate), campionamento di una voce, ottimizzazione AI del testo e traduzione dei libri.</p>"
   },
   "en": {
     "brand": "Audiobook Maker",
@@ -47,7 +48,8 @@
     "subscription_voucher_subject": "This month's €{voucher} voucher is in your account",
     "subscription_voucher_body": "<p>A new period of your subscription has started ({space} of cloud library).</p><p>This month's €{voucher} voucher is already in your account and is valid until {voucher_until}: it is offered automatically when you pay for a PREMIUM service while signed in.</p><p>Manage your subscription from your <a href=\"{manage_url}\">personal area</a>.</p>",
     "subscription_reminder_subject": "Your voucher expires on {voucher_until}",
-    "subscription_reminder_body": "<p>You have €{remaining} left on this month's subscription voucher, valid until {voucher_until}. After that date the unspent balance cannot be recovered.</p><p>You can use it for PREMIUM voices, sampled voices, text optimisation and translation: <a href=\"{manage_url}\">create an audiobook</a> while signed in and the voucher is offered automatically.</p>"
+    "subscription_reminder_body": "<p>You have €{remaining} left on this month's subscription voucher, valid until {voucher_until}. After that date the unspent balance cannot be recovered.</p><p><a href=\"{manage_url}\">Create an audiobook</a> while signed in and the voucher is offered automatically.</p>",
+    "subscription_voucher_scope": "<p>The PREMIUM voucher includes only: PREMIUM voices of the {model} model (sampled voices too), sampling a voice, AI text optimisation and book translation.</p>"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -72,7 +74,8 @@
     "subscription_voucher_subject": "Le bon du mois de {voucher} € est sur votre compte",
     "subscription_voucher_body": "<p>Une nouvelle période de votre abonnement a commencé ({space} de bibliothèque cloud).</p><p>Le bon du mois de {voucher} € est déjà sur votre compte et reste valable jusqu'au {voucher_until} : il vous est proposé automatiquement lorsque vous payez un service PREMIUM en étant connecté.</p><p>Gérez votre abonnement depuis votre <a href=\"{manage_url}\">espace personnel</a>.</p>",
     "subscription_reminder_subject": "Votre bon expire le {voucher_until}",
-    "subscription_reminder_body": "<p>Il vous reste {remaining} € sur le bon du mois de votre abonnement, valable jusqu'au {voucher_until}. Après cette date, le solde non utilisé est perdu.</p><p>Vous pouvez l'utiliser pour les voix PREMIUM, les voix échantillonnées, l'optimisation du texte et la traduction : <a href=\"{manage_url}\">créez un livre audio</a> en étant connecté et le bon vous est proposé automatiquement.</p>"
+    "subscription_reminder_body": "<p>Il vous reste {remaining} € sur le bon du mois de votre abonnement, valable jusqu'au {voucher_until}. Après cette date, le solde non utilisé est perdu.</p><p><a href=\"{manage_url}\">Créez un livre audio</a> en étant connecté et le bon vous est proposé automatiquement.</p>",
+    "subscription_voucher_scope": "<p>Le bon PREMIUM comprend uniquement : les voix PREMIUM du modèle {model} (y compris les voix échantillonnées), l'échantillonnage d'une voix, l'optimisation IA du texte et la traduction des livres.</p>"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -97,7 +100,8 @@
     "subscription_voucher_subject": "El bono del mes de {voucher} € ya está en tu cuenta",
     "subscription_voucher_body": "<p>Ha empezado un nuevo periodo de tu suscripción ({space} de biblioteca en la nube).</p><p>El bono del mes de {voucher} € ya está en tu cuenta y es válido hasta el {voucher_until}: se te propone automáticamente cuando pagas un servicio PREMIUM con la sesión iniciada.</p><p>Gestiona tu suscripción desde tu <a href=\"{manage_url}\">área personal</a>.</p>",
     "subscription_reminder_subject": "Tu bono caduca el {voucher_until}",
-    "subscription_reminder_body": "<p>Te quedan {remaining} € en el bono del mes de tu suscripción, válido hasta el {voucher_until}. Después de esa fecha el saldo no gastado no se recupera.</p><p>Puedes usarlo para voces PREMIUM, voces muestreadas, optimización del texto y traducción: <a href=\"{manage_url}\">crea un audiolibro</a> con la sesión iniciada y el bono se te propone automáticamente.</p>"
+    "subscription_reminder_body": "<p>Te quedan {remaining} € en el bono del mes de tu suscripción, válido hasta el {voucher_until}. Después de esa fecha el saldo no gastado no se recupera.</p><p><a href=\"{manage_url}\">Crea un audiolibro</a> con la sesión iniciada y el bono se te propone automáticamente.</p>",
+    "subscription_voucher_scope": "<p>El bono PREMIUM incluye solo: voces PREMIUM del modelo {model} (también las voces muestreadas), el muestreo de una voz, la optimización IA del texto y la traducción de libros.</p>"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -122,7 +126,8 @@
     "subscription_voucher_subject": "Der Gutschein des Monats über {voucher} € ist in deinem Konto",
     "subscription_voucher_body": "<p>Ein neuer Zeitraum deines Abonnements hat begonnen ({space} Cloud-Bibliothek).</p><p>Der Gutschein des Monats über {voucher} € ist bereits in deinem Konto und gilt bis {voucher_until}: Er wird dir automatisch angeboten, wenn du angemeldet einen PREMIUM-Dienst bezahlst.</p><p>Verwalte dein Abonnement in deinem <a href=\"{manage_url}\">persönlichen Bereich</a>.</p>",
     "subscription_reminder_subject": "Dein Gutschein läuft am {voucher_until} ab",
-    "subscription_reminder_body": "<p>Auf dem Gutschein des Monats deines Abonnements sind noch {remaining} € übrig, gültig bis {voucher_until}. Danach verfällt das nicht genutzte Guthaben.</p><p>Du kannst ihn für PREMIUM-Stimmen, eigene Stimmen, Textoptimierung und Übersetzung nutzen: <a href=\"{manage_url}\">Erstelle ein Hörbuch</a>, während du angemeldet bist, und der Gutschein wird dir automatisch angeboten.</p>"
+    "subscription_reminder_body": "<p>Auf dem Gutschein des Monats deines Abonnements sind noch {remaining} € übrig, gültig bis {voucher_until}. Danach verfällt das nicht genutzte Guthaben.</p><p><a href=\"{manage_url}\">Erstelle ein Hörbuch</a>, während du angemeldet bist, und der Gutschein wird dir automatisch angeboten.</p>",
+    "subscription_voucher_scope": "<p>Der PREMIUM-Gutschein umfasst nur: PREMIUM-Stimmen des Modells {model} (auch eigene Stimmen), das Erstellen einer eigenen Stimme, die KI-Textoptimierung und die Übersetzung von Büchern.</p>"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -147,7 +152,8 @@
     "subscription_voucher_subject": "本月 {voucher} € 的代金券已存入您的账户",
     "subscription_voucher_body": "<p>您的订阅已开始新的周期（{space} 云端书库）。</p><p>本月 {voucher} € 的代金券已存入您的账户，有效期至 {voucher_until}：登录后支付 PREMIUM 服务时会自动为您使用。</p><p>您可以在<a href=\"{manage_url}\">个人空间</a>中管理订阅。</p>",
     "subscription_reminder_subject": "您的代金券将于 {voucher_until} 到期",
-    "subscription_reminder_body": "<p>您订阅的本月代金券还剩 {remaining} €，有效期至 {voucher_until}。过期后未使用的余额将无法恢复。</p><p>可用于 PREMIUM 语音、采样语音、文本优化和翻译：登录后<a href=\"{manage_url}\">制作有声书</a>，代金券会自动为您使用。</p>"
+    "subscription_reminder_body": "<p>您订阅的本月代金券还剩 {remaining} €，有效期至 {voucher_until}。过期后未使用的余额将无法恢复。</p><p>登录后<a href=\"{manage_url}\">制作有声书</a>，代金券会自动为您使用。</p>",
+    "subscription_voucher_scope": "<p>PREMIUM 代金券仅包含：{model} 模型的 PREMIUM 语音（包括采样语音）、声音采样、AI 文本优化和书籍翻译。</p>"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -172,6 +178,7 @@
     "subscription_voucher_subject": "इस महीने का {voucher} € का वाउचर आपके खाते में है",
     "subscription_voucher_body": "<p>आपके सब्सक्रिप्शन की नई अवधि शुरू हो गई है ({space} क्लाउड लाइब्रेरी)।</p><p>इस महीने का {voucher} € का वाउचर आपके खाते में आ चुका है और {voucher_until} तक मान्य है: साइन इन करके PREMIUM सेवा का भुगतान करते समय यह अपने-आप सुझाया जाता है।</p><p>अपने <a href=\"{manage_url}\">निजी क्षेत्र</a> से सब्सक्रिप्शन संभालें।</p>",
     "subscription_reminder_subject": "आपका वाउचर {voucher_until} को समाप्त हो रहा है",
-    "subscription_reminder_body": "<p>आपके सब्सक्रिप्शन के इस महीने के वाउचर पर {remaining} € बचे हैं, जो {voucher_until} तक मान्य है। उस तारीख के बाद बचा हुआ बैलेंस वापस नहीं मिलता।</p><p>आप इसे PREMIUM आवाज़ों, सैंपल की गई आवाज़ों, टेक्स्ट ऑप्टिमाइज़ेशन और अनुवाद के लिए इस्तेमाल कर सकते हैं: साइन इन करके <a href=\"{manage_url}\">ऑडियोबुक बनाएँ</a>, वाउचर अपने-आप सुझाया जाएगा।</p>"
+    "subscription_reminder_body": "<p>आपके सब्सक्रिप्शन के इस महीने के वाउचर पर {remaining} € बचे हैं, जो {voucher_until} तक मान्य है। उस तारीख के बाद बचा हुआ बैलेंस वापस नहीं मिलता।</p><p>साइन इन करके <a href=\"{manage_url}\">ऑडियोबुक बनाएँ</a>, वाउचर अपने-आप सुझाया जाएगा।</p>",
+    "subscription_voucher_scope": "<p>PREMIUM वाउचर में केवल ये शामिल हैं: {model} मॉडल की PREMIUM आवाज़ें (सैंपल की गई आवाज़ें भी), आवाज़ का सैंपल बनाना, AI टेक्स्ट ऑप्टिमाइज़ेशन और किताबों का अनुवाद।</p>"
   }
 }

@@ -17,7 +17,8 @@ ARCHIVE_KEYS = ["archive_over_subject", "archive_over_body", "archive_off_subjec
 SUBSCRIPTION_KEYS = ["subscription_active_subject", "subscription_active_body",
                      "subscription_cancelled_subject", "subscription_cancelled_body",
                      "subscription_voucher_subject", "subscription_voucher_body",
-                     "subscription_reminder_subject", "subscription_reminder_body"]
+                     "subscription_reminder_subject", "subscription_reminder_body",
+                     "subscription_voucher_scope"]
 KEYS = ["brand", "login_subject", "login_body", "delete_subject", "delete_body",
         "deleted_subject", "deleted_body", "footer", *ARCHIVE_KEYS, *SUBSCRIPTION_KEYS]
 

@@ -1006,27 +1006,33 @@ def send_archive_remind(email, lang, *, books, deadline, quota, used, manage_url
                            quota=quota, used=used, manage_url=manage_url)
 
 
-def send_subscription_active(email, lang, *, space, voucher, voucher_until, renews_at):
+def _sub_voucher_send(email, lang, kind, **values):
+    """Email di un buono dell'abbonamento: il corpo e poi «il buono comprende
+    solo …» con `model`, l'etichetta del modello delle voci che copre."""
+    return _i18n_send(_ACCT_I18N, "account", email, lang, f"subscription_{kind}_subject",
+                      (f"subscription_{kind}_body", "subscription_voucher_scope"), **values)
+
+
+def send_subscription_active(email, lang, *, space, voucher, voucher_until, renews_at, model):
     """Abbonamento attivo (primo pagamento confermato). Valori gia' formattati:
     `space` ("5 GB"), `voucher` (importo), date YYYY-MM-DD in UTC."""
-    return _acct_send(email, lang, "subscription_active_subject", "subscription_active_body",
-                      space=space, voucher=voucher, voucher_until=voucher_until,
-                      renews_at=renews_at, manage_url=f"{BASE_URL}/account")
+    return _sub_voucher_send(email, lang, "active", space=space, voucher=voucher,
+                             voucher_until=voucher_until, renews_at=renews_at, model=model,
+                             manage_url=f"{BASE_URL}/account")
 
 
-def send_subscription_voucher(email, lang, *, space, voucher, voucher_until):
+def send_subscription_voucher(email, lang, *, space, voucher, voucher_until, model):
     """Buono di un nuovo periodo pagato (rinnovi e passaggi di piano; il primo
     sta nell'email di attivazione)."""
-    return _acct_send(email, lang, "subscription_voucher_subject", "subscription_voucher_body",
-                      space=space, voucher=voucher, voucher_until=voucher_until,
-                      manage_url=f"{BASE_URL}/account")
+    return _sub_voucher_send(email, lang, "voucher", space=space, voucher=voucher,
+                             voucher_until=voucher_until, model=model,
+                             manage_url=f"{BASE_URL}/account")
 
 
-def send_subscription_reminder(email, lang, *, remaining, voucher_until):
+def send_subscription_reminder(email, lang, *, remaining, voucher_until, model):
     """Promemoria pochi giorni prima della scadenza del buono non speso."""
-    return _acct_send(email, lang, "subscription_reminder_subject", "subscription_reminder_body",
-                      remaining=remaining, voucher_until=voucher_until,
-                      manage_url=f"{BASE_URL}/")
+    return _sub_voucher_send(email, lang, "reminder", remaining=remaining,
+                             voucher_until=voucher_until, model=model, manage_url=f"{BASE_URL}/")
 
 
 def send_subscription_cancelled(email, lang, *, space, ends_at, days):
