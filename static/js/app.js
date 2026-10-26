@@ -2400,9 +2400,27 @@ function _openPayModalCtx(ctx) {
   // PayPal e' il metodo usato dalla quasi totalita' dei paganti: il popup
   // si apre gia' sul suo pannello, il buono resta a un click.
   switchPayTab('paypal');
+  _paySubHintRender(ctx);
   const modal = document.getElementById('geminiPayModal');
   if (modal) modal.hidden = false;
   _suggestAccountVoucher(ctx);
+}
+
+// Riga «con l'abbonamento questo libro sarebbe coperto dal buono del mese»
+// (spec §9.3 punto 3): solo a chi e' loggato senza abbonamento, per un libro
+// che il buono puo' pagare (servizi e tetto da _acctMe.sub_promo), mai a
+// generazione in corso. Agli anonimi resta l'invito ad accedere.
+function _paySubHintRender(ctx) {
+  const el = document.getElementById('paySubHint');
+  if (!el) return;
+  const promo = (typeof _acctLoggedIn === 'function') && _acctLoggedIn() && _acctMe.sub_promo;
+  const sub = promo && _acctMe.subscription;
+  const purpose = ctx.voucherPurpose || '';
+  const svc = (purpose === 'llm' || purpose === 'translate') ? purpose
+    : (purpose === 'gemini' && _isVoxcpmVoiceId(ctx.voucherVoice)) ? 'voxcpm' : '';
+  const total = Number(ctx.total) || 0;
+  el.hidden = !(sub && sub.enabled && !sub.subscription && !generating && svc
+    && (promo.services || []).indexOf(svc) >= 0 && total > 0 && total <= Number(promo.max_eur));
 }
 
 // Utente loggato con un buono capiente per questo servizio: il modale passa
@@ -7408,11 +7426,14 @@ async function _acctBoot(){
 // ai loggati che hanno chiuso la proposta del piano gratuito la ricorda, al
 // massimo una volta ogni _ACCT_FREE_NUDGE_DAYS giorni contati anche dall'ultima
 // volta che si e' aperta la proposta. Il clic apre la proposta, non attiva nulla.
+// Con la libreria quasi piena o piena (archive_nudge) ricorda i piani con piu'
+// spazio, con la stessa cadenza su una data sua; il clic porta all'Area personale.
 const _ACCT_NUDGE_KEY='abm_acct_nudge_day';
 const _ACCT_FREE_NUDGE_KEY='abm_free_nudge_day';
+const _ACCT_ARCHIVE_NUDGE_KEY='abm_archive_nudge_day';
 const _ACCT_FREE_NUDGE_DAYS=7;
 let _acctNudgeTimer=null;
-let _acctNudgeKind='';  // 'guest' | 'free' | '' = nascosto
+let _acctNudgeKind='';  // 'guest' | 'free' | 'archive' | '' = nascosto
 function _acctNudgeToday(){
   const d=new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -7426,7 +7447,9 @@ function _acctDaysBetween(a,b){
 function _acctNudgeMaybe(){
   const box=document.getElementById('acctNudge');
   if(!box||!_acctMe||!_acctMe.enabled)return;
-  const kind=_acctLoggedIn()?(_acctMe.free_nudge?'free':''):'guest';
+  const kind=_acctLoggedIn()
+    ?(_acctMe.free_nudge?'free':(_acctMe.archive_nudge==='near_full'||_acctMe.archive_nudge==='full')?'archive':'')
+    :'guest';
   if(!kind)return;
   const today=_acctNudgeToday();
   try{
@@ -7434,10 +7457,11 @@ function _acctNudgeMaybe(){
       if(localStorage.getItem(_ACCT_NUDGE_KEY)===today)return;
       localStorage.setItem(_ACCT_NUDGE_KEY,today);
     }else{
+      const key=kind==='archive'?_ACCT_ARCHIVE_NUDGE_KEY:_ACCT_FREE_NUDGE_KEY;
       // una data illeggibile o nel futuro (orologio spostato) non blocca il promemoria
-      const d=_acctDaysBetween(localStorage.getItem(_ACCT_FREE_NUDGE_KEY),today);
+      const d=_acctDaysBetween(localStorage.getItem(key),today);
       if(d>=0&&d<_ACCT_FREE_NUDGE_DAYS)return;
-      localStorage.setItem(_ACCT_FREE_NUDGE_KEY,today);
+      localStorage.setItem(key,today);
     }
   }catch(e){return}
   _acctNudgeKind=kind;
@@ -7445,13 +7469,14 @@ function _acctNudgeMaybe(){
   box.hidden=false;
   _acctNudgeTimer=setTimeout(_acctNudgeHide,20000);
 }
-// Testo nella lingua corrente: niente data-t, perche' le versioni sono due e
-// una ha la quota; al cambio lingua lo riscrive _acctRender().
+// Testo nella lingua corrente: niente data-t, perche' le versioni sono piu'
+// d'una e una ha la quota; al cambio lingua lo riscrive _acctRender().
 function _acctNudgeFill(){
   const txt=document.getElementById('acctNudgeText');
   if(!txt||!_acctNudgeKind)return;
   txt.textContent=_acctNudgeKind==='free'
     ?t('acct_free_nudge',{quota:_acctFmtBytes(_acctFreeQuota(_acctMe))})
+    :_acctNudgeKind==='archive'?t('acct_archive_nudge_'+_acctMe.archive_nudge)
     :t('acct_nudge');
 }
 function _acctNudgeHide(){
@@ -7465,7 +7490,9 @@ document.addEventListener('DOMContentLoaded',function(){
   if(txt)txt.addEventListener('click',function(){
     const kind=_acctNudgeKind;
     _acctNudgeHide();
-    if(kind==='free')_acctFreeOffer(_acctMe);else openLoginModal();
+    if(kind==='free')_acctFreeOffer(_acctMe);
+    else if(kind==='archive')location.href='/account#abbonamento';
+    else openLoginModal();
   });
   const x=document.getElementById('acctNudgeClose');
   if(x)x.addEventListener('click',_acctNudgeHide);

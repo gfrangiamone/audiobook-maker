@@ -921,6 +921,7 @@ def _archive_sweep(now, force=False):
         quota = c["quota_bytes"]
         if used[aid] + nbytes > quota:
             _archive_over_quota[jid] = now
+            accounts.mark_archive_skipped(jid, now)       # l'area personale lo dice sulla riga
             print(f"[archive] {jid} oltre quota ({accounts.format_bytes(used[aid] + nbytes)} > "
                   f"{accounts.format_bytes(quota)}): retention ordinaria")
             continue

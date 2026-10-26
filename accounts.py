@@ -146,6 +146,12 @@ JOBS_ARCHIVE_MIGRATION = [
     "ALTER TABLE account_jobs ADD COLUMN archived_bytes INTEGER NOT NULL DEFAULT 0",
 ]
 
+# Job concluso che non e' entrato nell'archivio perche' la quota era piena
+# (l'area personale lo dice sulla riga del libro); si azzera se poi entra.
+JOBS_ARCHIVE_SKIP_MIGRATION = [
+    "ALTER TABLE account_jobs ADD COLUMN archive_skipped_at INTEGER",
+]
+
 
 # Archivio dell'app: libri archiviati dalla libreria dello smartphone. Ogni
 # riga e' un file caricato dall'app sotto `user_archive/<account_id>/` (`r2_key`,
@@ -283,6 +289,7 @@ def init_schema():
     db.migrate("archive_items_orphan_v1", ARCHIVE_ITEMS_ORPHAN_MIGRATION)
     db.migrate("accounts_plans_v2", PLANS_V2_MIGRATION)
     db.migrate("accounts_plans_v2_data", [_migrate_plans_v2_data])
+    db.migrate("account_jobs_archive_skip_v1", JOBS_ARCHIVE_SKIP_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -1184,7 +1191,8 @@ def archive_status(account, now=None):
             "free_active": account.get("free_consent_at") is not None,
             "quota_bytes": quota, "used_bytes": used, "jobs": n, "items": items,
             "state": state,
-            "grace_until": archive_grace_until(account) if state == "grace" else None}
+            "grace_until": archive_grace_until(account) if state == "grace" else None,
+            "fill_pct": round(used * 100 / quota, 1) if quota else None}
 
 
 def archive_candidates(now=None):
@@ -1263,10 +1271,22 @@ def mark_archived(job_id, nbytes, now=None):
         return False
     with db.tx() as c:
         cur = c.execute(
-            "UPDATE account_jobs SET archived_at=?, archived_bytes=? "
+            "UPDATE account_jobs SET archived_at=?, archived_bytes=?, archive_skipped_at=NULL "
             "WHERE job_id=? AND archived_at IS NULL",
             (_now(now), max(0, int(nbytes or 0)), str(job_id)))
     _archive_cache_clear()
+    return cur.rowcount > 0
+
+
+def mark_archive_skipped(job_id, now=None):
+    """Annota che il job non e' entrato nell'archivio per quota piena (una
+    volta sola; `mark_archived` la azzera). True se la riga e' cambiata."""
+    if not enabled():
+        return False
+    with db.tx() as c:
+        cur = c.execute(
+            "UPDATE account_jobs SET archive_skipped_at=? WHERE job_id=? AND archived_at IS NULL "
+            "AND archive_skipped_at IS NULL", (_now(now), str(job_id)))
     return cur.rowcount > 0
 
 

@@ -1133,6 +1133,30 @@ def status_for(account, *, for_app=False, now=None):
     return out
 
 
+def archive_nudge(archive):
+    """Proposta a libreria quasi piena (spec §9.3 punto 2): "full" dal 100%,
+    "near_full" dall'80%, "" altrimenti, con la vendita spenta o se il piano e'
+    gia' il piu' grande."""
+    if not archive or not enabled() or archive.get("plan") == "sub_10":
+        return ""
+    pct = archive.get("fill_pct")
+    if pct is None:
+        return ""
+    return "full" if pct >= 100 else ("near_full" if pct >= 80 else "")
+
+
+def promo_offer():
+    """Proposta dell'abbonamento nel modale di pagamento (spec §9.3 punto 3):
+    tetto del prezzo e servizi pagabili col buono del mese; None con la vendita
+    spenta o il tetto a zero."""
+    if not enabled():
+        return None
+    cap = round(env_float("ABM_SUB_PROMO_MAX_EUR", 10.0, floor=0.0), 2)
+    if cap <= 0:
+        return None
+    return {"max_eur": cap, "services": list(payment.VOUCHER_DEFAULT_SERVICES)}
+
+
 def _change_preview(old, plan, now):
     """Cosa comporta passare a `plan` dall'abbonamento vivo `old` (None se non
     si puo'): tipo, addebito di oggi e date, per il testo del popup."""

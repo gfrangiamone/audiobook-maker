@@ -21,6 +21,7 @@ ACCT_KEYS = [
     "acct_err_wrong", "acct_err_expired", "acct_err_locked", "acct_err_none",
     "acct_err_rate", "acct_err_generic", "acct_forced_notice", "acct_signed_in_as",
     "acct_logged_out", "acct_nudge", "acct_free_nudge",
+    "acct_archive_nudge_near_full", "acct_archive_nudge_full",
 ]
 
 

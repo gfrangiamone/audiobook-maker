@@ -349,7 +349,7 @@ def test_active_status_shape(env):
     st = accounts.archive_status(acct)
     assert st == {"plan": "free", "plan_source": "", "plan_until": None, "free_active": True,
                   "quota_bytes": 512 * accounts.MIB, "used_bytes": 0, "jobs": 0,
-                  "items": 0, "state": "active", "grace_until": None}
+                  "items": 0, "state": "active", "grace_until": None, "fill_pct": 0.0}
 
 
 # ------------------------------------------------------------ route

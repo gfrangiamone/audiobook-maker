@@ -139,7 +139,10 @@
     "sub_change_scheduled": "Switch to {plan} scheduled from {date}.",
     "sub_change_cancel_btn": "Cancel the switch",
     "sub_notice_scheduled": "Switch scheduled.",
-    "sub_notice_change_cancelled": "Switch cancelled."
+    "sub_notice_change_cancelled": "Switch cancelled.",
+    "sub_archive_near_full": "Your library is almost full: a plan with more space keeps your next books in the cloud.",
+    "sub_archive_full": "Your library is full: new books are no longer saved in the cloud. Choose a plan with more space.",
+    "dl_not_archived": "not saved in the library: out of space"
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -281,7 +284,10 @@
     "sub_change_scheduled": "Passaggio al {plan} programmato dal {date}.",
     "sub_change_cancel_btn": "Annulla il passaggio",
     "sub_notice_scheduled": "Passaggio programmato.",
-    "sub_notice_change_cancelled": "Passaggio annullato."
+    "sub_notice_change_cancelled": "Passaggio annullato.",
+    "sub_archive_near_full": "La tua libreria è quasi piena: con un piano più capiente i prossimi libri restano nel cloud.",
+    "sub_archive_full": "La tua libreria è piena: i nuovi libri non vengono più salvati nel cloud. Scegli un piano con più spazio.",
+    "dl_not_archived": "non salvato nella libreria: spazio esaurito"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -423,7 +429,10 @@
     "sub_change_scheduled": "Passage à l'offre {plan} prévu à partir du {date}.",
     "sub_change_cancel_btn": "Annuler le changement",
     "sub_notice_scheduled": "Changement programmé.",
-    "sub_notice_change_cancelled": "Changement annulé."
+    "sub_notice_change_cancelled": "Changement annulé.",
+    "sub_archive_near_full": "Votre bibliothèque est presque pleine : avec une formule plus spacieuse, vos prochains livres restent dans le cloud.",
+    "sub_archive_full": "Votre bibliothèque est pleine : les nouveaux livres ne sont plus enregistrés dans le cloud. Choisissez une formule avec plus d'espace.",
+    "dl_not_archived": "non enregistré dans la bibliothèque : espace épuisé"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -565,7 +574,10 @@
     "sub_change_scheduled": "Cambio al {plan} programado desde el {date}.",
     "sub_change_cancel_btn": "Anular el cambio",
     "sub_notice_scheduled": "Cambio programado.",
-    "sub_notice_change_cancelled": "Cambio anulado."
+    "sub_notice_change_cancelled": "Cambio anulado.",
+    "sub_archive_near_full": "Tu biblioteca está casi llena: con un plan con más espacio, tus próximos libros se quedan en la nube.",
+    "sub_archive_full": "Tu biblioteca está llena: los libros nuevos ya no se guardan en la nube. Elige un plan con más espacio.",
+    "dl_not_archived": "no guardado en la biblioteca: sin espacio"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -707,7 +719,10 @@
     "sub_change_scheduled": "Wechsel zum {plan} geplant ab {date}.",
     "sub_change_cancel_btn": "Wechsel abbrechen",
     "sub_notice_scheduled": "Wechsel geplant.",
-    "sub_notice_change_cancelled": "Wechsel abgebrochen."
+    "sub_notice_change_cancelled": "Wechsel abgebrochen.",
+    "sub_archive_near_full": "Deine Bibliothek ist fast voll: Mit einem größeren Tarif bleiben deine nächsten Bücher in der Cloud.",
+    "sub_archive_full": "Deine Bibliothek ist voll: Neue Bücher werden nicht mehr in der Cloud gespeichert. Wähle einen Tarif mit mehr Speicherplatz.",
+    "dl_not_archived": "nicht in der Bibliothek gespeichert: kein Speicherplatz"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -849,7 +864,10 @@
     "sub_change_scheduled": "已安排自 {date} 起切换到{plan}。",
     "sub_change_cancel_btn": "取消切换",
     "sub_notice_scheduled": "已安排切换。",
-    "sub_notice_change_cancelled": "已取消切换。"
+    "sub_notice_change_cancelled": "已取消切换。",
+    "sub_archive_near_full": "你的书库快满了：换一个空间更大的方案，之后的书都会保存在云端。",
+    "sub_archive_full": "你的书库已满：新书不再保存到云端。请选择一个空间更大的方案。",
+    "dl_not_archived": "未保存到书库：空间已满"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -991,6 +1009,9 @@
     "sub_change_scheduled": "{date} से {plan} पर बदलाव तय है।",
     "sub_change_cancel_btn": "बदलाव रद्द करें",
     "sub_notice_scheduled": "बदलाव तय हो गया।",
-    "sub_notice_change_cancelled": "बदलाव रद्द हो गया।"
+    "sub_notice_change_cancelled": "बदलाव रद्द हो गया।",
+    "sub_archive_near_full": "आपकी लाइब्रेरी लगभग भर गई है: ज़्यादा जगह वाले प्लान से आपकी अगली किताबें क्लाउड में बनी रहेंगी।",
+    "sub_archive_full": "आपकी लाइब्रेरी भर गई है: नई किताबें अब क्लाउड में सेव नहीं होतीं। ज़्यादा जगह वाला प्लान चुनें।",
+    "dl_not_archived": "लाइब्रेरी में सेव नहीं हुई: जगह खत्म"
   }
 }

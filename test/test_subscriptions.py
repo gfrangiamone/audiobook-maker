@@ -512,6 +512,45 @@ def test_status_for_shapes(sub_env):
     assert subscriptions.status_for(None)["subscription"] is None
 
 
+def test_archive_nudge_thresholds(sub_env, monkeypatch):
+    """Spec §9.3 punto 2: proposta dall'80% (79,9 no), «piena» dal 100%, mai sul
+    piano piu' grande ne' con la vendita spenta."""
+    st = {"plan": "free", "fill_pct": 79.9}
+    assert subscriptions.archive_nudge(st) == ""
+    assert subscriptions.archive_nudge({**st, "fill_pct": 80.0}) == "near_full"
+    assert subscriptions.archive_nudge({**st, "fill_pct": 99.9}) == "near_full"
+    assert subscriptions.archive_nudge({**st, "fill_pct": 100.0}) == "full"
+    assert subscriptions.archive_nudge({**st, "plan": "sub_5", "fill_pct": 130.0}) == "full"
+    assert subscriptions.archive_nudge({**st, "plan": "sub_10", "fill_pct": 100.0}) == ""
+    assert subscriptions.archive_nudge({**st, "fill_pct": None}) == ""
+    assert subscriptions.archive_nudge(None) == ""
+    monkeypatch.setenv("ABM_SUBSCRIPTIONS_ENABLE", "0")
+    assert subscriptions.archive_nudge({**st, "fill_pct": 100.0}) == ""
+
+
+def test_archive_nudge_from_real_status(sub_env):
+    acct = sub_env.login("full@x.it")
+    accounts.free_plan_action(acct["id"], "activate", "account", now=T0)
+    accounts.record_job(acct["id"], "j1", kind="generate", status="done", created_at=T0)
+    accounts.mark_archived("j1", 410 * accounts.MIB, now=T0)             # 410/512 = 80,1%
+    st = accounts.archive_status(accounts.get(acct["id"]), now=T0)
+    assert st["fill_pct"] == 80.1 and subscriptions.archive_nudge(st) == "near_full"
+
+
+def test_promo_offer(sub_env, monkeypatch):
+    """Spec §9.3 punto 3: tetto e servizi del buono del mese (gli stessi con cui
+    lo emette issue_subscription_voucher); niente con la vendita spenta o a zero."""
+    assert subscriptions.promo_offer() == {"max_eur": 10.0,
+                                           "services": list(payment.VOUCHER_DEFAULT_SERVICES)}
+    monkeypatch.setenv("ABM_SUB_PROMO_MAX_EUR", "7.5")
+    assert subscriptions.promo_offer()["max_eur"] == 7.5
+    monkeypatch.setenv("ABM_SUB_PROMO_MAX_EUR", "0")
+    assert subscriptions.promo_offer() is None
+    monkeypatch.setenv("ABM_SUB_PROMO_MAX_EUR", "10")
+    monkeypatch.setenv("ABM_SUBSCRIPTIONS_ENABLE", "0")
+    assert subscriptions.promo_offer() is None
+
+
 def test_add_month():
     jan31 = int(time.mktime((2027, 1, 31, 12, 0, 0, 0, 0, 0)) - time.timezone)
     feb = subscriptions._add_month(jan31)

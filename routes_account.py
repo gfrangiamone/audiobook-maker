@@ -670,14 +670,18 @@ def _account_archive_for(acct):
 def _acct_plan_info(acct):
     """Stato del piano di archivio esposto da login e `/api/auth/me`: se
     proporre il piano gratuito o ricordarlo, la sua quota, i giorni di
-    tolleranza, il riepilogo dell'archivio (None se non c'e' nulla da mostrare)
-    e l'abbonamento senza prezzi (lo legge anche l'app mobile)."""
+    tolleranza, il riepilogo dell'archivio (None se non c'e' nulla da mostrare),
+    l'abbonamento senza prezzi (lo legge anche l'app mobile) e i due momenti di
+    proposta dell'abbonamento: libreria quasi piena e buono nel pagamento."""
+    archive = _account_archive_for(acct)
     return {"free_offer": accounts.free_offer_pending(acct),
             "free_nudge": accounts.free_nudge_pending(acct),
             "free_quota_bytes": accounts.plan_quota_bytes(accounts.PLAN_FREE),
             "tolerance_days": accounts.archive_tolerance_days(),
-            "archive": _account_archive_for(acct),
-            "subscription": subscriptions.status_for(acct, for_app=True)}
+            "archive": archive,
+            "subscription": subscriptions.status_for(acct, for_app=True),
+            "archive_nudge": subscriptions.archive_nudge(archive),
+            "sub_promo": subscriptions.promo_offer()}
 
 
 @bp.route("/account", methods=["GET"])
@@ -711,14 +715,16 @@ def account_page_view():
     # spenta o il motore premium assente il bottone porterebbe a un wizard
     # che non si apre.
     new_voice_url = "/?vc=new" if routes_voice_clone._vc_gate() is None else ""
+    archive = _account_archive_for(acct)
     return _acct_html(account_page.render_history(
         t, lang=lang, account=acct, rows=rows, page=page, per_page=_ACCT_PER_PAGE,
         total=total, voices_count=len(voices), voices=voices,
         sessions=sessions, current_sid=acct.get("session_id") or "", tab=tab,
-        link_lang=link_lang, new_voice_url=new_voice_url, archive=_account_archive_for(acct),
+        link_lang=link_lang, new_voice_url=new_voice_url, archive=archive,
         free_quota_bytes=accounts.plan_quota_bytes(accounts.PLAN_FREE),
         tolerance_days=accounts.archive_tolerance_days(),
-        subscription=subscriptions.status_for(acct), sub_notice=request.args.get("sub") or ""))
+        subscription=subscriptions.status_for(acct), sub_notice=request.args.get("sub") or "",
+        archive_nudge=subscriptions.archive_nudge(archive)))
 
 
 @bp.route("/api/account/jobs", methods=["GET"])

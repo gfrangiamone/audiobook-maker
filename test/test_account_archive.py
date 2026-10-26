@@ -94,7 +94,7 @@ def test_archive_status_and_admin_list(acct_env):
     st = accounts.archive_status(accounts.get(acct["id"]))
     assert st == {"plan": "free", "plan_source": "", "plan_until": None, "free_active": True,
                   "quota_bytes": 512 * accounts.MIB, "used_bytes": 300 * accounts.MIB, "jobs": 1,
-                  "items": 0, "state": "active", "grace_until": None}
+                  "items": 0, "state": "active", "grace_until": None, "fill_pct": 58.6}
     out = accounts.admin_list(now=T0 + 60)
     r = out["records"][0]
     assert r["plan"] == "free"
@@ -201,6 +201,29 @@ def test_sweep_archives_within_quota_newest_first(sweep_env, monkeypatch):
     assert cleanup._archive_sweep(T0 + 60, force=True) == 0
     assert cleanup._archive_sweep(T0 + cleanup.ARCHIVE_OVER_QUOTA_RETRY_SEC + 1, force=True) == 1
     assert accounts.archive_protects("old")
+
+
+def test_sweep_over_quota_marks_the_row_until_archived(sweep_env, monkeypatch):
+    """Spec §9.3 punto 2: il libro che non entra per quota resta annotato sulla
+    riga (una volta sola) finche' un passaggio successivo non lo archivia."""
+    monkeypatch.setattr(accounts, "plan_quota_bytes", lambda plan: GIB)
+    acct = _login("a@b.it")
+    _consent(acct)
+    _done_job(acct, "old", T0)
+    _done_job(acct, "new", T0 + 10)
+    _live_tokens(monkeypatch, "old", "new")
+    sizes = {"old": GIB // 2, "new": GIB // 2 + 1}
+    monkeypatch.setattr(cleanup, "_job_archive_bytes", lambda jid: sizes[jid])
+    assert cleanup._archive_sweep(T0, force=True) == 1
+
+    def skipped():
+        return {r["job_id"]: r["archive_skipped_at"] for r in accounts.list_jobs(acct["id"])[0]}
+    assert skipped() == {"old": T0, "new": None}
+    assert not accounts.mark_archive_skipped("old", T0 + 5)      # gia' annotato
+    assert not accounts.mark_archive_skipped("new", T0 + 5)      # archiviato: non si annota
+    accounts.hide_job(acct["id"], "new")
+    assert cleanup._archive_sweep(T0 + cleanup.ARCHIVE_OVER_QUOTA_RETRY_SEC + 1, force=True) == 1
+    assert skipped() == {"old": None}
 
 
 def test_sweep_skips_jobs_without_live_files(sweep_env, monkeypatch):
@@ -362,16 +385,16 @@ def test_plan_header_quota_bar_is_an_accessible_progressbar(acct_env):
           "quota_bytes": 512 * accounts.MIB, "used_bytes": 380 * accounts.MIB, "jobs": 3,
           "items": 0, "state": "active", "grace_until": None}
     html = _render(t, acct, st)
-    bar = re.search(r'<div class="quota"([^>]*)>', html).group(1)
+    bar = re.search(r'<div class="quota[^"]*"([^>]*)>', html).group(1)
     assert 'role="progressbar"' in bar
     assert 'aria-valuemin="0"' in bar and 'aria-valuemax="100"' in bar and 'aria-valuenow="74"' in bar
     assert 'aria-valuetext="380 MB' in bar and "512 MB" in bar
     html = _render(t, acct, {**st, "quota_bytes": 0, "used_bytes": 200 * accounts.MIB, "state": "grace",
                              "grace_until": T0 + 15 * 86400})       # senza quota l'archivio non vuoto e' pieno
-    assert 'aria-valuenow="100"' in re.search(r'<div class="quota"([^>]*)>', html).group(1)
+    assert 'aria-valuenow="100"' in re.search(r'<div class="quota[^"]*"([^>]*)>', html).group(1)
     t = dict(t)
     t["archive_usage"] = '"><script>x</script> {used} {quota}'
-    bar = re.search(r'<div class="quota"([^>]*)>', _render(t, acct, st)).group(1)
+    bar = re.search(r'<div class="quota[^"]*"([^>]*)>', _render(t, acct, st)).group(1)
     assert "<script>" not in bar and '"><' not in bar and "&lt;script&gt;" in bar
 
 

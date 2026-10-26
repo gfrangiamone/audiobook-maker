@@ -230,6 +230,24 @@ def test_auth_me_exposes_subscription_without_prices(web):
     assert "plans" not in sub and "price" not in json.dumps(sub)
 
 
+def test_auth_me_exposes_proposals(web, monkeypatch):
+    """Spec §9.3 punti 2-3: la SPA legge da /api/auth/me se proporre i piani a
+    libreria quasi piena e il tetto/servizi della riga nel modale di pagamento."""
+    c, holder, acct, _fake, _mails = web
+    holder["acct"] = acct
+    me = c.get("/api/auth/me").get_json()
+    assert me["archive_nudge"] == ""
+    assert me["sub_promo"] == {"max_eur": 10.0, "services": list(payment.VOUCHER_DEFAULT_SERVICES)}
+    accounts.free_plan_action(acct["id"], "activate", "account", now=T0)
+    accounts.record_job(acct["id"], "j1", kind="generate", status="done", created_at=T0)
+    accounts.mark_archived("j1", 512 * accounts.MIB, now=T0)
+    holder["acct"] = accounts.get(acct["id"])
+    assert c.get("/api/auth/me").get_json()["archive_nudge"] == "full"
+    monkeypatch.setenv("ABM_SUBSCRIPTIONS_ENABLE", "0")
+    me = c.get("/api/auth/me").get_json()
+    assert me["archive_nudge"] == "" and me["sub_promo"] is None
+
+
 # ------------------------------------------------------------------ fase 2b: cambi di piano
 
 def _paid_via_routes(c, fake, acct):

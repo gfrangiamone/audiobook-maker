@@ -23,6 +23,7 @@ _CSS = page_brand.BASE_CSS + (
     ".planhead p{margin:0}.planhead .meta{margin-top:.3em}"
     ".quota{height:6px;border-radius:3px;background:var(--srf2);margin:.7em 0 .3em;overflow:hidden}"
     ".quota i{display:block;height:100%;background:var(--ac)}"
+    ".quota.near i{background:var(--err)}"
     ".planhead .warn{margin-top:.5em;font-size:.9em;color:var(--err)}"
     ".subplans{display:flex;gap:.8em;flex-wrap:wrap;margin-top:.6em}"
     ".subplan{flex:1 1 11em;padding:.6em .8em;border:1px solid var(--brd);border-radius:10px}"
@@ -439,7 +440,8 @@ def _plan_header(t, account, archive, *, free_quota_bytes, tolerance_days):
         pct = _usage_pct(used, quota)
         usage = _txt(t, "archive_usage", used=accounts.format_bytes(used),
                      quota=accounts.format_bytes(quota))
-        rows.append(f"<div class=\"quota\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\" "
+        rows.append(f"<div class=\"quota{' near' if pct >= 80 else ''}\" role=\"progressbar\" "
+                    f"aria-valuemin=\"0\" aria-valuemax=\"100\" "
                     f"aria-valuenow=\"{int(pct)}\" aria-valuetext=\"{usage}\">"
                     f"<i style=\"width:{int(pct)}%\"></i></div>")
         rows.append("<p class=\"meta\">" + usage + "</p>")
@@ -541,7 +543,7 @@ def _sub_change_line(t, change):
 
 
 def _subscription_block(t, status, *, notice="", tolerance_days=0, free_quota_bytes=0,
-                        free_active=False):
+                        free_active=False, archive_nudge=""):
     """Testata dell'abbonamento (spec §9.2): Gratuito / 5 GB / 10 GB affiancati,
     il piano in vigore segnato con prossimo rinnovo, buono e «Disdici» ben
     visibile; sugli altri «Abbonati», «Passa a questo piano» o, dopo una
@@ -553,9 +555,11 @@ def _subscription_block(t, status, *, notice="", tolerance_days=0, free_quota_by
     enabled = bool(status.get("enabled"))
     if not enabled and not sub:
         return ""
-    rows = [f"<p><strong>{_e(t['sub_title'])}</strong></p>"]
+    rows = [f"<p id=\"abbonamento\"><strong>{_e(t['sub_title'])}</strong></p>"]
     if notice in _SUB_NOTICES:
         rows.append(f"<p class=\"meta\">{_e(t[_SUB_NOTICES[notice]])}</p>")
+    if archive_nudge in ("near_full", "full"):          # spec §9.3 punto 2
+        rows.append(f"<p class=\"warn\">{_e(t['sub_archive_' + archive_nudge])}</p>")
     live = bool(sub) and sub.get("status") in ("active", "past_due", "cancelled", "activating")
     badge = f" <span class=\"badge done\">{_e(t['sub_current_badge'])}</span>"
     dialogs, cards = [], []
@@ -593,7 +597,7 @@ def _subscription_block(t, status, *, notice="", tolerance_days=0, free_quota_by
 def render_history(t, *, lang, account, rows, page, per_page, total, voices_count, voices=None,
                    now=None, sessions=None, current_sid="", tab="books", link_lang="",
                    new_voice_url="", archive=None, free_quota_bytes=0, tolerance_days=0,
-                   subscription=None, sub_notice=""):
+                   subscription=None, sub_notice="", archive_nudge=""):
     """Area personale: intestazione con il bottone «I tuoi dispositivi», testata
     del piano (occupazione dell'archivio e attivazione del gratuito), tab
     audiolibri / voci campionate, azioni in fondo e i popup (dispositivi,
@@ -618,7 +622,8 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
                      tolerance_days=tolerance_days),
         _subscription_block(t, subscription, notice=sub_notice, tolerance_days=tolerance_days,
                             free_quota_bytes=free_quota_bytes,
-                            free_active=account.get("free_consent_at") is not None),
+                            free_active=account.get("free_consent_at") is not None,
+                            archive_nudge=archive_nudge),
         "<nav class=\"tabs\" role=\"tablist\">"
         f"<button type=\"button\" role=\"tab\" data-tab=\"books\" aria-selected=\"{'true' if tab == 'books' else 'false'}\">"
         f"{_e(t['tab_books'])}</button>"
@@ -645,6 +650,8 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
                     cell += f" <span class=\"badge done\">{_e(t['dl_archived'])}</span>"
                 else:
                     cell += f" <span class=\"badge\">{_e(_expiry_label(t, min(d['expires_at'] for d in dls), now))}</span>"
+                    if r.get("archive_skipped_at"):           # spec §9.3 punto 2: link ai piani
+                        cell += f" <a class=\"badge expired\" href=\"#abbonamento\">{_e(t['dl_not_archived'])}</a>"
             elif status == "done":
                 cell = f"<span class=\"badge expired\">{_e(t['dl_expired'])}</span>"
             else:
