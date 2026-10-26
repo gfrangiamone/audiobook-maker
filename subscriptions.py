@@ -696,7 +696,8 @@ def _issue_voucher(sub, payment_id):
 
 
 def record_payment(sub_id, pay, now=None):
-    """Registra un pagamento: issued | duplicate | rejected | ignored."""
+    """Registra un pagamento: issued | deferred (pagamento anticipato di un
+    passaggio, buono a fine periodo) | duplicate | rejected | ignored."""
     now = _now(now)
     sub = get(sub_id)
     if sub is None or pay is None or pay.state != "completed" or not pay.payment_id:
@@ -754,7 +755,8 @@ def record_payment(sub_id, pay, now=None):
             _mail("voucher", sub, voucher_until=int(v["expires_at"]))
         _log(f"SUB_CHANGE:{sub['change_kind']}:{sub['plan']}" if first
              else f"SUB_RENEWED:{sub['plan']}", sub_id)
-    return "issued"
+    # collaudo webhook 26/10/2026: «issued» sulla setup fee diceva un buono che non c'era ancora
+    return "deferred" if due else "issued"
 
 
 def reverse_payment(provider, pay, now=None, alert=True):

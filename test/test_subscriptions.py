@@ -656,7 +656,7 @@ def test_upgrade_prepaid_no_double_charge(sub_env):
         ("switching", "upgrade", start, _sub_of(old)["id"])
     assert sub_env.fake.created[new] == {"start_at": start, "setup_fee_eur": 10.0, "plan": "sub_10"}
     ev = sub_env.fake.pay(new, "FEE1", T0 + 10 * DAY + 30, amount=10.0, next_at=start)
-    assert subscriptions.handle_event("paypal", ev, now=T0 + 10 * DAY + 31) == "issued"
+    assert subscriptions.handle_event("paypal", ev, now=T0 + 10 * DAY + 31) == "deferred"
     n, o = _sub_of(new), _sub_of(old)
     assert (n["status"], n["period_start"], n["period_end"]) == ("active", e1, start)
     assert (o["status"], o["replaced_by"]) == ("replaced", n["id"])
