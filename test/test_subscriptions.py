@@ -509,3 +509,49 @@ def test_add_month():
     feb = subscriptions._add_month(jan31)
     assert time.gmtime(feb)[:3] == (2027, 2, 28)
     assert time.gmtime(subscriptions._add_month(feb))[:3] == (2027, 3, 28)
+
+
+# ------------------------------------------------------------------ collaudo sandbox 2026-10-26
+
+def test_activating_rechecked_every_minute_then_slower(sub_env):
+    acct, ext = _subscribe(sub_env, "fast@x.it")
+    sub_env.fake.set(ext, status="ACTIVE")                       # approvato, pagamento non ancora elencato
+    sid = _sub_of(ext)["id"]
+    row = subscriptions.refresh(sid, now=T0 + 30)
+    assert row["status"] == "activating" and row["next_check_at"] == T0 + 30 + 60
+    row = subscriptions.refresh(sid, now=T0 + 30 + 3600)
+    assert row["next_check_at"] == T0 + 30 + 3600 + 600
+
+
+def test_poke_activates_without_waiting_the_sweep(sub_env):
+    acct, ext = _subscribe(sub_env, "poke@x.it")
+    sub_env.fake.set(ext, status="ACTIVE")
+    sid = _sub_of(ext)["id"]
+    subscriptions.refresh(sid, now=T0 + 30)
+    sub_env.fake.pay(ext, "SALEP", T0 + 40)                      # arriva dopo il ritorno
+    assert subscriptions.poke(acct, now=T0 + 40)["status"] == "activating"   # appena controllata
+    assert subscriptions.poke(acct, now=T0 + 30 + subscriptions.POKE_MIN_SEC)["status"] == "active"
+    assert len(_vouchers_of(acct)) == 1
+    assert subscriptions.poke(None) is None
+
+
+def test_reconcile_detects_refund_without_webhook(sub_env):
+    acct, ext = _paid(sub_env, "rimb@x.it")
+    pid = "SALE" + ext[2:]
+    sub_env.fake.payments[ext] = [dataclasses.replace(p, state="refunded")
+                                  for p in sub_env.fake.payments[ext]]
+    sub = _sub_of(ext)
+    subscriptions.sweep(now=sub["next_check_at"] + 1, force=True)
+    v = _vouchers_of(acct)[0]
+    assert v["revoked"] and v["remaining_eur"] == 0.0
+    with db.tx() as c:
+        assert c.execute("SELECT state FROM subscription_payments WHERE payment_id=?",
+                         (pid,)).fetchone()[0] == "refunded"
+    assert sub_env.alerts == ["reversal"]
+    subscriptions.sweep(now=sub["next_check_at"] + 2 * DAY, force=True)
+    assert sub_env.alerts == ["reversal"]                          # una volta sola
+
+
+def test_reconcile_interval_default_is_one_minute(monkeypatch):
+    monkeypatch.delenv("ABM_SUB_RECONCILE_SEC", raising=False)
+    assert subscriptions._reconcile_sec() == 60

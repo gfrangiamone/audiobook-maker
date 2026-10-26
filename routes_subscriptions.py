@@ -54,9 +54,13 @@ def _account():
 
 @bp.route("/api/subscription", methods=["GET"])
 def api_subscription_status():
+    """Stato per l'Area personale; con un abbonamento in attivazione lo
+    ricontrolla subito presso il fornitore (`subscriptions.poke`), cosi' la
+    pagina che aspetta la conferma la vede appena c'e'."""
     acct, err = _account()
     if err:
         return err
+    subscriptions.poke(acct)
     return jsonify(subscriptions.status_for(acct))
 
 
@@ -96,7 +100,8 @@ def account_subscription_return():
     if ext and ext != sub["external_id"]:
         abort(404)
     sub = subscriptions.reconcile_one(sub["id"])
-    return redirect("/account?sub=" + ("ok" if sub["status"] == "active" else "pending"))
+    notice = {"active": "ok", "activating": "pending", "pending": "pending"}.get(sub["status"])
+    return redirect("/account" + (f"?sub={notice}" if notice else ""))
 
 
 @bp.route("/api/subscription/cancel", methods=["POST"])

@@ -122,6 +122,13 @@ PRICE_ENV = {"sub_5": ("ABM_SUB5_PRICE_EUR", 5.0), "sub_10": ("ABM_SUB10_PRICE_E
 VOUCHER_ENV = {"sub_5": ("ABM_SUB5_VOUCHER_EUR", 5.0), "sub_10": ("ABM_SUB10_VOUCHER_EUR", 10.0)}
 SWEEP_BATCH = 50                 # righe controllate per giro
 ABANDONED_WATCH_SEC = 7 * 86400  # un checkout abbandonato si sorveglia ancora (link vecchio approvato)
+# Approvato ma senza pagamento confermato: PayPal elenca la transazione qualche
+# secondo dopo il ritorno, quindi nella prima ora la riga si ricontrolla a ogni
+# minuto (poi ogni 10); chi guarda la pagina la fa ricontrollare subito (`poke`),
+# al piu' ogni POKE_MIN_SEC.
+ACTIVATING_RECHECK_SEC = 60
+ACTIVATING_FAST_SEC = 3600
+POKE_MIN_SEC = 15
 _DAY = 86400
 
 _cfg = {"log_activity": None}
@@ -162,7 +169,7 @@ def _checkout_ttl():
 
 
 def _reconcile_sec():
-    return env_int("ABM_SUB_RECONCILE_SEC", 900, floor=60)
+    return env_int("ABM_SUB_RECONCILE_SEC", 60, floor=60)
 
 
 def _provider(name=DEFAULT_PROVIDER):
@@ -255,9 +262,13 @@ def current(account_id, now=None):
                     (account_id, now - _checkout_ttl()))
 
 
-def _next_check(status, period_end, now, cancel_pending=False):
-    """Quando ricontrollare la riga (0 = mai piu')."""
-    if cancel_pending or status in ("pending", "activating"):
+def _next_check(status, period_end, now, cancel_pending=False, approved_at=None):
+    """Quando ricontrollare la riga (0 = mai piu'). Un'attivazione recente
+    (`approved_at` nell'ultima ora) si ricontrolla a ogni minuto."""
+    if status == "activating" and not cancel_pending:
+        fast = approved_at is not None and now - int(approved_at) < ACTIVATING_FAST_SEC
+        return now + (ACTIVATING_RECHECK_SEC if fast else 600)
+    if cancel_pending or status == "pending":
         return now + 600
     end = period_end or now
     if status == "active":
@@ -415,7 +426,8 @@ def refresh(sub_id, now=None):
         cancel_pending = bool(sub["cancel_requested_at"]) and not (
             sub["cancel_confirmed_at"] or cols.get("cancel_confirmed_at"))
         cols["next_check_at"] = (now + 600 if new == "abandoned"
-                                 else _next_check(new, sub["period_end"], now, cancel_pending))
+                                 else _next_check(new, sub["period_end"], now, cancel_pending,
+                                                  sub["approved_at"] or cols.get("approved_at")))
         _update(c, sub_id, now, **cols)
         sub = _get(c, sub_id)
     _project(sub)
@@ -684,10 +696,15 @@ def request_cancel(account_id, reason, now=None):
 # ---------------------------------------------------------------- riconciliazione
 
 def _collect_payments(sub, now):
-    """Registra i pagamenti remoti che i webhook non hanno portato."""
+    """Registra i pagamenti remoti che i webhook non hanno portato e applica i
+    rimborsi persi: un pagamento che il fornitore da' come rimborsato revoca il
+    suo voucher anche senza webhook."""
     since = int(sub["period_start"] or sub["created_at"]) - 2 * _DAY
     for pay in _provider(sub["provider"]).list_payments(sub["external_id"], since, now):
-        record_payment(sub["id"], pay, now=now)
+        if pay.state == "completed":
+            record_payment(sub["id"], pay, now=now)
+        elif pay.state in ("refunded", "reversed"):
+            reverse_payment(sub["provider"], pay, now)
 
 
 def _sweep_abandoned(sub, now, out):
@@ -736,6 +753,19 @@ def reconcile_one(sub_id, now=None):
     except Exception as e:  # noqa: BLE001 - ci pensano webhook e riconciliazione
         print(f"[subscriptions] riconciliazione di {sub_id}: {type(e).__name__}: {e}", flush=True)
     return get(sub_id)
+
+
+def poke(account, now=None):
+    """Chi guarda l'abbonamento mentre e' in attivazione non aspetta il giro:
+    la riga si ricontrolla subito, al piu' ogni POKE_MIN_SEC. Ritorna la riga
+    corrente (o None)."""
+    now = _now(now)
+    if not account or not _ready():
+        return None
+    sub = current(account["id"], now)
+    if not sub or sub["status"] != "activating" or now - int(sub["updated_at"]) < POKE_MIN_SEC:
+        return sub
+    return reconcile_one(sub["id"], now)
 
 
 def _note_failure(sub, now, err):

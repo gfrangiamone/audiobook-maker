@@ -83,6 +83,7 @@ def test_subscription_block_active_cancelled_and_past_due():
     assert 'id="subCancel"' not in gone and "2027-01-15" in gone
     act = account_page._subscription_block(t, _status(dict(sub, status="activating")))
     assert account_page._e(t["sub_activating"]) in act and "data-subplan" not in act
+    assert "data-subpoll" in act and "data-subpoll" not in html
 
 
 def test_subscription_block_notice_whitelisted():

@@ -302,6 +302,12 @@ _HISTORY_JS = (
     "post('/api/subscription/checkout',{plan:b.getAttribute('data-subgo'),accept_terms:true,"
     "waive_withdrawal:true}).then(function(r){return r.json().then(function(j){return r.ok&&j&&j.approve_url?j:null;});})"
     ".then(function(j){if(j){location.href=j.approve_url;}else{fail();}}).catch(fail);};});"
+    "if(document.querySelector('[data-subpoll]')){var spn=0;(function spoll(){"
+    "fetch('/api/subscription',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;})"
+    ".then(function(d){var s=d&&d.subscription?d.subscription.status:'';"
+    "if(s==='active'){location.href='/account?sub=ok';return;}"
+    "if(d&&s!=='activating'){location.href='/account';return;}"
+    "if(++spn<24)setTimeout(spoll,5000);}).catch(function(){if(++spn<24)setTimeout(spoll,5000);});})();}"
     "var sc=document.getElementById('subCancel'),scd=document.getElementById('subCancelDlg'),"
     "scc=document.getElementById('subCancelConfirm');"
     "if(sc)sc.onclick=function(){openDlg(scd);};"
@@ -490,7 +496,7 @@ def _subscription_block(t, status, *, notice="", tolerance_days=0):
                                                    amount=accounts.format_eur(v["remaining_eur"]),
                                                    date=accounts.utc_day(v["expires_at"])) + "</p>")
     elif st == "activating":
-        rows.append(f"<p class=\"meta\">{_e(t['sub_activating'])}</p>")
+        rows.append(f"<p class=\"meta\" data-subpoll>{_e(t['sub_activating'])}</p>")
     elif status.get("enabled"):
         cards = []
         for p in status.get("plans") or []:

@@ -100,6 +100,18 @@ def test_checkout_returns_approve_url_and_status(web):
     assert st["subscription"]["status"] == "pending" and st["plans"][1]["price_eur"] == 10.0
 
 
+def test_status_route_pokes_activating_subscription(web):
+    c, holder, acct, fake, _mails = web
+    holder["acct"] = acct
+    ext = _ext(_checkout(c))
+    fake.set(ext, status="ACTIVE")
+    sid = subscriptions.current(acct["id"])["id"]
+    subscriptions.refresh(sid, now=T0 - 60)
+    fake.pay(ext, "SALEQ", T0 - 55)
+    st = c.get("/api/subscription").get_json()                     # ora reale: oltre POKE_MIN_SEC
+    assert st["subscription"]["status"] == "active"
+
+
 def test_return_route_activates_and_rejects_other_account(web):
     c, holder, acct, fake, mails = web
     holder["acct"] = acct
@@ -114,6 +126,9 @@ def test_return_route_activates_and_rejects_other_account(web):
     r = c.get(f"/account/subscription/return?sid={sid}&subscription_id={ext}")
     assert r.status_code == 302 and r.headers["Location"].endswith("/account?sub=ok")
     assert accounts.get(acct["id"])["plan_source"] == "paid" and mails == [("active", "a@x.it")]
+    subscriptions.request_cancel(acct["id"], "user")
+    r = c.get(f"/account/subscription/return?sid={sid}")            # disdetto: nessun avviso di attesa
+    assert r.headers["Location"].endswith("/account")
     holder["acct"] = None
     assert c.get(f"/account/subscription/return?sid={sid}").headers["Location"].endswith("/account")
 

@@ -1470,15 +1470,17 @@ Abbonamenti `sub_5`/`sub_10` con PayPal Subscriptions (fase 2a, v3.155.0). Spazi
 
 | Variabile / costante | Default | Significato | File:riga |
 |---|---|---|---|
-| `ABM_SUBSCRIPTIONS_ENABLE` | `0` | Interruttore della vendita: spento, nessun pulsante e `checkout` 404. Webhook e riconciliazione lavorano comunque sugli abbonamenti esistenti. Serve anche `billing_paypal.available()` (credenziali, plan e webhook configurati). | `subscriptions.py:175` |
+| `ABM_SUBSCRIPTIONS_ENABLE` | `0` | Interruttore della vendita: spento, nessun pulsante e `checkout` 404. Webhook e riconciliazione lavorano comunque sugli abbonamenti esistenti. Serve anche `billing_paypal.available()` (credenziali, plan e webhook configurati). | `subscriptions.py:182` |
 | `ABM_PAYPAL_PLAN_SUB5` / `ABM_PAYPAL_PLAN_SUB10` | `""` | Id dei plan PayPal (`P-…`) creati da `python -m billing_paypal setup`, diversi fra sandbox e live. | `billing_paypal.py:30` |
 | `ABM_PAYPAL_WEBHOOK_ID` | `""` | Id del webhook registrato nel pannello PayPal: senza, la firma non si verifica e ogni webhook e' 400. | `billing_paypal.py:286` |
 | `ABM_SUB5_PRICE_EUR` / `ABM_SUB10_PRICE_EUR` | `5` / `10` (floor 0,5) | Canone mensile mostrato all'utente e usato dal setup dei plan; un pagamento di importo diverso si accetta con email admin `amount_mismatch`. | `subscriptions.py:121` |
 | `ABM_SUB5_VOUCHER_EUR` / `ABM_SUB10_VOUCHER_EUR` | `5` / `10` | Importo del voucher emesso a ogni periodo pagato (`kind="subscription"`, servizi `VOUCHER_DEFAULT_SERVICES`, spendibile solo dall'account). | `subscriptions.py:122` |
-| `ABM_SUB_VOUCHER_DAYS` | `30` (floor 1) | Validita' del voucher dall'emissione; nessun riporto. | `subscriptions.py:157` |
-| `ABM_SUB_PAST_DUE_DAYS` | `10` (floor 0) | Grazia oltre la fine del periodo mentre PayPal ritenta un rinnovo fallito (2 tentativi a 5 giorni, `payment_failure_threshold=1`); con la disdetta chiesta non si applica. | `subscriptions.py:153` |
-| `ABM_SUB_RECONCILE_SEC` | `900` (floor 60) | Intervallo minimo fra due giri di riconciliazione (stato remoto, pagamenti persi, disdette da confermare, voucher non emessi). | `subscriptions.py:165` |
-| `ABM_SUB_CHECKOUT_TTL_SEC` | `10800` (floor 600) | Un checkout non approvato entro questo tempo diventa `abandoned` (misura dell'attrito); il link vecchio resta sorvegliato 7 giorni (`ABANDONED_WATCH_SEC`) e un pagamento tardivo si rimborsa. | `subscriptions.py:161` |
+| `ABM_SUB_VOUCHER_DAYS` | `30` (floor 1) | Validita' del voucher dall'emissione; nessun riporto. | `subscriptions.py:164` |
+| `ABM_SUB_PAST_DUE_DAYS` | `10` (floor 0) | Grazia oltre la fine del periodo mentre PayPal ritenta un rinnovo fallito (2 tentativi a 5 giorni, `payment_failure_threshold=1`); con la disdetta chiesta non si applica. | `subscriptions.py:160` |
+| `ABM_SUB_RECONCILE_SEC` | `60` (floor 60) | Intervallo minimo fra due giri di riconciliazione (stato remoto, pagamenti e rimborsi persi, disdette da confermare, voucher non emessi). Ogni giro guarda solo le righe con `next_check_at` scaduto: attive al piu' una volta al giorno, in attivazione ogni minuto nella prima ora. Era 900 fino al collaudo sandbox del 26/10/2026, che ha mostrato l'attivazione ferma 10 minuti senza webhook. | `subscriptions.py:172` |
+| `ACTIVATING_RECHECK_SEC` / `ACTIVATING_FAST_SEC` | `60` / `3600` | Un abbonamento approvato ma senza pagamento elencato si ricontrolla ogni minuto per un'ora dall'approvazione, poi ogni 10 minuti: PayPal elenca la transazione qualche secondo dopo il ritorno dal checkout. | `subscriptions.py:129` |
+| `POKE_MIN_SEC` | `15` | `GET /api/subscription` (polling della pagina in attesa, ogni 5 s per 2 minuti) ricontrolla subito presso PayPal un abbonamento in attivazione, al piu' ogni 15 s per riga (`subscriptions.poke`). | `subscriptions.py:131` |
+| `ABM_SUB_CHECKOUT_TTL_SEC` | `10800` (floor 600) | Un checkout non approvato entro questo tempo diventa `abandoned` (misura dell'attrito); il link vecchio resta sorvegliato 7 giorni (`ABANDONED_WATCH_SEC`) e un pagamento tardivo si rimborsa. | `subscriptions.py:168` |
 | `SWEEP_BATCH` | `50` | Righe controllate per giro di riconciliazione. | `subscriptions.py:123` |
 | `SUB_TERMS_VERSION` | `"2026-10-23"` | Versione delle condizioni accettate al checkout (registrata sulla riga con `withdrawal_waived_at`). | `subscriptions.py:41` |
 | Rate limit checkout | 10/min, 30/h per IP (`sub_checkout`) | | `routes_subscriptions.py` |
