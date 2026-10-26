@@ -1435,8 +1435,7 @@ def _generate_optimized_abm(job_id):
     # flag parentesi del job (assenti in fase di ottimizzazione = default della
     # generazione). Cosi` chi apre il .abm ritrova il maiuscolo gia' abbassato e
     # il punto dopo il titolo, che e` esattamente cio` che sentira`.
-    strip_round = not job.get("read_round_parens", False)
-    strip_square = not job.get("read_square_brackets", False)
+    paren = text_reflow.paren_strip_flags(job)
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         chapters_manifest = []
@@ -1478,9 +1477,7 @@ def _generate_optimized_abm(job_id):
                 # i paragrafi restano. Le parole sono comunque quelle del TTS.
                 # (Il placeholder di leak resta fuori: vive tra parentesi quadre
                 # e lo stripping lo cancellerebbe.)
-                ch_text_safe = prepare_tts_text(
-                    ch_text_safe, strip_round=strip_round,
-                    strip_square=strip_square, flatten=False)
+                ch_text_safe = prepare_tts_text(ch_text_safe, **paren, flatten=False)
 
             zf.writestr(f"chapters/{ch_filename}", ch_text_safe)
             entry = {
@@ -3465,6 +3462,7 @@ def run_optimization(job_id, selected_chapters=None):
                     _est_autogen = _tts_engines.estimate("gemini", 
                         info.chapters, voice,
                         language=_lang_autogen, rate_pct=rate,
+                        **text_reflow.paren_strip_flags(job),
                     )
                     job["gemini_estimate"] = _est_autogen
                 except Exception as _e_est_ag:
@@ -3484,6 +3482,7 @@ def run_optimization(job_id, selected_chapters=None):
                         language=((job.get("opt_lang") or "").lower()
                                   or _norm_lang(getattr(info, "language", ""))
                                   or "en"),
+                        **text_reflow.paren_strip_flags(job),
                     )
                     job["speechify_estimate"] = _est_spx_ag
                 except Exception as _e_est_spx_ag:
@@ -3500,6 +3499,7 @@ def run_optimization(job_id, selected_chapters=None):
                         language=((job.get("opt_lang") or "").lower()
                                   or _norm_lang(getattr(info, "language", ""))
                                   or "it"),
+                        **text_reflow.paren_strip_flags(job),
                     )
                 except Exception as _e_est_vox_ag:
                     print(f"[{job_id}] auto-gen voxcpm_estimate persist failed (non-fatal): {_e_est_vox_ag}")
@@ -5026,10 +5026,12 @@ def _rate_audit_fields(job):
 
 
 # Copertura del testo: caratteri del piano TTS contro quelli quotati nella
-# stima PREMIUM. Il prezzo si calcola su `pricing_common.billable_text`
-# (parentesi comprese), la sintesi su `prepare_tts_text`: nessun controllo li
-# confrontava, e il job sLRx3imAutQ0nHWhuJTyuQ (25/10/2026) e' stato fatturato
-# per 481k caratteri e letto per 220k. Sotto soglia il job prosegue: evento
+# stima PREMIUM. Il prezzo si calcola su `pricing_common.billable_text`, la
+# sintesi su `prepare_tts_text`: nessun controllo li confrontava, e il job
+# sLRx3imAutQ0nHWhuJTyuQ (25/10/2026) e' stato fatturato per 481k caratteri e
+# letto per 220k, perche' il prezzo contava anche gli incisi tolti. Dalla
+# v3.156.0 entrambi passano da `text_reflow.drop_parenthetical`; il controllo
+# resta come rete per altre divergenze. Sotto soglia il job prosegue: evento
 # TEXT_DROP nell'activity log (che alimenta il digest admin) e campi nell'audit.
 TEXT_COVERAGE_ALERT_PCT_DEFAULT = 85.0
 
@@ -6743,10 +6745,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Lettura opzionale del testo tra parentesi: di default (flag assenti o
         # False) il contenuto tra parentesi tonde/quadre viene rimosso dal TTS.
         # L'utente puo` scegliere di includerlo (read_* True -> strip_* False).
-        _strip_round = not bool(job.get("read_round_parens", False))
-        _strip_square = not bool(job.get("read_square_brackets", False))
-        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes,
-                            strip_round=_strip_round, strip_square=_strip_square,
+        _paren = text_reflow.paren_strip_flags(job)
+        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes, **_paren,
                             pre_split=_pick_pre_split(voice),
                             sentence_slack=_pick_sentence_slack(voice))
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
@@ -6798,7 +6798,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # Direttiva d'accento risolta (non il codice grezzo): incorpora anche
             # la lingua di lettura, cosi' un cambio di lingua invalida il riuso.
             accent=gemini_accent_directive,
-            strip_round=_strip_round, strip_square=_strip_square)
+            **_paren)
         try:
             _reusable_chunks = chunk_reuse.reusable_indices(
                 work_dir, _reuse_fp, total_chunks, _chunk_ext, plan=plan)

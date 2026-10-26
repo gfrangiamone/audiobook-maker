@@ -1857,7 +1857,7 @@ def compute_user_price_eur(audio_seconds, model_key):
     }
 
 
-def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
+def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0, strip_round=True, strip_square=True):
     """Stima prezzo e costo della generazione audio di un libro.
 
     Due stime distinte, per due usi distinti:
@@ -1872,6 +1872,8 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
         chapters: lista di oggetti con attributo `.text` (es. Chapter dataclass).
         voice_id: deve iniziare con 'gemini:'.
         language: ISO 639-1 (it/en/fr/es/de/zh/hi/...). Default 'it'.
+        strip_round, strip_square: testo tra parentesi tolto dal piano, e
+            quindi dal prezzo (`text_reflow.paren_strip_flags`).
     """
     model_key, _, voice_name = parse_voice_id(voice_id)
 
@@ -1881,7 +1883,8 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
     # e quindi nel prezzo (pricing_common.billable_text).
     from text_reflow import spoken_title_prefix
     chars_per_chapter, chars_total, normalized_parts = _pricing.billable_chars(
-        chapters, spoken_title_prefix, normalize=_normalize_text)
+        chapters, spoken_title_prefix, normalize=_normalize_text,
+        strip_round=strip_round, strip_square=strip_square)
 
     combined = " ".join(normalized_parts)
     audio_seconds = list_audio_seconds(combined, language=language, rate_pct=rate_pct)

@@ -344,7 +344,7 @@ def compute_user_price_eur(chars, language=None):
     }
 
 
-def estimate_book_cost(chapters, language="it"):
+def estimate_book_cost(chapters, language="it", strip_round=True, strip_square=True):
     """Stima end-to-end sui caratteri letti, capitolo per capitolo.
 
     Corpo del capitolo piu' il titolo che il piano gli antepone: il worker
@@ -355,8 +355,11 @@ def estimate_book_cost(chapters, language="it"):
         chapters: lista di oggetti con attributo `.text` (e `.title`).
         language: ISO 639-1 della voce scelta (pesa i caratteri, vedi
             `lang_price_factor`).
+        strip_round, strip_square: testo tra parentesi tolto dal piano, e
+            quindi dal prezzo (`text_reflow.paren_strip_flags`).
     """
-    chars_per_chapter, chars_total, _ = pricing_common.billable_chars(chapters, spoken_title_prefix)
+    chars_per_chapter, chars_total, _ = pricing_common.billable_chars(
+        chapters, spoken_title_prefix, strip_round=strip_round, strip_square=strip_square)
     price = compute_user_price_eur(chars_total, language)
     return {
         "chars_total": chars_total,

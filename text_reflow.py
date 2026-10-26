@@ -276,6 +276,52 @@ def _paren_strip_max_chars():
     return env_int("ABM_PAREN_STRIP_MAX_CHARS", PAREN_STRIP_MAX_CHARS_DEFAULT)
 
 
+def drop_parenthetical(text, strip_round=True, strip_square=True):
+    """Il testo senza gli incisi tra tonde e/o quadre (anche annidati), con
+    spazi e a-capo lasciati come sono. E' la parte di `_strip_parenthetical`
+    che decide cosa la voce non legge: la usa anche il prezzo
+    (`pricing_common.billable_text`), che fattura il testo letto.
+
+    Uno span oltre `ABM_PAREN_STRIP_MAX_CHARS` caratteri, o con una riga vuota
+    dentro, resta intatto (vedi la guardia qui sopra). Gli span tolti diventano
+    un carattere segnaposto ripetuto per la loro lunghezza, cosi' la coppia che
+    li contiene si misura sul testo di partenza; i segnaposto spariscono alla
+    fine. Una coppia tenuta non fa da ancora: `[^()]*` non la attraversa.
+    """
+    if not (strip_round or strip_square):
+        return text
+    max_chars = _paren_strip_max_chars()
+    used = set(text)  # una scansione sola, non una per candidato PUA
+    # PUA piena: hole '' toglie gli span a vuoto e replace('', '') e' neutro (misura storica).
+    hole = next((chr(c) for c in range(0xE000, 0xF900) if chr(c) not in used), '')
+
+    def _drop(m):
+        span = m.group(0)
+        if (max_chars > 0 and len(span) > max_chars) or _BLANK_LINE_RE.search(span):
+            return span
+        return hole * len(span)
+
+    prev = None
+    while prev != text:
+        prev = text
+        if strip_round:
+            text = _ROUND_SPAN_RE.sub(_drop, text)
+        if strip_square:
+            text = _SQUARE_SPAN_RE.sub(_drop, text)
+    return text.replace(hole, '')
+
+
+def paren_strip_flags(src):
+    """`{"strip_round", "strip_square"}` dalle scelte dell'utente
+    `read_round_parens` / `read_square_brackets` di un job, di un descrittore
+    o del body di una richiesta: assenti = testo tra parentesi tolto (il
+    default). Da passare con `**` a `_plan_chunks`, `prepare_tts_text` e alle
+    stime di prezzo, che cosi' leggono e fatturano lo stesso testo."""
+    src = src or {}
+    return {"strip_round": not bool(src.get("read_round_parens", False)),
+            "strip_square": not bool(src.get("read_square_brackets", False))}
+
+
 def _strip_parenthetical(text, strip_round=True, strip_square=True, flatten=True):
     """Rimuove il contenuto tra parentesi tonde e/o quadre (anche annidate).
 
@@ -294,32 +340,9 @@ def _strip_parenthetical(text, strip_round=True, strip_square=True, flatten=True
         hanno bisogno degli a-capo: appiattisce lui alla fine. Con False gli
         spazi DENTRO la riga vengono comunque collassati, gli a-capo no.
 
-    Uno span oltre `ABM_PAREN_STRIP_MAX_CHARS` caratteri, o con una riga vuota
-    dentro, resta intatto (vedi la guardia qui sopra). Gli span tolti diventano
-    un carattere segnaposto ripetuto per la loro lunghezza, cosi' la coppia che
-    li contiene si misura sul testo di partenza; i segnaposto spariscono alla
-    fine. Una coppia tenuta non fa da ancora: `[^()]*` non la attraversa.
+    La rimozione degli span e' `drop_parenthetical`.
     """
-    if strip_round or strip_square:
-        max_chars = _paren_strip_max_chars()
-        used = set(text)  # una scansione sola, non una per candidato PUA
-        # PUA piena: hole '' toglie gli span a vuoto e replace('', '') e' neutro (misura storica).
-        hole = next((chr(c) for c in range(0xE000, 0xF900) if chr(c) not in used), '')
-
-        def _drop(m):
-            span = m.group(0)
-            if (max_chars > 0 and len(span) > max_chars) or _BLANK_LINE_RE.search(span):
-                return span
-            return hole * len(span)
-
-        prev = None
-        while prev != text:
-            prev = text
-            if strip_round:
-                text = _ROUND_SPAN_RE.sub(_drop, text)
-            if strip_square:
-                text = _SQUARE_SPAN_RE.sub(_drop, text)
-        text = text.replace(hole, '')
+    text = drop_parenthetical(text, strip_round, strip_square)
     if flatten:
         return _flatten_ws(text)
     text = re.sub(r'[^\S\n]+', ' ', text)

@@ -9,6 +9,7 @@ import pytest
 
 import monthly_ledger as ml
 import pricing_common as pc
+import text_reflow
 
 
 def test_keys_and_pruning():
@@ -157,7 +158,11 @@ def test_db_helpers_and_activity_db_share_them(tmp_path):
 
 
 def test_new_leaves_import_only_leaves():
-    for mod, allowed in ((ml, {"contextlib", "threading", "datetime", "fileio"}), (pc, {"env_utils"})):
+    # pricing_common usa text_reflow (prezzo sul testo letto, v3.156.0): resta
+    # foglia finche' anche text_reflow lo e'.
+    for mod, allowed in ((ml, {"contextlib", "threading", "datetime", "fileio"}),
+                         (pc, {"env_utils", "text_reflow"}),
+                         (text_reflow, {"re", "unicodedata", "env_utils"})):
         src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
         mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
                 for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}

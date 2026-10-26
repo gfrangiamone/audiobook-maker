@@ -67,10 +67,13 @@ def test_estimate_dispatch_passes_each_engine_its_signature(monkeypatch):
     assert tts_engines.estimate("speechify", chs, language="it") == {"s": 1}      # solo inglese
     assert tts_engines.estimate("voxcpm", chs, language="de") == {"v": 1}
     assert tts_engines.estimate("voxcpm", chs) == {"v": 1}
-    assert calls == [("g", (chs, "gemini:flash31:Zephyr"), {"language": "fr", "rate_pct": "+10%"}),
-                     ("s", (chs,), {"language": "en"}),
-                     ("v", (chs,), {"language": "de"}),
-                     ("v", (chs,), {"language": "it"})]
+    assert tts_engines.estimate("voxcpm", chs, language="it", strip_round=False) == {"v": 1}
+    strip = {"strip_round": True, "strip_square": True}            # default: parentesi non lette
+    assert calls == [("g", (chs, "gemini:flash31:Zephyr"), {"language": "fr", "rate_pct": "+10%", **strip}),
+                     ("s", (chs,), {"language": "en", **strip}),
+                     ("v", (chs,), {"language": "de", **strip}),
+                     ("v", (chs,), {"language": "it", **strip}),
+                     ("v", (chs,), {"language": "it", "strip_round": False, "strip_square": True})]
 
 
 def test_no_direct_estimate_dispatch_left_in_app_and_engine():

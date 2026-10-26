@@ -2505,7 +2505,8 @@ function openPaymentModal(estimate) {
       endpoint: '/api/paypal_create_order_gemini',
       buildBody: () => {
         const _selLang = bookLangState.code || cl || '';
-        return { job_id: jobId, voice_id: (typeof getCurrentVoiceId === 'function') ? getCurrentVoiceId() : '', selected_chapters: (typeof _getSelectedChapterIndexes === 'function') ? _getSelectedChapterIndexes() : [], ai_opt_enabled: !!document.getElementById('aiToggle')?.checked, rate: document.getElementById('vr')?.value || '+0%', lang: _selLang, amount_eur: _payState.total };
+        // Parentesi lette: il prezzo PREMIUM e' sul testo letto, come nella stima.
+        return { job_id: jobId, voice_id: (typeof getCurrentVoiceId === 'function') ? getCurrentVoiceId() : '', selected_chapters: (typeof _getSelectedChapterIndexes === 'function') ? _getSelectedChapterIndexes() : [], ai_opt_enabled: !!document.getElementById('aiToggle')?.checked, rate: document.getElementById('vr')?.value || '+0%', lang: _selLang, ...getParenFlags(), amount_eur: _payState.total };
       },
     },
     onConfirm: (token) => startCombinedGeneration(token),

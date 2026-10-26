@@ -86,7 +86,7 @@ def _fake_gemini(monkeypatch, list_price=8.99, google_cost=3.0):
         GEMINI_MODELS = {"flash31": {}}
 
         @staticmethod
-        def estimate_book_cost(chs, voice, language="it", rate_pct="+0%"):
+        def estimate_book_cost(chs, voice, language="it", rate_pct="+0%", **_paren):
             return {"chars_total": sum(len(c.text) for c in chs),
                     "list_price_eur": list_price, "user_price_eur": list_price,
                     "google_cost_eur": google_cost, "input_tokens_est": 10,
@@ -191,6 +191,29 @@ def test_premium_paid_starts_and_persists_estimate_without_quota_gate(tmp_path, 
     finally:
         audiobook_app.jobs.pop("Jrec", None)
     assert len(started) == 1
+
+
+def test_premium_estimate_follows_descriptor_parentheses(tmp_path, monkeypatch, started):
+    """Il prezzo e' sul testo letto (25/10/2026): il recovery stima con le
+    parentesi scelte al lancio, come il pagamento."""
+    G = _fake_gemini(monkeypatch, list_price=8.99)
+    seen = []
+    import gemini_tts
+    monkeypatch.setattr(gemini_tts, "estimate_book_cost",
+                        lambda chs, voice, **k: seen.append(k) or G.estimate_book_cost(chs, voice, **k))
+    _no_fallback(monkeypatch)
+    monkeypatch.setattr(audiobook_app, "_premium_quota_decision",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("job pagato: la quota non c'entra")))
+    rec = _rec(tmp_path, PREMIUM, selected_chapters=[0], read_round_parens=True,
+               payment={"token": "ORD", "total_eur": 8.99, "method": "paypal"})
+    _fresh(tmp_path, monkeypatch)
+    monkeypatch.setattr(audiobook_app, "_parse_book", lambda src: _info())
+    try:
+        assert recovery._reenqueue_orphan(rec["id"], rec) is True
+    finally:
+        audiobook_app.jobs.pop("Jrec", None)
+    assert seen and all((k["strip_round"], k["strip_square"]) == (False, True) for k in seen)
 
 
 def test_premium_over_char_cap_is_rejected(tmp_path, monkeypatch, started):
