@@ -5492,9 +5492,75 @@ function _setCancelButtonMode(mode){
   }
 }
 
+// Annullamento dell'ottimizzazione AI. Su un job pagato chiede conferma: il
+// bottone compare appena chiuso il pagamento, e un tocco accidentale (job
+// LnRy1Zl1, 26/10/2026: annullato un secondo dopo l'avvio) trasformava il
+// pagamento in un buono che l'utente non vedeva, e che quindi pagava di nuovo.
 function cancelOptimization(){
   if(!jobId)return;
-  try{navigator.sendBeacon('/api/cancel_optimize/'+jobId);}catch(e){}
+  var jid=jobId;
+  var ps=(typeof _payState==='object' && _payState) ? _payState : {};
+  return fetch('/api/cancel_preview/'+jid,{credentials:'same-origin'}).then(function(r){
+    return r.ok ? r.json() : null;
+  }).catch(function(){return null;}).then(function(d){
+    // Importo dal server (sopravvive a F5); _payState solo se la lettura fallisce.
+    var paid=d && typeof d.paid_eur==='number' ? d.paid_eur : (Number(ps.total)||0);
+    var method=(d && d.paid_method) || ps.method || '';
+    if(!(paid>0)) return _cancelOptimizationNow(jid, 0, '');
+    return _confirmCancelOptModal(paid, method).then(function(yes){
+      return yes ? _cancelOptimizationNow(jid, paid, method) : false;
+    });
+  });
+}
+
+// Invia l'annullamento e riporta la pagina allo stato iniziale solo se il
+// server lo accetta: con la conferma aperta l'ottimizzazione puo' essere finita
+// e passata alla sintesi (404), e il bottone di avvio non deve ricomparire su
+// un job che sta ancora lavorando.
+function _cancelOptimizationNow(jid, paid, method){
+  return fetch('/api/cancel_optimize/'+jid,{method:'POST',credentials:'same-origin'}).then(function(r){
+    return r.ok;
+  }).catch(function(){
+    try{navigator.sendBeacon('/api/cancel_optimize/'+jid);}catch(e){}
+    return true;
+  }).then(function(ok){
+    if(!ok) return false;
+    _resetAfterOptCancel();
+    if(paid>0) _showOptCancelRefundModal(paid, method);
+    return true;
+  });
+}
+
+// Dove finisce il rimborso di un'ottimizzazione annullata
+// (generation_engine._refund_job_payment): il buono usato torna carico, un
+// pagamento PayPal diventa un buono nuovo spedito per email, mai un accredito.
+function _optRefundText(paid, method){
+  var txt=(method==='voucher')
+    ? _tOr('opt_cancel_refund_voucher','The {paid} EUR you paid goes back to your voucher: to start again, enter the same code at the payment step.')
+    : _tOr('opt_cancel_refund_paypal','The {paid} EUR you paid will not be returned through PayPal: you will receive it as a voucher, with the code sent to your email address. Enter the code at the payment step to start again without paying twice.');
+  return txt.replace('{paid}', Number(paid).toFixed(2));
+}
+
+// Conferma dell'annullamento di un'ottimizzazione pagata. Promise<bool>.
+function _confirmCancelOptModal(paid, method){
+  return new Promise(function(resolve){
+    var m=_mkCancelModal('cancelOptConfirmModal',
+      _tOr('opt_cancel_confirm_title','Cancel the optimization?'), resolve);
+    _cancelModalText(m, _tOr('opt_cancel_confirm_body','You have already paid for this job and it is in progress: if you cancel it now, it stops.'));
+    _cancelModalText(m, _optRefundText(paid, method));
+    _cancelModalChoice(m, _tOr('opt_cancel_confirm_no','Continue'), _tOr('cancel_confirm_yes','Yes, cancel'));
+  });
+}
+
+// Dopo l'annullamento di un job pagato la pagina torna al bottone di avvio:
+// senza questo avviso il buono passava inosservato e l'utente ripagava.
+function _showOptCancelRefundModal(paid, method){
+  var m=_mkCancelModal('optCancelRefundModal', _tOr('opt_cancelled','Optimization cancelled.'), null);
+  _cancelModalText(m, _optRefundText(paid, method));
+  _cancelModalOk(m, _tOr('news_modal_ok','Got it'));
+}
+
+function _resetAfterOptCancel(){
   _legacyTxt('pMsg',t('opt_cancelled')||'Optimisation cancelled');
   _setCancelButtonMode('gen');
   unlockUI();
@@ -5549,6 +5615,37 @@ function _mkCancelModal(modalId, titleText, resolveFn){
   return {root:ov, body:body, footer:footer, close:close};
 }
 
+// Mattoni dei modali di annullamento costruiti con _mkCancelModal.
+function _cancelModalText(m, text){
+  var p=document.createElement('p');
+  p.style.cssText='margin:0 0 12px;color:#1f2937';
+  p.textContent=text;
+  m.body.insertBefore(p, m.footer);
+  return p;
+}
+function _cancelModalChoice(m, noText, yesText){
+  var btnNo=document.createElement('button');
+  btnNo.className='btn';
+  btnNo.style.cssText='padding:8px 16px;border-radius:8px;background:#e5e7eb;color:#111;border:none;font-weight:600;cursor:pointer;margin-right:8px';
+  btnNo.textContent=noText;
+  btnNo.addEventListener('click', function(){ m.close(false); });
+  var btnYes=document.createElement('button');
+  btnYes.className='btn btn-danger';
+  btnYes.style.cssText='padding:8px 16px;border-radius:8px;background:#dc2626;color:#fff;border:none;font-weight:600;cursor:pointer';
+  btnYes.textContent=yesText;
+  btnYes.addEventListener('click', function(){ m.close(true); });
+  m.footer.appendChild(btnNo);
+  m.footer.appendChild(btnYes);
+}
+function _cancelModalOk(m, text){
+  var btnOk=document.createElement('button');
+  btnOk.className='btn btn-primary';
+  btnOk.style.cssText='padding:8px 16px;border-radius:8px;background:var(--ac,#4f46e5);color:#fff;border:none;font-weight:600;cursor:pointer';
+  btnOk.textContent=text;
+  btnOk.addEventListener('click', function(){ m.close(); });
+  m.footer.appendChild(btnOk);
+}
+
 // Modal di conferma cancel per voci PREMIUM (Gemini): l'utente sta per
 // rinunciare a parte dell'importo gia' versato. Promise<bool>.
 // `amounts`: trattenuto/rimborso calcolati dal server (/api/cancel_preview,
@@ -5564,12 +5661,9 @@ function _confirmCancelGeminiModal(paid, pct, amounts){
     var noPartial=!!(amounts && amounts.partial_audio===false);
     var m=_mkCancelModal('cancelConfirmModal',
       _tf('cancel_confirm_title','Annullare la generazione?'), resolve);
-    var p=document.createElement('p');
-    p.style.cssText='margin:0 0 12px;color:#1f2937';
-    p.textContent=noPartial
+    _cancelModalText(m, noPartial
       ? _tf('cancel_confirm_body_nopartial','Stai per annullare la generazione delle voci PREMIUM. Verrà trattenuta la parte dell\'importo versato che copre i capitoli già generati e riceverai il rimborso del resto. L\'audio parziale non viene consegnato.')
-      : _tf('cancel_confirm_body','Stai per annullare la generazione delle voci PREMIUM. Riceverai l\'audio parziale già generato, ma una parte dell\'importo versato sarà trattenuta per coprire il costo del servizio già consumato.');
-    m.body.insertBefore(p, m.footer);
+      : _tf('cancel_confirm_body','Stai per annullare la generazione delle voci PREMIUM. Riceverai l\'audio parziale già generato, ma una parte dell\'importo versato sarà trattenuta per coprire il costo del servizio già consumato.'));
     var ul=document.createElement('ul');
     ul.style.cssText='margin:0 0 12px;padding-left:8px;color:#1f2937;list-style:none';
     var lines=[
@@ -5584,18 +5678,7 @@ function _confirmCancelGeminiModal(paid, pct, amounts){
       ul.appendChild(li);
     });
     m.body.insertBefore(ul, m.footer);
-    var btnNo=document.createElement('button');
-    btnNo.className='btn';
-    btnNo.style.cssText='padding:8px 16px;border-radius:8px;background:#e5e7eb;color:#111;border:none;font-weight:600;cursor:pointer;margin-right:8px';
-    btnNo.textContent=_tf('cancel_confirm_no','Continua generazione');
-    btnNo.addEventListener('click', function(){ m.close(false); });
-    var btnYes=document.createElement('button');
-    btnYes.className='btn btn-danger';
-    btnYes.style.cssText='padding:8px 16px;border-radius:8px;background:#dc2626;color:#fff;border:none;font-weight:600;cursor:pointer';
-    btnYes.textContent=_tf('cancel_confirm_yes','Sì, annulla');
-    btnYes.addEventListener('click', function(){ m.close(true); });
-    m.footer.appendChild(btnNo);
-    m.footer.appendChild(btnYes);
+    _cancelModalChoice(m, _tf('cancel_confirm_no','Continua generazione'), _tf('cancel_confirm_yes','Sì, annulla'));
   });
 }
 
@@ -5606,16 +5689,8 @@ function _showCancelLockedModal(lockPct){
   var lockNum=Math.max(0,Math.min(100, Math.round(Number(lockPct)||70)));
   var m=_mkCancelModal('cancelLockedModal',
     _tf('cancel_locked_title','Annullamento non disponibile'), null);
-  var p=document.createElement('p');
-  p.style.cssText='margin:0 0 12px;color:#1f2937';
-  p.textContent=_tf('cancel_locked_body','La generazione è ormai oltre il {lock}% del completamento. Per non perdere quasi tutto l\'importo versato, attendi il completamento.').replace('{lock}', String(lockNum));
-  m.body.insertBefore(p, m.footer);
-  var btnOk=document.createElement('button');
-  btnOk.className='btn btn-primary';
-  btnOk.style.cssText='padding:8px 16px;border-radius:8px;background:var(--ac,#4f46e5);color:#fff;border:none;font-weight:600;cursor:pointer';
-  btnOk.textContent=_tf('news_modal_ok','Ho capito');
-  btnOk.addEventListener('click', function(){ m.close(); });
-  m.footer.appendChild(btnOk);
+  _cancelModalText(m, _tf('cancel_locked_body','La generazione è ormai oltre il {lock}% del completamento. Per non perdere quasi tutto l\'importo versato, attendi il completamento.').replace('{lock}', String(lockNum)));
+  _cancelModalOk(m, _tf('news_modal_ok','Ho capito'));
 }
 
 // Renderizza link MP3 parziale + refund summary post-cancel voci PREMIUM.
