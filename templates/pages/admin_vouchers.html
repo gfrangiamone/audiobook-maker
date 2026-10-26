@@ -20,7 +20,12 @@
   button.danger{background:var(--err)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-  @media(max-width:600px){.row,.row3{grid-template-columns:1fr}}
+  .panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px 20px;flex-wrap:wrap;margin-bottom:14px}
+  .panel-head h2{margin:0}
+  .summary{display:grid;grid-template-columns:1fr auto;gap:3px 18px;font-size:.85rem;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px}
+  .summary span{color:var(--muted)}
+  .summary b{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+  @media(max-width:600px){.row,.row3{grid-template-columns:1fr}.summary{width:100%}}
   .msg{padding:10px 14px;border-radius:6px;margin:12px 0;font-size:.9rem}
   .msg.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid var(--ok)}
   .msg.err{background:rgba(239,68,68,.15);color:var(--err);border:1px solid var(--err)}
@@ -107,7 +112,10 @@
   </div>
 
   <div class="panel">
-    <h2>Voucher esistenti</h2>
+    <div class="panel-head">
+      <h2>Voucher esistenti</h2>
+      <div class="summary" id="summary" title="Totali dei voucher che passano i filtri"></div>
+    </div>
     <div class="toolbar">
       <div><label>Filtra email</label><input id="fEmail" placeholder="contiene..." oninput="renderList()"></div>
       <div><label>Filtra tipo</label>
@@ -181,8 +189,10 @@ async function loadList(){
 
 function fmtTs(ts){if(!ts)return'-';var d=new Date(ts*1000);return d.toLocaleString('it-IT',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
 
+function remOf(v){return(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:(v.amount_eur||0))}
+
 function statusOf(v){
-  var rem=(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:v.amount_eur);
+  var rem=remOf(v);
   if(rem<0.01)return'USED';
   if((v.expires_at||0)*1000<Date.now())return'EXPIRED';
   if(rem<(v.amount_eur||0)-0.01)return'PARTIAL';
@@ -197,6 +207,35 @@ function servicesLabel(s){
   return s.map(function(k){return escapeHtml(SVC_NAMES[k]||k)}).join(', ');
 }
 
+function eur(x){return(Math.abs(x)<0.005?0:x).toFixed(2)+' €'}
+
+// Totali dei voucher filtrati. Emesso = utilizzato + scaduto + da utilizzare
+// + revocato: la revoca azzera il saldo, quindi per i revocati l'utilizzato
+// e' la somma netta degli usi (i riaccrediti sono usi negativi).
+function renderSummary(rows){
+  var issued=0,used=0,expired=0,open=0,revoked=0;
+  rows.forEach(function(v){
+    var tot=v.amount_eur||0,rem=remOf(v),st=statusOf(v);
+    var net=(v.uses||[]).reduce(function(s,u){return s+(+u.amount_eur||0)},0);
+    var u=v.revoked?Math.min(Math.max(net,0),tot):tot-rem;
+    issued+=tot;used+=u;
+    if(v.revoked)revoked+=tot-u;
+    else if(st==='EXPIRED')expired+=rem;
+    else if(st!=='USED')open+=rem;
+  });
+  var lines=[
+    ['Voucher emessi',rows.length,''],
+    ['Valore emesso',eur(issued),''],
+    ['Utilizzato',eur(used),'var(--ok)'],
+    ['Scaduto non utilizzato',eur(expired),'var(--err)'],
+    ['Da utilizzare (non scaduto)',eur(open),'#c4b5fd']
+  ];
+  if(revoked>=0.005)lines.push(['Revocato non utilizzato',eur(revoked),'var(--muted)']);
+  document.getElementById('summary').innerHTML=lines.map(function(l){
+    return '<span>'+l[0]+'</span><b'+(l[2]?' style="color:'+l[2]+'"':'')+'>'+l[1]+'</b>';
+  }).join('');
+}
+
 function renderList(){
   var fe=(document.getElementById('fEmail').value||'').toLowerCase();
   var fk=document.getElementById('fKind').value;
@@ -207,11 +246,12 @@ function renderList(){
     if(fs&&statusOf(v)!==fs)return false;
     return true;
   }).sort(function(a,b){return(b.created_at||0)-(a.created_at||0)});
+  renderSummary(rows);
   var tb=document.getElementById('tbody');
   if(!rows.length){tb.innerHTML='<tr><td colspan="10"style="text-align:center;color:var(--muted);padding:20px">Nessun voucher</td></tr>';return}
   tb.innerHTML=rows.map(function(v){
     var st=statusOf(v);var k=v.kind||'refund';
-    var rem=(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:(v.amount_eur||0));
+    var rem=remOf(v);
     var tot=v.amount_eur||0;
     var balCell='<strong>'+rem.toFixed(2)+'</strong> / '+tot.toFixed(2);
     if(v.uses&&v.uses.length){balCell+=' <span style="color:var(--muted);font-size:.8em">('+v.uses.length+' us'+(v.uses.length===1?'o':'i')+')</span>';}
