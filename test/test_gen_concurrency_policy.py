@@ -210,13 +210,11 @@ def test_wait_gen_slot_non_attende_per_i_premium(monkeypatch):
     assert calls == []
 
 
-def test_wait_gen_slot_attende_e_poi_procede(monkeypatch):
+def test_wait_gen_slot_attende_e_poi_procede(monkeypatch, sleeps):
     """Slot occupato: si attende, non si scarta il lavoro gia' ottimizzato."""
-    sleeps = []
     states = [True, True, False]
     monkeypatch.setattr(generation_engine, "_client_gen_cap_reached",
                         lambda cid, jid=None: (states.pop(0) if states else False, 2, 2))
-    monkeypatch.setattr(generation_engine.time, "sleep", sleeps.append)
     monkeypatch.setattr(generation_engine, "GEN_SLOT_WAIT_SEC", 60.0)
     monkeypatch.setattr(generation_engine, "GEN_SLOT_POLL_SEC", 5.0)
 

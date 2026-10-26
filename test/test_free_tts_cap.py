@@ -13,6 +13,7 @@ import audiobook_app
 import free_tts_quota as ftq
 import generation_engine
 import payment
+import routes_account
 from epub_to_tts import BookInfo, Chapter
 
 CID = "cid_tts_cap_test"
@@ -135,6 +136,30 @@ def test_cap_decision_allows_retry_of_charged_generation(env):
     assert ftq.cap_decision(CID, 500, "j2", email=MAIL)["allowed"] is False
 
 
+def test_decision_counts_the_email_key_too(env):
+    """La quota (non solo il cap) guarda la chiave email: un cid nuovo con
+    l'email gia' spesa arriva al gate invece di ripartire da zero."""
+    ftq.consume(CID, 900, "j1", email=MAIL)
+    dec = ftq.decision(CID2, 200, "j2", email=MAIL)
+    assert dec["allowed"] is False and dec["exhausted"] is True
+    assert dec["key"] == "mail" and dec["used_chars"] == 900
+    assert dec["remaining_chars"] == 100
+    assert ftq.decision(CID2, 200, "j2")["allowed"] is True, "senza email: cid nuovo pulito"
+
+
+def test_decision_prefers_cid_key_on_tie_and_allows_charged_retry(env):
+    ftq.consume(CID, 1500, "j1", email=MAIL)
+    dec = ftq.decision(CID, 100, "j2", email=MAIL)
+    assert dec["allowed"] is False and dec["key"] == "cid"
+    assert ftq.decision(CID2, 100, "j1", email=MAIL)["allowed"] is True,         "retry della generazione gia' addebitata sulla chiave email"
+
+
+def test_current_account_email_outside_request_and_without_session():
+    assert routes_account.current_account_email() == ""
+    with audiobook_app.app.test_request_context("/api/generate"):
+        assert routes_account.current_account_email() == ""
+
+
 def test_cap_off_never_blocks(env, monkeypatch):
     monkeypatch.setenv("ABM_FREE_TTS_CAP_CHARS_PER_MONTH", "0")
     ftq.consume(CID, 10_000_000, "j1")
@@ -243,3 +268,43 @@ def test_legacy_two_element_ref_still_refunds(env):
     job = {"status": "error", "_free_tts_quota_ref": (CID, "legacy")}
     generation_engine._set_job_status(job, "error")
     assert ftq.used_chars(CID) == 0
+
+
+# ---------------------------------------------------------------- account
+
+def _login(monkeypatch, email=MAIL):
+    monkeypatch.setattr(routes_account, "_current_account",
+                        lambda: {"id": 7, "email": email, "lang": "en"})
+
+
+def test_signed_in_device_counts_on_the_account_email(client, env, monkeypatch):
+    """Caso del 25/10/2026: un dispositivo loggato aveva una quota fresca tutta
+    sua, perche' la chiave email arrivava solo dopo i controlli."""
+    _login(monkeypatch)
+    _mk_job("cap-acct", 300, client_id=CID2)
+    client.set_cookie("abm_cid", CID2)
+    assert _post(client, "cap-acct").status_code == 200
+    assert ftq._used_key(ftq.mail_key(MAIL)) == 300, "consumo sull'email dell'account"
+
+
+def test_signed_in_new_device_meets_the_account_quota(client, env, monkeypatch):
+    ftq.consume(CID, 1200, "old", email=MAIL)  # oltre quota, sotto cap
+    _login(monkeypatch)
+    job = _mk_job("cap-acct-gate", 300, client_id=CID2)
+    client.set_cookie("abm_cid", CID2)
+    r = _post(client, "cap-acct-gate")
+    assert r.status_code == 402, r.get_data(as_text=True)
+    assert r.get_json()["error_code"] == "free_tts_quota_exhausted"
+    assert r.get_json()["quota_used_chars"] == 1200
+    assert job["status"] == "analyzed" and env["run"] == []
+
+
+def test_signed_in_new_device_meets_the_account_cap(client, env, monkeypatch):
+    ftq.consume(CID, 1800, "old", email=MAIL)
+    _login(monkeypatch)
+    _mk_job("cap-acct-cap", 300, client_id=CID2)
+    client.set_cookie("abm_cid", CID2)
+    r = _post(client, "cap-acct-cap", quota_ack=True)
+    assert r.status_code == 402, r.get_data(as_text=True)
+    assert r.get_json()["error_code"] == "free_tts_cap_reached"
+    assert env["run"] == []

@@ -103,18 +103,12 @@ def test_once_noop_when_db_not_ready(monkeypatch, tmp_path):
                                                          "r2_key": None, "r2_pruned": 0}
 
 
-def test_supervisor_runs_once_then_sleeps(env, monkeypatch):
+def test_supervisor_runs_once_then_sleeps(env, monkeypatch, sleeps):
     calls = []
-    sleeps = []
     monkeypatch.setattr(cleanup, "_account_maintenance_once",
                         lambda: calls.append(1) or {"purged": {}, "backup": None,
                                                     "r2_key": None, "r2_pruned": 0})
-
-    def fake_sleep(s):
-        sleeps.append(s)
-        if len(sleeps) >= 3:
-            raise KeyboardInterrupt
-    monkeypatch.setattr(audiobook_app.time, "sleep", fake_sleep)
+    sleeps.stop_after(3, KeyboardInterrupt)
     with pytest.raises(KeyboardInterrupt):
         cleanup._account_maintenance_supervisor()
     assert sleeps[0] == cleanup._ACCT_MAINT_FIRST_SEC

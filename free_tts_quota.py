@@ -337,7 +337,31 @@ def snapshot(client_id):
     }
 
 
-def decision(client_id, chars, job_id=None):
+def _quota_keys(client_id, email=""):
+    """Chiavi su cui si conta il mese: l'identita' di quota canonica e, se
+    c'e' un'email (quella del gate o dell'account loggato), la sua `mail:`."""
+    keys = [("cid", _norm_client(client_id))]
+    mkey = mail_key(email)
+    if mkey:
+        keys.append(("mail", mkey))
+    return keys
+
+
+def _worst_usage(keys, job_id=None):
+    """(gia' addebitato, chiave piu' consumata, caratteri) sulle `keys`.
+
+    A parita' vince "cid": e' la chiave canonica. `gia' addebitato` vale per
+    il retry della stessa generazione, su qualunque delle chiavi."""
+    charged = bool(job_id) and any(_job_charged_key(k, job_id) for _, k in keys)
+    worst_kind, worst_used = "", 0
+    for kind, key in keys:
+        used = _used_key(key)
+        if kind == "cid" or used > worst_used:
+            worst_kind, worst_used = kind, used
+    return charged, worst_kind, worst_used
+
+
+def decision(client_id, chars, job_id=None, email=""):
     """Esito della quota per un job a voce standard di `chars` caratteri.
 
     Non consuma nulla: il consumo e' esplicito via `consume()` dove il job
@@ -345,26 +369,31 @@ def decision(client_id, chars, job_id=None):
     ha gia' addebitato quota (retry della stessa generazione) o quando
     `used + chars <= limit`. Altrimenti `allowed=False, exhausted=True`: il
     chiamante decide se accettare comunque il job tramite il gate email.
+    Con `email` conta la piu' consumata fra identita' di quota e chiave
+    email: un dispositivo nuovo dello stesso account (o della stessa email
+    del gate) non riparte da zero.
     """
     try:
         need = max(0, int(chars or 0))
     except (TypeError, ValueError):
         need = 0
     limit = limit_chars()
-    used = used_chars(client_id) if limit > 0 else 0
     out = {
         "allowed": True,
         "exhausted": False,
-        "used_chars": used,
+        "used_chars": 0,
         "limit_chars": limit,
         "chars": need,
-        "remaining_chars": max(0, limit - used) if limit > 0 else 0,
+        "remaining_chars": 0,
+        "key": "",
     }
     if limit <= 0:
         return out
-    if job_id and job_charged(client_id, job_id):
-        return out
-    if used + need <= limit:
+    charged, kind, used = _worst_usage(_quota_keys(client_id, email), job_id)
+    out["used_chars"] = used
+    out["remaining_chars"] = max(0, limit - used)
+    out["key"] = kind
+    if charged or used + need <= limit:
         return out
     out["allowed"] = False
     out["exhausted"] = True
@@ -391,21 +420,13 @@ def cap_decision(client_id, chars, job_id=None, email=""):
            "used_chars": 0, "chars": need, "remaining_chars": 0, "key": ""}
     if cap <= 0:
         return out
-    keys = [("cid", _norm_client(client_id))]
-    mkey = mail_key(email)
-    if mkey:
-        keys.append(("mail", mkey))
-    if job_id and any(_job_charged_key(k, job_id) for _, k in keys):
+    charged, kind, used = _worst_usage(_quota_keys(client_id, email), job_id)
+    if charged:
         return out
-    worst_kind, worst_used = "", 0
-    for kind, key in keys:
-        used = _used_key(key)
-        if kind == "cid" or used > worst_used:
-            worst_kind, worst_used = kind, used
-    out["used_chars"] = worst_used
-    out["remaining_chars"] = max(0, cap - worst_used)
-    out["key"] = worst_kind
-    if worst_used + need > cap:
+    out["used_chars"] = used
+    out["remaining_chars"] = max(0, cap - used)
+    out["key"] = kind
+    if used + need > cap:
         out["allowed"] = False
         out["cap_reached"] = True
     return out

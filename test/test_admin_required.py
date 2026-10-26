@@ -30,9 +30,7 @@ def test_decorator_variants(client, monkeypatch):
         assert r.status_code in (401, 403, 404), (rule.rule, r.status_code)
 
 
-def test_one_json_form_and_one_text_form(client, monkeypatch):
-    sleeps = []
-    monkeypatch.setattr(app.time, "sleep", lambda s: sleeps.append(s))
+def test_one_json_form_and_one_text_form(client, monkeypatch, sleeps):
     json_routes = ("/api/admin/funnel", "/admin/api/vouchers", "/api/active_jobs", "/api/admin/load_stats",
                    "/api/admin/jobs_progress", "/admin/api/tts_backend")
     text_routes = ("/admin/api/news/list", "/admin/api/feedback/list", "/admin/log-activity/day")
@@ -49,9 +47,7 @@ def test_one_json_form_and_one_text_form(client, monkeypatch):
     assert client.get("/api/admin/funnel", headers={"X-Admin-Token": "tok-test"}).status_code == 200
 
 
-def test_ui_off_is_404_everywhere(client, monkeypatch):
-    sleeps = []
-    monkeypatch.setattr(app.time, "sleep", lambda s: sleeps.append(s))
+def test_ui_off_is_404_everywhere(client, monkeypatch, sleeps):
     monkeypatch.setattr(app, "ADMIN_TOKEN", "")
     for route in ("/admin/api/vouchers", "/api/active_jobs", "/api/admin/funnel", "/api/admin/load_stats"):
         r = client.get(route)

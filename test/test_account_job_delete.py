@@ -12,6 +12,7 @@ import routes_account
 import cleanup
 import token_store
 import db
+import user_archive
 
 
 @pytest.fixture
@@ -102,6 +103,21 @@ def test_endpoint_does_not_touch_files_or_tokens(env, monkeypatch):
     assert called == [] and tokens == {"tok": {"job_id": "d"}}
 
 
+def test_jobs_api_marks_job_linked_to_app_archive(env, monkeypatch):
+    # Un job collegato a un libro dell'archivio dell'app resta nell'archivio
+    # anche se eliminato dall'elenco: web e app lo dicono nella conferma.
+    acct, _ = env
+    monkeypatch.setattr(routes_account, "_current_account", lambda: acct)
+    accounts.record_job(acct["id"], "lnk", kind="generate", status="done")
+    accounts.record_job(acct["id"], "own", kind="generate", status="done")
+    user_archive._insert(acct["id"], {"fingerprint": "a" * 64, "state": "ready", "job_id": "lnk",
+                                      "link_token": "tok", "link_kind": "m4b"}, 1)
+    jobs = {j["job_id"]: j for j in
+            audiobook_app.app.test_client().get("/api/account/jobs").get_json()["jobs"]}
+    assert jobs["lnk"]["in_app_archive"] is True
+    assert jobs["own"]["in_app_archive"] is False
+
+
 def _render(rows):
     t = routes_account._acct_txt("it")
     return account_page.render_history(
@@ -115,16 +131,23 @@ def test_page_delete_buttons():
             {"kind": "m4b", "url": "https://x/dl/t/m4b", "expires_at": 2_000_000_000}]},
         {"job_id": "old", "status": "done", "downloads": []},
         {"job_id": "busy", "status": "running", "downloads": []},
+        {"job_id": "arch", "status": "done", "downloads": [
+            {"kind": "m4b", "url": "https://x/dl/a/m4b", "expires_at": 2_000_000_000, "archived": True}]},
+        {"job_id": "lnk", "status": "done", "in_app_archive": True, "downloads": [
+            {"kind": "m4b", "url": "https://x/dl/l/m4b", "expires_at": 2_000_000_000, "archived": True}]},
     ])
     assert 'data-del="live" data-dl="1"' in html
     assert 'data-del="old" data-dl="0"' in html
     assert 'data-del="busy"' not in html
+    assert 'data-del="arch" data-dl="2"' in html
+    assert 'data-del="lnk" data-dl="3"' in html
     assert 'id="acctJobDelDlg"' in html and "Eliminare questo lavoro" in html
+    assert 'id="acctJobDelPLinked" hidden' in html and "archivio online" in html
     assert "/api/account/jobs/delete" in html
 
 
 def test_texts_in_every_language():
     data = json.load(open("i18n/account_pages.json", encoding="utf-8"))
     for lang, t in data.items():
-        for k in ("job_delete", "job_delete_title", "job_delete_p"):
+        for k in ("job_delete", "job_delete_title", "job_delete_p", "job_delete_linked_p"):
             assert t.get(k), (lang, k)

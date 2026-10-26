@@ -10,10 +10,8 @@ def _events(resp):
     return [json.loads(chunk[len("data: "):]) for chunk in body.split("\n\n") if chunk.startswith("data: ")]
 
 
-def test_sse_stream_heartbeat_terminal_and_missing_job(monkeypatch):
+def test_sse_stream_heartbeat_terminal_and_missing_job(monkeypatch, sleeps):
     monkeypatch.setattr(app, "jobs", {"j1": {"status": "generating", "n": 0}})
-    sleeps = []
-    monkeypatch.setattr(app.time, "sleep", lambda s: sleeps.append(s))
 
     def build(job):
         job["n"] += 1

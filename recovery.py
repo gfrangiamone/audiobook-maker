@@ -30,6 +30,7 @@ import tts_engines
 import voice_clone
 import voxcpm_tts
 from env_utils import env_bool, env_int
+from text_reflow import paren_strip_flags
 from voice_utils import (is_gemini_voice as _is_gemini_voice, is_speechify_voice as _is_speechify_voice,
                          is_voxcpm_voice as _is_voxcpm_voice)
 
@@ -178,14 +179,16 @@ def _recovery_generate_gate(job_id, rec, info):
             f"{total_chars:,} caratteri oltre il cap {max_chars:,} della voce premium")
     lang = (_i18n.norm_lang((rec.get("gen_lang") or rec.get("lang")
              or getattr(info, "language", "") or "it")) or "it")
+    # Il testo tra parentesi scelto al lancio: la stima e' quella del pagamento.
+    paren = paren_strip_flags(rec)
     if is_gem:
         if gemini_tts is None:
             raise _RecoveryRejected("modulo gemini_tts non disponibile")
         est = tts_engines.estimate("gemini", chs, voice, language=lang,
-                                            rate_pct=rec.get("rate", "+0%"))
+                                   rate_pct=rec.get("rate", "+0%"), **paren)
         key = "gemini_estimate"
     elif is_spx:
-        est = tts_engines.estimate("speechify", chs, language="en")
+        est = tts_engines.estimate("speechify", chs, language="en", **paren)
         key = "speechify_estimate"
     else:
         if voxcpm_tts is None:
@@ -198,7 +201,7 @@ def _recovery_generate_gate(job_id, rec, info):
             _err = voice_clone.check_use(voice, (rec.get("client_id") or "").strip(), lang, _vc_locale)
             if _err:
                 raise _RecoveryRejected(f"voce campione non usabile: {_err}")
-        est = tts_engines.estimate("voxcpm", chs, language=lang)
+        est = tts_engines.estimate("voxcpm", chs, language=lang, **paren)
         key = "voxcpm_estimate"
     if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
         raise _RecoveryRejected("stima ex-ante su testo vuoto")

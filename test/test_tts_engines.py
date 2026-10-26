@@ -67,10 +67,13 @@ def test_estimate_dispatch_passes_each_engine_its_signature(monkeypatch):
     assert tts_engines.estimate("speechify", chs, language="it") == {"s": 1}      # solo inglese
     assert tts_engines.estimate("voxcpm", chs, language="de") == {"v": 1}
     assert tts_engines.estimate("voxcpm", chs) == {"v": 1}
-    assert calls == [("g", (chs, "gemini:flash31:Zephyr"), {"language": "fr", "rate_pct": "+10%"}),
-                     ("s", (chs,), {"language": "en"}),
-                     ("v", (chs,), {"language": "de"}),
-                     ("v", (chs,), {"language": "it"})]
+    assert tts_engines.estimate("voxcpm", chs, language="it", strip_round=False) == {"v": 1}
+    strip = {"strip_round": True, "strip_square": True}            # default: parentesi non lette
+    assert calls == [("g", (chs, "gemini:flash31:Zephyr"), {"language": "fr", "rate_pct": "+10%", **strip}),
+                     ("s", (chs,), {"language": "en", **strip}),
+                     ("v", (chs,), {"language": "de", **strip}),
+                     ("v", (chs,), {"language": "it", **strip}),
+                     ("v", (chs,), {"language": "it", "strip_round": False, "strip_square": True})]
 
 
 def test_no_direct_estimate_dispatch_left_in_app_and_engine():
@@ -79,7 +82,9 @@ def test_no_direct_estimate_dispatch_left_in_app_and_engine():
     for mod in (app, ge, recovery):
         src = inspect.getsource(mod)
         assert not re.search(r"\b(gemini_tts|_gemini_tts_mod|speechify_tts|voxcpm_tts)\.estimate_book_cost\(", src), mod.__name__
-    assert sum(inspect.getsource(m).count('tts_engines.estimate("') for m in (app, recovery)) >= 14
+    src = "".join(inspect.getsource(m) for m in (app, recovery))
+    # i rami combinati di /api/optimize passano dal dispatcher via _combined_tts_estimate
+    assert src.count('tts_engines.estimate("') + src.count('_combined_tts_estimate("') >= 14
     assert inspect.getsource(ge).count('_tts_engines.estimate("') == 3        # auto-gen: stima mancante
 
 

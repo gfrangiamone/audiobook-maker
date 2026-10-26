@@ -142,7 +142,7 @@ from tts_split import (
     _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
     prepare_tts_text,
 )
-from text_reflow import trim_preview as _trim_preview
+from text_reflow import paren_strip_flags, trim_preview as _trim_preview
 
 import assembly_queue
 import load_metrics
@@ -1065,32 +1065,43 @@ def _free_quota_book_chars(info, all_chs=None):
 # Il lock e' registrato per order_id (non per job): con piu' ordini creati sullo
 # stesso job — succede col doppio click sul bottone di pagamento — ognuno porta
 # l'importo effettivamente quotato per quell'ordine. La firma degli input di
-# prezzo (voce, capitoli, velocita', lingua, AI on/off) e' registrata insieme
+# prezzo (voce, capitoli, velocita', lingua, AI on/off, parentesi lette) e'
+# registrata insieme
 # all'importo: se l'utente cambia qualcosa fra pagamento e conferma la firma non
 # combacia, il lock non si applica e il ricalcolo torna a essere quello vivo.
 _PRICE_LOCK_TTL_SEC = env_int("ABM_PRICE_LOCK_TTL_SEC", 1800)
 _PRICE_LOCK_MAX_PER_JOB = 8
 
 
-def _pricing_signature(voice_id, chapter_indexes, rate, lang, ai_opt):
+def _pricing_signature(voice_id, chapter_indexes, rate, lang, ai_opt, paren=None):
     """Firma canonica degli input che determinano il prezzo combinato.
 
     `chapter_indexes` sono gli indici dei capitoli EFFETTIVI su cui e' calcolata
     la stima (non la lista grezza del client): "nessuna selezione" e "tutti i
     capitoli selezionati" devono produrre la stessa firma, altrimenti il lock
     non si applicherebbe mai nel caso piu' comune.
+
+    `paren` (`paren_strip_flags`) entra nella firma solo quando l'utente fa
+    leggere il testo tra parentesi, che dal 26/10/2026 si paga: le firme di
+    default restano quelle di prima, anche per gli ordini aperti al deploy.
     """
     try:
         _sel = ",".join(str(int(i)) for i in sorted(chapter_indexes or []))
     except (TypeError, ValueError):
         _sel = ""
-    return "|".join([
+    parts = [
         (voice_id or "").strip(),
         _sel,
         str(rate or "+0%").strip(),
         (lang or "").strip().lower(),
         "1" if ai_opt else "0",
-    ])
+    ]
+    _paren = paren or {}
+    _read = (("r" if not _paren.get("strip_round", True) else "")
+             + ("s" if not _paren.get("strip_square", True) else ""))
+    if _read:
+        parts.append("read=" + _read)
+    return "|".join(parts)
 
 
 def _price_lock_store(job, order_id, sig, total_eur):
@@ -2858,7 +2869,8 @@ _PREMIUM_START_OPS = frozenset({"GENERATE", "OPTIMIZE"})
 # righe M4B_START/M4B_PROGRESS/M4B_END. Queste righe non devono aggiornare
 # voice/lang/ip della sessione ("ultimo valore non vuoto vince" altrimenti
 # sovrascrive la voce reale con il payload): vedi item 1 del final-fix-brief.
-_M4B_OP_PREFIX = "M4B_"
+# Lo stesso vale per TEXT_DROP: l'elenco sta in user_stats, unico.
+_M4B_OP_PREFIX = user_stats.VOICE_PAYLOAD_OPS
 
 
 def _parse_log_sessions(ym):
@@ -2999,6 +3011,7 @@ def _abuse_note(job_id, job, kind, **data):
         group = _abuse_group_of(job)
         data.setdefault("filename", job.get("original_filename", ""))
         data.setdefault("lang", getattr(job.get("info"), "language", "") or "")
+        data.setdefault("account_email", routes_account.current_account_email())
         group_data = abuse_watch.record_event(group, cid, kind, data)
         if abuse_watch.needs_judgement(group, cid, group_data=group_data):
             abuse_watch.enqueue(group, cid)
@@ -3095,6 +3108,7 @@ try:
     _email_service.set_funnel_provider(lambda: routes_admin_logs._funnel_data(routes_admin_logs._last_n_days(30)))
     _email_service.set_power_users_provider(routes_admin_logs._power_users_data)
     _email_service.set_abuse_provider(_abuse_digest_data)
+    _email_service.set_text_drop_provider(routes_admin_logs._text_drop_data)
 except Exception:
     pass
 
@@ -4520,9 +4534,11 @@ def api_generate():
     output_format = data.get("output_format", "m4b")
     podcast_base_url = (data.get("podcast_base_url") or "").strip()
     selected_chapters = data.get("selected_chapters")  # list of chapter indices, or None
-    # Lettura opzionale del testo tra parentesi (default: rimosso).
+    # Lettura opzionale del testo tra parentesi (default: rimosso): decide il
+    # piano e il prezzo, che si calcola sul testo letto.
     read_round_parens = bool(data.get("read_round_parens", False))
     read_square_brackets = bool(data.get("read_square_brackets", False))
+    _paren = paren_strip_flags(data)
 
     # Modello PREMIUM spento via ABM_<MODELLO>_ENABLE=false. Valutato prima
     # dei check di configurazione: e' la ragione piu' specifica del rifiuto.
@@ -4694,7 +4710,8 @@ def api_generate():
             # Il rate scelto influisce sulla stima (estimate_audio_seconds scala
             # con rate_pct): il ricalcolo server-side deve usarlo per allinearsi
             # alla stima vista dall'utente e validare correttamente il pagamento.
-            est_pre = tts_engines.estimate("gemini", chs_pre, voice, language=lang_pre, rate_pct=rate)
+            est_pre = tts_engines.estimate("gemini", chs_pre, voice, language=lang_pre, rate_pct=rate,
+                                           **_paren)
             gemini_eur_pre = round(est_pre["user_price_eur"], 2)
             # Persisti la stima sul job: serve all'audit Gemini per popolare
             # i campi *_est (input_tokens_est, output_tokens_est, audio_seconds_est,
@@ -4778,8 +4795,7 @@ def api_generate():
             _plan_info = _PlanInfo()
             _plan_info.chapters = _info_chs_for_plan
             _plan_for_pf = _plan_chunks(_plan_info, max_chars=_max_chars_pf, max_bytes=_max_bytes_pf,
-                                        strip_round=not read_round_parens,
-                                        strip_square=not read_square_brackets)
+                                        **_paren)
             _total_chunks_pf = len(_plan_for_pf)
             _parts_v_pf = (voice or "").split(":")
             _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash31"
@@ -4857,7 +4873,7 @@ def api_generate():
         if not _quota_dec["is_free"] and payment_token:
             _sig_pre = _pricing_signature(
                 voice, [getattr(ch, "index", None) for ch in chs_pre],
-                rate, lang_pre, bool(data.get("ai_opt_enabled")))
+                rate, lang_pre, bool(data.get("ai_opt_enabled")), paren=_paren)
             _locked_pre = _price_lock_lookup(job, payment_token, _sig_pre)
             _lock_src_pre = "al create dell'ordine"
             if _locked_pre is None:
@@ -5007,7 +5023,7 @@ def api_generate():
                         or "it")
             job["gen_lang"] = lang_pre
             try:
-                est_pre = tts_engines.estimate("voxcpm", chs_pre, language=lang_pre)
+                est_pre = tts_engines.estimate("voxcpm", chs_pre, language=lang_pre, **_paren)
                 # Persisti la stima sul job: serve all'eventuale audit VoxCPM
                 # (Task 11) per popolare i campi *_est.
                 job["voxcpm_estimate"] = est_pre
@@ -5019,7 +5035,7 @@ def api_generate():
             # con /api/combined_estimate.
             job["gen_lang"] = "en"
             try:
-                est_pre = tts_engines.estimate("speechify", chs_pre, language="en")
+                est_pre = tts_engines.estimate("speechify", chs_pre, language="en", **_paren)
                 # Persisti la stima sul job: serve all'eventuale audit Speechify
                 # per popolare i campi *_est.
                 job["speechify_estimate"] = est_pre
@@ -5272,8 +5288,7 @@ def api_generate():
         try:
             _rk = output_reuse.compute_key(
                 info.chapters, voice, rate, output_format, single_file,
-                strip_round=not bool(job.get("read_round_parens", False)),
-                strip_square=not bool(job.get("read_square_brackets", False)))
+                **paren_strip_flags(job))
             job["reuse_key"] = _rk
             _ent = output_reuse.lookup(_rk, client_id)
             if _ent and _ent.get("job_id") != job_id:
@@ -5298,7 +5313,10 @@ def api_generate():
             free_tts_quota.limit_chars() > 0 or free_tts_quota.cap_chars() > 0):
         _ftq_cid = _quota_client_id(job)
         _ftq_key = f"{job_id}:{job.get('gen_epoch', 0) + 1}"
-        _ftq_mail = job.get("notify_email") or ""
+        # Con sessione conta l'email dell'account (la consegna viene forzata li'
+        # da _apply_account_to_job): ogni dispositivo loggato pesca dallo
+        # stesso contatore, invece di avere una quota fresca per cookie.
+        _ftq_mail = routes_account.current_account_email() or job.get("notify_email") or ""
         _ftq_gated = False
         # Tetto duro (ABM_FREE_TTS_CAP_CHARS_PER_MONTH): qui, PRIMA del gate
         # email, perche' nessun ack lo supera. Contato sull'identita' di quota
@@ -5328,7 +5346,8 @@ def api_generate():
                 "quota_cap_chars": _ftq_cap["cap_chars"],
                 "chars_selected": selected_chars,
             }), 402
-        _ftq_dec = (free_tts_quota.decision(_ftq_cid, selected_chars, _ftq_key)
+        _ftq_dec = (free_tts_quota.decision(_ftq_cid, selected_chars, _ftq_key,
+                                            email=_ftq_mail)
                     if free_tts_quota.limit_chars() > 0 else {"allowed": True})
         if not _ftq_dec["allowed"]:
             _ftq_ack = (bool(data.get("quota_ack")) and bool(job.get("notify_email"))
@@ -6184,7 +6203,9 @@ routes_mobile.configure(
     _check_job_owner=lambda *a, **k: _check_job_owner(*a, **k),
     _find_files_in_outputs=lambda *a, **k: _find_files_in_outputs(*a, **k),
     _job_original_filename=lambda *a, **k: _job_original_filename(*a, **k),
-    _send_file_throttled=lambda *a, **k: _send_file_throttled(*a, **k))
+    _send_file_throttled=lambda *a, **k: _send_file_throttled(*a, **k),
+    _account_share=lambda *a, **k: routes_account.account_share(*a, **k),
+    _account_job_ids_since=lambda *a, **k: routes_account.account_job_ids_since(*a, **k))
 app.register_blueprint(routes_mobile.bp)
 
 
@@ -6590,7 +6611,8 @@ def api_gemini_estimate():
     # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
     lang = ui_lang or _i18n.norm_lang(getattr(info, "language", "")) or "it"
     try:
-        est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate)
+        est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate,
+                                   **paren_strip_flags(data))
     except Exception as e:
         return jsonify({"error": f"estimate failed: {e}"}), 500
 
@@ -6626,8 +6648,7 @@ def api_combined_estimate():
     ui_lang = _i18n.norm_lang(data.get("lang"))
     # Lettura opzionale del testo tra parentesi (default: rimosso): influenza il
     # conteggio chunk/caratteri e quindi la stima costo e il preflight PREMIUM.
-    read_round_parens = bool(data.get("read_round_parens", False))
-    read_square_brackets = bool(data.get("read_square_brackets", False))
+    _paren = paren_strip_flags(data)
     _gate = _premium_model_gate(voice_id)
     if _gate is not None:
         return _gate
@@ -6663,7 +6684,8 @@ def api_combined_estimate():
     _premium_list_eur = 0.0
     if _is_gemini_voice(voice_id):
         try:
-            est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate)
+            est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate,
+                                       **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
@@ -6681,7 +6703,7 @@ def api_combined_estimate():
     speechify_breakdown = {}
     if _is_speechify_voice(voice_id):
         try:
-            est_spx = tts_engines.estimate("speechify", chs, language="en")
+            est_spx = tts_engines.estimate("speechify", chs, language="en", **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         speechify_eur = round(est_spx["user_price_eur"], 2)
@@ -6699,7 +6721,7 @@ def api_combined_estimate():
     voxcpm_breakdown = {}
     if _is_voxcpm_voice(voice_id):
         try:
-            est_vox = tts_engines.estimate("voxcpm", chs, language=lang)
+            est_vox = tts_engines.estimate("voxcpm", chs, language=lang, **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         # list_price_eur, non user_price_eur: quest'ultimo e' gia' azzerato da
@@ -6764,7 +6786,7 @@ def api_combined_estimate():
         _quote_lock_store(
             job,
             _pricing_signature(voice_id, [getattr(ch, "index", None) for ch in chs],
-                               rate, lang, ai_opt),
+                               rate, lang, ai_opt, paren=_paren),
             total,
         )
     # Soglia gratuita coerente con l'engine premium attivo: /api/generate applica
@@ -6799,8 +6821,7 @@ def api_combined_estimate():
             _pi = _PlanInfoCB()
             _pi.chapters = chs
             _plan_cb = _plan_chunks(_pi, max_chars=_max_chars_cb, max_bytes=_max_bytes_cb,
-                                    strip_round=not read_round_parens,
-                                    strip_square=not read_square_brackets)
+                                    **_paren)
             _total_chunks_cb = len(_plan_cb)
             _parts_cb = voice_id.split(":")
             _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash31"
@@ -6869,6 +6890,8 @@ def api_paypal_create_order_gemini():
     ai_opt = bool(data.get("ai_opt_enabled", False))
     rate = data.get("rate", "+0%")
     ui_lang = _i18n.norm_lang(data.get("lang"))
+    # Stesse parentesi lette di /api/combined_estimate: il prezzo e' sul testo letto.
+    _paren = paren_strip_flags(data)
     try:
         requested_amount = float(data.get("amount_eur") or 0)
     except (TypeError, ValueError):
@@ -6930,7 +6953,8 @@ def api_paypal_create_order_gemini():
         try:
             # rate_pct: la stima dipende dalla velocità scelta, quindi va
             # passata anche qui per coerenza con /api/combined_estimate.
-            est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate)
+            est = tts_engines.estimate("gemini", chs, voice_id, language=lang, rate_pct=rate,
+                                       **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
@@ -6939,7 +6963,7 @@ def api_paypal_create_order_gemini():
     speechify_eur = 0.0
     if _is_speechify_voice(voice_id):
         try:
-            est = tts_engines.estimate("speechify", chs, language="en")
+            est = tts_engines.estimate("speechify", chs, language="en", **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         speechify_eur = round(est["user_price_eur"], 2)
@@ -6951,7 +6975,7 @@ def api_paypal_create_order_gemini():
             # `lang` gia' risolto sopra (UI > metadata > "it"), stessa
             # priorita' di /api/combined_estimate: necessario per non
             # produrre un amount mismatch server-side (Fix round 1).
-            est = tts_engines.estimate("voxcpm", chs, language=lang)
+            est = tts_engines.estimate("voxcpm", chs, language=lang, **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         voxcpm_eur = round(est["user_price_eur"], 2)
@@ -6987,7 +7011,7 @@ def api_paypal_create_order_gemini():
     # su PayPal non e' un problema dell'utente — e in buona parte la provoca lui
     # stesso ascoltando le anteprime. Vedi _quote_lock_store.
     _sig_order = _pricing_signature(
-        voice_id, [getattr(ch, "index", None) for ch in chs], rate, lang, ai_opt)
+        voice_id, [getattr(ch, "index", None) for ch in chs], rate, lang, ai_opt, paren=_paren)
     _quoted = _quote_lock_lookup(job, _sig_order)
     if (_quoted is not None
             and abs(_quoted - requested_amount) <= 0.01
@@ -7030,12 +7054,7 @@ def api_paypal_create_order_gemini():
     # _price_lock_store per il razionale completo.
     _order_id = (order.get("id") or "").strip()
     if _order_id:
-        _price_lock_store(
-            job, _order_id,
-            _pricing_signature(voice_id, [getattr(ch, "index", None) for ch in chs],
-                               rate, lang, ai_opt),
-            server_total,
-        )
+        _price_lock_store(job, _order_id, _sig_order, server_total)
 
     return jsonify({
         "order_id": order.get("id"),
@@ -7351,6 +7370,27 @@ def api_optimize():
                 "error_code": "invalid_payment",
             }), 402
 
+    def _combined_tts_estimate(engine, chs, *args, **kwargs):
+        # Stima TTS dei tre rami combinati qui sotto, in un punto solo (il ramo
+        # VoxCPM aveva perso `_pricing_chapters`). Su un job gia' terminale i
+        # testi sono spillati su disco e `ch.text` e' vuoto in RAM: senza
+        # rilettura la stima vale ~0 e la voce PREMIUM parte gratis. Se il
+        # testo manca comunque, errore invece di un prezzo finto.
+        chs = _pricing_chapters(job_id, job, chs)
+        est = tts_engines.estimate(engine, chs, *args, **kwargs)
+        if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
+            raise ValueError("price computed on empty text")
+        return est
+
+    def _combined_estimate_failed(engine, err):
+        # FAIL-CLOSED. Azzerare la stima mandava il listino sotto soglia -> la
+        # voce PREMIUM partiva GRATIS (stesso esito dell'incidente
+        # Q9lQN3RrapCvGLSonVnzmA). /api/generate rifiuta gia' in questo caso.
+        print(f"[{job_id}] combined-payment {engine} estimate failed: {err}", flush=True)
+        _release_opt_claim()
+        return jsonify({"error": "Cost estimate unavailable, please retry.",
+                        "error_code": "estimate_failed"}), 500
+
     # ----- Combined payment (LLM + Gemini in auto_generate flow) -----
     # Il flusso combinato usa UN unico token (PayPal order o voucher) che
     # copre entrambe le quote LLM + Gemini. Il branch standalone LLM sopra
@@ -7380,25 +7420,16 @@ def api_optimize():
             _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
         else:
             _chs_for_est = _all_chs
-        # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in
-        # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
-        _chs_for_est = _pricing_chapters(job_id, job, _chs_for_est)
         try:
-            _est_gemini = tts_engines.estimate("gemini", 
+            _est_gemini = _combined_tts_estimate("gemini",
                 _chs_for_est, _voice_for_est,
                 language=_lang_for_est, rate_pct=_rate_for_est,
+                **paren_strip_flags(data),
             )
             _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
             _gemini_list_quota = round(_est_gemini.get("list_price_eur", 0.0), 2)
         except Exception as _e_est:
-            # FAIL-CLOSED. Azzerare la stima qui mandava il listino sotto
-            # soglia -> la voce PREMIUM partiva GRATIS (stesso esito
-            # dell'incidente Q9lQN3RrapCvGLSonVnzmA). /api/generate rifiuta
-            # gia' in questo caso: qui allineato.
-            print(f"[{job_id}] combined-payment estimate failed: {_e_est}", flush=True)
-            _release_opt_claim()
-            return jsonify({"error": "Cost estimate unavailable, please retry.",
-                            "error_code": "estimate_failed"}), 500
+            return _combined_estimate_failed("gemini", _e_est)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _quota_cid = _quota_client_id(job)
         _fq_key_gem = _free_quota_key(job_id, _voice_for_est, _chs_for_est, _all_chs)
@@ -7417,7 +7448,7 @@ def api_optimize():
         if not _quota_dec["is_free"] and _combined_token:
             _sig_combined = _pricing_signature(
                 _voice_for_est, [getattr(ch, "index", None) for ch in _chs_for_est],
-                _rate_for_est, _lang_for_est, True)
+                _rate_for_est, _lang_for_est, True, paren=paren_strip_flags(data))
             _locked = _price_lock_lookup(job, _combined_token, _sig_combined)
             _lock_src = "al create dell'ordine"
             if _locked is None:
@@ -7579,19 +7610,13 @@ def api_optimize():
             _chs_for_est_spx = [_by_idx_spx[i] for i in _sel_list_spx if i in _by_idx_spx]
         else:
             _chs_for_est_spx = _all_chs_spx
-        # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in
-        # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
-        _chs_for_est_spx = _pricing_chapters(job_id, job, _chs_for_est_spx)
         try:
-            _est_spx = tts_engines.estimate("speechify", _chs_for_est_spx, language="en")
+            _est_spx = _combined_tts_estimate("speechify", _chs_for_est_spx, language="en",
+                                              **paren_strip_flags(data))
             _speechify_eur_quota = round(_est_spx.get("user_price_eur", 0.0), 2)
             _speechify_list_quota = round(_est_spx.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_spx:
-            # FAIL-CLOSED: vedi nota nel ramo Gemini.
-            print(f"[{job_id}] combined-payment speechify estimate failed: {_e_est_spx}", flush=True)
-            _release_opt_claim()
-            return jsonify({"error": "Cost estimate unavailable, please retry.",
-                            "error_code": "estimate_failed"}), 500
+            return _combined_estimate_failed("speechify", _e_est_spx)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_spx = data.get("voice", "")
         _quota_cid_spx = _quota_client_id(job)
@@ -7741,14 +7766,12 @@ def api_optimize():
         else:
             _chs_for_est_vox = _all_chs_vox
         try:
-            _est_vox = tts_engines.estimate("voxcpm", _chs_for_est_vox, language=_lang_for_vox)
+            _est_vox = _combined_tts_estimate("voxcpm", _chs_for_est_vox, language=_lang_for_vox,
+                                              **paren_strip_flags(data))
             _voxcpm_eur_quota = round(_est_vox.get("user_price_eur", 0.0), 2)
             _voxcpm_list_quota = round(_est_vox.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_vox:
-            print(f"[{job_id}] combined-payment voxcpm estimate failed: {_e_est_vox}")
-            _est_vox = None
-            _voxcpm_eur_quota = 0.0
-            _voxcpm_list_quota = 0.0
+            return _combined_estimate_failed("voxcpm", _e_est_vox)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_vox = data.get("voice", "")
         _quota_cid_vox = _quota_client_id(job)

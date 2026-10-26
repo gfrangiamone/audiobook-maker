@@ -87,31 +87,17 @@ INPUT = "Prosa di prova, abbastanza lunga da non essere triviale. " * 4
 OUT = "Testo ottimizzato dopo il nuovo tentativo."
 
 
-def _setup(monkeypatch, factories, sleeps):
+def _setup(monkeypatch, factories):
+    """Le attese le registra la fixture `sleeps` (conftest), che il test chiede."""
     client = _Client(factories)
     monkeypatch.setattr(ge, "_llm_client", client)
-    # `ge.time` e' il modulo `time`: la patch e' globale al processo. I thread
-    # di sfondo lasciati vivi da altri moduli di test (cleanup, sonde a 30/60 s)
-    # inondavano `sleeps` e li mandavano in busy-loop. Si registra solo il
-    # thread del test; gli altri dormono davvero.
-    mio = threading.get_ident()
-    dormi = ge.time.sleep
-
-    def _sleep(s):
-        if threading.get_ident() == mio:
-            sleeps.append(s)
-        else:
-            dormi(s)
-    monkeypatch.setattr(ge.time, "sleep", _sleep)
     monkeypatch.setattr(ge, "LLM_FIRST_EVENT_TIMEOUT_SEC", 0.2)
     monkeypatch.setattr(ge, "LLM_OVERLOAD_BACKOFF_SEC", 20.0)
     return client
 
 
-def test_stream_muto_viene_chiuso_e_ritentato(monkeypatch):
-    sleeps = []
-    client = _setup(monkeypatch, [_SilentStream, lambda: _TextStream(OUT)],
-                    sleeps)
+def test_stream_muto_viene_chiuso_e_ritentato(monkeypatch, sleeps):
+    client = _setup(monkeypatch, [_SilentStream, lambda: _TextStream(OUT)])
 
     out = ge._call_llm(INPUT, job={"opt_lang": "it"}, max_retries=4)
 
@@ -120,24 +106,21 @@ def test_stream_muto_viene_chiuso_e_ritentato(monkeypatch):
     assert sleeps == [20.0], "pausa da sovraccarico, non 1 s"
 
 
-def test_stream_muto_che_finisce_senza_eccezione(monkeypatch):
+def test_stream_muto_che_finisce_senza_eccezione(monkeypatch, sleeps):
     """La chiusura puo' anche terminare l'iterazione in silenzio: resta uno
     stallo, non una risposta vuota."""
-    sleeps = []
     client = _setup(
         monkeypatch,
         [lambda: _SilentStream(raise_on_close=False),
-         lambda: _TextStream(OUT)],
-        sleeps)
+         lambda: _TextStream(OUT)])
 
     assert ge._call_llm(INPUT, job={"opt_lang": "it"}, max_retries=4) == OUT
     assert client.chat.completions.chiamate == 2
     assert sleeps == [20.0]
 
 
-def test_stallo_persistente_esaurisce_il_budget(monkeypatch):
-    sleeps = []
-    client = _setup(monkeypatch, [_SilentStream], sleeps)
+def test_stallo_persistente_esaurisce_il_budget(monkeypatch, sleeps):
+    client = _setup(monkeypatch, [_SilentStream])
 
     try:
         ge._call_llm(INPUT, job={"opt_lang": "it"}, max_retries=3)
@@ -149,28 +132,25 @@ def test_stallo_persistente_esaurisce_il_budget(monkeypatch):
     assert sleeps == [20.0, 40.0]
 
 
-def test_rinuncia_del_provider_e_transitoria(monkeypatch):
-    sleeps = []
+def test_rinuncia_del_provider_e_transitoria(monkeypatch, sleeps):
 
     def _rinuncia():
         raise Exception("Server unable to start processing the request "
                         "after waiting, please try again later")
 
-    client = _setup(monkeypatch, [_rinuncia, lambda: _TextStream(OUT)],
-                    sleeps)
+    client = _setup(monkeypatch, [_rinuncia, lambda: _TextStream(OUT)])
 
     assert ge._call_llm(INPUT, job={"opt_lang": "it"}, max_retries=4) == OUT
     assert client.chat.completions.chiamate == 2
     assert sleeps == [20.0]
 
 
-def test_errore_non_transitorio_non_si_ritenta(monkeypatch):
-    sleeps = []
+def test_errore_non_transitorio_non_si_ritenta(monkeypatch, sleeps):
 
     def _auth():
         raise ValueError("invalid api key")
 
-    client = _setup(monkeypatch, [_auth], sleeps)
+    client = _setup(monkeypatch, [_auth])
     try:
         ge._call_llm(INPUT, job={"opt_lang": "it"}, max_retries=4)
     except ValueError:
@@ -181,11 +161,10 @@ def test_errore_non_transitorio_non_si_ritenta(monkeypatch):
     assert sleeps == []
 
 
-def test_annullamento_durante_lattesa(monkeypatch):
+def test_annullamento_durante_lattesa(monkeypatch, sleeps):
     """Chi annulla mentre il provider e' in coda non aspetta lo stallo."""
-    sleeps = []
     job = {"opt_lang": "it", "opt_cancelled": False}
-    client = _setup(monkeypatch, [_SilentStream], sleeps)
+    client = _setup(monkeypatch, [_SilentStream])
     monkeypatch.setattr(ge, "LLM_FIRST_EVENT_TIMEOUT_SEC", 30.0)
     threading.Timer(0.1, lambda: job.__setitem__("opt_cancelled", True)).start()
 
@@ -198,9 +177,8 @@ def test_annullamento_durante_lattesa(monkeypatch):
     assert client.chat.completions.chiamate == 1
 
 
-def test_watchdog_disattivabile(monkeypatch):
-    sleeps = []
-    client = _setup(monkeypatch, [lambda: _TextStream(OUT)], sleeps)
+def test_watchdog_disattivabile(monkeypatch, sleeps):
+    client = _setup(monkeypatch, [lambda: _TextStream(OUT)])
     monkeypatch.setattr(ge, "LLM_FIRST_EVENT_TIMEOUT_SEC", 0)
 
     assert ge._call_llm(INPUT, job={"opt_lang": "it"}, max_retries=1) == OUT

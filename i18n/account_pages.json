@@ -122,7 +122,8 @@
     "sub_notice_ok": "Subscription active. Thank you!",
     "sub_notice_pending": "We are waiting for the payment confirmation: the subscription will be active shortly.",
     "sub_notice_cancelled": "Payment cancelled: you have not been charged.",
-    "sub_notice_cancel_ok": "Cancellation confirmed."
+    "sub_notice_cancel_ok": "Cancellation confirmed.",
+    "job_delete_linked_p": "This book is also in the app's online archive: it will disappear from this list, but it stays archived and downloadable (also from the email link) until you delete it from the online archive in the app."
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -247,7 +248,8 @@
     "sub_notice_ok": "Abbonamento attivo. Grazie!",
     "sub_notice_pending": "Stiamo aspettando la conferma del pagamento: l'abbonamento si attiva tra poco.",
     "sub_notice_cancelled": "Pagamento annullato: nessun addebito.",
-    "sub_notice_cancel_ok": "Disdetta confermata."
+    "sub_notice_cancel_ok": "Disdetta confermata.",
+    "job_delete_linked_p": "Questo libro è anche nell'archivio online dell'app: sparirà da questo elenco, ma resterà archiviato e scaricabile (anche dal link dell'email) finché non lo elimini dall'archivio online nell'app."
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -372,7 +374,8 @@
     "sub_notice_ok": "Abonnement actif. Merci !",
     "sub_notice_pending": "Nous attendons la confirmation du paiement : l'abonnement sera bientôt actif.",
     "sub_notice_cancelled": "Paiement annulé : aucun prélèvement.",
-    "sub_notice_cancel_ok": "Résiliation confirmée."
+    "sub_notice_cancel_ok": "Résiliation confirmée.",
+    "job_delete_linked_p": "Ce livre est aussi dans l'archive en ligne de l'app : il disparaîtra de cette liste, mais restera archivé et téléchargeable (aussi depuis le lien de l'e-mail) jusqu'à ce que vous le supprimiez de l'archive en ligne dans l'app."
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -497,7 +500,8 @@
     "sub_notice_ok": "Suscripción activa. ¡Gracias!",
     "sub_notice_pending": "Estamos esperando la confirmación del pago: la suscripción se activará en breve.",
     "sub_notice_cancelled": "Pago anulado: no se ha realizado ningún cargo.",
-    "sub_notice_cancel_ok": "Cancelación confirmada."
+    "sub_notice_cancel_ok": "Cancelación confirmada.",
+    "job_delete_linked_p": "Este libro también está en el archivo en línea de la app: desaparecerá de esta lista, pero seguirá archivado y descargable (también desde el enlace del correo) hasta que lo elimines del archivo en línea en la app."
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -622,7 +626,8 @@
     "sub_notice_ok": "Abonnement aktiv. Danke!",
     "sub_notice_pending": "Wir warten auf die Bestätigung der Zahlung: Das Abonnement ist gleich aktiv.",
     "sub_notice_cancelled": "Zahlung abgebrochen: Es wurde nichts abgebucht.",
-    "sub_notice_cancel_ok": "Kündigung bestätigt."
+    "sub_notice_cancel_ok": "Kündigung bestätigt.",
+    "job_delete_linked_p": "Dieses Buch ist auch im Online-Archiv der App: Es verschwindet aus dieser Liste, bleibt aber archiviert und herunterladbar (auch über den Link in der E-Mail), bis du es in der App aus dem Online-Archiv löschst."
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -747,7 +752,8 @@
     "sub_notice_ok": "订阅已生效，谢谢！",
     "sub_notice_pending": "正在等待付款确认：订阅很快就会生效。",
     "sub_notice_cancelled": "付款已取消：未产生任何扣款。",
-    "sub_notice_cancel_ok": "已确认取消。"
+    "sub_notice_cancel_ok": "已确认取消。",
+    "job_delete_linked_p": "这本书也在应用的在线归档中：它会从此列表中消失，但仍会保留在归档中并可下载（包括通过邮件中的链接），直到你在应用中将其从在线归档删除。"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -872,6 +878,7 @@
     "sub_notice_ok": "सब्सक्रिप्शन सक्रिय है। धन्यवाद!",
     "sub_notice_pending": "हम भुगतान की पुष्टि का इंतज़ार कर रहे हैं: सब्सक्रिप्शन जल्द ही सक्रिय हो जाएगा।",
     "sub_notice_cancelled": "भुगतान रद्द हुआ: कोई शुल्क नहीं लिया गया।",
-    "sub_notice_cancel_ok": "रद्द करने की पुष्टि हो गई।"
+    "sub_notice_cancel_ok": "रद्द करने की पुष्टि हो गई।",
+    "job_delete_linked_p": "यह किताब ऐप के ऑनलाइन संग्रह में भी है: यह इस सूची से हट जाएगी, लेकिन तब तक आर्काइव में रहेगी और डाउनलोड की जा सकेगी (ईमेल के लिंक से भी), जब तक आप इसे ऐप में ऑनलाइन संग्रह से नहीं हटाते।"
   }
 }

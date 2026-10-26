@@ -437,7 +437,7 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
             e.__cause__ if e.resp is None else None)
 
 
-def estimate_book_cost(chapters, language="en"):
+def estimate_book_cost(chapters, language="en", strip_round=True, strip_square=True):
     """Stima costo end-to-end sui caratteri letti (corpo + titolo parlato
     di ogni capitolo, `pricing_common.billable_text`: dal 2026-10-09 come
     VoxCPM; prima i titoli non erano fatturati).
@@ -445,10 +445,13 @@ def estimate_book_cost(chapters, language="en"):
     Args:
         chapters: lista di oggetti con attributo `.text` (e `.title`).
         language: ISO 639-1 (solo 'en' supportato; parametro per simmetria).
+        strip_round, strip_square: testo tra parentesi tolto dal piano, e
+            quindi dal prezzo (`text_reflow.paren_strip_flags`).
     """
     from text_reflow import spoken_title_prefix
 
-    chars_per_chapter, chars_total, _ = _pricing.billable_chars(chapters, spoken_title_prefix)
+    chars_per_chapter, chars_total, _ = _pricing.billable_chars(
+        chapters, spoken_title_prefix, strip_round=strip_round, strip_square=strip_square)
     price = compute_user_price_eur(chars_total)
     return {
         "chars_total": chars_total,

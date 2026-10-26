@@ -35,6 +35,13 @@ MANIFEST_NAME = ".chunks_manifest.json"
 FAILED_NAME = ".chunks_failed.json"
 _failed_lock = threading.Lock()
 
+# Capitoli gia' codificati dal ramo multi-file in `output_N/`. Dopo l'encode
+# le parti del capitolo si cancellano e il riuso per chunk non le vede piu':
+# il 26/10/2026, al restart del deploy, due job zip con piano identico sono
+# ripartiti dal capitolo 1. Il segno si scrive solo a encode riuscito e porta
+# l'impronta del file: un MP3 riscritto o troncato dopo non vale.
+CHAPTERS_NAME = ".chapters_done.json"
+
 # Versione dello schema: un bump invalida tutti i manifest esistenti (utile se
 # cambia il modo in cui i chunk vengono scritti su disco).
 SCHEMA_VERSION = 1
@@ -93,13 +100,15 @@ def read_manifest(work_dir):
 
 def write_manifest(work_dir, fp: dict) -> bool:
     """Scrive il manifest (tmp+rename). Non solleva: il riuso e' best-effort.
-    Se l'impronta cambia, l'elenco dei falliti del piano precedente non vale
-    piu' (gli indici sono posizionali) e viene rimosso."""
+    Se l'impronta cambia, l'elenco dei falliti e i capitoli codificati del
+    piano precedente non valgono piu' (gli indici sono posizionali) e vengono
+    rimossi."""
     if read_manifest(work_dir) != fp:
-        try:
-            os.remove(failed_path(work_dir))
-        except OSError:
-            pass
+        for _vecchio in (failed_path(work_dir), chapters_path(work_dir)):
+            try:
+                os.remove(_vecchio)
+            except OSError:
+                pass
     return write_json_safe(manifest_path(work_dir), fp, indent=2)
 
 
@@ -135,6 +144,61 @@ def mark_failed(work_dir, i) -> bool:
 def clear_failed(work_dir, i) -> bool:
     """Toglie il segno al chunk `i`, risintetizzato con successo."""
     return _update_failed(work_dir, i, False)
+
+
+def chapters_path(work_dir) -> str:
+    return os.path.join(str(work_dir), CHAPTERS_NAME)
+
+
+def _file_sha256(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for blocco in iter(lambda: f.read(1 << 20), b""):
+            h.update(blocco)
+    return h.hexdigest()
+
+
+def mark_chapter_done(work_dir, ch_idx, mp3_path) -> bool:
+    """Segna il capitolo `ch_idx` come codificato in `mp3_path` (dentro la
+    `output_N/` del run). Solo dopo un encode riuscito e senza chunk falliti:
+    il file e' audio vero e completo. Non solleva: il riuso e' best-effort."""
+    try:
+        rec = {"dir": Path(mp3_path).parent.name, "file": Path(mp3_path).name,
+               "sha256": _file_sha256(mp3_path)}
+    except OSError:
+        return False
+    done = load_json(chapters_path(work_dir), dict)
+    done[str(ch_idx)] = rec
+    return write_json_safe(chapters_path(work_dir), done)
+
+
+def reusable_chapters(work_dir, fp: dict, output_dir) -> dict:
+    """`{chapter_index: percorso MP3}` dei capitoli che il ramo multi-file
+    puo' saltare: manifest identico all'impronta corrente, motore riusabile,
+    MP3 nella stessa `output_N/` (lo ZIP si fa da li') e con lo stesso
+    contenuto di quando e' stato segnato."""
+    if (fp or {}).get("engine") not in REUSABLE_ENGINES:
+        return {}
+    if not matches(work_dir, fp):
+        return {}
+    out_dir = Path(output_dir)
+    out = {}
+    for key, rec in load_json(chapters_path(work_dir), dict).items():
+        try:
+            ci = int(key)
+            name, sha = rec["file"], rec["sha256"]
+            valido = (rec["dir"] == out_dir.name and sha
+                      and name == os.path.basename(name))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if not valido:
+            continue
+        try:
+            if _file_sha256(out_dir / name) == sha:
+                out[ci] = str(out_dir / name)
+        except OSError:
+            continue
+    return out
 
 
 def matches(work_dir, fp: dict) -> bool:

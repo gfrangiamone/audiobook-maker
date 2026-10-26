@@ -36,6 +36,8 @@ import semantic_judge as sj
 _lock = threading.RLock()
 
 KINDS = ("generate", "quota_gate", "quota_block", "email")
+# Eventi di /api/generate che consumano o toccano la quota voci standard.
+_QUOTA_KINDS = ("generate", "quota_gate", "quota_block")
 VERDICTS = ("abuse", "clean", "inconclusive")
 
 # Motivo dominante del verdetto. Sostituisce la frase libera che scriveva il
@@ -257,6 +259,17 @@ def _apply(bucket, kind, data, now):
         email = str(data.get("email") or "").strip().lower()
         if email:
             _add_unique(bucket["emails"], _hash(email), _EMAILS_KEEP)
+    # Richiesta con sessione: l'email dell'account e' un'identita' come quella
+    # del gate (due account sullo stesso gruppo restano rotazione), e il cid
+    # resta marcato come dispositivo di un account (vedi `_account_device`).
+    # Lo stesso cid usato anche senza sessione (prima del login o dopo il
+    # logout) lascia `anon`: li' la quota tornava al cookie.
+    account = str(data.get("account_email") or "").strip().lower()
+    if account:
+        _add_unique(bucket["emails"], _hash(account), _EMAILS_KEEP)
+        bucket["account"] = True
+    elif kind in _QUOTA_KINDS:
+        bucket["anon"] = True
     fn = str(data.get("filename") or "")
     if fn:
         _add_unique(bucket["files"], _hash(fn), _FILES_KEEP)
@@ -387,12 +400,25 @@ def _reactive_birth(first, last_block):
                 and last_block < first <= last_block + _REACTIVE_WINDOW_SEC)
 
 
+def _account_device(b):
+    """Vero se il cid ha toccato la quota solo con la sessione di un account.
+
+    Basta una volta senza sessione per perdere l'esenzione: altrimenti un
+    login con un cookie nuovo, un job minuscolo e un logout darebbero un cid
+    che genera anonimo su una quota da cookie fresca senza mai contare come
+    rotazione (review di sicurezza del 25/10/2026)."""
+    return bool(b.get("account")) and not b.get("anon")
+
+
 def _born_after_last_block(g, cid):
     """Vero se `cid` e' comparso a ridosso dell'ultimo blocco del gruppo: e' il
     profilo del cookie creato per ripartire da zero, non quello del vicino di
     NAT che era gia' li'."""
+    b = (((g or {}).get("cids") or {}).get(cid) or {})
+    if _account_device(b):
+        return False
     try:
-        first = float((((g or {}).get("cids") or {}).get(cid) or {}).get("first_ts") or 0)
+        first = float(b.get("first_ts") or 0)
     except (TypeError, ValueError):
         return False
     return _reactive_birth(first, _last_block_ts(g))
@@ -429,15 +455,22 @@ def _evasion_features(g, now):
     last_block = _last_block_ts(g)
     born_after = disposable = 0
     lifespans, ages = [], []
+    anon_cids = 0
     for c in cids.values():
         first, last = float(c.get("first_ts") or 0), float(c.get("last_ts") or 0)
         if not first:
             continue
+        ages.append(now - first)
+        if _account_device(c):
+            # Dispositivo di un account: la quota segue l'email dell'account,
+            # non il cookie, quindi un cid nuovo non riparte da zero e non e'
+            # rotazione. Un account *diverso* resta visibile in `emails`.
+            continue
+        anon_cids += 1
         if _reactive_birth(first, last_block):
             born_after += 1
         life = max(0.0, last - first)
         lifespans.append(life)
-        ages.append(now - first)
         if (int(c.get("generate", 0) or 0) > 0 and life < _DISPOSABLE_LIFE_SEC
                 and (now - last) > _DISPOSABLE_IDLE_SEC):
             disposable += 1
@@ -445,7 +478,7 @@ def _evasion_features(g, now):
     ages.sort()
     median_life = lifespans[len(lifespans) // 2] if lifespans else 0.0
     emails = len(b.get("emails") or [])
-    many_young_cids = (len(cids) >= _ROTATION_MIN_CIDS
+    many_young_cids = (anon_cids >= _ROTATION_MIN_CIDS
                        and median_life < _ROTATION_MAX_MEDIAN_LIFE_SEC)
     rotation = bool(born_after or disposable >= _DISPOSABLE_MIN
                     or emails > _STABLE_MAX_EMAILS or many_young_cids)
@@ -640,17 +673,41 @@ def _covered_by_group_scope(v, g, cid):
         return False
 
 
+def _blocks_cid(g, cid, now, threshold, group_scope=True):
+    """Vero se il verdetto valido del gruppo `g` e' `abuse` sopra soglia e
+    `cid` ricade nel suo scope. Con `group_scope=False` conta solo la lista
+    dei cid giudicati, senza i cookie arrivati sul gruppo dopo il verdetto."""
+    v = _valid_verdict(g, now) if g else None
+    return bool(v and v["verdict"] == "abuse"
+                and float(v.get("confidence") or 0) >= threshold
+                and (cid in (v.get("cids") or [])
+                     or (group_scope and _covered_by_group_scope(v, g, cid))))
+
+
 def is_blocked(group, cid):
     """Vero solo con kill accesa, verdetto `abuse` valido sopra soglia e cid
-    nello scope — dove `scope=group` copre anche i cid nati dopo il verdetto."""
+    nello scope — dove `scope=group` copre anche i cid nati dopo il verdetto.
+
+    Il verdetto segue il cid su qualunque rete: si guarda prima `group`, poi
+    gli altri gruppi con un verdetto. Il 25/10/2026 un cid fermato due volte
+    sul /24 di casa e' stato servito cinque ore dopo da un altro /24, giudicato
+    `clean` perche' li' nessuno l'aveva mai visto. L'email non si segue: quella
+    del gate non e' verificata, e chi la scrive potrebbe far bloccare altri.
+
+    Fuori dal gruppo di origine segue solo i cid nella lista del verdetto, non
+    quelli coperti da `scope=group` perche' arrivati dopo: su una CGNAT mobile
+    puo' essere un vicino capitato su quel /24, e verrebbe fermato ovunque per
+    tutta la durata del verdetto."""
     if not cid or not kill_enabled():
         return False
-    g = dossier(group)
-    v = _valid_verdict(g, time.time()) if g else None
-    return bool(v and v["verdict"] == "abuse"
-                and float(v.get("confidence") or 0) >= confidence_threshold()
-                and (cid in (v.get("cids") or [])
-                     or _covered_by_group_scope(v, g, cid)))
+    now = time.time()
+    threshold = confidence_threshold()
+    with _lock:
+        groups = _load()["groups"]
+    if _blocks_cid(groups.get(group), cid, now, threshold):
+        return True
+    return any(_blocks_cid(g, cid, now, threshold, group_scope=False)
+               for key, g in groups.items() if key != group)
 
 
 def clear_verdict(group):
@@ -776,6 +833,7 @@ The offence is EVADING THE QUOTA, not consuming it. High volume alone is not abu
 - "distinct_emails": how many identities this group has ever used. Evading the gate in series requires fresh ones; ONE email behind any number of gate acceptances is one person using the service as designed.
 - "identity_rotation" / "stable_identity": the summary of the three lines above — whether the group has ever swapped the identity it passes the gate with.
 - "admin_cleared_recently": a human operator has already reviewed this group and declared it legitimate.
+- per cid, "signed_in": the cookie has only ever been used signed in to an account, whose quota follows the account and not the cookie. A new signed-in cookie is the same person on another device, not a rotated cookie, and is left out of the rotation counts above; a second account shows up in "distinct_emails".
 
 HARD RULE: if "quota_gate_ever" is false AND "cids_born_after_last_block" is 0 AND "disposable_cids" is below 2, you MUST NOT answer "abuse", however large the volume. Answer "clean" or "inconclusive".
 HARD RULE: if "stable_identity" is true, you MUST NOT answer "abuse" either — however large the volume, and however many times the quota gate was accepted. A user who exhausts the quota over and over with one stable email and long-lived cookies is a heavy user paying the price the gate asks, not an evader. Answer "clean" or "inconclusive".
@@ -815,6 +873,7 @@ def _bucket_features(b, now):
         "active_hours_utc": sorted({time.gmtime(t).tm_hour for t in recent}),
         "span_hours": round((last - first) / 3600, 1) if first and last else 0,
         "median_gap_minutes": round(sorted(gaps)[len(gaps) // 2] / 60, 1) if gaps else None,
+        "signed_in": _account_device(b),
     }
 
 

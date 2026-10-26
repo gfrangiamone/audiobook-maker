@@ -10,6 +10,7 @@ import cleanup
 import free_tts_quota as ftq
 import generation_engine
 import payment
+import routes_account
 from epub_to_tts import BookInfo, Chapter
 
 CID = "cid_abuse_enf_test"
@@ -202,6 +203,26 @@ def test_generate_records_dossier_and_resets_markers(env, client):
     assert len(d["all"]["files"]) == 1
 
 
+def test_403_follows_the_cid_onto_another_network(env, client):
+    """Il cid condannato sul gruppo IP resta fermo anche da un altro /24."""
+    _abuse_verdict([CID])
+    job = _mk_job("abz-net")
+    job["client_ip"] = "8.8.4.4"
+    r = _post(client, "abz-net")
+    assert r.status_code == 403 and r.get_json()["error_code"] == "job_terminated"
+    assert env["run"] == []
+
+
+def test_signed_in_generate_marks_the_cid_as_account_device(env, client, monkeypatch):
+    monkeypatch.setattr(routes_account, "_current_account",
+                        lambda: {"id": 3, "email": "lettore@example.com", "lang": "en"})
+    _mk_job("abz-acct")
+    assert _post(client, "abz-acct").status_code == 200
+    d = aw.dossier(aw.group_key(IP, CID))
+    assert d["cids"][CID]["account"] is True
+    assert d["cids"][CID]["emails"] == [aw._hash("lettore@example.com")]
+
+
 def test_abuse_reset_recovery_markers_clears_stale_flags(env):
     """Il recovery bypassa /api/generate (che resetta questi marker al claim):
     _abuse_reset_recovery_markers deve fare lo stesso lavoro sul job
@@ -323,7 +344,7 @@ def test_abuse_cleanup_decision_hold_remove_pass(env):
     assert audiobook_app._abuse_cleanup_decision(expired_with_token, now, True) == "pass"
 
 
-def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path, monkeypatch):
+def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path, monkeypatch, sleeps):
     """Integrazione: il ramo 'analyzed' di _cleanup_loop passa davvero dalla
     decisione pura _abuse_cleanup_decision (issue #10) invece di duplicarne la
     logica inline. Tutto cio' che e' fuori dal ramo abuso e' no-op: il target
@@ -356,14 +377,7 @@ def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path,
     expired["abuse_kept_until"] = now - 10
     expired["_tag"] = "expired"
 
-    n_sleeps = [0]
-
-    def _sleep(_sec):
-        n_sleeps[0] += 1
-        if n_sleeps[0] >= 2:
-            raise SystemExit("stop after one _cleanup_loop pass")
-
-    monkeypatch.setattr(audiobook_app.time, "sleep", _sleep)
+    sleeps.stop_after(2, SystemExit("stop after one _cleanup_loop pass"))
 
     with pytest.raises(SystemExit):
         cleanup._cleanup_loop()

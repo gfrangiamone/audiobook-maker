@@ -780,6 +780,20 @@ def list_jobs(account_id, page=1, per_page=50, q="", audio_only=False):
     return [dict(r) for r in rows], total
 
 
+def audiobook_job_ids_since(account_id, since):
+    """job_id degli audiolibri visibili dell'account avviati da `since` in poi:
+    la tab Attivita' dell'app li segue anche se partiti dal sito."""
+    if not enabled():
+        return set()
+    with db.tx() as c:
+        rows = c.execute(
+            "SELECT job_id FROM account_jobs WHERE account_id=? AND hidden_at IS NULL "
+            f"AND created_at>=? AND {_AUDIOBOOK_WHERE}",
+            (account_id, int(since)),
+        ).fetchall()
+    return {r["job_id"] for r in rows}
+
+
 def get_job(account_id, job_id):
     """Riga di storico visibile del job dell'account, o None."""
     if not enabled():

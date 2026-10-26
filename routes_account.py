@@ -151,6 +151,16 @@ def current_account_id():
     return acct["id"] if acct else None
 
 
+def current_account_email():
+    """Email dell'account della richiesta corrente; "" senza sessione o fuori
+    da una richiesta (worker, recovery). Per i loggati e' la chiave della
+    quota voci standard e l'identita' che vede l'anti-abuso: un secondo
+    dispositivo dello stesso account non e' un'identita' nuova."""
+    if not has_request_context():
+        return ""
+    return (_current_account() or {}).get("email") or ""
+
+
 def _acct_cookie_secure():
     return cookie_secure()      # regola unica della app (E2)
 
@@ -622,10 +632,12 @@ def _account_rows_for(acct, page, q="", audio_only=False):
     _account_reconcile_running(rows, time.time())
     now = time.time()
     index = _download_tokens_index()
+    linked = user_archive.linked_job_ids(acct["id"])
     out = []
     for r in rows:
         d = dict(r)
         d["downloads"] = _account_downloads_for(d, now, index)
+        d["in_app_archive"] = d["job_id"] in linked
         out.append(d)
     return out, total
 
@@ -735,6 +747,9 @@ def api_account_jobs():
         "status": r.get("status"), "paid_eur": float(r.get("paid_eur") or 0),
         "engine": r.get("engine") or "", "model": r.get("model") or "",
         "downloads": r["downloads"],
+        # Collegato a un libro dell'archivio dell'app: eliminarlo dall'elenco
+        # non lo toglie dall'archivio (l'app lo dice nella conferma).
+        "in_app_archive": bool(r.get("in_app_archive")),
     } for r in rows]
     return jsonify({"jobs": jobs, "total": total, "page": page, "per_page": _ACCT_PER_PAGE,
                     "archive": _account_archive_for(acct)})
@@ -986,6 +1001,40 @@ def api_account_archive_share():
     return jsonify({"mode": "ready", "share_token": stok,
                     "link": routes_mobile._share_link_for(stok),
                     "ttl_sec": info["ttl_sec"]})
+
+
+def account_share(fingerprint, job_id, cid, filename):
+    """Per /api/share/create: share del libro che l'account della richiesta ha
+    gia' sul server (nell'archivio online o fra i job archiviati), cercato per
+    impronta come in archive/create. (token, ttl_sec), o None se non c'e' un
+    account o il libro va caricato."""
+    acct = _current_account()
+    if not acct:
+        return None
+    kind, hit = user_archive.server_copy(acct["id"], fingerprint,
+                                         _archive_job_candidates(acct, job_id))
+    if kind == "item":
+        stok, info = routes_mobile.create_archive_share(acct["id"], hit, cid)
+        return stok, info["ttl_sec"]
+    if kind == "job":
+        stok = routes_mobile.create_ready_share(hit[2], cid, filename, fingerprint)
+        return stok, routes_mobile._share_ttl_sec()
+    return None
+
+
+def account_job_ids_since(since):
+    """Per /api/my_jobs: job_id degli audiolibri che l'account della richiesta
+    ha avviato da `since` in poi, anche dal sito o da altri dispositivi.
+    Insieme vuoto senza account; best-effort, la lista dell'app non si rompe
+    per un errore del DB."""
+    acct = _current_account()
+    if not acct:
+        return set()
+    try:
+        return accounts.audiobook_job_ids_since(acct["id"], since)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING account_job_ids_since: {e}", flush=True)
+        return set()
 
 
 @bp.route("/api/account/archive/download", methods=["GET"])

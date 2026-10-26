@@ -1435,8 +1435,7 @@ def _generate_optimized_abm(job_id):
     # flag parentesi del job (assenti in fase di ottimizzazione = default della
     # generazione). Cosi` chi apre il .abm ritrova il maiuscolo gia' abbassato e
     # il punto dopo il titolo, che e` esattamente cio` che sentira`.
-    strip_round = not job.get("read_round_parens", False)
-    strip_square = not job.get("read_square_brackets", False)
+    paren = text_reflow.paren_strip_flags(job)
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         chapters_manifest = []
@@ -1478,9 +1477,7 @@ def _generate_optimized_abm(job_id):
                 # i paragrafi restano. Le parole sono comunque quelle del TTS.
                 # (Il placeholder di leak resta fuori: vive tra parentesi quadre
                 # e lo stripping lo cancellerebbe.)
-                ch_text_safe = prepare_tts_text(
-                    ch_text_safe, strip_round=strip_round,
-                    strip_square=strip_square, flatten=False)
+                ch_text_safe = prepare_tts_text(ch_text_safe, **paren, flatten=False)
 
             zf.writestr(f"chapters/{ch_filename}", ch_text_safe)
             entry = {
@@ -3465,6 +3462,7 @@ def run_optimization(job_id, selected_chapters=None):
                     _est_autogen = _tts_engines.estimate("gemini", 
                         info.chapters, voice,
                         language=_lang_autogen, rate_pct=rate,
+                        **text_reflow.paren_strip_flags(job),
                     )
                     job["gemini_estimate"] = _est_autogen
                 except Exception as _e_est_ag:
@@ -3484,6 +3482,7 @@ def run_optimization(job_id, selected_chapters=None):
                         language=((job.get("opt_lang") or "").lower()
                                   or _norm_lang(getattr(info, "language", ""))
                                   or "en"),
+                        **text_reflow.paren_strip_flags(job),
                     )
                     job["speechify_estimate"] = _est_spx_ag
                 except Exception as _e_est_spx_ag:
@@ -3500,6 +3499,7 @@ def run_optimization(job_id, selected_chapters=None):
                         language=((job.get("opt_lang") or "").lower()
                                   or _norm_lang(getattr(info, "language", ""))
                                   or "it"),
+                        **text_reflow.paren_strip_flags(job),
                     )
                 except Exception as _e_est_vox_ag:
                     print(f"[{job_id}] auto-gen voxcpm_estimate persist failed (non-fatal): {_e_est_vox_ag}")
@@ -5025,13 +5025,65 @@ def _rate_audit_fields(job):
     return {"rate_pct": int(_parse_rate_pct(rate_raw)), "rate_step": _rate_step(rate_raw)}
 
 
+# Copertura del testo: caratteri del piano TTS contro quelli quotati nella
+# stima PREMIUM. Il prezzo si calcola su `pricing_common.billable_text`, la
+# sintesi su `prepare_tts_text`: nessun controllo li confrontava, e il job
+# sLRx3imAutQ0nHWhuJTyuQ (25/10/2026) e' stato fatturato per 481k caratteri e
+# letto per 220k, perche' il prezzo contava anche gli incisi tolti. Dalla
+# v3.156.0 entrambi passano da `text_reflow.drop_parenthetical`; il controllo
+# resta come rete per altre divergenze. Sotto soglia il job prosegue: evento
+# TEXT_DROP nell'activity log (che alimenta il digest admin) e campi nell'audit.
+TEXT_COVERAGE_ALERT_PCT_DEFAULT = 85.0
+
+
+def _check_text_coverage(job_id, job, engine, plan_chars):
+    """Confronta i caratteri del piano con `chars_total` della stima del
+    motore e salva `job["text_coverage"]`. Ritorna quel dict, None per Edge,
+    senza stima o su errore. Mai fatale: il job non si ferma."""
+    try:
+        eng = _tts_engines.ENGINES.get(engine)
+        if eng is None:
+            return None
+        billed = int((job.get(eng.estimate_key) or {}).get("chars_total") or 0)
+        if billed <= 0:
+            return None
+        plan_chars = int(plan_chars or 0)
+        pct = round(plan_chars * 100.0 / billed, 1)
+        threshold = _env_float("ABM_TEXT_COVERAGE_ALERT_PCT", TEXT_COVERAGE_ALERT_PCT_DEFAULT,
+                               floor=0.0, ceil=100.0)
+        drop = pct < threshold
+        cov = {"chars_billed": billed, "plan_chars": plan_chars, "pct": pct, "drop": drop}
+        job["text_coverage"] = cov
+        if drop:
+            # Con l'ottimizzazione AI la stima puo' essere sul testo prima
+            # dell'LLM (wizard combinato): `opt=1` lo dice al lettore.
+            opt = 1 if (job.get("optimized_chapters") or job.get("optimized_abm_path")) else 0
+            print(f"[{job_id}] TEXT DROP: piano {plan_chars:,} car. su {billed:,} "
+                  f"fatturati ({pct}% < {threshold:g}%), engine={engine}", flush=True)
+            _log_activity(job_id, job.get("original_filename", ""), "TEXT_DROP",
+                          job.get("client_id", ""), job.get("client_ip", ""),
+                          f"plan={plan_chars} billed={billed} pct={pct} engine={engine} opt={opt}",
+                          job.get("browser_lang", ""), epoch=job.get("gen_epoch"))
+        return cov
+    except Exception as e:
+        print(f"[{job_id}] text coverage check error (non-fatal): {e}", flush=True)
+        return None
+
+
 def _common_audit_tail(rec, job):
     """Campi condivisi in coda al record: chunk riusati da un tentativo
     precedente (senza, il costo reale di un job recuperato appare
-    inspiegabilmente sotto stima) e i numeri dell'annullamento."""
+    inspiegabilmente sotto stima), i numeri dell'annullamento e la copertura
+    del testo fatturato (`_check_text_coverage`)."""
     reused = int(job.get("chunks_reused", 0) or 0)
     if reused:
         rec["chunks_reused"] = reused
+    cov = job.get("text_coverage")
+    if isinstance(cov, dict):
+        rec["chars_billed"] = int(cov.get("chars_billed", 0) or 0)
+        rec["plan_chars"] = int(cov.get("plan_chars", 0) or 0)
+        rec["text_coverage_pct"] = float(cov.get("pct", 0.0) or 0.0)
+        rec["text_drop"] = bool(cov.get("drop", False))
     cancel = job.get("cancel_meta")
     if isinstance(cancel, dict):
         rec["cancel_paid_eur"] = round(float(cancel.get("paid_eur", 0) or 0), 2)
@@ -6693,10 +6745,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Lettura opzionale del testo tra parentesi: di default (flag assenti o
         # False) il contenuto tra parentesi tonde/quadre viene rimosso dal TTS.
         # L'utente puo` scegliere di includerlo (read_* True -> strip_* False).
-        _strip_round = not bool(job.get("read_round_parens", False))
-        _strip_square = not bool(job.get("read_square_brackets", False))
-        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes,
-                            strip_round=_strip_round, strip_square=_strip_square,
+        _paren = text_reflow.paren_strip_flags(job)
+        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes, **_paren,
                             pre_split=_pick_pre_split(voice),
                             sentence_slack=_pick_sentence_slack(voice))
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
@@ -6733,6 +6783,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
         job["total_chars"] = total_chars
         job["total_chunks"] = total_chunks
+        _check_text_coverage(job_id, job, engine, total_chars)
 
         # Riuso dei chunk gia' su disco (resume dopo crash/restart). I file
         # `chunk_XXXXXX.*` di un tentativo precedente sono gia' sintetizzati e,
@@ -6747,19 +6798,28 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # Direttiva d'accento risolta (non il codice grezzo): incorpora anche
             # la lingua di lettura, cosi' un cambio di lingua invalida il riuso.
             accent=gemini_accent_directive,
-            strip_round=_strip_round, strip_square=_strip_square)
+            **_paren)
         try:
             _reusable_chunks = chunk_reuse.reusable_indices(
                 work_dir, _reuse_fp, total_chunks, _chunk_ext, plan=plan)
+            # Ramo multi-file: i capitoli gia' codificati in output_N/ non hanno
+            # piu' i chunk su disco. I loro blocchi contano come riusati
+            # (preflight RPD, pre-pass VoxCPM, audit) e il loop li salta.
+            _reusable_chapters = ({} if single_file else
+                                  chunk_reuse.reusable_chapters(work_dir, _reuse_fp, output_dir))
+            _reusable_chunks |= {i for i, b in enumerate(plan)
+                                 if b["chapter_index"] in _reusable_chapters}
         except Exception as _reuse_err:
             print(f"[{job_id}] Chunk reuse scan error (non-fatal): {_reuse_err}")
             _reusable_chunks = set()
+            _reusable_chapters = {}
         chunk_reuse.write_manifest(work_dir, _reuse_fp)
         job["chunks_reused"] = len(_reusable_chunks)
         if _reusable_chunks:
             print(f"[{job_id}] Chunk reuse: {len(_reusable_chunks)}/{total_chunks} chunk "
                   f"gia' sintetizzati riusati da un tentativo precedente "
-                  f"({total_chunks - len(_reusable_chunks)} da generare)")
+                  f"({total_chunks - len(_reusable_chunks)} da generare, "
+                  f"{len(_reusable_chapters)} capitoli gia' codificati)")
 
         # Pre-flight RPD check: per job Gemini, se i chunk previsti superano
         # la quota giornaliera residua (cap - used - reserve), abortire ANTE
@@ -7576,25 +7636,31 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if os.path.exists(p) and p != silence_path:
                         os.remove(p)
 
+            def _add_chapter_mp3(ch_idx, mp3_path):
+                nonlocal current_ms
+                mp3_files.append(mp3_path)
+                duration = _get_audio_duration_ms(mp3_path)
+                m4b_chapters.append({"title": chapter_by_idx[ch_idx].title,
+                                     "start": current_ms, "end": current_ms + duration})
+                current_ms += duration
+
             def _flush_chapter(ch_idx, parts, *, reset_attempts):
                 """Chiude il capitolo `ch_idx`: concatena/encoda le parti in un MP3
-                numerato, aggiorna i capitoli M4B e cancella le parti (non quelle
-                di un capitolo con chunk falliti, che servono al ripasso). Con
+                numerato, aggiorna i capitoli M4B, lo segna come codificato per
+                un eventuale restart e cancella le parti (non quelle di un
+                capitolo con chunk falliti, che servono al ripasso). Con
                 `reset_attempts`, al primo capitolo scritto di un job recuperato
                 azzera i tentativi (progresso reale, anti-burn del cap)."""
-                nonlocal current_ms
                 ch = chapter_by_idx[ch_idx]
                 safe_title = _safe_filename(ch.title)[:50] or f"ch_{ch_idx}"
                 out_num = output_num_by_idx.get(ch_idx, ch_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 _encode_chapter(ch_idx, parts, mp3_path)
-                mp3_files.append(mp3_path)
-                duration = _get_audio_duration_ms(mp3_path)
-                m4b_chapters.append({"title": ch.title, "start": current_ms, "end": current_ms + duration})
-                current_ms += duration
+                _add_chapter_mp3(ch_idx, mp3_path)
                 if any(plan[j]["chapter_index"] == ch_idx for j in _failed_idx):
                     _kept_chapters[ch_idx] = (list(parts), mp3_path)
                 else:
+                    chunk_reuse.mark_chapter_done(work_dir, ch_idx, mp3_path)
                     _remove_parts(parts)
                 if reset_attempts and job.get("recovered") and not job.get("_attempts_reset"):
                     job["_attempts_reset"] = True
@@ -7613,9 +7679,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         _flush_chapter(current_chapter_idx, current_chapter_parts, reset_attempts=True)
                     current_chapter_parts = []
                     current_chapter_idx = block["chapter_index"]
-                    # Silenzio all'inizio del capitolo
-                    if os.path.exists(silence_path):
+                    if current_chapter_idx in _reusable_chapters:
+                        # Codificato da un tentativo precedente: niente sintesi.
+                        _add_chapter_mp3(current_chapter_idx,
+                                         _reusable_chapters[current_chapter_idx])
+                    elif os.path.exists(silence_path):
+                        # Silenzio all'inizio del capitolo
                         current_chapter_parts.append(silence_path)
+                if current_chapter_idx in _reusable_chapters:
+                    _carry_tick(i)
+                    job["processed_chars"] += block["chars"]
+                    continue
 
                 result, part_path = _synthesize_chunk(i, block)
                 _carry_tick(i)
@@ -7784,7 +7858,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # quindi una glob non-ricorsiva sul livello di work_dir non li tocca.
         try:
             for _pattern in ("chunk_*", "prompt*.txt", "*.filelist.txt",
-                             chunk_reuse.MANIFEST_NAME, chunk_reuse.FAILED_NAME):
+                             chunk_reuse.MANIFEST_NAME, chunk_reuse.FAILED_NAME,
+                             chunk_reuse.CHAPTERS_NAME):
                 for _leftover in work_dir.glob(_pattern):
                     if _leftover.is_file():
                         try:

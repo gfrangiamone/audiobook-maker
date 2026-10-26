@@ -197,3 +197,80 @@ def test_failed_list_survives_same_fingerprint_reset_on_change(tmp_path):
 def test_read_failed_ignores_garbage(tmp_path):
     (tmp_path / chunk_reuse.FAILED_NAME).write_text('{"x": 1}', encoding="utf-8")
     assert chunk_reuse.read_failed(tmp_path) == set()
+
+
+# --- Capitoli gia' codificati (ramo multi-file) ---------------------------
+# Dopo l'encode del capitolo le sue parti si cancellano: al restart il riuso
+# per chunk non le vede piu' e solo il segno del capitolo evita di rifarlo
+# (26/10/2026: job zip ripartiti dal capitolo 1 dopo il deploy).
+
+EDGE = dict(voice="en-US-AndrewNeural", engine="edge")
+
+
+def _chapter_mp3(work, epoch=1, name="002_Cap 2.mp3", data=b"ID3" + b"" * 200):
+    out = work / f"output_{epoch}"
+    out.mkdir(exist_ok=True)
+    p = out / name
+    p.write_bytes(data)
+    return out, p
+
+
+def test_chapter_done_is_reused_with_same_fingerprint(tmp_path):
+    fp = _fp(**EDGE)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    out, p = _chapter_mp3(tmp_path)
+    chunk_reuse.mark_chapter_done(tmp_path, 2, p)
+    chunk_reuse.write_manifest(tmp_path, fp)  # restart, stesso piano
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {2: str(p)}
+
+
+def test_chapter_done_not_reused_if_file_changed_or_missing(tmp_path):
+    fp = _fp(**EDGE)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    out, p = _chapter_mp3(tmp_path)
+    chunk_reuse.mark_chapter_done(tmp_path, 2, p)
+    p.write_bytes(b"ID3" + b"" * 200)  # riscritto da un encode poi interrotto
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {}
+    p.unlink()
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {}
+
+
+def test_chapter_done_only_in_the_same_output_dir(tmp_path):
+    # Lo ZIP si fa dalla output_N corrente: un MP3 identico in un'altra
+    # cartella (altra gen_epoch) non vale.
+    fp = _fp(**EDGE)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    _out1, p = _chapter_mp3(tmp_path, epoch=1)
+    chunk_reuse.mark_chapter_done(tmp_path, 2, p)
+    out2, _p2 = _chapter_mp3(tmp_path, epoch=2)
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out2) == {}
+
+
+def test_chapters_done_reset_on_fingerprint_change(tmp_path):
+    fp = _fp(**EDGE)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    out, p = _chapter_mp3(tmp_path)
+    chunk_reuse.mark_chapter_done(tmp_path, 2, p)
+    other = _fp(rate="+10%", **EDGE)
+    chunk_reuse.write_manifest(tmp_path, other)
+    assert chunk_reuse.reusable_chapters(tmp_path, other, out) == {}
+    chunk_reuse.write_manifest(tmp_path, fp)  # il segno non risorge
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {}
+
+
+def test_speechify_never_reuses_chapters(tmp_path):
+    fp = _fp(engine="speechify", voice="speechify:scott")
+    chunk_reuse.write_manifest(tmp_path, fp)
+    out, p = _chapter_mp3(tmp_path)
+    chunk_reuse.mark_chapter_done(tmp_path, 2, p)
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {}
+
+
+def test_reusable_chapters_ignores_garbage(tmp_path):
+    fp = _fp(**EDGE)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    out, _p = _chapter_mp3(tmp_path)
+    (tmp_path / chunk_reuse.CHAPTERS_NAME).write_text(
+        '{"x": 1, "2": {"dir": "output_1", "file": "../002_Cap 2.mp3", "sha256": ""}}',
+        encoding="utf-8")
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {}

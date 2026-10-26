@@ -84,15 +84,18 @@ class Engine:
         """La classe di eccezione "motore non disponibile" del modulo."""
         return getattr(self.mod(), self.unavailable_exc)
 
-    def estimate(self, chapters, voice=None, language=None, rate_pct=0):
+    def estimate(self, chapters, voice=None, language=None, rate_pct=0, strip_round=True, strip_square=True):
         """`estimate_book_cost` del motore con la sua firma: Gemini vuole la
-        voce e il rate, Speechify legge solo inglese, VoxCPM la lingua."""
+        voce e il rate, Speechify legge solo inglese, VoxCPM la lingua. Il
+        testo tra parentesi segue le scelte dell'utente per tutti e tre
+        (`**text_reflow.paren_strip_flags(job)`): si fattura cio' che si legge."""
         m = self.mod()
+        paren = {"strip_round": strip_round, "strip_square": strip_square}
         if self.name == "gemini":
-            return m.estimate_book_cost(chapters, voice, language=language or "it", rate_pct=rate_pct)
+            return m.estimate_book_cost(chapters, voice, language=language or "it", rate_pct=rate_pct, **paren)
         if self.only_language:
-            return m.estimate_book_cost(chapters, language=self.only_language)
-        return m.estimate_book_cost(chapters, language=language or "it")
+            return m.estimate_book_cost(chapters, language=self.only_language, **paren)
+        return m.estimate_book_cost(chapters, language=language or "it", **paren)
 
     def consumed_list_price_eur(self, job, voice=None, language=None):
         """Listino del lavoro gia' consegnato da questo run (`<motore>_actual`
@@ -145,9 +148,10 @@ def premium_for_voice(voice):
     return ENGINES.get(engine_for_voice(voice))
 
 
-def estimate(engine, chapters, voice=None, language=None, rate_pct=0):
+def estimate(engine, chapters, voice=None, language=None, rate_pct=0, strip_round=True, strip_square=True):
     """Stima del costo per nome motore (comodo nei dispatch di audiobook_app)."""
-    return ENGINES[engine].estimate(chapters, voice, language=language, rate_pct=rate_pct)
+    return ENGINES[engine].estimate(chapters, voice, language=language, rate_pct=rate_pct,
+                                    strip_round=strip_round, strip_square=strip_square)
 
 
 def unavailable_exceptions():

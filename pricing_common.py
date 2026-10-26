@@ -1,6 +1,6 @@
 """pricing_common — cambio USD->EUR, commissioni PayPal e soglia gratuita.
 
-Modulo foglia (stdlib + `env_utils`). Prima: `ABM_GEMINI_USD_EUR_RATE`
+Modulo foglia (stdlib + `env_utils`, `text_reflow`). Prima: `ABM_GEMINI_USD_EUR_RATE`
 letto in quattro moduli (uno solo controllava i valori <= 0), il gross-up
 PayPal scritto due volte (`gemini_tts`, `speechify_tts`), l'audit VoxCPM
 che prendeva il cambio da `speechify_tts`.
@@ -18,6 +18,7 @@ che prendeva il cambio da `speechify_tts`.
   latino nel prezzo della traduzione, misurato sull'audit di prod.
 """
 from env_utils import env_float
+from text_reflow import drop_parenthetical
 
 DEFAULT_USD_EUR_RATE = 0.86
 DEFAULT_PAYPAL_FIXED_FEE_EUR = 0.34
@@ -117,15 +118,21 @@ def free_result(gross_eur, threshold_eur):
     }
 
 
-def billable_text(ch, title_prefix=None, normalize=None):
+def billable_text(ch, title_prefix=None, normalize=None, strip_round=True, strip_square=True):
     """Il testo che la voce legge per il capitolo `ch`, e che quindi si
     fattura: il titolo parlato che il piano antepone (`title_prefix(ch,
     text)`, separatore compreso) piu' il corpo. `normalize` (es. la
     normalizzazione Gemini) si applica a entrambi. "" per un capitolo
     senza testo. Unica regola per Gemini, Speechify e VoxCPM: prima i titoli
     letti erano fatturati solo su VoxCPM (un libro da 402 capitoli ne leggeva
-    ~15 mila caratteri gratis)."""
-    text = getattr(ch, "text", "") or ""
+    ~15 mila caratteri gratis).
+
+    `strip_round` / `strip_square` sono le scelte dell'utente sul testo tra
+    parentesi (`text_reflow.paren_strip_flags`): il testo che il piano toglie
+    non si fattura (`drop_parenthetical`, spazi intatti). Prima si fatturava
+    tutto: un PDF OCR da 481 mila caratteri ne leggeva 220 mila (incidente
+    25/10/2026). Con entrambi False il testo e' quello di prima."""
+    text = drop_parenthetical(getattr(ch, "text", "") or "", strip_round, strip_square)
     if not text:
         return ""
     prefix = title_prefix(ch, text) if title_prefix else ""
@@ -133,8 +140,8 @@ def billable_text(ch, title_prefix=None, normalize=None):
     return normalize(spoken) if normalize else spoken
 
 
-def billable_chars(chapters, title_prefix=None, normalize=None):
+def billable_chars(chapters, title_prefix=None, normalize=None, strip_round=True, strip_square=True):
     """(caratteri per capitolo, totale, testi fatturati) su `billable_text`."""
-    texts = [billable_text(ch, title_prefix, normalize) for ch in chapters]
+    texts = [billable_text(ch, title_prefix, normalize, strip_round, strip_square) for ch in chapters]
     per = [len(t) for t in texts]
     return per, sum(per), texts

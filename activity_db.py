@@ -25,6 +25,7 @@ FIELDS = ("job_id", "ts", "filename", "op", "client_id", "ip", "voice",
 # la riga riletta e' identica a quella del file.
 DETAIL_FIELD = (
     ("M4B_", "voice"),             # size_mb=... pct=... (generation_engine)
+    ("TEXT_DROP", "voice"),        # plan=... billed=... pct=... (generation_engine)
     ("ADMIN_VOUCHER_", "lang"),    # email del destinatario o motivo della revoca
     ("VOUCHER_ATTEMPT", "lang"),   # esito del tentativo
     ("PAYMENT_", "lang"),          # errore della capture

@@ -38,8 +38,10 @@ PAID_OPS = frozenset({"PAYMENT_CAPTURED"})
 # (size_mb=... elapsed_s=... pct=... status=...) nella colonna voice delle
 # righe M4B_START/M4B_PROGRESS/M4B_END. Queste righe non devono aggiornare
 # voice/lang/ip della sessione ("ultimo valore non vuoto vince" altrimenti
-# sovrascrive la voce reale con il payload).
+# sovrascrive la voce reale con il payload). Stesso payload per TEXT_DROP
+# (plan=... billed=... pct=..., generation_engine._check_text_coverage).
 M4B_OP_PREFIX = "M4B_"
+VOICE_PAYLOAD_OPS = (M4B_OP_PREFIX, "TEXT_DROP")
 
 QUANTILI = (0.50, 0.70, 0.90)
 # Fasce di spesa (EUR) per l'istogramma del fatturato per utente.
@@ -71,7 +73,7 @@ def parse_sessions(rows):
                 "client_ip": "", "platform": "", "day": dt_str[:10],
             }
         s["events"].add(operation)
-        is_m4b = operation.startswith(M4B_OP_PREFIX)
+        is_m4b = operation.startswith(VOICE_PAYLOAD_OPS)
         if client_id:
             s["client_id"] = client_id
         if client_ip and not is_m4b:

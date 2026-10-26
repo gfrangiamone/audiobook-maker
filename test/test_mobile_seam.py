@@ -27,7 +27,7 @@ def test_routes_and_helpers_live_in_the_blueprint():
     assert not re.search(r"^\s*(import|from) (audiobook_app|generation_engine)\b", inspect.getsource(rm), flags=re.M)
     assert "os.environ.get(" not in inspect.getsource(rm)
     for n in rm.FUNCS:
-        assert callable(getattr(audiobook_app, n)), n
+        assert callable(rm._cfg[n]), n                  # configurata dalla app (anche se vive in un altro seam)
 
 
 def test_values_and_helpers_resolve_on_the_app(monkeypatch, tmp_path):

@@ -594,3 +594,148 @@ def test_trigger_cid_never_revives_an_abuse_downgraded_by_the_guard(env):
                            "cids": ["a"], "reason": "volume", "trigger_cid": "a"})
     assert v["verdict"] == "inconclusive"
     assert aw.is_blocked(g, "a") is False
+
+
+# ------------------------------------------------- verdetto che segue il cid
+
+def test_verdict_follows_the_cid_onto_another_network(env):
+    """25/10/2026: cid fermato sul /24 di casa e servito cinque ore dopo da un
+    altro /24, dove nessuno l'aveva mai visto."""
+    casa, altrove = aw.group_key("9.9.9.9", "a"), aw.group_key("8.8.8.8", "a")
+    _gen(casa, "a")
+    _evasione(casa, "a")
+    aw.set_verdict(casa, {"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": ["a"]})
+    _gen(altrove, "a")
+    aw.set_verdict(altrove, {"verdict": "clean", "confidence": 0.1, "scope": "cids", "cids": []})
+    assert aw.is_blocked(altrove, "a") is True, "un clean altrove non sblocca il cid"
+    assert aw.is_blocked(altrove, "b") is False
+    assert aw.is_blocked(aw.group_key("7.7.7.7", "z"), "a") is True, "anche su un gruppo mai visto"
+
+
+def test_group_scope_follows_only_the_judged_cids_onto_another_network(env, monkeypatch):
+    """Fuori dal gruppo condannato contano solo i cid giudicati: un cookie
+    arrivato su quel /24 dopo il verdetto puo' essere un vicino di CGNAT, e
+    altrove non va fermato per tutta la durata del verdetto."""
+    casa, altrove = aw.group_key("9.9.9.9", "a"), aw.group_key("8.8.8.8", "x")
+    real_time = time.time
+    _gen(casa, "a")
+    _evasione(casa, "a")
+    aw.set_verdict(casa, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    _gen(casa, "rotated")                                # rotazione coperta dallo scope
+    _gen(altrove, "solo-altrove")                        # mai passato dal gruppo condannato
+    assert aw.is_blocked(casa, "rotated") is True, "sul gruppo condannato lo scope vale"
+    assert aw.is_blocked(altrove, "a") is True, "il cid giudicato segue su altre reti"
+    assert aw.is_blocked(altrove, "rotated") is False
+    assert aw.is_blocked(altrove, "solo-altrove") is False
+
+
+def test_expired_or_low_confidence_verdict_elsewhere_does_not_block(env, monkeypatch):
+    casa, altrove = aw.group_key("9.9.9.9", "a"), aw.group_key("8.8.8.8", "a")
+    _gen(casa, "a")
+    _evasione(casa, "a")
+    aw.set_verdict(casa, {"verdict": "abuse", "confidence": 0.80, "scope": "cids", "cids": ["a"]})
+    assert aw.is_blocked(altrove, "a") is False, "sotto la soglia della kill"
+    aw.set_verdict(casa, {"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": ["a"]})
+    assert aw.is_blocked(altrove, "a") is True
+    _age_verdict(casa, aw.verdict_ttl_sec() + 10)
+    assert aw.is_blocked(altrove, "a") is False, "verdetto scaduto"
+
+
+# ------------------------------------------------- dispositivi di un account
+
+def test_signed_in_device_after_the_gate_is_not_reactive_rotation(env, monkeypatch):
+    """Possibile falso innesco del 25/10/2026: il secondo dispositivo dello
+    stesso account, comparso dopo il gate del primo, contava come cookie nato
+    dopo il blocco."""
+    g = aw.group_key("9.9.9.9", "app")
+    real_time = time.time
+    _gen(g, "app")
+    aw.record_event(g, "app", "quota_gate", {})
+    aw.record_event(g, "app", "email", {"email": "Lettore@Example.com"})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    aw.record_event(g, "web", "generate", {"chars": 1000, "account_email": "lettore@example.com "})
+    ev = aw.evasion_for(g)
+    assert ev["cids_born_after_last_block"] == 0
+    assert ev["stable_identity"] is True and ev["quota_evasion_evidence"] is False
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    assert v["verdict"] == "inconclusive"
+
+
+def test_anonymous_cookie_after_the_gate_is_still_rotation(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "app")
+    real_time = time.time
+    _gen(g, "app")
+    aw.record_event(g, "app", "quota_gate", {})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    _gen(g, "reinstallata")
+    assert aw.evasion_for(g)["cids_born_after_last_block"] == 1
+
+
+def test_login_then_anonymous_use_loses_the_account_exemption(env, monkeypatch):
+    """Review del 25/10/2026: cookie nuovo, login, job minuscolo, logout e poi
+    generazioni anonime sulla quota del cookie. Il cid resta rotazione."""
+    g = aw.group_key("9.9.9.9", "app")
+    real_time = time.time
+    _gen(g, "app")
+    aw.record_event(g, "app", "quota_gate", {})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    aw.record_event(g, "nuovo", "generate", {"chars": 10, "account_email": "uno@example.com"})
+    assert aw.evasion_for(g)["cids_born_after_last_block"] == 0
+    aw.record_event(g, "nuovo", "generate", {"chars": 900000})        # dopo il logout
+    assert aw.evasion_for(g)["cids_born_after_last_block"] == 1
+    assert aw.dossier(g)["cids"]["nuovo"]["anon"] is True
+
+
+def test_always_signed_in_device_keeps_the_exemption(env, monkeypatch):
+    """Un'email di notifica registrata senza sessione non tocca la quota: non
+    fa perdere l'esenzione al dispositivo dell'account."""
+    g = aw.group_key("9.9.9.9", "app")
+    real_time = time.time
+    _gen(g, "app")
+    aw.record_event(g, "app", "quota_gate", {})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    for _ in range(3):
+        aw.record_event(g, "web", "generate", {"chars": 1000, "account_email": "uno@example.com"})
+        aw.record_event(g, "web", "quota_gate", {"account_email": "uno@example.com"})
+    aw.record_event(g, "web", "email", {"email": "uno@example.com"})
+    assert aw.evasion_for(g)["cids_born_after_last_block"] == 0
+    assert "anon" not in aw.dossier(g)["cids"]["web"]
+
+
+def test_a_second_account_is_still_identity_rotation(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "app")
+    real_time = time.time
+    _gen(g, "app")
+    aw.record_event(g, "app", "quota_gate", {})
+    aw.record_event(g, "app", "email", {"email": "uno@example.com"})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    aw.record_event(g, "web", "generate", {"chars": 1000, "account_email": "due@example.com"})
+    ev = aw.evasion_for(g)
+    assert ev["identity_rotation"] is True and ev["quota_evasion_evidence"] is True
+
+
+def test_signed_in_trigger_cid_does_not_enter_the_cids_scope(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "vecchio")
+    real_time = time.time
+    _gen(g, "vecchio")
+    _evasione(g, "vecchio")
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 3600)
+    aw.record_event(g, "web", "generate", {"chars": 1000, "account_email": "uno@example.com"})
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "cids",
+                           "cids": ["vecchio"], "trigger_cid": "web"})
+    assert v["cids"] == ["vecchio"]
+
+
+def test_signed_in_flag_reaches_the_judge_without_the_email(env):
+    g = aw.group_key("9.9.9.9", "web")
+    aw.record_event(g, "web", "generate", {"chars": 10, "account_email": "uno@example.com"})
+    _gen(g, "anon")
+    aw.record_event(g, "misto", "generate", {"chars": 10, "account_email": "uno@example.com"})
+    _gen(g, "misto")
+    payload, alias = aw.build_prompt(g)
+    assert "uno@example.com" not in payload
+    cids = json.loads(payload)["cids"]
+    by_cid = {alias[a]: f for a, f in cids.items()}
+    assert by_cid["web"]["signed_in"] is True and by_cid["anon"]["signed_in"] is False
+    assert by_cid["misto"]["signed_in"] is False, "usato anche senza sessione"

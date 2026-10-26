@@ -12,10 +12,8 @@ def _client():
     return audiobook_app.app.test_client()
 
 
-def test_failed_login_sleeps_and_is_rate_limited(monkeypatch):
+def test_failed_login_sleeps_and_is_rate_limited(monkeypatch, sleeps):
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-s10")
-    slept = []
-    monkeypatch.setattr(audiobook_app.time, "sleep", lambda s: slept.append(s))
     audiobook_app._ip_rl_buckets.pop("admin_login", None)
     c = _client()
     codes = []
@@ -23,7 +21,7 @@ def test_failed_login_sleeps_and_is_rate_limited(monkeypatch):
         r = c.post("/admin/login", json={"token": "wrong"}, environ_base={"REMOTE_ADDR": IP})
         codes.append(r.status_code)
     assert codes[:5] == [401] * 5 and codes[5:] == [429, 429]
-    assert len(slept) == 5 and all(s >= 0.5 for s in slept)
+    assert len(sleeps) == 5 and all(s >= 0.5 for s in sleeps)
     assert int(r.headers["Retry-After"]) >= 1
     # anche il token giusto resta bloccato finche' la finestra non scade
     r = c.post("/admin/login", json={"token": "tok-s10"}, environ_base={"REMOTE_ADDR": IP})

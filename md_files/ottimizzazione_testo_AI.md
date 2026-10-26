@@ -615,6 +615,8 @@ if _active_optimizing_for_client_unlocked(client_id) >= MAX_CONCURRENT_LLM_PER_C
 
 L'utente preme "Genera audiolibro": il frontend chiama `/api/optimize` con `auto_generate=true` + voice/rate/single_file/output_format. Il backend salva i parametri in `job["opt_*"]` e a fine ottimizzazione `run_optimization` chiama direttamente `run_generation(...)` senza passare per `/api/generate`.
 
+Per una voce PREMIUM il pagamento (TTS + AI) si decide quindi qui, nei tre rami combinati Gemini / Speechify / VoxCPM di `api_optimize`. Dalla v3.156.1 la stima TTS dei tre rami passa da un solo punto, `_combined_tts_estimate`: rilegge i testi spillati (`_pricing_chapters`), rifiuta un prezzo calcolato su testo vuoto (`_assert_priced_on_real_text`) e, se la stima fallisce, risponde 500 `estimate_failed` rilasciando il claim (`_combined_estimate_failed`). Prima il ramo VoxCPM saltava la rilettura: un job tornato "analyzed" dopo la generazione (`/api/reset_to_chapters`) pagava la sola quota AI e un buono scalava solo quella. Il ramo VoxCPM, inoltre, con la stima fallita proseguiva a prezzo TTS zero.
+
 ```python
 voice = job["opt_voice"]
 rate = job["opt_rate"]
