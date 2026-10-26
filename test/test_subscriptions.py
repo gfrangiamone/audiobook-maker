@@ -24,18 +24,21 @@ class FakeProvider:
     """Fornitore finto con lo stato remoto in memoria."""
 
     def __init__(self):
-        self.remote, self.payments, self.calls = {}, {}, []
+        self.remote, self.payments, self.calls, self.created = {}, {}, [], {}
         self.fail_cancel = self.fail_fetch = self.fail_refund = False
 
     def available(self):
         return True
 
-    def create_checkout(self, *, sub_id, plan, email, lang, return_url, cancel_url):
+    def create_checkout(self, *, sub_id, plan, email, lang, return_url, cancel_url, start_at=None,
+                        setup_fee_eur=None):
         ext = "I-" + sub_id[-8:].upper().replace("_", "X").replace("-", "Y")
         self.remote[ext] = billing_paypal.Remote(
             external_id=ext, status="APPROVAL_PENDING", plan=plan, custom_id=sub_id,
-            next_billing_at=None, last_payment_at=None, last_payment_eur=None, failed_payments=0)
+            next_billing_at=None, last_payment_at=None, last_payment_eur=None, failed_payments=0,
+            start_at=start_at)
         self.calls.append(("create", ext, return_url))
+        self.created[ext] = {"start_at": start_at, "setup_fee_eur": setup_fee_eur, "plan": plan}
         return ext, "https://pp.test/approve/" + ext
 
     def fetch(self, ext):
@@ -573,3 +576,192 @@ def test_schema_v2_one_next_row_per_account_beside_the_live_one(sub_env):
         pcols = {r[1] for r in c.execute("PRAGMA table_info(subscription_payments)")}
     assert {"replaces", "replaced_by", "start_at", "change_kind"} <= cols
     assert {"voucher_due_at", "kind"} <= pcols
+
+
+# ------------------------------------------------------------------ fase 2b: cambi di piano
+
+def _change(env, acct, plan, now):
+    st, url = subscriptions.change_plan(acct, plan, accepted_terms=True, waived_withdrawal=True,
+                                        return_url="https://h/r", cancel_url="https://h/c", now=now)
+    assert st == "ok", st
+    ext = url.rsplit("/", 1)[1]
+    return ext, _sub_of(ext)
+
+
+def _approve(env, ext, now):
+    env.fake.set(ext, status="ACTIVE", next_billing_at=env.fake.created[ext]["start_at"])
+    return subscriptions.refresh(_sub_of(ext)["id"], now=now)
+
+
+def _plan(acct):
+    a = accounts.get(acct["id"])
+    return a["plan"], a["plan_source"], a["plan_until"]
+
+
+def test_upgrade_prepaid_no_double_charge(sub_env):
+    acct, old = _paid(sub_env, "up@x.it")
+    e1 = _sub_of(old)["period_end"]
+    new, row = _change(sub_env, acct, "sub_10", T0 + 10 * DAY)
+    start = subscriptions._add_month(e1)
+    assert (row["status"], row["change_kind"], row["start_at"], row["replaces"]) == \
+        ("switching", "upgrade", start, _sub_of(old)["id"])
+    assert sub_env.fake.created[new] == {"start_at": start, "setup_fee_eur": 10.0, "plan": "sub_10"}
+    ev = sub_env.fake.pay(new, "FEE1", T0 + 10 * DAY + 30, amount=10.0, next_at=start)
+    assert subscriptions.handle_event("paypal", ev, now=T0 + 10 * DAY + 31) == "issued"
+    n, o = _sub_of(new), _sub_of(old)
+    assert (n["status"], n["period_start"], n["period_end"]) == ("active", e1, start)
+    assert (o["status"], o["replaced_by"]) == ("replaced", n["id"])
+    assert ("cancel", old, "plan_change") in sub_env.fake.calls
+    assert _plan(acct) == ("sub_10", "paid", start + 10 * DAY)              # 10 GB subito
+    assert [v["amount_eur"] for v in _vouchers_of(acct)] == [5.0]            # il 10 € arriva a e1
+    with db.tx() as c:
+        assert tuple(c.execute("SELECT kind, voucher_due_at FROM subscription_payments "
+                               "WHERE payment_id='FEE1'").fetchone()) == ("prepaid", e1)
+    # il vecchio da 5 € non si rinnova: se PayPal lo addebita comunque, rimborso
+    sub_env.fake.fail_cancel = False
+    late = sub_env.fake.pay(old, "OLD2", e1 + 60)
+    assert subscriptions.handle_event("paypal", late, now=e1 + 61) == "rejected"
+    assert ("refund", "OLD2", 5.0) in sub_env.fake.calls
+    assert _plan(acct)[0] == "sub_10"
+
+
+def test_deferred_voucher_issued_once_at_period_start(sub_env):
+    acct, old = _paid(sub_env, "def@x.it")
+    e1 = _sub_of(old)["period_end"]
+    new, _row = _change(sub_env, acct, "sub_10", T0 + 5 * DAY)
+    start = subscriptions._add_month(e1)
+    subscriptions.handle_event("paypal", sub_env.fake.pay(new, "FEE2", T0 + 5 * DAY + 9, amount=10.0,
+                                                          next_at=start), now=T0 + 5 * DAY + 10)
+    subscriptions.sweep(now=e1 - 10, force=True)
+    assert [v["amount_eur"] for v in _vouchers_of(acct)] == [5.0]
+    assert subscriptions.sweep(now=e1 + 1, force=True)["vouchers"] == 1
+    subscriptions.sweep(now=e1 + 2, force=True)
+    assert sorted(v["amount_eur"] for v in _vouchers_of(acct)) == [5.0, 10.0]
+
+
+def test_failed_switch_leaves_old_subscription(sub_env):
+    acct, old = _paid(sub_env, "fail@x.it")
+    new, _row = _change(sub_env, acct, "sub_10", T0 + DAY)
+    sub_env.fake.set(new, status="CANCELLED")                                # setup fee rifiutata
+    assert subscriptions.refresh(_sub_of(new)["id"], now=T0 + DAY + 60)["status"] == "ended"
+    assert _sub_of(old)["status"] == "active" and _plan(acct)[0] == "sub_5"
+    assert ("cancel", old, "plan_change") not in sub_env.fake.calls
+
+
+def test_switch_abandoned_after_ttl_keeps_old(sub_env):
+    acct, old = _paid(sub_env, "ttl@x.it")
+    new, _row = _change(sub_env, acct, "sub_10", T0 + DAY)
+    subscriptions.sweep(now=T0 + DAY + 3 * 3600 + 1, force=True)
+    assert _sub_of(new)["status"] == "abandoned" and _sub_of(old)["status"] == "active"
+    assert subscriptions.status_for(acct, now=T0 + DAY + 3 * 3600 + 2).get("change") is None
+
+
+def test_downgrade_scheduled_then_effective(sub_env):
+    acct, old = _paid(sub_env, "down@x.it", plan="sub_10", amount=10.0)
+    e1 = _sub_of(old)["period_end"]
+    new, row = _change(sub_env, acct, "sub_5", T0 + 3 * DAY)
+    assert (row["status"], row["change_kind"], row["start_at"]) == ("scheduled", "downgrade", e1)
+    assert sub_env.fake.created[new]["setup_fee_eur"] is None
+    _approve(sub_env, new, T0 + 3 * DAY + 60)
+    o = _sub_of(old)
+    assert (o["status"], o["cancel_reason"]) == ("cancelled", "plan_change")
+    assert ("cancel", old, "plan_change") in sub_env.fake.calls
+    assert _plan(acct) == ("sub_10", "paid", e1)                             # 10 GB fino a fine periodo
+    subscriptions.sweep(now=e1 + 120, force=True)                            # il vecchio finisce
+    assert _sub_of(old)["status"] == "ended"
+    assert _plan(acct) == ("sub_5", "paid", e1 + 10 * DAY)                   # ponte sul piano nuovo
+    ev = sub_env.fake.pay(new, "NEW1", e1 + 600)
+    assert subscriptions.handle_event("paypal", ev, now=e1 + 601) == "issued"
+    n = _sub_of(new)
+    assert n["status"] == "active" and _plan(acct)[0] == "sub_5"
+    assert sorted(v["amount_eur"] for v in _vouchers_of(acct)) == [5.0, 10.0]
+    assert _sub_of(old)["replaced_by"] == n["id"]
+
+
+def test_scheduled_start_failure_ends_after_grace(sub_env):
+    acct, old = _paid(sub_env, "nofunds@x.it", plan="sub_10", amount=10.0)
+    e1 = _sub_of(old)["period_end"]
+    new, _row = _change(sub_env, acct, "sub_5", T0 + DAY)
+    _approve(sub_env, new, T0 + DAY + 60)
+    subscriptions.sweep(now=e1 + 120, force=True)
+    assert _sub_of(new)["status"] == "scheduled"
+    subscriptions.refresh(_sub_of(new)["id"], now=e1 + 11 * DAY)
+    assert _sub_of(new)["status"] == "ended" and _plan(acct)[0] == "free"
+
+
+def test_early_payment_of_scheduled_row_is_refunded(sub_env):
+    acct, old = _paid(sub_env, "early@x.it", plan="sub_10", amount=10.0)
+    new, _row = _change(sub_env, acct, "sub_5", T0 + DAY)
+    _approve(sub_env, new, T0 + DAY + 60)
+    ev = sub_env.fake.pay(new, "EARLY", T0 + 2 * DAY)
+    assert subscriptions.handle_event("paypal", ev, now=T0 + 2 * DAY + 1) == "rejected"
+    assert ("refund", "EARLY", 5.0) in sub_env.fake.calls
+
+
+def test_cancel_with_scheduled_change_cancels_both(sub_env):
+    acct, old = _paid(sub_env, "both@x.it", plan="sub_10", amount=10.0)
+    new, _row = _change(sub_env, acct, "sub_5", T0 + DAY)
+    _approve(sub_env, new, T0 + DAY + 60)
+    sub_env.mails.clear()
+    out = subscriptions.request_cancel(acct["id"], "user", now=T0 + 2 * DAY)
+    assert out["status"] == "cancelled" and _sub_of(new)["status"] == "ended"
+    assert ("cancel", new, "user") in sub_env.fake.calls
+    assert sub_env.mails == [("cancelled", "both@x.it")]
+
+
+def test_cancel_after_prepaid_switch_keeps_prepaid_period(sub_env):
+    acct, old = _paid(sub_env, "keep@x.it")
+    e1 = _sub_of(old)["period_end"]
+    new, _row = _change(sub_env, acct, "sub_10", T0 + DAY)
+    start = subscriptions._add_month(e1)
+    subscriptions.handle_event("paypal", sub_env.fake.pay(new, "FEE3", T0 + DAY + 5, amount=10.0,
+                                                          next_at=start), now=T0 + DAY + 6)
+    out = subscriptions.request_cancel(acct["id"], "user", now=T0 + 2 * DAY)
+    assert (out["status"], out["ends_at"]) == ("cancelled", start)
+    assert _plan(acct) == ("sub_10", "paid", start)
+
+
+def test_account_deletion_cancels_every_row(sub_env):
+    acct, old = _paid(sub_env, "gone@x.it")
+    new, _row = _change(sub_env, acct, "sub_10", T0 + DAY)
+    subscriptions.request_cancel(acct["id"], "account_deleted", now=T0 + DAY + 10)
+    assert ("cancel", new, "account_deleted") in sub_env.fake.calls
+    assert ("cancel", old, "account_deleted") in sub_env.fake.calls
+    assert _sub_of(new)["status"] == "ended"
+
+
+def test_change_plan_refusals(sub_env):
+    kw = dict(accepted_terms=True, waived_withdrawal=True, return_url="r", cancel_url="c")
+    nobody = sub_env.login("none@x.it")
+    assert subscriptions.change_plan(nobody, "sub_10", now=T0, **kw) == ("no_subscription", None)
+    acct, old = _paid(sub_env, "ref@x.it")
+    assert subscriptions.change_plan(acct, "sub_5", now=T0 + DAY, **kw) == ("same_plan", None)
+    assert subscriptions.change_plan(acct, "sub_10", now=T0 + DAY, accepted_terms=True,
+                                     waived_withdrawal=False, return_url="r",
+                                     cancel_url="c") == ("terms_required", None)
+    _change(sub_env, acct, "sub_10", T0 + DAY)
+    assert subscriptions.change_plan(acct, "sub_10", now=T0 + DAY + 5, **kw) == ("change_pending", None)
+    assert subscriptions.cancel_change(acct["id"], now=T0 + DAY + 6) is True
+    assert subscriptions.cancel_change(acct["id"], now=T0 + DAY + 7) is False
+
+
+def test_resume_same_plan_scheduled_at_period_end(sub_env):
+    acct, old = _paid(sub_env, "again@x.it")
+    e1 = _sub_of(old)["period_end"]
+    subscriptions.request_cancel(acct["id"], "user", now=T0 + DAY)
+    new, row = _change(sub_env, acct, "sub_5", T0 + 2 * DAY)
+    assert (row["status"], row["change_kind"], row["start_at"]) == ("scheduled", "resume", e1)
+    calls = len(sub_env.fake.calls)
+    _approve(sub_env, new, T0 + 2 * DAY + 60)
+    assert len(sub_env.fake.calls) == calls                                 # niente da disdire
+    st = subscriptions.status_for(acct, now=T0 + 2 * DAY + 61)
+    assert st["change"] == {"kind": "resume", "plan": "sub_5", "status": "scheduled",
+                            "start_at": e1, "approved": True}
+
+
+def test_resume_upgrade_prepaid(sub_env):
+    acct, old = _paid(sub_env, "resup@x.it")
+    subscriptions.request_cancel(acct["id"], "user", now=T0 + DAY)
+    new, row = _change(sub_env, acct, "sub_10", T0 + 2 * DAY)
+    assert (row["status"], row["change_kind"]) == ("switching", "resume")
+    assert sub_env.fake.created[new]["setup_fee_eur"] == 10.0
