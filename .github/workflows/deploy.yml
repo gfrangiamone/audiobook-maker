@@ -31,6 +31,9 @@ jobs:
       - name: Python syntax check (py_compile su tutti i .py tracciati)
         run: python -m py_compile $(git ls-files '*.py')
       - name: ffmpeg (i test di assembly e dei chunk lo usano)
+        # Di solito 17 s. Il 26/10/2026 apt e' rimasto appeso oltre 20 min e, con
+        # la concurrency sopra, bloccava anche i push successivi (default 6 h).
+        timeout-minutes: 5
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Dipendenze (senza lo stack torch, vedi requirements-ci.txt)
         run: pip install -r requirements-ci.txt
