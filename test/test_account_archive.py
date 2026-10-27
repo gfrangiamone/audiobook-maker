@@ -936,13 +936,16 @@ def test_admin_aggregate_boxes_are_quick_filters(tmp_path):
     Resta evidenziata, il secondo clic azzera tutto, un filtro toccato a mano la spegne."""
     html = ADMIN_HTML.read_text(encoding="utf-8")
     boxes = re.findall(r'<div class="agg-box"[^>]*data-acc-agg="[^"]+"[^>]*>', html)
-    expected = dict(accounts._ADMIN_AGGREGATES, last30={"date_from": "2026-09-21"})
+    # "sub_live" la conta subscriptions.admin_stats (`subscriptions` della risposta), non un aggregato
+    expected = dict(accounts._ADMIN_AGGREGATES, last30={"date_from": "2026-09-21"},
+                    sub_live={"sub": "live"})
     assert len(boxes) == len(expected)
     for b in boxes:
         assert 'role="button"' in b and 'tabindex="0"' in b
-    aggregates = {k: i + 1 for i, k in enumerate(expected)}
+    aggregates = {k: i + 1 for i, k in enumerate(expected) if k != "sub_live"}
     out = _run_admin_accounts_js(tmp_path, {"AUDIT": {
-        "records": [], "count": 0, "aggregates": aggregates, "last30_since": "2026-09-21"}}, r"""
+        "records": [], "count": 0, "aggregates": aggregates, "last30_since": "2026-09-21",
+        "subscriptions": {"live": 3, "live_sub_5": 2, "live_sub_10": 1}}}, r"""
       const fields = () => Object.fromEntries(Object.entries(ACC_FILTER_DEFAULTS).map(([id, d]) =>
         [id, typeof d === "boolean" ? $(id).checked : $(id).value]));
       const marked = () => _boxes.filter(b => b.classList.contains("agg-active")).map(b => b.dataset.accAgg);
@@ -965,12 +968,12 @@ def test_admin_aggregate_boxes_are_quick_filters(tmp_path):
     """)
     param = {"accStateFilter": "state", "accQuery": "q", "accDateFrom": "date_from",
              "accDateTo": "date_to", "accPlanFilter": "plan", "accOriginFilter": "origin",
-             "accTolFilter": "tolerance"}
+             "accSubFilter": "sub", "accTolFilter": "tolerance"}
 
     def as_filter(fields):
         return {param[k]: v for k, v in fields.items() if v not in ("", "all", False)}
 
-    assert out["values"] == {k: str(v) for k, v in aggregates.items()}
+    assert out["values"] == dict({k: str(v) for k, v in aggregates.items()}, sub_live="3 (2 / 1)")
     for key, kw in expected.items():
         got = out["apply"][key]
         assert as_filter(got["fields"]) == kw, key
