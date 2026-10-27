@@ -457,6 +457,13 @@
         </select>
       </div>
       <div>
+        <label for="accSubFilter" title="Abbonamento PayPal vivo: attivo, in rinnovo, disdetto fino a fine periodo, in attivazione.">Abbonamento</label>
+        <select id="accSubFilter">
+          <option value="">Tutti</option>
+          <option value="live">Vivo</option>
+        </select>
+      </div>
+      <div>
         <label>&nbsp;</label>
         <label class="toggle-row" style="margin:0;padding:8px 0;cursor:pointer"
                title="Solo gli account vivi con l'archivio oltre la quota: il periodo di tolleranza e' aperto.">
@@ -488,7 +495,7 @@
       <div class="agg-box" data-acc-agg="gift" role="button" tabindex="0"><div class="agg-label" title="Account vivi con un piano regalato dall'admin e ancora attivo.">Regalati</div><div class="agg-value">-</div></div>
       <div class="agg-box" data-acc-agg="free_active" role="button" tabindex="0"><div class="agg-label" title="Account vivi senza piano pagato o regalato attivo, con il consenso al piano gratuito.">Gratuito attivo</div><div class="agg-value">-</div></div>
       <div class="agg-box" data-acc-agg="in_tolerance" role="button" tabindex="0"><div class="agg-label" title="Account vivi con l'archivio oltre la quota: il periodo di tolleranza e' aperto.">In tolleranza</div><div class="agg-value">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Abbonamenti PayPal vivi (attivi, in rinnovo, disdetti fino a fine periodo, in attivazione): 5 GB / 10 GB.">Abbonamenti vivi</div><div class="agg-value" id="accSubLive">-</div></div>
+      <div class="agg-box" data-acc-agg="sub_live" role="button" tabindex="0"><div class="agg-label" title="Abbonamenti PayPal vivi (attivi, in rinnovo, disdetti fino a fine periodo, in attivazione): 5 GB / 10 GB.">Abbonamenti vivi</div><div class="agg-value" id="accSubLive">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Checkout di abbonamento avviati negli ultimi 30 giorni e mai approvati (misura dell'attrito: chi non ha un conto PayPal deve aprirlo).">Checkout abbandonati 30 gg</div><div class="agg-value" id="accSubAbandoned">-</div></div>
     </div>
   </div>
@@ -1592,9 +1599,10 @@
     return accPost(btn, "/admin/api/accounts/gift_revoke", {account_id: accGiftId});
   }
   // Caselle degli Aggregati = filtri rapidi: il clic azzera i filtri e imposta quelli con cui
-  // il server conta la casella (accounts._ADMIN_AGGREGATES); il secondo clic azzera tutto.
+  // il server conta la casella (accounts._ADMIN_AGGREGATES, per "sub_live"
+  // subscriptions.admin_stats); il secondo clic azzera tutto.
   const ACC_FILTER_DEFAULTS = {accStateFilter: "all", accQuery: "", accDateFrom: "", accDateTo: "",
-                               accPlanFilter: "", accOriginFilter: "", accTolFilter: false};
+                               accPlanFilter: "", accOriginFilter: "", accSubFilter: "", accTolFilter: false};
   const ACC_AGG_FILTERS = {
     "total":        {},
     "with_session": {accStateFilter: "active"},
@@ -1605,6 +1613,7 @@
     "gift":         {accOriginFilter: "gift"},
     "free_active":  {accOriginFilter: "free"},
     "in_tolerance": {accTolFilter: true},
+    "sub_live":     {accSubFilter: "live"},
   };
   let accAggActive = "", accLast30Since = "";
   function accAggBoxes(){ return document.querySelectorAll("#tab_accounts [data-acc-agg]"); }
@@ -1647,6 +1656,7 @@
     const pl=$("accPlanFilter").value, og=$("accOriginFilter").value;
     if (pl) p.set("plan",pl);
     if (og) p.set("origin",og);
+    if ($("accSubFilter").value) p.set("sub",$("accSubFilter").value);
     if ($("accTolFilter").checked) p.set("tolerance","1");
     const so=$("accSort").value;
     if (so==="fill") p.set("sort",so);
@@ -1660,9 +1670,12 @@
     if (seq !== accFetchSeq) return;
     const a = d.aggregates||{};
     accLast30Since = d.last30_since||"";
-    accAggBoxes().forEach(b => { b.querySelector(".agg-value").textContent = a[b.dataset.accAgg] ?? 0; });
     const ss = d.subscriptions||{};
-    $("accSubLive").textContent = `${ss.live ?? 0} (${ss.live_sub_5 ?? 0} / ${ss.live_sub_10 ?? 0})`;
+    const subLive = `${ss.live ?? 0} (${ss.live_sub_5 ?? 0} / ${ss.live_sub_10 ?? 0})`;
+    accAggBoxes().forEach(b => {
+      const key = b.dataset.accAgg;
+      b.querySelector(".agg-value").textContent = key === "sub_live" ? subLive : a[key] ?? 0;
+    });
     $("accSubAbandoned").textContent = `${ss.abandoned_30d ?? 0} su ${ss.checkouts_30d ?? 0}`;
     accRender(d.records||[], d.count||0);
   }

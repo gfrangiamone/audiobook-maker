@@ -1298,6 +1298,17 @@ def admin_stats(now=None):
             "abandoned_30d": abandoned}
 
 
+def live_account_ids():
+    """Account con un abbonamento vivo: il filtro della casella "Abbonamenti
+    vivi" (uno solo per account, quindi tanti quanti `admin_stats()["live"]`)."""
+    if not _ready():
+        return []
+    marks = ",".join("?" * len(LIVE))
+    with db.tx() as c:
+        return [r[0] for r in c.execute(
+            f"SELECT DISTINCT account_id FROM subscriptions WHERE status IN ({marks})", LIVE)]
+
+
 def admin_status_map(account_ids):
     """{account_id: stato dell'abbonamento piu' recente} per la tabella Utenti."""
     ids = [a for a in account_ids if a]

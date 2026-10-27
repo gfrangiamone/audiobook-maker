@@ -97,10 +97,42 @@ def test_accounts_audit_reports_sub_status_and_stats(sub_env, monkeypatch):
     assert d["subscriptions"]["abandoned_30d"] == 1
 
 
+def test_accounts_audit_sub_live_filter_matches_the_box(sub_env, monkeypatch):
+    c = _admin(monkeypatch)
+    monkeypatch.setattr(app, "_smtp_available", lambda: True)
+    _paid(sub_env, "live@x.it")
+    sub_env.login("nosub@x.it")
+    other = sub_env.login("idle@x.it")
+    subscriptions.start_checkout(other, "sub_10", accepted_terms=True, waived_withdrawal=True,
+                                 return_url="r", cancel_url="c", now=T0)
+    subscriptions.sweep(now=T0 + 4 * 3600, force=True)                        # checkout abbandonato
+
+    def get(query):
+        r = c.get("/admin/api/accounts_audit" + query, headers=H)
+        assert r.status_code == 200
+        return r.get_json()
+
+    for on in ("?sub=live", "?sub=%20LIVE%20"):
+        d = get(on)
+        assert [r["email"] for r in d["records"]] == ["live@x.it"], on
+        assert d["count"] == d["subscriptions"]["live"] == 1
+        assert d["aggregates"]["total"] == 3                                  # aggregati sull'intera anagrafica
+    assert get("?sub=boh")["count"] == get("")["count"] == 3                  # valori ignoti: nessun filtro
+    assert get("?sub=live&origin=gift")["count"] == 0                         # filtri in AND
+
+
+def test_admin_list_empty_account_ids_matches_nothing(sub_env):
+    sub_env.login("one@x.it")
+    out = accounts.admin_list(account_ids=[])
+    assert out["count"] == 0 and out["records"] == [] and out["aggregates"]["total"] == 1
+    assert accounts.admin_list(account_ids=None)["count"] == 1
+
+
 def test_admin_page_has_the_subscription_popup(sub_env, monkeypatch):
     with open("templates/pages/admin_audit_premium.html", encoding="utf-8") as f:
         html = f.read()
     for needle in ('id="accSubModal"', "data-acc-sub-open", "/admin/api/subscriptions/refund",
                    "/admin/api/subscriptions/cancel_now", 'id="accSubLive"', 'id="accSubAbandoned"',
-                   'id="accSubEndNow" checked'):
+                   'id="accSubEndNow" checked', 'data-acc-agg="sub_live"', 'id="accSubFilter"',
+                   '"sub_live":     {accSubFilter: "live"}'):
         assert needle in html, needle

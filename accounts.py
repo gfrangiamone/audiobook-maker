@@ -1447,10 +1447,16 @@ def _admin_plan_where(plan, origin, now):
 
 
 def _admin_where(now, state="all", q="", date_from=None, date_to=None,
-                 plan="", origin="", tolerance=False):
+                 plan="", origin="", tolerance=False, account_ids=None):
     """Condizioni SQL (alias `a`) di tutti i filtri della console admin, in AND,
-    come ([sql, ...], [args]): le usano sia l'elenco sia gli aggregati."""
+    come ([sql, ...], [args]): le usano sia l'elenco sia gli aggregati.
+    `account_ids` (None = nessun filtro) restringe a quegli id: lo usa chi
+    conosce tabelle che questo modulo non legge, come gli abbonamenti."""
     where, args = _admin_state_where(state, now)
+    if account_ids is not None:
+        ids = list(account_ids)
+        where.append("a.id IN (" + ",".join("?" * len(ids)) + ")" if ids else "0")
+        args += ids
     if q:
         where.append("(LOWER(a.email) LIKE ? OR a.id LIKE ?)")
         like = "%" + str(q).strip().lower() + "%"
@@ -1481,7 +1487,7 @@ def _admin_fill_key(rec):
 
 def admin_list(state="all", q="", date_from=None, date_to=None,
                limit=500, offset=0, now=None, plan="", origin="", tolerance=False,
-               sort="recent"):
+               sort="recent", account_ids=None):
     """Elenco account per la console admin: registrazione, ultimo accesso,
     cancellazione, sessioni attive e storico.
 
@@ -1495,6 +1501,8 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     attivo con quella `plan_source`, `free` = nessun piano attivo e consenso al
     piano gratuito, `none` = nessun piano attivo e nessun consenso.
     `tolerance` tiene solo gli account vivi nella tolleranza dell'archivio.
+    `account_ids` (None = tutti) restringe l'elenco a quegli id, non gli
+    aggregati.
     `sort`: recent (registrazione, piu' recenti prima; default) | fill
     (riempimento dell'archivio, piu' pieni prima, vedi `_admin_fill_key`).
     Ogni record porta `archive_fill_pct`, l'occupazione della quota in
@@ -1510,7 +1518,8 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     now = _now(now)
     limit = max(1, min(int(limit or 500), 2000))
     offset = max(0, int(offset or 0))
-    where, args = _admin_where(now, state, q, date_from, date_to, plan, origin, tolerance)
+    where, args = _admin_where(now, state, q, date_from, date_to, plan, origin, tolerance,
+                               account_ids)
     sql_where = ("WHERE " + " AND ".join(where)) if where else ""
     since30 = (now - 30 * 86400) // 86400 * 86400
 

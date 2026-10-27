@@ -1375,7 +1375,8 @@ def admin_api_accounts_audit():
     `date_from`/`date_to` (YYYY-MM-DD, UTC) sulla data di registrazione.
     `plan` (free | sub_5 | sub_10) filtra sul piano effettivo, `origin` (paid
     | gift | free | none) sull'origine del piano, `tolerance=1` tiene solo gli
-    account nella tolleranza dell'archivio. `sort` (recent | fill) ordina per
+    account nella tolleranza dell'archivio, `sub=live` solo quelli con un
+    abbonamento vivo (altri valori non filtrano). `sort` (recent | fill) ordina per
     registrazione o per riempimento dell'archivio (`archive_fill_pct`). Ogni
     aggregato conta le righe del filtro che la sua casella applica;
     `last30_since` e' il `date_from` di "Nuovi 30 gg".
@@ -1398,6 +1399,8 @@ def admin_api_accounts_audit():
             origin=(request.args.get("origin") or "").strip().lower(),
             tolerance=request.args.get("tolerance") in ("1", "true"),
             sort=(request.args.get("sort") or "").strip().lower(),
+            account_ids=(subscriptions.live_account_ids()
+                         if (request.args.get("sub") or "").strip().lower() == "live" else None),
         )
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": f"accounts unavailable: {e}"}), 503
