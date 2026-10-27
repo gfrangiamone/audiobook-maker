@@ -770,11 +770,18 @@ def test_admin_accounts_sort_select_reloads_with_sort(tmp_path):
       $("accSort").value = "fill"; $("accSort")._fire("change"); await _tick();
       out.fill = {q: q(), title: $("accListScope").textContent,
                   marked: _boxes.filter(b => b.classList.contains("agg-active")).map(b => b.dataset.accAgg)};
+      $("accSort").value = "spent"; $("accSort")._fire("change"); await _tick();
+      out.spent = {q: q(), title: $("accListScope").textContent};
+      $("accSort").value = "recent"; $("accSort")._fire("change"); await _tick();
+      out.back = {q: q(), title: $("accListScope").textContent};
       console.log(JSON.stringify(out));
     """)
     assert out["recent"]["q"] == {"limit": "500"} and out["recent"]["title"] == "ultimi 500"
     assert out["fill"]["q"] == {"origin": "gift", "sort": "fill", "limit": "500"}
     assert out["fill"]["marked"] == ["gift"] and "piena" in out["fill"]["title"]
+    assert out["spent"]["q"] == {"origin": "gift", "sort": "spent", "limit": "500"}
+    assert "speso" in out["spent"]["title"]
+    assert out["back"] == {"q": {"origin": "gift", "limit": "500"}, "title": "ultimi 500"}
 
 
 @needs_node

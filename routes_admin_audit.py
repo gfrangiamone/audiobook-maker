@@ -1376,8 +1376,9 @@ def admin_api_accounts_audit():
     `plan` (free | sub_5 | sub_10) filtra sul piano effettivo, `origin` (paid
     | gift | free | none) sull'origine del piano, `tolerance=1` tiene solo gli
     account nella tolleranza dell'archivio, `sub=live` solo quelli con un
-    abbonamento vivo (altri valori non filtrano). `sort` (recent | fill) ordina per
-    registrazione o per riempimento dell'archivio (`archive_fill_pct`). Ogni
+    abbonamento vivo (altri valori non filtrano). `sort` (recent | fill | spent)
+    ordina per registrazione, per riempimento dell'archivio (`archive_fill_pct`) o
+    per speso complessivo sui job dello storico (`paid_eur`). Ogni
     aggregato conta le righe del filtro che la sua casella applica;
     `last30_since` e' il `date_from` di "Nuovi 30 gg".
     """

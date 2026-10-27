@@ -1437,8 +1437,9 @@ def evict_archived_job(job_id, now=None):
 
 ADMIN_PLAN_FILTERS = (PLAN_FREE, *SPACE_PLANS)
 ADMIN_ORIGINS = (*PLAN_SOURCES, "free", "none")
-# Ordinamenti dell'elenco: registrazione (piu' recenti prima) o riempimento dell'archivio.
-ADMIN_SORTS = ("recent", "fill")
+# Ordinamenti dell'elenco: registrazione (piu' recenti prima), riempimento dell'archivio
+# o speso complessivo sui job dello storico.
+ADMIN_SORTS = ("recent", "fill", "spent")
 # Account vivo nella tolleranza del cleanup dell'archivio (alias `a`).
 _ADMIN_TOLERANCE_SQL = "a.deleted_at IS NULL AND a.archive_over_since IS NOT NULL"
 # Casella degli aggregati -> filtri di `_admin_where` che la console applica
@@ -1559,7 +1560,8 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
     `account_ids` (None = tutti) restringe l'elenco a quegli id, non gli
     aggregati.
     `sort`: recent (registrazione, piu' recenti prima; default) | fill
-    (riempimento dell'archivio, piu' pieni prima, vedi `_admin_fill_key`).
+    (riempimento dell'archivio, piu' pieni prima, vedi `_admin_fill_key`) |
+    spent (`paid_eur`, chi ha speso di piu' prima; a parita' la registrazione).
     Ogni record porta `archive_fill_pct`, l'occupazione della quota in
     percento (None senza quota).
 
@@ -1588,7 +1590,8 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         "(SELECT COALESCE(SUM(j.paid_eur),0) FROM account_jobs j WHERE j.account_id=a.id) AS paid_eur, "
         + _ARCHIVE_BYTES_SQL + " AS archive_bytes "
         "FROM accounts a " + sql_where +
-        " ORDER BY a.created_at DESC, a.id DESC"
+        " ORDER BY " + ("paid_eur DESC, " if sort == "spent" else "")
+        + "a.created_at DESC, a.id DESC"
     )
     # La quota viene da `archive_quota_for`, non dal DB: per riempimento si
     # leggono tutte le righe filtrate e la pagina si taglia dopo l'ordinamento.

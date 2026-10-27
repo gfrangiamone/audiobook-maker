@@ -155,6 +155,31 @@ def test_admin_list_filters_by_query_and_date(acct_env):
     assert [r["email"] for r in out["records"]] == ["due@other.com"]
 
 
+def test_admin_list_sorts_by_total_spent(acct_env):
+    """sort=spent: somma di `paid_eur` sui job dello storico, chi ha speso di piu' prima, poi la
+    pagina; a parita' (anche a zero) vale la registrazione, piu' recente prima."""
+    def acct(email, created, *paid):
+        a = _login(email, created)
+        for i, eur in enumerate(paid):
+            accounts.record_job(a["id"], f"{email}-{i}", kind="generate", paid_eur=eur)
+        return email
+    low = acct("low@b.it", T0 + 1, 1.5)
+    many = acct("many@b.it", T0 + 2, 2.0, 3.25)               # 5.25 su due job
+    top = acct("top@b.it", T0 + 3, 9.0)
+    tie_old = acct("tie_old@b.it", T0 + 4, 1.5)
+    zero = acct("zero@b.it", T0 + 5)
+    tie_new = acct("tie_new@b.it", T0 + 6, 1.5)
+
+    def emails(**kw):
+        return [r["email"] for r in accounts.admin_list(now=T0 + 60, **kw)["records"]]
+    assert emails() == [tie_new, zero, tie_old, top, many, low]
+    assert emails(sort="spent") == [top, many, tie_new, tie_old, low, zero]
+    assert emails(sort="spent", limit=2, offset=1) == [many, tie_new]
+    out = accounts.admin_list(now=T0 + 60, sort="spent", limit=1)
+    assert out["count"] == 6 and out["records"][0]["paid_eur"] == 9.0
+    assert accounts.admin_list(now=T0 + 60, sort="spent", offset=1)["records"][0]["paid_eur"] == 5.25
+
+
 def test_accounts_audit_api(acct_env, monkeypatch):
     acct = _login("api@example.com", T0)
     accounts.open_session(acct["id"], now=T0)
