@@ -44,6 +44,8 @@ class FakeProvider:
     def fetch(self, ext):
         if self.fail_fetch:
             raise billing_paypal.ProviderError("down", transient=True)
+        if ext not in self.remote:
+            raise billing_paypal.ProviderError("not found", status=404, issue="INVALID_RESOURCE_ID")
         return self.remote[ext]
 
     def list_payments(self, ext, since, until):
@@ -390,6 +392,33 @@ def test_abandoned_checkout_paid_later_is_refunded(sub_env):
     assert ("cancel", old, "rejected: closed") in sub_env.fake.calls
     assert [v["amount_eur"] for v in _vouchers_of(acct)] == [10.0]
     assert accounts.get(acct["id"])["plan"] == "sub_10"
+
+
+def test_abandoned_checkout_deleted_by_provider_ends_watch(sub_env):
+    """PayPal cancella i checkout mai approvati: il 404 chiude la sorveglianza
+    senza errori ne' alert (prod 27/10/2026, I-AKP6KNH090MK)."""
+    acct, first = _subscribe(sub_env, "gone@x.it", plan="sub_10")
+    st, url = subscriptions.start_checkout(acct, "sub_5", accepted_terms=True, waived_withdrawal=True,
+                                           return_url="https://h/r", cancel_url="https://h/c",
+                                           now=T0 + 40)
+    assert st == "ok" and _sub_of(first)["status"] == "abandoned"
+    del sub_env.fake.remote[first]
+    for t in (T0 + 700, T0 + 6 * 3600, T0 + DAY):
+        assert subscriptions.sweep(now=t, force=True)["errors"] == 0
+    row = _sub_of(first)
+    assert row["next_check_at"] == 0 and row["check_failures"] == 0
+    assert sub_env.alerts == []
+    assert not [c for c in sub_env.fake.calls if c[0] == "cancel" and c[1] == first]
+
+
+def test_abandoned_checkout_other_errors_still_count(sub_env):
+    acct, first = _subscribe(sub_env, "down@x.it", plan="sub_10")
+    subscriptions.start_checkout(acct, "sub_5", accepted_terms=True, waived_withdrawal=True,
+                                 return_url="https://h/r", cancel_url="https://h/c", now=T0 + 40)
+    sub_env.fake.fail_fetch = True                  # fallisce anche la riga 5 GB in attesa
+    assert subscriptions.sweep(now=T0 + 700, force=True)["errors"] == 2
+    row = _sub_of(first)
+    assert row["check_failures"] == 1 and row["next_check_at"] > T0 + 700
 
 
 def test_second_live_subscription_is_abandoned_by_refresh(sub_env):

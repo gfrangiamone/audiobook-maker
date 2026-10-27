@@ -950,12 +950,22 @@ def _collect_payments(sub, now):
 
 
 def _sweep_abandoned(sub, now, out):
-    """Un checkout abbandonato approvato piu' tardi va chiuso e rimborsato."""
+    """Un checkout abbandonato approvato piu' tardi va chiuso e rimborsato. Uno
+    mai approvato il fornitore lo cancella dopo qualche ora (404): non c'e' piu'
+    nulla da sorvegliare."""
     if not sub["external_id"] or now - sub["created_at"] > ABANDONED_WATCH_SEC:
         with db.tx() as c:
             _update(c, sub["id"], now, next_check_at=0)
         return
-    remote = _provider(sub["provider"]).fetch(sub["external_id"])
+    try:
+        remote = _provider(sub["provider"]).fetch(sub["external_id"])
+    except billing_paypal.ProviderError as e:
+        if e.status != 404:
+            raise
+        with db.tx() as c:
+            _update(c, sub["id"], now, next_check_at=0, check_failures=0)
+        _log("SUB_ABANDONED_GONE", sub["id"])
+        return
     if remote.status in ("APPROVED", "ACTIVE", "SUSPENDED"):
         _provider(sub["provider"]).cancel(sub["external_id"], "abandoned checkout")
         _collect_payments(sub, now)
