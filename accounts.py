@@ -152,6 +152,13 @@ JOBS_ARCHIVE_SKIP_MIGRATION = [
     "ALTER TABLE account_jobs ADD COLUMN archive_skipped_at INTEGER",
 ]
 
+# Email «libreria quasi piena» (subscriptions._archive_warnings): quando e' partita
+# e con quale piano in vigore; si azzera sotto la soglia di riarmo o al cambio di piano.
+SPACE_WARN_MIGRATION = [
+    "ALTER TABLE accounts ADD COLUMN space_warned_at INTEGER",
+    "ALTER TABLE accounts ADD COLUMN space_warned_plan TEXT NOT NULL DEFAULT ''",
+]
+
 
 # Archivio dell'app: libri archiviati dalla libreria dello smartphone. Ogni
 # riga e' un file caricato dall'app sotto `user_archive/<account_id>/` (`r2_key`,
@@ -290,6 +297,7 @@ def init_schema():
     db.migrate("accounts_plans_v2", PLANS_V2_MIGRATION)
     db.migrate("accounts_plans_v2_data", [_migrate_plans_v2_data])
     db.migrate("account_jobs_archive_skip_v1", JOBS_ARCHIVE_SKIP_MIGRATION)
+    db.migrate("accounts_space_warn_v1", SPACE_WARN_MIGRATION)
 
 
 # ---------------------------------------------------------------- helpers
@@ -971,6 +979,16 @@ _archive_cache = {"at": 0.0, "ids": frozenset()}
 _JOB_IN_ARCHIVE = (
     "j.archived_at IS NOT NULL AND (j.hidden_at IS NULL OR EXISTS ("
     "SELECT 1 FROM archive_items i WHERE i.job_id=j.job_id AND i.account_id=j.account_id))")
+# Account (alias `a`) con qualcosa nell'archivio: un job o un libro caricato dall'app.
+_HAS_ARCHIVE_SQL = (
+    "(EXISTS (SELECT 1 FROM account_jobs j WHERE j.account_id=a.id AND " + _JOB_IN_ARCHIVE + ") "
+    "OR EXISTS (SELECT 1 FROM archive_items i WHERE i.account_id=a.id AND i.job_id=''))")
+# Byte nell'archivio dell'account (alias `a`), come `archive_usage`.
+_ARCHIVE_BYTES_SQL = (
+    "(SELECT COALESCE(SUM(j.archived_bytes),0) FROM account_jobs j WHERE j.account_id=a.id "
+    " AND " + _JOB_IN_ARCHIVE + ") + "
+    "(SELECT COALESCE(SUM(i.size_bytes),0) FROM archive_items i WHERE i.account_id=a.id "
+    " AND i.job_id='')")
 _archive_cache_lock = threading.Lock()
 
 
@@ -1168,6 +1186,11 @@ def archive_state(account, now=None, quota=None):
     return "active" if quota > 0 else "none"
 
 
+def _fill_pct(used, quota):
+    """Occupazione della quota in percento a un decimale, None senza quota."""
+    return round((used or 0) * 100 / quota, 1) if quota else None
+
+
 def archive_status(account, now=None):
     """Riepilogo per l'area personale e per l'app, o None senza quota, senza
     archivio e senza tolleranza. `state`/`grace_until` dicono all'app se avvisare
@@ -1192,7 +1215,41 @@ def archive_status(account, now=None):
             "quota_bytes": quota, "used_bytes": used, "jobs": n, "items": items,
             "state": state,
             "grace_until": archive_grace_until(account) if state == "grace" else None,
-            "fill_pct": round(used * 100 / quota, 1) if quota else None}
+            "fill_pct": _fill_pct(used, quota)}
+
+
+def archive_fill_rows(now=None):
+    """Account vivi con qualcosa nell'archivio o con l'email «libreria quasi
+    piena» gia' partita, in una sola query: le colonne dell'account piu'
+    `archive_bytes`, `archive_quota_bytes`, `archive_fill_pct` (None senza
+    quota), `plan_effective` e `origin`, come nell'elenco della console."""
+    if not enabled():
+        return []
+    now = _now(now)
+    with db.tx() as c:
+        rows = c.execute(
+            "SELECT a.*, " + _ARCHIVE_BYTES_SQL + " AS archive_bytes FROM accounts a "
+            "WHERE a.deleted_at IS NULL AND (a.space_warned_at IS NOT NULL OR "
+            + _HAS_ARCHIVE_SQL + ") ORDER BY a.id").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["archive_quota_bytes"] = quota = archive_quota_for(d, now)
+        d["archive_fill_pct"] = _fill_pct(d["archive_bytes"], quota)
+        d["plan_effective"] = effective_plan(d, now)
+        d["origin"] = plan_origin(d, now)
+        out.append(d)
+    return out
+
+
+def set_space_warned(account_id, plan, now=None):
+    """Annota l'email «libreria quasi piena» partita con `plan` in vigore, o la
+    azzera (`plan` None) per riarmarla."""
+    if not enabled():
+        return
+    with db.tx() as c:
+        c.execute("UPDATE accounts SET space_warned_at=?, space_warned_plan=? WHERE id=?",
+                  (None if plan is None else _now(now), plan or "", account_id))
 
 
 def archive_candidates(now=None):
@@ -1300,9 +1357,7 @@ def archive_accounts_to_check():
     with db.tx() as c:
         rows = c.execute(
             "SELECT a.* FROM accounts a WHERE " + cond + " AND (a.archive_over_since IS NOT NULL "
-            "OR EXISTS (SELECT 1 FROM account_jobs j WHERE j.account_id=a.id AND " + _JOB_IN_ARCHIVE + ") "
-            "OR EXISTS (SELECT 1 FROM archive_items i WHERE i.account_id=a.id AND i.job_id='')) "
-            "ORDER BY a.id", tuple(args)).fetchall()
+            "OR " + _HAS_ARCHIVE_SQL + ") ORDER BY a.id", tuple(args)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -1531,10 +1586,7 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
         "(SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.account_id=a.id) AS last_seen_at, "
         "(SELECT COUNT(*) FROM account_jobs j WHERE j.account_id=a.id) AS jobs, "
         "(SELECT COALESCE(SUM(j.paid_eur),0) FROM account_jobs j WHERE j.account_id=a.id) AS paid_eur, "
-        "(SELECT COALESCE(SUM(j.archived_bytes),0) FROM account_jobs j WHERE j.account_id=a.id "
-        " AND " + _JOB_IN_ARCHIVE + ") + "
-        "(SELECT COALESCE(SUM(i.size_bytes),0) FROM archive_items i WHERE i.account_id=a.id "
-        " AND i.job_id='') AS archive_bytes "
+        + _ARCHIVE_BYTES_SQL + " AS archive_bytes "
         "FROM accounts a " + sql_where +
         " ORDER BY a.created_at DESC, a.id DESC"
     )
@@ -1575,7 +1627,7 @@ def admin_list(state="all", q="", date_from=None, date_to=None,
             d["state"] = "active"
         d["paid_eur"] = round(float(d.get("paid_eur") or 0), 2)
         d["archive_quota_bytes"] = quota = archive_quota_for(d, now)
-        d["archive_fill_pct"] = round((d["archive_bytes"] or 0) * 100 / quota, 1) if quota else None
+        d["archive_fill_pct"] = _fill_pct(d["archive_bytes"], quota)
         d["plan_effective"] = effective_plan(d, now)
         d["origin"] = plan_origin(d, now)
         d["archive_grace_until"] = archive_grace_until(d)

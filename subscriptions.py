@@ -149,6 +149,11 @@ DEFAULT_PROVIDER = "paypal"
 PRICE_ENV = {"sub_5": ("ABM_SUB5_PRICE_EUR", 5.0), "sub_10": ("ABM_SUB10_PRICE_EUR", 10.0)}
 VOUCHER_ENV = {"sub_5": ("ABM_SUB5_VOUCHER_EUR", 5.0), "sub_10": ("ABM_SUB10_VOUCHER_EUR", 10.0)}
 SWEEP_BATCH = 50                 # righe controllate per giro
+ARCHIVE_NEAR_FULL_PCT = 80       # libreria quasi piena: proposta in pagina, email ad abbonati e gratuiti
+ARCHIVE_WARN_REARM_PCT = 70      # sotto questa occupazione l'email si riarma
+ARCHIVE_WARN_STATUSES = ("active", "past_due")   # abbonati che la ricevono (senza disdetta chiesta)
+ARCHIVE_WARN_INTERVAL_SEC = 300  # come il giro dell'archivio che fa crescere la libreria
+ARCHIVE_WARN_PER_SWEEP = 20
 ABANDONED_WATCH_SEC = 7 * 86400  # un checkout abbandonato si sorveglia ancora (link vecchio approvato)
 # Approvato ma senza pagamento confermato: PayPal elenca la transazione qualche
 # secondo dopo il ritorno, quindi nella prima ora la riga si ricontrolla a ogni
@@ -1040,6 +1045,79 @@ def _send_reminders(now):
     return sent
 
 
+def _plan_values(plan):
+    """Spazio, canone e buono di `plan` gia' formattati per un'email."""
+    return {"plan_space": accounts.format_bytes(accounts.plan_quota_bytes(plan)),
+            "price": accounts.format_eur(price_eur(plan)),
+            "voucher": accounts.format_eur(voucher_eur(plan))}
+
+
+def _space_offer(acct, now):
+    """Chi riceve l'email «libreria quasi piena» e con quale proposta: (None,
+    offer) per un gratuito, (riga, offer) per un abbonato attivo senza disdetta,
+    None per gli altri o con un cambio in corso (si riguarda al giro dopo).
+    `offer` e' il piano piu' piccolo per il gratuito e quello piu' grande per
+    l'abbonato (la stessa regola del popup), None se adesso non si puo'
+    sottoscrivere (vendita spenta, gia' il piu' grande, rinnovo non riuscito)."""
+    with db.tx() as c:
+        sub = _live_row(c, acct["id"])
+        pending = _next_row(c, acct["id"]) is not None
+    if acct["origin"] == "free":
+        if sub is not None or pending:
+            return None                       # abbonamento in attivazione
+        first = min(accounts.SPACE_PLANS, key=accounts.plan_quota_bytes)
+        return None, (_plan_values(first) if enabled() else None)
+    if acct["origin"] != "paid" or sub is None or pending:
+        return None
+    if sub["status"] not in ARCHIVE_WARN_STATUSES or sub["cancel_requested_at"]:
+        return None
+    if enabled():
+        for plan in accounts.SPACE_PLANS:
+            preview = _change_preview(sub, plan, now)
+            if preview and preview["kind"] == "upgrade":
+                return sub, _plan_values(plan)
+    return sub, None
+
+
+def _archive_warnings(now):
+    """Email «libreria quasi piena» agli abbonati attivi e ai gratuiti la cui
+    libreria supera ARCHIVE_NEAR_FULL_PCT della quota, al piu' ogni
+    ARCHIVE_WARN_INTERVAL_SEC e ARCHIVE_WARN_PER_SWEEP per giro. Una per account
+    e piano (`accounts.set_space_warned`, annotata anche se l'invio fallisce:
+    niente raffiche), riarmata sotto ARCHIVE_WARN_REARM_PCT o al cambio di
+    piano. Mai a chi e' gia' in tolleranza: li' parte l'avviso di rimozione."""
+    if now - _sweep_state.get("space_at", 0) < ARCHIVE_WARN_INTERVAL_SEC:
+        return 0
+    _sweep_state["space_at"] = now
+    sent = 0
+    for acct in accounts.archive_fill_rows(now):
+        pct, plan = acct["archive_fill_pct"], acct["plan_effective"]
+        if acct["space_warned_at"] is not None:
+            if acct["space_warned_plan"] == plan and pct is not None and pct >= ARCHIVE_WARN_REARM_PCT:
+                continue
+            accounts.set_space_warned(acct["id"], None)
+        if pct is None or pct < ARCHIVE_NEAR_FULL_PCT or acct["archive_over_since"] is not None:
+            continue
+        if sent >= ARCHIVE_WARN_PER_SWEEP:
+            break
+        target = _space_offer(acct, now)
+        if target is None:
+            continue
+        sub, offer = target
+        accounts.set_space_warned(acct["id"], plan, now)
+        try:
+            email_service.send_subscription_space(
+                acct["email"], acct.get("lang") or "en", used=accounts.format_bytes(acct["archive_bytes"]),
+                space=accounts.format_bytes(acct["archive_quota_bytes"]), pct=int(pct),
+                free_plan=sub is None, offer=offer, model=voxcpm_catalog.MODEL_LABEL)
+        except Exception as e:  # noqa: BLE001 - email best-effort
+            print(f"[subscriptions] email space per {acct['id']}: {type(e).__name__}: {e}", flush=True)
+        _log(f"SUB_SPACE_WARN:{'free' if sub is None else 'sub'}:{'offer' if offer else 'cleanup'}",
+             f"{acct['id']} {pct}%")
+        sent += 1
+    return sent
+
+
 def _note_failure(sub, now, err):
     with db.tx() as c:
         cur = _get(c, sub["id"])
@@ -1054,7 +1132,8 @@ def sweep(now=None, force=False):
     """Un giro di riconciliazione (dal loop di cleanup, al piu' ogni
     `ABM_SUB_RECONCILE_SEC`; `force` salta l'attesa): checkout scaduti, disdette
     da confermare, stato remoto e pagamenti persi delle righe in scadenza di
-    controllo, voucher non emessi. Ritorna i conteggi."""
+    controllo, voucher non emessi, promemoria dei buoni e avvisi a libreria
+    quasi piena. Ritorna i conteggi."""
     t = _now(now)
     out = dict.fromkeys(("checked", "abandoned", "cancelled", "closed", "vouchers", "errors"), 0)
     if not force and t - _sweep_state["at"] < _reconcile_sec():
@@ -1089,6 +1168,7 @@ def sweep(now=None, force=False):
             out["errors"] += 1
             print(f"[subscriptions] voucher {row['payment_id']}: {type(e).__name__}: {e}", flush=True)
     out["reminded"] = _send_reminders(t)
+    out["space_warned"] = _archive_warnings(t)
     if any(out.values()):
         print(f"[subscriptions] sweep: {out}", flush=True)
     return out
@@ -1142,14 +1222,14 @@ def status_for(account, *, for_app=False, now=None):
 
 def archive_nudge(archive):
     """Proposta a libreria quasi piena (spec §9.3 punto 2): "full" dal 100%,
-    "near_full" dall'80%, "" altrimenti, con la vendita spenta o se il piano e'
-    gia' il piu' grande."""
+    "near_full" da ARCHIVE_NEAR_FULL_PCT, "" altrimenti, con la vendita spenta o
+    se il piano e' gia' il piu' grande."""
     if not archive or not enabled() or archive.get("plan") == "sub_10":
         return ""
     pct = archive.get("fill_pct")
     if pct is None:
         return ""
-    return "full" if pct >= 100 else ("near_full" if pct >= 80 else "")
+    return "full" if pct >= 100 else ("near_full" if pct >= ARCHIVE_NEAR_FULL_PCT else "")
 
 
 def promo_offer():

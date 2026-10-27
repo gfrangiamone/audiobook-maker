@@ -272,3 +272,35 @@ def test_voucher_and_reminder_emails_compose(lang, monkeypatch):
     if lang == "it":
         assert all("Il buono PREMIUM comprende solo:" in b for _s, b in sent)
         assert "Puoi usarlo per le voci PREMIUM" not in sent[1][1]
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_space_warning_email_variants(lang, monkeypatch):
+    sent = []
+    monkeypatch.setattr(email_service, "_send_email",
+                        lambda to, subject, body, **k: sent.append((subject, body)) or True)
+    ten = {"plan_space": "10 GB", "price": "10", "voucher": "10"}
+    five = {"plan_space": "5 GB", "price": "5", "voucher": "5"}
+    send = email_service.send_subscription_space
+    assert send("a@x.it", lang, used="4.25 GB", space="5 GB", pct=85, offer=ten, model="Modello-X")
+    assert send("a@x.it", lang, used="8.5 GB", space="10 GB", pct=85, model="Modello-X")
+    assert send("a@x.it", lang, used="430 MB", space="512 MB", pct=84, free_plan=True, offer=five,
+                model="Modello-X")
+    assert send("a@x.it", lang, used="430 MB", space="512 MB", pct=84, free_plan=True, model="Modello-X")
+    (s_up, b_up), (s_full, b_full), (s_sub, b_sub), (s_gone, b_gone) = sent
+    assert len({s_up, s_full, s_sub, s_gone}) == 1 and "{" not in b_up + b_full + b_sub + b_gone
+    assert "4.25 GB" in b_up and "85" in b_up and "8.5 GB" in b_full and "430 MB" in b_sub
+    for with_offer in (b_up, b_sub):                                         # proposta + «comprende solo»
+        assert "/account#abbonamento" in with_offer and "Modello-X" in with_offer
+    for without in (b_full, b_gone):
+        assert "/account#abbonamento" not in without and "Modello-X" not in without
+        assert "/account" in without
+    data = i18n.load("account_emails")[lang]
+    assert data["subscription_space_body"] != data["subscription_space_body_free_plan"]
+    if lang == "it":
+        assert s_up == "La tua libreria cloud è quasi piena"
+        assert "Passa al piano 10 GB" in b_up and "Il buono PREMIUM comprende solo:" in b_up
+        assert "non togliamo nulla" in b_full and "libera spazio" in b_full
+        assert "dei 512 MB del piano gratuito" in b_sub and "finché il piano gratuito è attivo" in b_sub
+        assert "Abbonati al piano 5 GB" in b_sub and "5 € al mese" in b_sub
+        assert "del tuo abbonamento" not in b_sub + b_gone

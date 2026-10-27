@@ -18,7 +18,10 @@ SUBSCRIPTION_KEYS = ["subscription_active_subject", "subscription_active_body",
                      "subscription_cancelled_subject", "subscription_cancelled_body",
                      "subscription_voucher_subject", "subscription_voucher_body",
                      "subscription_reminder_subject", "subscription_reminder_body",
-                     "subscription_voucher_scope"]
+                     "subscription_voucher_scope", "subscription_space_subject",
+                     "subscription_space_body", "subscription_space_upgrade",
+                     "subscription_space_body_free_plan", "subscription_space_subscribe",
+                     "subscription_space_cleanup"]
 KEYS = ["brand", "login_subject", "login_body", "delete_subject", "delete_body",
         "deleted_subject", "deleted_body", "footer", *ARCHIVE_KEYS, *SUBSCRIPTION_KEYS]
 

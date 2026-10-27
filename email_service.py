@@ -1035,6 +1035,23 @@ def send_subscription_reminder(email, lang, *, remaining, voucher_until, model):
                              voucher_until=voucher_until, model=model, manage_url=f"{BASE_URL}/")
 
 
+def send_subscription_space(email, lang, *, used, space, pct, free_plan=False, offer=None, model=""):
+    """Libreria quasi piena, per un abbonato o (`free_plan`) per il piano
+    gratuito: cosa succede quando lo spazio finisce, poi con `offer`
+    ({plan_space, price, voucher}) la proposta di passare al piano piu' grande o
+    di abbonarsi, l'alternativa di liberare spazio e «il buono comprende solo …»
+    con `model`; senza, solo l'invito a liberare spazio."""
+    body = "subscription_space_body_free_plan" if free_plan else "subscription_space_body"
+    values = {"used": used, "space": space, "pct": pct, "manage_url": f"{BASE_URL}/account"}
+    if not offer:
+        return _i18n_send(_ACCT_I18N, "account", email, lang, "subscription_space_subject",
+                          (body, "subscription_space_cleanup"), **values)
+    proposal = "subscription_space_subscribe" if free_plan else "subscription_space_upgrade"
+    return _i18n_send(_ACCT_I18N, "account", email, lang, "subscription_space_subject",
+                      (body, proposal, "subscription_voucher_scope"),
+                      **values, **offer, model=model, offer_url=f"{BASE_URL}/account#abbonamento")
+
+
 def send_subscription_cancelled(email, lang, *, space, ends_at, days):
     """Conferma della disdetta: attivo fino a `ends_at`, poi tolleranza di `days`
     giorni sull'eccedenza."""

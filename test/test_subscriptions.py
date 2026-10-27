@@ -104,6 +104,9 @@ def sub_env(tmp_path, monkeypatch):
     monkeypatch.setattr(email_service, "send_subscription_reminder",
                         lambda email, lang, **kw: mails.append(("reminder", email)), raising=False)
     monkeypatch.setitem(subscriptions._sweep_state, "reminded_at", 0)
+    monkeypatch.setitem(subscriptions._sweep_state, "space_at", 0)
+    monkeypatch.setattr(email_service, "send_subscription_space",
+                        lambda email, lang, **kw: mails.append(("space", email, kw)), raising=False)
     monkeypatch.setattr(email_service, "send_subscription_cancelled",
                         lambda email, lang, **kw: mails.append(("cancelled", email)), raising=False)
     monkeypatch.setattr(email_service, "admin_notify_subscription",
