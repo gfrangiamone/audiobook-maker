@@ -96,6 +96,11 @@ def sub_env(tmp_path, monkeypatch):
     fake = FakeProvider()
     monkeypatch.setitem(subscriptions.PROVIDERS, "paypal", fake)
     monkeypatch.setitem(subscriptions._sweep_state, "at", 0)
+    # Il loop di cleanup di un audiobook_app importato da altri test chiama sweep() senza
+    # force su questo stesso DB: con l'intervallo enorme resta fermo e non scrive in
+    # concorrenza col test (CI 27/10/2026: space_warned_at a ora reale invece di NOW).
+    # I test chiamano sweep(force=True), che salta l'intervallo.
+    monkeypatch.setenv("ABM_SUB_RECONCILE_SEC", str(10 ** 10))
     mails, alerts = [], []
     monkeypatch.setattr(email_service, "send_subscription_active",
                         lambda email, lang, **kw: mails.append(("active", email)), raising=False)
