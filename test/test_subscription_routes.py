@@ -28,6 +28,9 @@ def web(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "_unlink_voice", None)
     monkeypatch.setattr(audiobook_app, "_smtp_available", lambda: True)
     monkeypatch.setattr(audiobook_app, "_ip_rl_check", lambda *a, **k: (True, 0))
+    # URL di ritorno indipendente da ABM_BASE_URL: in CI manca e vale il default di sviluppo
+    import routes_subscriptions
+    monkeypatch.setitem(routes_subscriptions._cfg, "base_url", lambda: "https://abm.test")
     monkeypatch.setattr(payment, "_vouchers", {})
     monkeypatch.setattr(payment, "_VOUCHERS_FILE", tmp_path / "_vouchers.json")
     monkeypatch.setenv("ABM_SUBSCRIPTIONS_ENABLE", "1")
@@ -95,7 +98,7 @@ def test_checkout_returns_approve_url_and_status(web):
     holder["acct"] = acct
     r = _checkout(c)
     assert r.status_code == 200 and r.get_json()["approve_url"].startswith("https://pp.test/approve/")
-    assert fake.calls[0][2].startswith("http://localhost/account/subscription/return?sid=sub_")
+    assert fake.calls[0][2].startswith("https://abm.test/account/subscription/return?sid=sub_")
     st = c.get("/api/subscription").get_json()
     assert st["subscription"]["status"] == "pending" and st["plans"][1]["price_eur"] == 10.0
 
