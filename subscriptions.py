@@ -1393,6 +1393,44 @@ def live_account_ids():
             f"SELECT DISTINCT account_id FROM subscriptions WHERE status IN ({marks})", LIVE)]
 
 
+def admin_payments(since=None, until=None):
+    """Pagamenti di abbonamento per la tab Abbonamenti del cruscotto audit, piu'
+    recenti prima: `since`/`until` sono epoch su `paid_at` (`until` escluso).
+    Ogni riga porta piano e account (email vuota se cancellato) e il voucher
+    emesso: codice mascherato, importo e quanto ne e' gia' stato speso."""
+    if not _ready():
+        return []
+    where, args = [], []
+    if since is not None:
+        where.append("p.paid_at>=?")
+        args.append(int(since))
+    if until is not None:
+        where.append("p.paid_at<?")
+        args.append(int(until))
+    with db.tx() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT p.*, s.plan, s.account_id FROM subscription_payments p "
+            "JOIN subscriptions s ON s.id=p.subscription_id"
+            + (" WHERE " + " AND ".join(where) if where else "")
+            + " ORDER BY p.paid_at DESC, p.payment_id", args)]
+    vouchers = dict(payment.iter_vouchers())
+    emails = {}
+    out = []
+    for p in rows:
+        aid = p["account_id"]
+        if aid not in emails:
+            acct = accounts.get(aid)
+            emails[aid] = acct["email"] if acct and not acct["deleted_at"] else ""
+        v = vouchers.get(p["voucher_code"]) or {}
+        out.append({**{k: p[k] for k in _ADMIN_PAY_COLS}, "provider": p["provider"],
+                    "plan": p["plan"], "account_id": aid, "email": emails[aid],
+                    "voucher_code": payment.mask_code(p["voucher_code"]),
+                    "voucher_eur": round(float(v.get("amount_eur") or 0), 2),
+                    "voucher_spent_eur": payment.voucher_spent_eur(v),
+                    "voucher_revoked": bool(v.get("revoked"))})
+    return out
+
+
 def admin_status_map(account_ids):
     """{account_id: stato dell'abbonamento piu' recente} per la tabella Utenti."""
     ids = [a for a in account_ids if a]

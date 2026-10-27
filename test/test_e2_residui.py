@@ -53,7 +53,7 @@ def test_pagination_helper(monkeypatch):
         assert routes_admin_audit._pagination(500, 2000) == (500, 0)
     with app.test_request_context("/?limit=0&offset=7"):
         assert routes_admin_audit._pagination(200, 1000) == (1, 7)
-    assert inspect.getsource(routes_admin_audit).count("= _pagination(") == 5
+    assert inspect.getsource(routes_admin_audit).count("= _pagination(") == 6
 
 
 def test_trim_preview_lives_in_text_reflow():

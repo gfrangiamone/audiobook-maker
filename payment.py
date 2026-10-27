@@ -641,6 +641,19 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
     return code, bonus_amount
 
 
+# Prefisso dei codici dei voucher mensili degli abbonamenti: resta leggibile anche
+# nei token mascherati dei record di audit (`SUB-XXXX...`). I codici generati
+# (`XXXX-XXXX-XXXX`) hanno il trattino in quinta posizione, mai in quarta.
+SUBSCRIPTION_VOUCHER_PREFIX = "SUB-"
+
+
+def is_subscription_voucher(method, token) -> bool:
+    """True se un pagamento (metodo e token, anche mascherato) e' un voucher di
+    abbonamento: il suo ricavo e' gia' contato al pagamento dell'abbonamento."""
+    return ((method or "").lower() == "voucher"
+            and str(token or "").upper().startswith(SUBSCRIPTION_VOUCHER_PREFIX))
+
+
 def issue_subscription_voucher(*, key, account_id, email, amount_eur, days) -> str:
     """Voucher mensile di un abbonamento: importo nominale, scadenza a `days`
     giorni dall'emissione, servizi premium "propri" (VOUCHER_DEFAULT_SERVICES),
@@ -654,7 +667,8 @@ def issue_subscription_voucher(*, key, account_id, email, amount_eur, days) -> s
                 return code
         code, _ = _create_voucher(email, round(float(amount_eur), 2), kind="subscription",
                                   created_by="subscription", expiry_days=days,
-                                  apply_bonus=False, code="SUB-" + _generate_voucher_code(),
+                                  apply_bonus=False,
+                                  code=SUBSCRIPTION_VOUCHER_PREFIX + _generate_voucher_code(),
                                   services=list(VOUCHER_DEFAULT_SERVICES),
                                   account_id=account_id, key=key)
     return code
@@ -676,6 +690,19 @@ def _voucher_remaining(v: dict) -> float:
         return round(float(v.get("amount_eur", 0) or 0), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+def voucher_spent_eur(v: dict) -> float:
+    """Quanto del voucher e' stato speso: consumi meno riaccrediti (`uses`, i
+    rimborsi sono negativi). A differenza del saldo non cambia con la revoca,
+    che azzera `remaining_eur`."""
+    total = 0.0
+    for u in v.get("uses") or []:
+        try:
+            total += float(u.get("amount_eur") or 0)
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return max(0.0, round(total, 2))
 
 
 def _voucher_consume(code: str, amount: float, job_id: str = "",

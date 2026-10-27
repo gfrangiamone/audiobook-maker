@@ -44,15 +44,18 @@ def _day(ts):
         return ""
 
 
-def row(rec, *, usd_eur=1.0, fee_fn=None):
+def row(rec, *, usd_eur=1.0, fee_fn=None, sub_voucher_fn=None):
     """La riga della tabella per un record voce. Mai token/segreti: solo
-    l'id `vc_...` e i dati descrittivi."""
+    l'id `vc_...` e i dati descrittivi. `sub_voucher_fn(metodo, token)` dice
+    se il pagamento e' un voucher di abbonamento: ricavo 0, gia' contato al
+    pagamento dell'abbonamento."""
     pay = rec.get("payment") or {}
     method = (pay.get("type") or "") if pay else ""
     charged = round(_f(pay.get("amount_eur")), 4)
     refund = rec.get("refund") or {}
     refunded = rec.get("state") == "refunded" or bool(refund)
-    revenue = 0.0 if refunded else charged
+    sub_voucher = bool(sub_voucher_fn and pay and sub_voucher_fn(method, pay.get("token")))
+    revenue = 0.0 if refunded or sub_voucher else charged
     cost = rec.get("demo_cost") or {}
     cost_usd = _f(cost.get("usd"))
     cost_eur = round(cost_usd * _f(usd_eur), 4)
@@ -86,6 +89,7 @@ def row(rec, *, usd_eur=1.0, fee_fn=None):
         "ended_at": rec.get("refunded_at") or rec.get("expired_at") or rec.get("deleted_at"),
         "ref_ts": reference_ts(rec),
         "payment_method": method,
+        "sub_voucher": sub_voucher,
         "charged_eur": charged,
         "refund_eur": round(_f(refund.get("amount_eur")), 4) if refunded else 0.0,
         "revenue_eur": round(revenue, 4),
@@ -158,13 +162,14 @@ def aggregate(rows):
 
 
 def report(recs, *, state=None, language=None, date_from=None, date_to=None,
-           usd_eur=1.0, fee_fn=None, limit=200, offset=0, hide_zero=False):
+           usd_eur=1.0, fee_fn=None, sub_voucher_fn=None, limit=200, offset=0,
+           hide_zero=False):
     """`hide_zero`: via le voci senza addebito (omaggi, bozze). Criterio:
     l'importo addebitato, non il ricavo: una voce rimborsata resta una
     transazione. Filtra prima degli aggregati, come gli altri filtri."""
     chosen = select(recs, state=state, language=language,
                     date_from=date_from, date_to=date_to)
-    rows = [row(r, usd_eur=usd_eur, fee_fn=fee_fn) for r in chosen]
+    rows = [row(r, usd_eur=usd_eur, fee_fn=fee_fn, sub_voucher_fn=sub_voucher_fn) for r in chosen]
     if hide_zero:
         rows = [r for r in rows if r["charged_eur"] >= ZERO_EUR]
     languages = sorted({str(r.get("lang")) for r in recs or []

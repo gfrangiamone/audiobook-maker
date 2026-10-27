@@ -78,11 +78,11 @@
   <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
     <h1 style="margin:0">Admin - Audit Premium Services <span id="periodLabel" style="font-size:.85rem;color:var(--muted);font-weight:500"></span></h1>
     <div class="top-totals">
-      <div class="top-total" title="Somma dei ricavi dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti.">
+      <div class="top-total" title="Somma dei ricavi dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate) e degli abbonamenti, come mostrati nelle rispettive tab con i filtri correnti. I job pagati con i voucher degli abbonamenti contano solo nella tab Abbonamenti.">
         <div class="top-total-label">Ricavi totali</div>
         <div id="totalRevenueValue" class="top-total-value">-</div>
       </div>
-      <div class="top-total" title="Somma dei margini netti dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate), come mostrati nelle rispettive tab con i filtri correnti.">
+      <div class="top-total" title="Somma dei margini netti dei servizi premium (Audit TTS + Traduzioni + AI Optimization + Voci campionate) e degli abbonamenti, come mostrati nelle rispettive tab con i filtri correnti.">
         <div class="top-total-label">Margine netto totale</div>
         <div id="totalNetMarginValue" class="top-total-value">-</div>
       </div>
@@ -129,6 +129,7 @@
   <button type="button" class="tab-btn" data-tab="translations">Audit Traduzioni</button>
   <button type="button" class="tab-btn" data-tab="optimization">Audit AI Optimization</button>
   <button type="button" class="tab-btn" data-tab="voices">Voci campionate</button>
+  <button type="button" class="tab-btn" data-tab="subscriptions">Abbonamenti</button>
   <button type="button" class="tab-btn" data-tab="accounts">Utenti registrati</button>
 </div>
 
@@ -411,6 +412,55 @@
   </div>
 </div>
 
+<div class="tab-panel" id="tab_subscriptions">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="subDateFrom" title="Data del pagamento (primo addebito o rinnovo)">Pagato dal</label>
+        <input type="date" id="subDateFrom">
+      </div>
+      <div>
+        <label for="subDateTo">Al</label>
+        <input type="date" id="subDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="subRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6">
+      <div class="agg-box"><div class="agg-label">Pagamenti</div><div class="agg-value" id="subAggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Pagamenti incassati alla data del pagamento o del rinnovo. I job pagati con i voucher dell'abbonamento hanno ricavo zero nelle altre tab: il ricavo e' qui, una volta sola.">Ricavi</div><div class="agg-value" id="subAggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label">Fee PayPal</div><div class="agg-value" id="subAggFees">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Ricavi - fee PayPal. I costi dei servizi pagati con i voucher dell'abbonamento sono nelle tab dei servizi.">Margine netto</div><div class="agg-value" id="subAggNet">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Pagamenti rimborsati, stornati o rifiutati: restano in tabella con ricavo zero.">Rimborsati</div><div class="agg-value" id="subAggRefunded">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Voucher emessi dai pagamenti del periodo e quanto ne e' gia' stato speso.">Voucher spesi / emessi</div><div class="agg-value" id="subAggVouchers">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Pagamenti (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Account</th><th>Piano</th>
+        <th title="Periodo pagato">Periodo</th>
+        <th>Importo &euro;</th>
+        <th title="Importo incassato: zero se rimborsato, stornato o rifiutato">Ricavo &euro;</th>
+        <th>Fee PayPal &euro;</th>
+        <th title="Margine netto = Ricavo - fee PayPal">Margine netto &euro;</th>
+        <th title="Voucher del pagamento: speso / emesso">Voucher</th>
+        <th>Stato</th>
+      </tr></thead>
+      <tbody id="subRecordsBody">
+        <tr><td colspan="10" class="empty-msg">Premi "Aggiorna" per caricare i pagamenti.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <div class="tab-panel" id="tab_accounts">
   <div class="panel">
     <h2>Filtri</h2>
@@ -546,6 +596,11 @@
   const $ = (id) => document.getElementById(id);
 
   function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
+  // Job pagato con un voucher di abbonamento: ricavo zero, gia' contato al
+  // pagamento dell'abbonamento (tab Abbonamenti); restano i costi.
+  function subMark(on){
+    return on ? `<br><small title="Voucher di abbonamento: il ricavo e' contato al pagamento dell'abbonamento (tab Abbonamenti), qui restano i costi.">abbonamento</small>` : "";
+  }
   // Filtro "importo zero": vale per tutte e quattro le tab e viaggia al
   // server (hide_zero=1), cosi' anche gli aggregati escludono le righe
   // nascoste. La scelta resta fra una visita e l'altra.
@@ -666,7 +721,9 @@
   // netto dei propri aggregati; i box in alto a destra mostrano le somme dei
   // servizi gia' caricati. Il margine % medio segue la regola delle tab:
   // margine netto / costo provider x 100, pesato sul costo.
-  const totalsByService = { tts: null, translations: null, optimization: null, voices: null };
+  // Gli abbonamenti hanno costo zero: i costi dei job pagati coi loro voucher
+  // sono nelle tab dei servizi, dove quei job hanno ricavo zero.
+  const totalsByService = { tts: null, translations: null, optimization: null, voices: null, subscriptions: null };
   function setServiceTotals(service, revenue, cost, net){
     totalsByService[service] = {revenue: Number(revenue)||0, cost: Number(cost)||0, net: Number(net)||0};
     const loaded = Object.values(totalsByService).filter(v => v != null);
@@ -764,7 +821,7 @@
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
         <td title="${esc(costTip)}">${fmtEur(gCost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
-        <td${cancelTip}>${fmtEur(revenue)}</td>
+        <td${cancelTip}>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
         <td class="${dCls}">${margPct.toFixed(2)}%</td>
@@ -1185,7 +1242,7 @@
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td${tokTip}>${(tokIn + tokOut).toLocaleString()}${tokStar}</td>
         <td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
-        <td>${fmtEur(revenue)}</td>
+        <td>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
         <td class="${dCls}">${margPct.toFixed(2)}%</td>
@@ -1273,7 +1330,7 @@
         <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total)||0).toLocaleString()}</td>
         <td${tokTip}>${tok.toLocaleString()}</td>
-        <td>${fmtEur(revenue)}</td><td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
+        <td>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td><td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td class="${dCls}">${fmtEur(marg)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
         <td class="${dCls}">${pct.toFixed(2)}%</td>
@@ -1364,7 +1421,7 @@
         <td>${esc(langLabel(r.lang))}<br><small>${esc(r.locale)} ${esc(gender)}${r.demo_extra_id?" · "+esc(r.demo_extra_id):""}</small></td>
         <td>${esc(r.owner_email||"-")}</td>
         <td>${pay}</td>
-        <td>${fmtEur(r.revenue_eur)}</td>
+        <td>${fmtEur(r.revenue_eur)}${subMark(r.sub_voucher)}</td>
         <td title="${esc(costTip)}">${fmtEur(r.gpu_cost_eur)}</td>
         <td class="${dCls}">${fmtEur(marg)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
@@ -1378,6 +1435,62 @@
     }).join("") + auditTruncNote(recs.length, total, 15);
   }
   $("vcaRefreshBtn").addEventListener("click", vcaFetch);
+
+  // ===================== Abbonamenti =====================
+  // Ricavo al pagamento o al rinnovo; i job pagati con i voucher SUB- hanno
+  // ricavo zero nelle altre tab (restano i costi), cosi' nulla si conta due volte.
+  const SUB_PAY_STATE = {
+    "completed": ["badge-ok", "Pagato"],
+    "refunded":  ["badge-err", "Rimborsato"],
+    "reversed":  ["badge-err", "Stornato"],
+    "rejected":  ["badge-warn", "Rifiutato (rimborsato)"],
+  };
+  async function subFetch(){
+    const p = new URLSearchParams();
+    const df=$("subDateFrom").value, dt=$("subDateTo").value;
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","200");
+    const r = await fetch("/admin/api/subscription_revenue_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento abbonamenti: "+r.status); return; }
+    const d = await r.json();
+    const a = d.aggregates||{};
+    $("subAggCount").textContent = a.count ?? 0;
+    $("subAggRevenue").textContent = fmtEur(a.revenue_eur);
+    $("subAggFees").textContent = fmtEur(a.paypal_fees_eur);
+    $("subAggNet").textContent = fmtEur(a.net_margin_eur);
+    $("subAggRefunded").textContent = fmtEur(a.refunded_eur);
+    $("subAggVouchers").textContent = `${fmtEur(a.voucher_spent_eur)} / ${fmtEur(a.voucher_eur)}`;
+    setServiceTotals("subscriptions", a.revenue_eur, 0, a.net_margin_eur);
+    subRender(d.records||[], d.count||0);
+  }
+  function subRender(recs, total){
+    const tb = $("subRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="10" class="empty-msg">Nessun pagamento trovato.</td></tr>'; return; }
+    tb.innerHTML = recs.map(r=>{
+      const [bcls,blab] = SUB_PAY_STATE[r.state]||["badge-muted", r.state||"?"];
+      const mail = r.email ? esc(r.email) : '<span style="color:var(--muted)">(rimossa)</span>';
+      const plan = esc(ACC_PLAN_LABEL[r.plan]||r.plan||"-") + (r.kind === "prepaid" ? "<br><small>prepagato</small>" : "");
+      const net = Number(r.net_margin_eur||0);
+      const voucher = r.voucher_code && r.voucher_code !== "-"
+        ? `<code>${esc(r.voucher_code)}</code><br><small>${fmtEur(r.voucher_spent_eur)} / ${fmtEur(r.voucher_eur)}${r.voucher_revoked ? " &middot; revocato" : ""}</small>`
+        : (r.voucher_due_at ? `<small>dal ${accDay(r.voucher_due_at)}</small>` : "-");
+      return `<tr>
+        <td>${vcaDate(r.paid_at)}</td>
+        <td>${mail}<br><code>${esc(r.account_id)}</code></td>
+        <td>${plan}</td>
+        <td>${accDay(r.period_start)} &rarr; ${accDay(r.period_end)}</td>
+        <td>${fmtEur(r.amount_eur)}</td>
+        <td>${fmtEur(r.revenue_eur)}</td>
+        <td>${fmtEur(r.paypal_fee_eur)}</td>
+        <td class="${net>=0?"delta-positive":"delta-negative"}">${fmtEur(net)}</td>
+        <td>${voucher}</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+      </tr>`;
+    }).join("") + auditTruncNote(recs.length, total, 10);
+  }
+  $("subRefreshBtn").addEventListener("click", subFetch);
 
   // ===================== Utenti registrati =====================
   const ACC_STATE_BADGE = {
@@ -1777,6 +1890,10 @@
       window._vcaLoaded = true;
       vcaFetch();
     }
+    if (name === "subscriptions" && !window._subLoaded) {
+      window._subLoaded = true;
+      subFetch();
+    }
     if (name === "accounts" && !window._accLoaded) {
       window._accLoaded = true;
       accFetch();
@@ -1802,10 +1919,10 @@
     const firstDay = ym + "-01";
     const lastDay = (ym === cur)
       ? "" : ym + "-" + String(new Date(y, m, 0).getDate()).padStart(2,"0");
-    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom","vcaDateFrom"].forEach(id => {
+    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom","vcaDateFrom","subDateFrom"].forEach(id => {
       const el = $(id); if (el && !el.value) el.value = firstDay;
     });
-    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo","vcaDateTo"].forEach(id => {
+    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo","vcaDateTo","subDateTo"].forEach(id => {
       const el = $(id); if (el && !el.value) el.value = lastDay;
     });
     const per = $("periodLabel");
@@ -1843,12 +1960,15 @@
   optLoadLanguages().finally(optFetch);
   window._vcaLoaded = true;
   vcaFetch();
+  window._subLoaded = true;
+  subFetch();
 
   // Deep-link hash: apre direttamente la tab richiesta dai vecchi URL redirected.
   const _h = location.hash;
   if (_h === "#tab-translations") showTab("translations");
   else if (_h === "#tab-optimization") showTab("optimization");
   else if (_h === "#tab-voices") showTab("voices");
+  else if (_h === "#tab-subscriptions") showTab("subscriptions");
   else if (_h === "#tab-accounts") showTab("accounts");
 })();
 </script>

@@ -6,7 +6,8 @@ Blueprint `admin_audit`: `/admin/audit-premium` (+ i due redirect storici),
 `/admin/api/gemini_kill_switch`, `/admin/api/tts_backend`,
 `/admin/api/gemini_model_availability`, `/admin/api/translation_cost_audit
 [/languages]`, `/admin/api/optimization_cost_audit[/languages]`,
-`/admin/api/voice_clone_audit`, `/admin/api/accounts_audit` (+ i piani regalati:
+`/admin/api/voice_clone_audit`, `/admin/api/subscription_revenue_audit`,
+`/admin/api/accounts_audit` (+ i piani regalati:
 `/admin/api/accounts/gift` e `/gift_revoke`; gli abbonamenti:
 `/admin/api/accounts/subscription`, `/admin/api/subscriptions/{refund,cancel_now}`), con i record
 sintetici dei job in corso, la trattenuta effettiva dei cancel, la sonda
@@ -176,6 +177,13 @@ def admin_audit_translations_page():
 _ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")
 
 
+def _live_sub_voucher(job):
+    """Il job in corso e' pagato con un voucher di abbonamento? Le righe live
+    non portano il token, nemmeno mascherato: lo si guarda qui."""
+    pay = job.get("payment") or {}
+    return payment.is_subscription_voucher(pay.get("method"), pay.get("token"))
+
+
 def _synth_running_gemini_audit_records():
     """Snapshot dei job PREMIUM attivi (Gemini + Speechify/Simba + VoxCPM) in
     forma audit-shaped.
@@ -302,6 +310,7 @@ def _synth_running_gemini_audit_records():
                 "combined_total_eur": combined_total,
                 "outcome": "running",
                 "_live": True,
+                "_sub_voucher": _live_sub_voucher(job),
             }
             out.append(rec)
         except Exception:
@@ -367,6 +376,7 @@ def _synth_running_translation_audit_records():
                 "payment_method": pay.get("method", "") or "",
                 "outcome": "running",
                 "_live": True,
+                "_sub_voucher": _live_sub_voucher(job),
             }
             out.append(rec)
         except Exception:
@@ -434,6 +444,7 @@ def _synth_running_optimization_audit_records():
                 "payment_method": pay.get("method", "") or "",
                 "outcome": "running",
                 "_live": True,
+                "_sub_voucher": _live_sub_voucher(job),
             }
             out.append(rec)
         except Exception:
@@ -509,6 +520,9 @@ def _apply_cancel_effective(rec):
     - `*_refunded` (rimborso totale: qualita`/quota/budget/preflight/cancel
       pre-attivita`/failure generico): ricavo = 0, quindi margine = -costo.
     - altri (completed, running, ...): ricavo = `user_price_eur_charged`.
+    - pagato con un voucher di abbonamento (`_sub_voucher`): ricavo = 0, gia'
+      contato al pagamento dell'abbonamento; restano i costi. Il delta resta
+      sul prezzo applicato, come se il ricavo fosse quello.
 
     Aggiunge inoltre `_paypal_fee_eur` e `_net_margin_eur` (margine al netto
     delle fee PayPal: zero per voucher/free).
@@ -533,10 +547,14 @@ def _apply_cancel_effective(rec):
         revenue = float(cancel_retained or 0)
     else:
         revenue = charged
-    rec["_eff_revenue_eur"] = round(revenue, 4)
-    rec["_eff_margin_eur"] = round(revenue - cost, 4)
     rec["_eff_delta_eur"] = round(should - revenue, 4)
     rec["_eff_delta_pct"] = round((rec["_eff_delta_eur"] / drift_base * 100), 2) if drift_base > 0 else 0.0
+    rec["_sub_voucher"] = bool(rec.get("_sub_voucher") or payment.is_subscription_voucher(
+        rec.get("payment_method"), rec.get("payment_token_short")))
+    if rec["_sub_voucher"]:
+        revenue = 0.0
+    rec["_eff_revenue_eur"] = round(revenue, 4)
+    rec["_eff_margin_eur"] = round(revenue - cost, 4)
     fee = _compute_paypal_fee_eur(revenue, rec.get("payment_method", ""),
                                   combined_total_eur=rec.get("combined_total_eur"))
     rec["_paypal_fee_eur"] = round(fee, 4)
@@ -1357,10 +1375,59 @@ def admin_api_voice_clone_audit():
         date_to=request.args.get("date_to") or None,
         usd_eur=usd_eur,
         fee_fn=lambda rev, method: _compute_paypal_fee_eur(rev, method),
+        sub_voucher_fn=payment.is_subscription_voucher,
         limit=limit, offset=offset,
         hide_zero=_audit_hide_zero(request.args),
     )
     return jsonify(out)
+
+
+@bp.route("/admin/api/subscription_revenue_audit", methods=["GET"])
+@admin_required
+def admin_api_subscription_revenue_audit():
+    """Ricavi degli abbonamenti: una riga per pagamento (primo addebito o
+    rinnovo), contata alla data del pagamento. Admin-only.
+
+    Ricavo = importo dei pagamenti `completed`; rimborsati, stornati o
+    rifiutati restano visibili con ricavo 0, come i job rimborsati. Margine
+    netto = ricavo - fee PayPal: i costi dei servizi pagati con i voucher
+    dell'abbonamento stanno nelle tab dei servizi, dove quei job hanno ricavo
+    0 (`_apply_cancel_effective`). `date_from`/`date_to` (YYYY-MM-DD, UTC) su
+    `paid_at`. Codici voucher mascherati.
+    """
+    try:
+        limit, offset = _pagination(200, 1000)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+    try:
+        rows = subscriptions.admin_payments(
+            since=_day_epoch(request.args.get("date_from")),
+            until=_day_epoch(request.args.get("date_to"), end=True))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": f"subscriptions unavailable: {e}"}), 503
+    rev = fees = refunded = voucher = spent = 0.0
+    for r in rows:
+        amount = float(r.get("amount_eur") or 0)
+        revenue = amount if r.get("state") == "completed" else 0.0
+        fee = _compute_paypal_fee_eur(revenue, r.get("provider"))
+        r["revenue_eur"] = round(revenue, 4)
+        r["paypal_fee_eur"] = fee
+        r["net_margin_eur"] = round(revenue - fee, 4)
+        rev += revenue
+        fees += fee
+        refunded += amount - revenue
+        voucher += float(r.get("voucher_eur") or 0)
+        spent += float(r.get("voucher_spent_eur") or 0)
+    agg = {
+        "count": len(rows),
+        "revenue_eur": round(rev, 4),
+        "paypal_fees_eur": round(fees, 4),
+        "net_margin_eur": round(rev - fees, 4),
+        "refunded_eur": round(refunded, 4),
+        "voucher_eur": round(voucher, 4),
+        "voucher_spent_eur": round(spent, 4),
+    }
+    return jsonify({"records": rows[offset:offset + limit], "count": len(rows), "aggregates": agg})
 
 
 @bp.route("/admin/api/accounts_audit", methods=["GET"])
