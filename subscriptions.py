@@ -362,22 +362,24 @@ def _day(ts):
     return accounts.utc_day(int(ts)) if ts else ""
 
 
-def _mail(kind, sub, *, voucher_until=None, renews_at=None, ends_at=None):
-    """Email all'utente (`kind`: active | voucher | cancelled), best-effort."""
+def _mail(kind, sub, *, code=None, renews_at=None, ends_at=None):
+    """Email all'utente (`kind`: active | voucher | cancelled), best-effort.
+    `code`: buono del periodo, mostrato nell'email con la sua scadenza."""
     email, lang = _account_email(sub["account_id"])
     if not email:
         return
     space = accounts.format_bytes(accounts.plan_quota_bytes(sub["plan"]))
+    v = payment.voucher_info(code) if code else None
+    voucher = {"code": code if v else "", "voucher": accounts.format_eur(voucher_eur(sub["plan"])),
+               "voucher_until": _day(v["expires_at"] if v else None)}
     try:
         if kind == "active":
             email_service.send_subscription_active(
-                email, lang, space=space, voucher=accounts.format_eur(voucher_eur(sub["plan"])),
-                voucher_until=_day(voucher_until), renews_at=_day(renews_at),
+                email, lang, space=space, **voucher, renews_at=_day(renews_at),
                 model=voxcpm_catalog.MODEL_LABEL)
         elif kind == "voucher":
             email_service.send_subscription_voucher(
-                email, lang, space=space, voucher=accounts.format_eur(voucher_eur(sub["plan"])),
-                voucher_until=_day(voucher_until), model=voxcpm_catalog.MODEL_LABEL)
+                email, lang, space=space, **voucher, model=voxcpm_catalog.MODEL_LABEL)
         else:
             email_service.send_subscription_cancelled(
                 email, lang, space=space, ends_at=_day(ends_at),
@@ -750,14 +752,12 @@ def record_payment(sub_id, pay, now=None):
     if abs(float(pay.amount_eur) - price_eur(sub["plan"])) > 0.01 or (pay.currency or "EUR") != "EUR":
         _alert("amount_mismatch", subscription=sub_id, payment=pay.payment_id,
                amount=pay.amount_eur, currency=pay.currency, expected=price_eur(sub["plan"]))
-    v = payment.voucher_info(code) if code else None
     if first and not sub["change_kind"]:
-        _mail("active", sub, voucher_until=int(v["expires_at"]) if v else None,
-              renews_at=sub["period_end"])
+        _mail("active", sub, code=code, renews_at=sub["period_end"])
         _log(f"SUB_ACTIVE:{sub['plan']}", sub_id)
     else:
-        if v:                           # buono di un rinnovo o del primo periodo dopo un cambio
-            _mail("voucher", sub, voucher_until=int(v["expires_at"]))
+        if code:                        # buono di un rinnovo o del primo periodo dopo un cambio
+            _mail("voucher", sub, code=code)
         _log(f"SUB_CHANGE:{sub['change_kind']}:{sub['plan']}" if first
              else f"SUB_RENEWED:{sub['plan']}", sub_id)
     # collaudo webhook 26/10/2026: «issued» sulla setup fee diceva un buono che non c'era ancora
@@ -1037,7 +1037,7 @@ def _send_reminders(now):
             continue
         try:
             email_service.send_subscription_reminder(
-                email, lang, remaining=accounts.format_eur(payment._voucher_remaining(v)),
+                email, lang, code=code, remaining=accounts.format_eur(payment._voucher_remaining(v)),
                 voucher_until=_day(v["expires_at"]), model=voxcpm_catalog.MODEL_LABEL)
             sent += 1
         except Exception as e:  # noqa: BLE001 - email best-effort
@@ -1162,8 +1162,7 @@ def sweep(now=None, force=False):
             code = _issue_voucher(row, row["payment_id"])
             if code:
                 out["vouchers"] += 1
-                v = payment.voucher_info(code)
-                _mail("voucher", row, voucher_until=int(v["expires_at"]) if v else None)
+                _mail("voucher", row, code=code)
         except Exception as e:  # noqa: BLE001
             out["errors"] += 1
             print(f"[subscriptions] voucher {row['payment_id']}: {type(e).__name__}: {e}", flush=True)
@@ -1177,14 +1176,19 @@ def sweep(now=None, force=False):
 # ---------------------------------------------------------------- stato per UI/API
 
 def _voucher_summary(account_id, now):
-    live = [v for _code, v in payment.iter_vouchers()
+    live = [(code, v) for code, v in payment.iter_vouchers()
             if v.get("kind") == "subscription" and v.get("account_id") == account_id
             and not v.get("revoked") and v.get("expires_at", 0) > now
             and payment._voucher_remaining(v) >= 0.01]
     if not live:
         return None
-    return {"remaining_eur": round(sum(payment._voucher_remaining(v) for v in live), 2),
-            "expires_at": int(min(v["expires_at"] for v in live))}
+    live.sort(key=lambda cv: cv[1]["expires_at"])
+    return {"remaining_eur": round(sum(payment._voucher_remaining(v) for _c, v in live), 2),
+            "expires_at": int(live[0][1]["expires_at"]),
+            # uno per buono (dopo un cambio di piano possono essere due): l'Area
+            # personale mostra i codici, spendibili solo da questo account
+            "codes": [{"code": c, "remaining_eur": round(payment._voucher_remaining(v), 2),
+                       "expires_at": int(v["expires_at"])} for c, v in live]}
 
 
 def status_for(account, *, for_app=False, now=None):

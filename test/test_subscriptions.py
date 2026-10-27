@@ -851,6 +851,32 @@ def test_voucher_reminder_once(sub_env):
     assert subscriptions.sweep(now=now + 4 * DAY, force=True)["reminded"] == 0
 
 
+def test_voucher_emails_and_status_carry_the_code(sub_env, monkeypatch):
+    """Richiesta dell'utente del 27/10/2026: chi si abbonava non trovava il buono.
+    Le email ricevono il codice e lo stato dell'Area personale li elenca tutti,
+    dal primo che scade."""
+    got = []
+    for name in ("send_subscription_active", "send_subscription_reminder"):
+        monkeypatch.setattr(email_service, name,
+                            lambda email, lang, _n=name, **kw: got.append((_n, kw)))
+    acct, _ext = _paid(sub_env, "code@x.it")
+    code = _vouchers_of(acct)[0]["code"]
+    assert got[0][0] == "send_subscription_active" and got[0][1]["code"] == code
+    assert got[0][1]["voucher_until"]
+    other = payment.issue_subscription_voucher(key="paypal:X3", account_id=acct["id"],
+                                               email="code@x.it", amount_eur=10.0, days=30)
+    payment._vouchers[other]["expires_at"] = payment.voucher_info(code)["expires_at"] - DAY
+    v = subscriptions.status_for(acct, now=T0 + 120)["subscription"]["voucher"]
+    assert [c["code"] for c in v["codes"]] == [other, code]
+    assert [c["remaining_eur"] for c in v["codes"]] == [10.0, 5.0] and v["remaining_eur"] == 15.0
+    assert v["expires_at"] == v["codes"][0]["expires_at"]
+    payment.revoke_voucher(other, "test")
+    now = int(time.time())
+    payment._vouchers[code]["expires_at"] = now + 3 * DAY
+    subscriptions.sweep(now=now, force=True)
+    assert got[-1][0] == "send_subscription_reminder" and got[-1][1]["code"] == code
+
+
 def test_reminder_runs_at_most_once_a_day(sub_env):
     acct, _ext = _paid(sub_env, "daily@x.it")
     now = int(time.time())

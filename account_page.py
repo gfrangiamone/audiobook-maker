@@ -26,6 +26,12 @@ _CSS = page_brand.BASE_CSS + (
     ".quota.near i{background:var(--err)}"
     ".subplan .subv{margin:.3em 0;font-size:.9em;color:var(--ac)}"
     "dialog .subscope{font-weight:600}"
+    ".subvoucher{margin-top:.7em;padding:.7em .9em;border:1px solid var(--ac);border-radius:10px;"
+    "background:var(--acs)}"
+    ".subvoucher .vcode{margin-top:.4em;display:flex;align-items:center;gap:.6em;flex-wrap:wrap}"
+    ".subvoucher .vcode code{font-size:1.05em;font-weight:700;letter-spacing:.05em;color:var(--ac);"
+    "background:var(--srf);user-select:all}"
+    ".subvoucher .subscope{margin-top:.3em;font-size:.85em;color:var(--txd)}"
     ".planhead .warn{margin-top:.5em;font-size:.9em;color:var(--err)}"
     ".subplans{display:flex;gap:.8em;flex-wrap:wrap;margin-top:.6em}"
     ".subplan{flex:1 1 11em;padding:.6em .8em;border:1px solid var(--brd);border-radius:10px}"
@@ -537,12 +543,21 @@ def _sub_current_card(t, sub, p, change, enabled, dialogs, tolerance_days):
         out.append(f"<button type=\"button\" class=\"small danger\" id=\"subCancel\">"
                    f"{_e(t['sub_cancel_btn'])}</button>")
         dialogs.append(_sub_cancel_dialog(t, end, tolerance_days))
-    v = sub.get("voucher")
-    if v:
-        out.append("<p class=\"meta\">" + _txt(t, "sub_voucher_line",
-                                               amount=accounts.format_eur(v["remaining_eur"]),
-                                               date=_day(v["expires_at"])) + "</p>")
     return out
+
+
+def _sub_voucher_box(t, voucher, model):
+    """Riquadro «Il tuo buono PREMIUM» in testa all'abbonamento: codice, saldo e
+    scadenza di ogni buono vivo, come si usa e cosa «comprende solo». Prima era
+    una riga in fondo alla scheda del piano e chi si abbonava non la trovava."""
+    rows = [f"<p><strong>{_e(t['sub_voucher_title'])}</strong></p>"]
+    for c in voucher.get("codes") or []:
+        avail = _txt(t, "sub_voucher_avail", amount=accounts.format_eur(c["remaining_eur"]),
+                     date=_day(c["expires_at"]))
+        rows.append(f"<p class=\"vcode\"><code>{_e(c['code'])}</code> <span>{avail}</span></p>")
+    rows.append(f"<p class=\"meta\">{_e(t['sub_voucher_use'])}</p>")
+    rows.append(_sub_voucher_scope(t, {"model": model}))
+    return "<div class=\"subvoucher\">" + "".join(rows) + "</div>"
 
 
 def _sub_change_line(t, change):
@@ -578,6 +593,8 @@ def _subscription_block(t, status, *, notice="", tolerance_days=0, free_quota_by
     if archive_nudge in ("near_full", "full"):          # spec §9.3 punto 2
         rows.append(f"<p class=\"warn\">{_e(t['sub_archive_' + archive_nudge])}</p>")
     live = bool(sub) and sub.get("status") in ("active", "past_due", "cancelled", "activating")
+    if live and sub.get("voucher"):
+        rows.append(_sub_voucher_box(t, sub["voucher"], status.get("voucher_model") or ""))
     badge = f" <span class=\"badge done\">{_e(t['sub_current_badge'])}</span>"
     dialogs, cards = [], []
     if free_quota_bytes:

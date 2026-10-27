@@ -1006,33 +1006,51 @@ def send_archive_remind(email, lang, *, books, deadline, quota, used, manage_url
                            quota=quota, used=used, manage_url=manage_url)
 
 
-def _sub_voucher_send(email, lang, kind, **values):
-    """Email di un buono dell'abbonamento: il corpo e poi «il buono comprende
-    solo …» con `model`, l'etichetta del modello delle voci che copre."""
+def _sub_voucher_box(lang, code, amount, until):
+    """Box del codice del buono dell'abbonamento (etichette del box dei buoni di
+    rimborso) e dove ritrovarlo nell'Area personale; vuoto senza codice."""
+    if not code:
+        return ""
+    v = _i18n.pick(_VOUCHER_I18N, lang)
+    where = _acct_t(lang)["subscription_voucher_where"].format(
+        voucher_url=f"{BASE_URL}/account#abbonamento")
+    return (_layout.voucher_box(html.escape(code), html.escape(amount), html.escape(until),
+                                code_label=v["code"] + ":", value_label=v["value"],
+                                expiry_label=v["expiry"])
+            + f"<p>{where}</p>")
+
+
+def _sub_voucher_send(email, lang, kind, *, code, amount, **values):
+    """Email di un buono dell'abbonamento: il corpo con il box del codice
+    (`code`, `amount` gia' formattato) e poi «il buono comprende solo …» con
+    `model`, l'etichetta del modello delle voci che copre."""
+    box = _sub_voucher_box(lang, code, amount, values["voucher_until"])
     return _i18n_send(_ACCT_I18N, "account", email, lang, f"subscription_{kind}_subject",
-                      (f"subscription_{kind}_body", "subscription_voucher_scope"), **values)
+                      (f"subscription_{kind}_body", "subscription_voucher_scope"),
+                      voucher_html=box, **values)
 
 
-def send_subscription_active(email, lang, *, space, voucher, voucher_until, renews_at, model):
+def send_subscription_active(email, lang, *, space, voucher, voucher_until, renews_at, model, code=""):
     """Abbonamento attivo (primo pagamento confermato). Valori gia' formattati:
     `space` ("5 GB"), `voucher` (importo), date YYYY-MM-DD in UTC."""
-    return _sub_voucher_send(email, lang, "active", space=space, voucher=voucher,
-                             voucher_until=voucher_until, renews_at=renews_at, model=model,
-                             manage_url=f"{BASE_URL}/account")
+    return _sub_voucher_send(email, lang, "active", code=code, amount=voucher, space=space,
+                             voucher=voucher, voucher_until=voucher_until, renews_at=renews_at,
+                             model=model, manage_url=f"{BASE_URL}/account")
 
 
-def send_subscription_voucher(email, lang, *, space, voucher, voucher_until, model):
+def send_subscription_voucher(email, lang, *, space, voucher, voucher_until, model, code=""):
     """Buono di un nuovo periodo pagato (rinnovi e passaggi di piano; il primo
     sta nell'email di attivazione)."""
-    return _sub_voucher_send(email, lang, "voucher", space=space, voucher=voucher,
-                             voucher_until=voucher_until, model=model,
+    return _sub_voucher_send(email, lang, "voucher", code=code, amount=voucher, space=space,
+                             voucher=voucher, voucher_until=voucher_until, model=model,
                              manage_url=f"{BASE_URL}/account")
 
 
-def send_subscription_reminder(email, lang, *, remaining, voucher_until, model):
+def send_subscription_reminder(email, lang, *, remaining, voucher_until, model, code=""):
     """Promemoria pochi giorni prima della scadenza del buono non speso."""
-    return _sub_voucher_send(email, lang, "reminder", remaining=remaining,
-                             voucher_until=voucher_until, model=model, manage_url=f"{BASE_URL}/")
+    return _sub_voucher_send(email, lang, "reminder", code=code, amount=remaining,
+                             remaining=remaining, voucher_until=voucher_until, model=model,
+                             manage_url=f"{BASE_URL}/")
 
 
 def send_subscription_space(email, lang, *, used, space, pct, free_plan=False, offer=None, model=""):

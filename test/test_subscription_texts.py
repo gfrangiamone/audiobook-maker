@@ -113,7 +113,8 @@ def test_subscription_block_empty_when_disabled_without_subscription():
 def test_subscription_block_active_cancelled_and_past_due():
     t = _t()
     sub = {"plan": "sub_5", "status": "active", "period_end": 1_800_000_000, "renews": True,
-           "ends_at": None, "voucher": {"remaining_eur": 3.5, "expires_at": 1_800_000_000}}
+           "ends_at": None, "voucher": {"remaining_eur": 3.5, "expires_at": 1_800_000_000, "codes": [
+               {"code": "SUB-AAAA-BBBB-CCCC", "remaining_eur": 3.5, "expires_at": 1_800_000_000}]}}
     html = account_page._subscription_block(t, _status(sub, enabled=False), tolerance_days=15)
     assert 'id="subCancel"' in html and 'id="subCancelDlg"' in html and "3.50" in html
     assert "data-subplan" not in html
@@ -124,6 +125,55 @@ def test_subscription_block_active_cancelled_and_past_due():
     act = account_page._subscription_block(t, _status(dict(sub, status="activating")))
     assert account_page._e(t["sub_activating"]) in act and "data-subplan" not in act
     assert "data-subpoll" in act and "data-subpoll" not in html
+
+
+_VOUCHER = {"remaining_eur": 13.5, "expires_at": 1_800_000_000, "codes": [
+    {"code": "SUB-AAAA-BBBB-CCCC", "remaining_eur": 3.5, "expires_at": 1_800_000_000},
+    {"code": "SUB-<b>x</b>", "remaining_eur": 10.0, "expires_at": 1_802_678_400}]}
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_voucher_box_on_top_with_codes(lang):
+    """Richiesta dell'utente del 27/10/2026: il buono era una riga grigia in fondo
+    alla scheda del piano e chi si abbonava non lo trovava. Ora e' un riquadro in
+    testa all'abbonamento, con codice, saldo, scadenza, uso e «comprende solo»."""
+    t = _t(lang)
+    sub = {"plan": "sub_10", "status": "active", "period_end": 1_800_000_000, "renews": True,
+           "ends_at": None, "voucher": _VOUCHER}
+    html = account_page._subscription_block(t, _status(sub), tolerance_days=15)
+    box = re.search(r'<div class="subvoucher">.*?</div>', html).group(0)
+    assert html.index('class="subvoucher"') < html.index('class="subplans"')
+    assert "<code>SUB-AAAA-BBBB-CCCC</code>" in box
+    assert "SUB-&lt;b&gt;x&lt;/b&gt;" in box and "<b>x" not in html
+    assert account_page._txt(t, "sub_voucher_avail", amount="3.50", date="2027-01-15") in box
+    assert account_page._e(t["sub_voucher_title"]) in box and account_page._e(t["sub_voucher_use"]) in box
+    assert account_page._txt(t, "sub_voucher_scope", model="Modello-X") in box
+    assert "subvoucher" not in account_page._subscription_block(t, _status(dict(sub, voucher=None)))
+    gone = dict(sub, status="cancelled", ends_at=1_800_000_000)       # disdetto: il buono resta
+    assert "SUB-AAAA-BBBB-CCCC" in account_page._subscription_block(t, _status(gone))
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_voucher_emails_show_code_and_where_to_find_it(lang, monkeypatch):
+    sent = []
+    monkeypatch.setattr(email_service, "_send_email",
+                        lambda to, subject, body, **k: sent.append(body) or True)
+    common = {"voucher_until": "2027-01-15", "model": "Modello-X", "code": "SUB-AAAA-<i>"}
+    assert email_service.send_subscription_active("a@x.it", lang, space="5 GB", voucher="5",
+                                                  renews_at="2027-01-14", **common)
+    assert email_service.send_subscription_voucher("a@x.it", lang, space="10 GB", voucher="10",
+                                                   **common)
+    assert email_service.send_subscription_reminder("a@x.it", lang, remaining="3.50", **common)
+    for body in sent:
+        assert "SUB-AAAA-&lt;i&gt;" in body and "<i>" not in body
+        assert "/account#abbonamento" in body and "{" not in body
+        assert body.index("SUB-AAAA") < body.index("Modello-X")        # prima di «comprende solo»
+    assert "3.50 EUR" in sent[2]
+    sent.clear()                                         # buono non ancora emesso: nessun box
+    assert email_service.send_subscription_active("a@x.it", lang, space="5 GB", voucher="5",
+                                                  renews_at="2027-01-14", voucher_until="",
+                                                  model="Modello-X")
+    assert "#abbonamento" not in sent[0]
 
 
 def test_subscription_block_notice_whitelisted():
