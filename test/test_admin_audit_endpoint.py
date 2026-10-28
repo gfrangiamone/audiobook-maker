@@ -108,6 +108,38 @@ def test_admin_audit_live_rerun_row_visible(client, admin_headers, monkeypatch, 
         audiobook_app.jobs.pop("rr1", None)
 
 
+def test_admin_audit_live_row_paypal_fee(client, admin_headers, monkeypatch, tmp_path):
+    """La riga live porta il metodo di pagamento: un job PayPal in corso sconta
+    la fee nel margine netto come il record persistito (prima restava 0 e il
+    margine netto era uguale al margine), un job a voucher no."""
+    import audiobook_app
+    monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(audiobook_app.gemini_tts, "PAYPAL_PERCENT_FEE", 3.4)
+    monkeypatch.setattr(audiobook_app.gemini_tts, "PAYPAL_FIXED_FEE_EUR", 0.35)
+    base = {"status": "generating", "voice": "gemini:flash31:Puck", "rate": "+0%",
+            "gemini_actual": {"chars": 100, "google_cost_eur": 0.19,
+                              "audio_seconds": 5.0}}
+    audiobook_app.jobs["Jlivepp"] = dict(base, payment={
+        "total_eur": 6.54, "method": "paypal", "token": "ORDER1234567890"})
+    audiobook_app.jobs["Jlivevc"] = dict(base, payment={
+        "total_eur": 6.54, "method": "voucher", "token": "ABCD-EFGH-IJKL"})
+    try:
+        r = client.get("/admin/api/gemini_cost_audit", headers=admin_headers)
+        assert r.status_code == 200
+        live = {rec["job_id"]: rec for rec in r.get_json()["records"]
+                if rec.get("_live")}
+        pp, vc = live["Jlivepp"], live["Jlivevc"]
+        assert pp["payment_method"] == "paypal"
+        assert pp["_paypal_fee_eur"] == round(6.54 * 3.4 / 100 + 0.35, 4)
+        assert pp["_net_margin_eur"] == round(6.54 - 0.19 - pp["_paypal_fee_eur"], 4)
+        assert vc["payment_method"] == "voucher"
+        assert vc["_paypal_fee_eur"] == 0
+        assert vc["_net_margin_eur"] == round(6.54 - 0.19, 4)
+    finally:
+        audiobook_app.jobs.pop("Jlivepp", None)
+        audiobook_app.jobs.pop("Jlivevc", None)
+
+
 def test_running_gemini_row_uses_real_audio_seconds_not_cost_for_drift(monkeypatch):
     """Mirror di test_write_gemini_audit_drift_uses_real_audio_seconds_not_cost
     (generation_engine.py) per la riga LIVE del pannello: il listino dovuto

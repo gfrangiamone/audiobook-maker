@@ -223,11 +223,10 @@ def _synth_running_gemini_audit_records():
                 language = generation_engine._audit_language(job, info) or ""
             except Exception:
                 language = _i18n.norm_lang(getattr(info, "language", "")) if info else ""
-            payment = job.get("payment") or {}
-            charged = float(payment.get("total_eur", 0) or 0)
-            if charged <= 0:
-                charged = generation_engine._tts_share_eur(
-                    job.get("payment_amount_eur", 0), payment.get("llm_eur"))
+            # Stessi campi di pagamento del record persistito: senza il metodo
+            # la fee PayPal della riga live restava a zero.
+            pay_fields = generation_engine._payment_audit_fields(job)
+            charged = pay_fields["charged"]
             rate_raw = job.get("rate", "+0%")
             rate_pct = int(_parse_rate_pct(rate_raw))
             backend_main = ""
@@ -289,9 +288,6 @@ def _synth_running_gemini_audit_records():
                 audio_seconds = float(sa.get("audio_seconds", 0) or 0)
                 vat_actual = 0.0
             delta_eur = round(should_have_been - charged, 4)
-            _llm_quota = (job.get("payment") or {}).get("llm_eur")
-            combined_total = (round(charged + float(_llm_quota or 0), 4)
-                              if _llm_quota is not None else round(charged, 4))
             rec = {
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
@@ -307,7 +303,8 @@ def _synth_running_gemini_audit_records():
                 "user_price_eur_should_have_been": round(should_have_been, 2),
                 "delta_eur": delta_eur,
                 "margin_eur_actual": round(charged - provider_cost_actual, 4),
-                "combined_total_eur": combined_total,
+                "combined_total_eur": pay_fields["combined_total_eur"],
+                "payment_method": pay_fields["payment_method"],
                 "outcome": "running",
                 "_live": True,
                 "_sub_voucher": _live_sub_voucher(job),
