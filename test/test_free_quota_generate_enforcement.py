@@ -567,3 +567,54 @@ def test_voxcpm_libro_oltre_cap_gratuito_richiede_pagamento(client, env, monkeyp
     assert body["error_code"] == "payment_required"
     assert body["total_eur"] == 0.50
     assert free_quota.used_eur(CID) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Chiave di rete (28/10/2026): un cookie nuovo non riparte da zero sulla
+# connessione di un cookie che ha gia' finito il credito.
+# ---------------------------------------------------------------------------
+
+NET_IP = "46.185.190.253"
+
+
+def test_gemini_net_on_cookie_nuovo_sulla_rete_esaurita_402_network(client, env, monkeypatch):
+    """Con la rete applicata la decisione legge l'IP fissato sul job
+    all'analyze (non quello della richiesta, qui 127.0.0.1) e il 402 dice
+    alla UI che a esaurire il credito e' stata la connessione."""
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
+    monkeypatch.setenv("ABM_FREE_QUOTA_NET_KEY", "on")
+    job = _mk_job("fq-net-on", 5000)
+    job["client_ip"] = NET_IP
+    free_quota.consume(free_quota.who("cid_rotated_before", ip=NET_IP), 1.99, "preload_net")
+
+    r = _post_generate(client, "fq-net-on", GEMINI_VOICE)
+    assert r.status_code == 402, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["error_code"] == "free_quota_exhausted"
+    assert body["quota_scope"] == "network"
+    assert body["quota_used_eur"] == pytest.approx(1.99)
+    assert env["run_calls"] == []
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
+
+
+def test_gemini_net_observe_parte_gratis_e_registra_would_charge(client, env, monkeypatch, capsys):
+    """Default `observe`: il job parte gratis come prima, la rete viene
+    addebitata e il log dice che con `on` sarebbe stato a pagamento."""
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
+    monkeypatch.delenv("ABM_FREE_QUOTA_NET_KEY", raising=False)
+    job = _mk_job("fq-net-observe", 5000)
+    job["client_ip"] = NET_IP
+    net = free_quota.who("cid_rotated_before", ip=NET_IP)
+    free_quota.consume(net, 1.99, "preload_net")
+
+    r = _post_generate(client, "fq-net-observe", GEMINI_VOICE)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert env["run_calls"] == [("fq-net-observe", GEMINI_VOICE)]
+    out = capsys.readouterr().out
+    assert "[fq-net-observe] free quota:" in out
+    assert "would charge" in out
+    list_price = free_quota.used_eur(CID)
+    assert list_price > 0
+    assert free_quota._LEDGER.used(net.net) == pytest.approx(1.99 + list_price)

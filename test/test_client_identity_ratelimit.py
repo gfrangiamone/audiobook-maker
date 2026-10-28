@@ -147,7 +147,7 @@ def test_cooldown_counter():
 
 def test_leaves():
     import ast, pathlib
-    for mod, allowed in ((ci, {"hashlib", "re", "env_utils"}), (rl, {"time"})):
+    for mod, allowed in ((ci, {"hashlib", "ipaddress", "re", "env_utils"}), (rl, {"time"})):
         src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
         mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
                 for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}

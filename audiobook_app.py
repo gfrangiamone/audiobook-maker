@@ -938,6 +938,20 @@ def _quota_client_id(job=None):
     return cid or _get_client_id()
 
 
+def _premium_quota_who(job=None):
+    """Identita' completa della quota premium (`free_quota.who`) per i punti
+    di decisione e consumo di una richiesta: cid di `_quota_client_id`, IP
+    fissato sul job all'analyze (stima, ordine PayPal e avvio vedono la stessa
+    rete anche se la connessione cambia nel frattempo), account della
+    sessione, app con device push registrato. Il recovery, senza richiesta,
+    passa il cid nudo: la generazione ha gia' addebitato tutte le chiavi."""
+    cid = _quota_client_id(job)
+    ip = (job.get("client_ip") if isinstance(job, dict) else "") or client_ip()
+    app_device = _client_platform() in ("android", "ios") and _has_fresh_device(cid)
+    return free_quota.who(cid, ip=ip, account_email=routes_account.current_account_email(),
+                          app_device=app_device)
+
+
 def _pricing_chapters(job_id, job, chapters):
     """Capitoli con TESTO GARANTITO, da usare in ogni calcolo di prezzo.
 
@@ -1000,9 +1014,17 @@ def _free_quota_log(job_id, decision, charged=False):
         if decision.get("free_cap_exceeded"):
             verdict += (f" [libro {int(decision.get('book_chars') or 0):,} chars > cap "
                         f"gratuito {int(decision.get('free_cap_chars') or 0):,}]")
+        # Chiave che ha deciso (cid/mail/net) e, in observe, la rete che
+        # avrebbe negato: `grep "would charge"` misura i falsi positivi
+        # prima di passare ABM_FREE_QUOTA_NET_KEY a `on`.
+        extra = ""
+        if decision.get("quota_key") not in (None, "", "cid"):
+            extra = f" key={decision['quota_key']}"
+        if decision.get("net_would_charge"):
+            extra += f" [net {decision.get('net_used_eur', 0):.2f}€: would charge]"
         print(f"[{job_id}] free quota: used={decision['quota_used_eur']:.2f}/"
               f"{decision['quota_limit_eur']:.2f}€ list={decision['list_total_eur']:.2f}€ "
-              f"-> {verdict}{' consumed' if charged else ''}", flush=True)
+              f"-> {verdict}{' consumed' if charged else ''}{extra}", flush=True)
     except Exception:
         pass
 
@@ -4861,7 +4883,7 @@ def api_generate():
         )
         _fq_key_pre = _free_quota_key(job_id, voice, chs_pre, all_chs_pre)
         _quota_dec = _premium_quota_decision(
-            _quota_client_id(job), voice, _list_total_pre, _fq_key_pre,
+            _premium_quota_who(job), voice, _list_total_pre, _fq_key_pre,
             book_chars=_free_quota_book_chars(info_pre, all_chs_pre),
             language=lang_pre,
         )
@@ -4926,9 +4948,7 @@ def api_generate():
                                    if _quota_dec["quota_exhausted"] else "payment_required"),
                     "total_eur": total_eur_pre,
                     "threshold_eur": threshold_pre,
-                    "quota_used_eur": _quota_dec["quota_used_eur"],
-                    "quota_limit_eur": _quota_dec["quota_limit_eur"],
-                    "free_cap_exceeded": bool(_quota_dec.get("free_cap_exceeded")),
+                    **free_quota.client_fields(_quota_dec),
                 }), 402
             try:
                 _pay_method = payment.consume_payment_token(
@@ -5060,7 +5080,7 @@ def api_generate():
         )
         _fq_key_pre = _free_quota_key(job_id, voice, chs_pre, all_chs_pre)
         _quota_dec = _premium_quota_decision(
-            _quota_client_id(job), voice, _list_total_pre, _fq_key_pre,
+            _premium_quota_who(job), voice, _list_total_pre, _fq_key_pre,
             book_chars=_free_quota_book_chars(info_pre, all_chs_pre),
             language=job.get("gen_lang"),
         )
@@ -5086,9 +5106,7 @@ def api_generate():
                                    if _quota_dec["quota_exhausted"] else "payment_required"),
                     "total_eur": total_eur_pre,
                     "threshold_eur": threshold_pre,
-                    "quota_used_eur": _quota_dec["quota_used_eur"],
-                    "quota_limit_eur": _quota_dec["quota_limit_eur"],
-                    "free_cap_exceeded": bool(_quota_dec.get("free_cap_exceeded")),
+                    **free_quota.client_fields(_quota_dec),
                 }), 402
             try:
                 _pay_method = payment.consume_payment_token(
@@ -5411,7 +5429,7 @@ def api_generate():
         _fq_key = job_id
     if _fq_charge is not None and free_quota.limit_eur() > 0:
         try:
-            _fq_total = free_quota.consume(_quota_client_id(job), _fq_charge, _fq_key)
+            _fq_total = free_quota.consume(_premium_quota_who(job), _fq_charge, _fq_key)
             job["free_quota_key"] = _fq_key
             print(f"[{job_id}] free quota consumed: +{_fq_charge:.2f}€ -> "
                   f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€ "
@@ -6770,10 +6788,10 @@ def api_combined_estimate():
     # combinata), non sul prezzo gia' azzerato sotto soglia. Sola lettura: qui
     # non si consuma nulla.
     _quota_dec = None
-    _quota_cid = _quota_client_id(job)
+    _quota_who = _premium_quota_who(job) if _has_premium else None
     if _has_premium:
         _quota_dec = _premium_quota_decision(
-            _quota_cid, voice_id, round(_premium_list_eur + llm_eur, 2),
+            _quota_who, voice_id, round(_premium_list_eur + llm_eur, 2),
             _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None)),
             book_chars=_free_quota_book_chars(info),
             language=lang,
@@ -6847,13 +6865,16 @@ def api_combined_estimate():
         "total_eur": total,
         "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
         "quota_exhausted": bool(_quota_dec and _quota_dec["quota_exhausted"]),
+        # `network`: credito della connessione esaurito (ABM_FREE_QUOTA_NET_KEY
+        # a `on`), la UI invita ad accedere per usare il proprio.
+        "quota_scope": (_quota_dec or {}).get("quota_scope", ""),
         # Libro sopra il cap della gratuita' (solo VoxCPM, vedi
         # free_quota._premium_free_max_chars): il totale e' il floor per
         # generazione, non il listino, e la quota mensile puo' essere ancora
         # capiente. Senza questo flag l'UI mostra un importo senza causa
         # (richiesta di assistenza del 21/09/2026).
         "free_cap_exceeded": bool(_quota_dec and _quota_dec.get("free_cap_exceeded")),
-        "free_quota": free_quota.snapshot(_quota_cid) if _has_premium else None,
+        "free_quota": free_quota.snapshot(_quota_who) if _has_premium else None,
         "threshold_eur": threshold,
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
@@ -6998,7 +7019,7 @@ def api_paypal_create_order_gemini():
     # pretendera'), quota gratuita inclusa.
     if _has_premium:
         server_total = _premium_quota_decision(
-            _quota_client_id(job), voice_id,
+            _premium_quota_who(job), voice_id,
             round(_premium_list_eur + llm_eur, 2),
             _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None)),
             book_chars=_free_quota_book_chars(info),
@@ -7431,10 +7452,10 @@ def api_optimize():
         except Exception as _e_est:
             return _combined_estimate_failed("gemini", _e_est)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
-        _quota_cid = _quota_client_id(job)
+        _quota_who = _premium_quota_who(job)
         _fq_key_gem = _free_quota_key(job_id, _voice_for_est, _chs_for_est, _all_chs)
         _quota_dec = _premium_quota_decision(
-            _quota_cid, _voice_for_est,
+            _quota_who, _voice_for_est,
             round(_gemini_list_quota + estimated_cost, 2), _fq_key_gem,
             book_chars=_free_quota_book_chars(info, _all_chs),
         )
@@ -7467,7 +7488,7 @@ def api_optimize():
         _fq_consumed = False
         if _quota_dec["is_free"] and free_quota.limit_eur() > 0:
             try:
-                free_quota.consume(_quota_cid, _quota_dec["list_total_eur"], _fq_key_gem)
+                free_quota.consume(_quota_who, _quota_dec["list_total_eur"], _fq_key_gem)
                 job["free_quota_key"] = _fq_key_gem
                 _fq_consumed = True
             except Exception as _fq_err:
@@ -7495,9 +7516,7 @@ def api_optimize():
                     "gemini_eur": _gemini_eur_quota,
                     "llm_eur": estimated_cost,
                     "threshold_eur": _threshold_combined,
-                    "quota_used_eur": _quota_dec["quota_used_eur"],
-                    "quota_limit_eur": _quota_dec["quota_limit_eur"],
-                    "free_cap_exceeded": bool(_quota_dec.get("free_cap_exceeded")),
+                    **free_quota.client_fields(_quota_dec),
                 }), 402
             # Validazione + consume del token combinato.
             _consumed = False
@@ -7619,10 +7638,10 @@ def api_optimize():
             return _combined_estimate_failed("speechify", _e_est_spx)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_spx = data.get("voice", "")
-        _quota_cid_spx = _quota_client_id(job)
+        _quota_who_spx = _premium_quota_who(job)
         _fq_key_spx = _free_quota_key(job_id, _voice_spx, _chs_for_est_spx, _all_chs_spx)
         _quota_dec_spx = _premium_quota_decision(
-            _quota_cid_spx, _voice_spx,
+            _quota_who_spx, _voice_spx,
             round(_speechify_list_quota + estimated_cost, 2), _fq_key_spx,
             book_chars=_free_quota_book_chars(info, _all_chs_spx),
         )
@@ -7632,7 +7651,7 @@ def api_optimize():
         _fq_consumed_spx = False
         if _quota_dec_spx["is_free"] and free_quota.limit_eur() > 0:
             try:
-                free_quota.consume(_quota_cid_spx,
+                free_quota.consume(_quota_who_spx,
                                    _quota_dec_spx["list_total_eur"], _fq_key_spx)
                 job["free_quota_key"] = _fq_key_spx
                 _fq_consumed_spx = True
@@ -7659,9 +7678,7 @@ def api_optimize():
                     "speechify_eur": _speechify_eur_quota,
                     "llm_eur": estimated_cost,
                     "threshold_eur": _threshold_spx,
-                    "quota_used_eur": _quota_dec_spx["quota_used_eur"],
-                    "quota_limit_eur": _quota_dec_spx["quota_limit_eur"],
-                    "free_cap_exceeded": bool(_quota_dec_spx.get("free_cap_exceeded")),
+                    **free_quota.client_fields(_quota_dec_spx),
                 }), 402
             # Validazione + consume del token combinato.
             _consumed_spx = False
@@ -7774,10 +7791,10 @@ def api_optimize():
             return _combined_estimate_failed("voxcpm", _e_est_vox)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_vox = data.get("voice", "")
-        _quota_cid_vox = _quota_client_id(job)
+        _quota_who_vox = _premium_quota_who(job)
         _fq_key_vox = _free_quota_key(job_id, _voice_vox, _chs_for_est_vox, _all_chs_vox)
         _quota_dec_vox = _premium_quota_decision(
-            _quota_cid_vox, _voice_vox,
+            _quota_who_vox, _voice_vox,
             round(_voxcpm_list_quota + estimated_cost, 2), _fq_key_vox,
             book_chars=_free_quota_book_chars(info, _all_chs_vox),
             language=_lang_for_vox,
@@ -7788,7 +7805,7 @@ def api_optimize():
         _fq_consumed_vox = False
         if _quota_dec_vox["is_free"] and free_quota.limit_eur() > 0:
             try:
-                free_quota.consume(_quota_cid_vox,
+                free_quota.consume(_quota_who_vox,
                                    _quota_dec_vox["list_total_eur"], _fq_key_vox)
                 job["free_quota_key"] = _fq_key_vox
                 _fq_consumed_vox = True
@@ -7815,9 +7832,7 @@ def api_optimize():
                     "voxcpm_eur": _voxcpm_eur_quota,
                     "llm_eur": estimated_cost,
                     "threshold_eur": _threshold_vox,
-                    "quota_used_eur": _quota_dec_vox["quota_used_eur"],
-                    "quota_limit_eur": _quota_dec_vox["quota_limit_eur"],
-                    "free_cap_exceeded": bool(_quota_dec_vox.get("free_cap_exceeded")),
+                    **free_quota.client_fields(_quota_dec_vox),
                 }), 402
             # Validazione + consume del token combinato.
             _consumed_vox = False

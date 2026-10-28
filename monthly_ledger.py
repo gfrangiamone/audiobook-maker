@@ -161,6 +161,24 @@ class MonthlyLedger(JsonDoc):
             b = self.bucket(self.load(), key)
         return bool(b) and jid in b["jobs"]
 
+    def worst(self, keys, job_id=None):
+        """Chiave piu' consumata del mese fra `keys` [(tipo, chiave)], letta
+        in un'unica lettura del file. Ritorna (gia' addebitato, tipo, usato):
+        a parita' vince la prima chiave (la canonica), e `gia' addebitato`
+        vale per il retry della stessa generazione su una qualunque."""
+        jid = (job_id or "").strip()
+        charged, kind, used = False, "", self.cast(0)
+        with self.lock:
+            d = self.load()
+            for i, (k_kind, key) in enumerate(keys):
+                b = self.bucket(d, key) if key else None
+                amount = b[self.amount_key] if b else self.cast(0)
+                if jid and b and jid in b["jobs"]:
+                    charged = True
+                if i == 0 or amount > used:
+                    kind, used = k_kind, amount
+        return charged, kind, used
+
     def charge(self, d, key, amount, job_id):
         """Somma `amount` su `key` (idempotente per `job_id`). Chi chiama tiene
         il lock e salva. Ritorna (totale, addebitato_adesso)."""

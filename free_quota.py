@@ -6,21 +6,36 @@ cioe' UNA generazione. Prima del 21/09/2026 era il solo job_id, e un libro da
 5 EUR e' stato letto gratis un capitolo per volta sullo stesso job (53
 generazioni via reset_to_chapters): dal secondo capitolo l'idempotenza per
 job vedeva il job "gia' addebitato" e la quota non si muoveva piu'.
-Nessun dato personale oltre al client_id (cookie anonimo abm_cid).
+Identita' di quota (`who()`): il cid da solo si azzera cancellando il cookie
+(28/10/2026: un romanzo letto a pezzi su 7 cid ruotati a quota esaurita, circa
+10 EUR di listino in tre giorni). Accanto al cid si contano l'email
+dell'account della sessione (`mail:<hash>`, come la quota voci standard) e la
+rete della connessione (`net:<hash>`, IPv4 esatto o /64), e si decide sulla
+piu' consumata. La rete non si conta per chi ha fatto l'accesso ne' per l'app
+con un device registrato: e' li' che stanno i falsi positivi (NAT condivisi,
+reti mobili) e quelle identita' non si azzerano con un cookie. La rete passa
+da `ABM_FREE_QUOTA_NET_KEY` (off/observe/on, vedi `net_mode`).
+Nessun dato personale in chiaro: cid anonimo e hash salati di email e rete.
 Best-effort, thread-safe, scrittura atomica: nessuna eccezione propagata.
 """
 import hashlib
 import json
 import os
-from env_utils import env_float as _env_float
+from typing import NamedTuple
+
+from client_identity import network_hash
+from env_utils import env_float as _env_float, env_str
 from pathlib import Path
 
+import free_tts_quota
 from fileio import data_dir
 from monthly_ledger import MonthlyLedger, month_key
 from voice_utils import is_speechify_voice, is_voxcpm_voice
 
 _KEEP_MONTHS = 3
 _ANON = "_anon"
+_NET_PREFIX = "net:"
+_NET_MODES = ("off", "observe", "on")
 
 
 def _quota_file():
@@ -46,16 +61,74 @@ def limit_eur():
     return _env_float("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
 
 
+def net_mode():
+    """Chiave di rete (`ABM_FREE_QUOTA_NET_KEY`, letta a ogni chiamata).
+
+    `off`: non calcolata ne' addebitata. `observe` (default): addebitata e
+    confrontata con il limite, ma la decisione resta quella di cid e account;
+    `_free_quota_log` registra `would charge` dove la rete avrebbe negato la
+    gratuita'. `on`: applicata. Valore sconosciuto = `observe`."""
+    mode = env_str("ABM_FREE_QUOTA_NET_KEY", "observe").strip().lower()
+    return mode if mode in _NET_MODES else "observe"
+
+
+class Who(NamedTuple):
+    """Identita' di quota: cid canonico piu' le chiavi che sopravvivono al
+    cookie (`mail:` dell'account, `net:` della connessione), vuote se
+    assenti."""
+    cid: str
+    mail: str = ""
+    net: str = ""
+
+
 def _norm_client(client_id):
     """Identita' di quota del client. Risolve gli alias device registrati da
     free_tts_quota (app mobile che rigenera il cid): prima la quota premium
     ripartiva da zero a ogni nuovo cid mentre quella standard no."""
     cid = (client_id or "").strip() or _ANON
     try:
-        import free_tts_quota  # import tardivo: evita un ciclo di import
         return free_tts_quota.canonical(cid)
     except Exception:
         return cid
+
+
+def who(client_id, *, ip="", account_email="", app_device=False):
+    """Identita' di quota di una richiesta.
+
+    `account_email` e' l'email dell'account della sessione (verificata dal
+    login), non quella digitata per la consegna: il gate email delle voci
+    standard ha mostrato che un indirizzo non verificato si cambia come un
+    cookie. Con l'account, o dall'app con un device push registrato
+    (`app_device`), la rete non si conta.
+    """
+    net = ""
+    if not account_email and not app_device and net_mode() != "off":
+        h = network_hash(ip)
+        net = _NET_PREFIX + h if h else ""
+    return Who(_norm_client(client_id), free_tts_quota.mail_key(account_email), net)
+
+
+def _as_who(client):
+    """`Who` da un `Who` o da un client_id nudo (recovery, admin, test).
+    Si riconosce la stringa, non la classe: un reload del modulo nei test
+    crea una seconda classe `Who` e un isinstance la scambierebbe per un cid."""
+    if client is None or isinstance(client, str):
+        return Who(_norm_client(client))
+    return client
+
+
+def _keys(w, *, net):
+    """Chiavi del mese per `w`, cid in testa; la rete solo se `net`."""
+    keys = [("cid", w.cid)]
+    if w.mail:
+        keys.append(("mail", w.mail))
+    if net and w.net:
+        keys.append(("net", w.net))
+    return keys
+
+
+def _enforced_keys(w):
+    return _keys(w, net=net_mode() == "on")
 
 
 def _load():
@@ -63,16 +136,21 @@ def _load():
 
 
 def used_eur(client_id):
-    """Valore di listino gia' regalato al client nel mese corrente."""
-    return float(_LEDGER.used(_norm_client(client_id)))
+    """Valore di listino gia' regalato nel mese corrente: il piu' alto fra le
+    chiavi applicate di `client_id` (cid nudo o `Who`)."""
+    return float(_LEDGER.worst(_enforced_keys(_as_who(client_id)))[2])
 
 
 def consume(client_id, eur, job_id):
-    """Somma `eur` al bucket del mese. Idempotente per `job_id`.
+    """Somma `eur` al bucket del mese di ogni chiave dell'identita', rete
+    compresa anche in `observe` (serve a misurare cosa avrebbe negato).
+    Idempotente per `job_id` su ciascuna chiave.
 
-    Ritorna il totale del mese dopo l'operazione.
+    Ritorna il totale del mese del cid dopo l'operazione.
     """
-    return _LEDGER.consume(_norm_client(client_id), eur, job_id)
+    w = _as_who(client_id)
+    extra = [key for _kind, key in _keys(w, net=True)[1:]]
+    return _LEDGER.consume(w.cid, eur, job_id, extra_keys=extra)
 
 
 def charge_key(job_id, voice_id, chapter_indexes=None):
@@ -102,13 +180,13 @@ def job_charged(client_id, job_id):
     Serve all'idempotenza per job di `decision()`: al retry della stessa
     generazione il contributo del job e' gia' dentro `used_eur`, quindi
     ricalcolare `used + list` produrrebbe un 402 che chiede denaro per un
-    credito gia' speso.
+    credito gia' speso. Vale su una qualunque delle chiavi applicate.
     """
-    return _LEDGER.job_charged(_norm_client(client_id), job_id)
+    return _LEDGER.worst(_enforced_keys(_as_who(client_id)), job_id)[0]
 
 
 def snapshot(client_id):
-    """Stato quota per UI/admin."""
+    """Stato quota per UI/admin, sulla chiave applicata piu' consumata."""
     lim = limit_eur()
     used = used_eur(client_id)
     return {
@@ -116,6 +194,18 @@ def snapshot(client_id):
         "limit_eur": round(lim, 2),
         "remaining_eur": round(max(0.0, lim - used), 2),
         "exhausted": bool(lim > 0 and used >= lim),
+    }
+
+
+def client_fields(dec):
+    """Campi della decisione che il client legge in un 402 di quota:
+    consumo, limite, cap del libro e `quota_scope` (`network` quando a
+    esaurire la gratuita' e' la rete, per la nota «accedi»)."""
+    return {
+        "quota_used_eur": dec["quota_used_eur"],
+        "quota_limit_eur": dec["quota_limit_eur"],
+        "free_cap_exceeded": bool(dec.get("free_cap_exceeded")),
+        "quota_scope": dec.get("quota_scope", ""),
     }
 
 
@@ -188,6 +278,12 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
     `_premium_free_max_chars(voice_id)` la voce non e' gratuita neanche sotto
     soglia (`free_cap_exceeded`), e si paga il floor. `language` e' la lingua
     TTS della stima: pesa il cap come pesa il listino.
+
+    `client_id` e' un `Who` (vedi `who()`) o un cid nudo. Si decide sulla
+    chiave applicata piu' consumata (`quota_key`); a quota esaurita
+    `quota_scope` dice se a negare e' stata la rete (`network`) o il client
+    (`client`). In `observe` la rete non decide: se avrebbe negato, il
+    risultato porta `net_would_charge` e `net_used_eur`.
     """
     try:
         list_total = round(float(list_total_eur or 0.0), 2)
@@ -195,13 +291,17 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
         list_total = 0.0
     threshold = _premium_threshold_eur(voice_id)
     limit = limit_eur()
-    used = used_eur(client_id) if limit > 0 else 0.0
+    w = _as_who(client_id)
+    charged, kind, used = (_LEDGER.worst(_enforced_keys(w), job_id) if limit > 0
+                           else (False, "cid", 0.0))
+    used = float(used)
     out = {
         "due_eur": list_total,
         "is_free": False,
         "quota_exhausted": False,
         "quota_used_eur": round(used, 2),
         "quota_limit_eur": round(limit, 2),
+        "quota_key": kind,
         "threshold_eur": threshold,
         "list_total_eur": list_total,
     }
@@ -223,7 +323,7 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
         out["book_chars"] = book
         out["due_eur"] = round(max(list_total, _premium_floor_eur(voice_id)), 2)
         return out
-    if job_id and limit > 0 and job_charged(client_id, job_id):
+    if job_id and charged:
         # Retry della stessa generazione (btnRetryWiz, reload di pagina, app
         # mobile): il credito di questa generazione e' gia' stato speso e
         # `used_eur` lo contiene gia'. Senza questa uscita il confronto
@@ -238,8 +338,14 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
     if limit <= 0 or round(used + list_total, 4) <= limit:
         out["due_eur"] = 0.0
         out["is_free"] = True
+        if limit > 0 and w.net and net_mode() == "observe":
+            net_used = float(_LEDGER.used(w.net))
+            if round(net_used + list_total, 4) > limit:
+                out["net_would_charge"] = True
+                out["net_used_eur"] = round(net_used, 2)
         return out
     floor = _premium_floor_eur(voice_id)
     out["due_eur"] = round(max(list_total, floor), 2)
     out["quota_exhausted"] = True
+    out["quota_scope"] = "network" if kind == "net" else "client"
     return out

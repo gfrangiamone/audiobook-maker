@@ -66,3 +66,16 @@ def test_cache_key_includes_jobid():
     assert m, "getEstimateCacheKey not found"
     body = m.group(1)
     assert "jobId" in body, "cache key must include jobId"
+
+
+def test_free_quota_network_note_in_every_quota_message():
+    """Credito finito sulla connessione (`quota_scope: network`): stima,
+    nota del popup di pagamento e 402 passano tutti dallo stesso testo, e il
+    contesto del popup aperto dal 402 porta lo scope."""
+    assert "function _freeQuotaExhaustedText(scope,fallback)" in APP
+    assert "'free_quota_network'" in APP
+    assert "_freeQuotaExhaustedText(data.quota_scope," in APP
+    assert "_freeQuotaExhaustedText(estimate.quota_scope," in APP
+    assert "_freeQuotaExhaustedText(d.quota_scope," in APP
+    assert "quota_scope:d.quota_scope||''" in APP
+    assert "t('free_quota_exhausted')" not in APP

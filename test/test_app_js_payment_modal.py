@@ -256,5 +256,9 @@ def test_min_note_mentions_quota_when_exhausted():
     start = APP.find("function _payMinNoteText")
     assert start >= 0
     snippet = APP[start:APP.find("function openPaymentModal")]
-    assert "quota_exhausted" in snippet and "free_quota_exhausted" in snippet
+    # Il testo della quota esaurita (credito del browser o della connessione)
+    # arriva dall'helper condiviso con la stima e con il 402.
+    assert "quota_exhausted" in snippet and "_freeQuotaExhaustedText(" in snippet
+    helper = APP[APP.find("function _freeQuotaExhaustedText"):APP.find("function _freeCapNote")]
+    assert "'free_quota_exhausted'" in helper
     assert "pay_min_note" in snippet

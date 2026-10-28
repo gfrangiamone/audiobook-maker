@@ -350,15 +350,10 @@ def _quota_keys(client_id, email=""):
 def _worst_usage(keys, job_id=None):
     """(gia' addebitato, chiave piu' consumata, caratteri) sulle `keys`.
 
-    A parita' vince "cid": e' la chiave canonica. `gia' addebitato` vale per
-    il retry della stessa generazione, su qualunque delle chiavi."""
-    charged = bool(job_id) and any(_job_charged_key(k, job_id) for _, k in keys)
-    worst_kind, worst_used = "", 0
-    for kind, key in keys:
-        used = _used_key(key)
-        if kind == "cid" or used > worst_used:
-            worst_kind, worst_used = kind, used
-    return charged, worst_kind, worst_used
+    A parita' vince "cid": e' la chiave canonica, sempre prima in
+    `_quota_keys`. `gia' addebitato` vale per il retry della stessa
+    generazione, su qualunque delle chiavi."""
+    return _LEDGER.worst(keys, job_id)
 
 
 def decision(client_id, chars, job_id=None, email=""):

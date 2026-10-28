@@ -2176,6 +2176,18 @@ function _freeQuotaStatusLine(used,limit){
   const s=(window.t&&t('free_quota_reset',{rem:rem.toFixed(2),limit:lim.toFixed(2),date:_freeQuotaResetDate()}))||'';
   return (s&&s!=='free_quota_reset')?s:'';
 }
+// Credito gratuito PREMIUM esaurito. `scope==='network'` (free_quota.decision,
+// ABM_FREE_QUOTA_NET_KEY a `on`): a finirlo e' stata la connessione, non
+// questo browser, e chi condivide la rete (casa, ufficio, rete mobile) usa il
+// proprio credito accedendo al suo account.
+function _freeQuotaExhaustedText(scope,fallback){
+  const k=(scope==='network')?'free_quota_network':'free_quota_exhausted';
+  const s=(window.t&&t(k))||'';
+  if(s&&s!==k)return s;
+  return (scope==='network')
+    ?"This month's free PREMIUM voice credit for this connection is used up. Sign in to your account to use your own credit."
+    :fallback;
+}
 // Libro sopra il cap della gratuita' PREMIUM (free_quota._premium_free_max_chars):
 // il totale non e' il listino ma il minimo per generazione, e la quota mensile
 // puo' essere ancora capiente. Senza questa nota l'utente vede un importo fisso
@@ -2244,8 +2256,8 @@ function renderEstimate(data){
       // Quota gratuita mensile esaurita: spiega perche' un libro breve non e'
       // gratis, che l'addebito e' una tantum e quando il credito torna.
       if(data.quota_exhausted){
-        segs.push((window.t&&t('free_quota_exhausted'))
-          ||'Free monthly credit for PREMIUM voices used up.');
+        segs.push(_freeQuotaExhaustedText(data.quota_scope,
+          'Free monthly credit for PREMIUM voices used up.'));
         const _fq=data.free_quota||{};
         const _st=_freeQuotaStatusLine(_fq.used_eur,_fq.limit_eur);
         if(_st)segs.push(_st);
@@ -2481,8 +2493,8 @@ function _payMinNoteText(estimate, adjust){
   if (!(adjust > 0)) return '';
   const segs = [];
   if (estimate.quota_exhausted) {
-    segs.push((window.t && t('free_quota_exhausted'))
-      || "You have used up this month's free PREMIUM voice credit.");
+    segs.push(_freeQuotaExhaustedText(estimate.quota_scope,
+      "You have used up this month's free PREMIUM voice credit."));
     const _fq = estimate.free_quota || {};
     const _st = _freeQuotaStatusLine(
       (_fq.used_eur != null) ? _fq.used_eur : estimate.quota_used_eur,
@@ -6628,8 +6640,8 @@ function _handlePremiumPaymentRequired(d){
   // `free_cap_exceeded` e' il libro sopra il cap della gratuita': il credito
   // mensile puo' essere intatto, quindi il messaggio della quota sarebbe falso.
   let msg=d.free_cap_exceeded?_freeCapNote()
-    :((window.t&&t('free_quota_exhausted'))
-      ||"You have used up this month's free PREMIUM voice credit. This generation has a minimum charge.");
+    :_freeQuotaExhaustedText(d.quota_scope,
+      "You have used up this month's free PREMIUM voice credit. This generation has a minimum charge.");
   // Solo il ramo quota: su `payment_required` (libro sopra soglia) il credito
   // mensile non c'entra e la riga sarebbe fuorviante.
   if(d.error_code==='free_quota_exhausted'){
@@ -6654,6 +6666,7 @@ function _handlePremiumPaymentRequired(d){
     is_free:false,
     threshold_eur:Number(d.threshold_eur)||0,
     quota_exhausted:(d.error_code==='free_quota_exhausted'),
+    quota_scope:d.quota_scope||'',
     free_cap_exceeded:!!d.free_cap_exceeded,
     quota_used_eur:Number(d.quota_used_eur)||0,
     quota_limit_eur:Number(d.quota_limit_eur)||0,

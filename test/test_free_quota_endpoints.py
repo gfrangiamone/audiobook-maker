@@ -123,3 +123,27 @@ def test_estimate_and_order_agree_when_quota_exhausted(client, jb, tmp_path, mon
     })
     assert r_stale.status_code == 409, r_stale.get_data(as_text=True)
     assert "mismatch" in (r_stale.get_json().get("error") or "").lower()
+
+
+def test_estimate_dice_quando_il_credito_e_finito_sulla_rete(client, jb, tmp_path, monkeypatch):
+    """Con la chiave di rete applicata la stima porta `quota_scope: network`
+    e lo snapshot mostra il consumo della connessione: la UI spiega che si
+    puo' accedere per usare il proprio credito invece di un prezzo muto."""
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_PREMIUM_MIN_COST_EUR", "0.50")
+    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
+    monkeypatch.setenv("ABM_FREE_QUOTA_NET_KEY", "on")
+    job_id, _chs = jb
+    # Il job del fixture non ha client_ip: vale l'IP della richiesta.
+    free_quota.consume(free_quota.who("altro_cookie", ip="127.0.0.1"), 1.99, "preload")
+
+    r = client.post("/api/combined_estimate", json={
+        "job_id": job_id, "voice_id": VOICE,
+        "selected_chapters": [0], "ai_opt_enabled": False,
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["quota_exhausted"] is True
+    assert body["quota_scope"] == "network"
+    assert body["free_quota"]["used_eur"] == pytest.approx(1.99)
