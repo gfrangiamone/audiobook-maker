@@ -584,9 +584,12 @@ def set_verdict(group, verdict):
         known = list(g.get("cids", {}).keys())
         scope = "group" if verdict.get("scope") == "group" else "cids"
         if scope == "group":
-            active = [c for c in known
+            # I dispositivi di account restano fuori: con la sessione la quota
+            # e' per email, ruotare cookie non aggira nulla.
+            anon = [c for c in known if not _account_device(g["cids"][c])]
+            active = [c for c in anon
                       if now - float(g["cids"][c].get("last_ts") or 0) <= _GROUP_SCOPE_ACTIVE_SEC]
-            cids = active or known
+            cids = active or anon
         else:
             cids = [c for c in (verdict.get("cids") or []) if isinstance(c, str) and c in known]
         try:
@@ -666,6 +669,8 @@ def _covered_by_group_scope(v, g, cid):
     if not cid or v.get("verdict") != "abuse" or v.get("scope") != "group":
         return False
     b = ((g or {}).get("cids") or {}).get(cid) or {}
+    if _account_device(b):
+        return False                # come in `_born_after_last_block`
     try:
         first = float(b.get("first_ts") or 0)
         return first > 0 and first >= float(v.get("ts") or 0)

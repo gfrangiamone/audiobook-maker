@@ -183,6 +183,21 @@ def test_paid_or_premium_job_never_blocked(env, client):
     assert r.status_code == 200 and "QUOTA_ABUSE_BLOCK" not in _ops(env)
 
 
+def test_subscriber_session_never_blocked(env, client, monkeypatch):
+    """Chi genera connesso con un abbonamento pagato non si ferma, neanche con
+    il cid nel verdetto; un account senza abbonamento si' (ticket 28/10/2026)."""
+    _abuse_verdict([CID])
+    acct = {"id": 3, "email": "abbonata@example.com", "lang": "es", "plan": "sub_10",
+            "plan_until": None, "plan_source": "paid"}
+    monkeypatch.setattr(routes_account, "_current_account", lambda: acct)
+    _mk_job("abz-sub")
+    assert _post(client, "abz-sub").status_code == 200 and "QUOTA_ABUSE_BLOCK" not in _ops(env)
+    for altro in (dict(acct, plan="free"), dict(acct, plan_source="gift"), None):
+        monkeypatch.setattr(routes_account, "_current_account", lambda a=altro: a)
+        _mk_job("abz-nosub")
+        assert _post(client, "abz-nosub").status_code == 403
+
+
 def test_kill_disabled_means_no_403(env, client, monkeypatch):
     _abuse_verdict([CID])
     monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")

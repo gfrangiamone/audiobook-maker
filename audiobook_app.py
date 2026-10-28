@@ -5164,10 +5164,12 @@ def api_generate():
                     or _is_voxcpm_voice(voice)
                     or generation_engine.is_premium_job(job))
     # Moderazione anti-abuso: cid nello scope di un verdetto `abuse` valido
-    # (abuse_watch). Mai su job premium/pagati. Il messaggio non spiega il
-    # perche': spiegare le feature insegnerebbe al bot come aggirarle.
+    # (abuse_watch). Mai su job premium/pagati ne' per chi e' connesso con un
+    # abbonamento pagato (ticket del 28/10/2026: abbonata fermata dal verdetto
+    # sui cookie di prima). Il messaggio non spiega il perche': spiegare le
+    # feature insegnerebbe al bot come aggirarle.
     _abuse_group = _abuse_group_of(job)
-    if not _premium_req:
+    if not _premium_req and not accounts.is_subscriber(routes_account._current_account()):
         try:
             _abuse_blocked = abuse_watch.is_blocked(_abuse_group, client_id)
         except Exception:

@@ -1015,6 +1015,11 @@ def effective_plan(account, now=None):
     return account["plan"] if space_plan_active(account, now) else PLAN_FREE
 
 
+def is_subscriber(account, now=None):
+    """True se l'account ha un abbonamento pagato in vigore (non un regalo)."""
+    return plan_origin(account, now) == "paid" if account else False
+
+
 def gift_active(account, now=None):
     """True se il piano di spazio attivo e' un regalo dell'admin."""
     return space_plan_active(account, now) and account.get("plan_source") == "gift"

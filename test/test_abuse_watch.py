@@ -739,3 +739,25 @@ def test_signed_in_flag_reaches_the_judge_without_the_email(env):
     by_cid = {alias[a]: f for a, f in cids.items()}
     assert by_cid["web"]["signed_in"] is True and by_cid["anon"]["signed_in"] is False
     assert by_cid["misto"]["signed_in"] is False, "usato anche senza sessione"
+
+
+def test_scope_group_lascia_fuori_i_dispositivi_di_account(env):
+    """Con la sessione di un account la quota e' per email: il cid di un
+    account non entra nel verdetto di gruppo ne' ci ricade dopo (ticket del
+    28/10/2026: abbonata fermata dal verdetto sui cookie di prima)."""
+    g = aw.group_key("2.136.199.1")
+    _gen(g, "anon-1")
+    _evasione(g, "anon-1")
+    aw.record_event(g, "app-1", "generate", {"chars": 10, "account_email": "abbonata@example.com"})
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "reason": "t"})
+    v = aw.verdict_for(g)
+    assert v["verdict"] == "abuse" and "anon-1" in v["cids"] and "app-1" not in v["cids"]
+    assert aw.is_blocked(g, "anon-1") and not aw.is_blocked(g, "app-1")
+    # cid nati dopo il verdetto: l'anonimo ricade nel gruppo, quello di account no
+    time.sleep(0.01)
+    aw.record_event(g, "app-2", "generate", {"chars": 10, "account_email": "abbonata@example.com"})
+    aw.record_event(g, "anon-2", "generate", {"chars": 10})
+    assert aw.is_blocked(g, "anon-2") and not aw.is_blocked(g, "app-2")
+    # lo stesso cid usato anche senza sessione perde l'esenzione
+    aw.record_event(g, "app-2", "generate", {"chars": 10})
+    assert aw.is_blocked(g, "app-2")
