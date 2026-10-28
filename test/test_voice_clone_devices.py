@@ -368,14 +368,26 @@ def test_il_codice_vale_24_ore_dalla_richiesta(tmp_path):
     assert vc.confirm(rec2["voice_code"], "cid-nuovo", code, now=1000 + 24 * 3600 + 1) == "expired"
 
 
-def test_add_resume_device_con_nome(tmp_path):
+def test_add_device_con_nome(tmp_path):
     rec = _pronta(tmp_path)
-    assert vc.add_resume_device(rec["id"], "cid-r", "Tablet", now=5) is True
+    assert vc.add_device(rec["id"], "cid-r", "Tablet", via="resume", now=5) is True
     assert vc.device_of(vc.get(rec["id"]), "cid-r") == {
         "cid": "cid-r", "added_at": 5, "via": "resume", "name": "Tablet"}
-    # gia' dentro: nessun duplicato
-    assert vc.add_resume_device(rec["id"], "cid-r", "Altro", now=6) is False
-    assert len(vc.get(rec["id"])["devices"]) == 2
+    # gia' dentro: nessun duplicato, neanche da un'altra via
+    assert vc.add_device(rec["id"], "cid-r", "Altro", via="account", now=6) is False
+    assert vc.add_device(rec["id"], "cid-a", "Portatile", via="account", now=7) is True
+    assert vc.device_of(vc.get(rec["id"]), "cid-a")["via"] == "account"
+    assert len(vc.get(rec["id"])["devices"]) == 3
+
+
+def test_owned_by_email(tmp_path):
+    email = "u@example.com"
+    rec = vc.store().update(_pronta(tmp_path)["id"], {"owner_email": email,
+                                                      "owner_email_hash": vc.email_hash(email)})
+    assert vc.owned_by_email(rec, email) and vc.owned_by_email(rec, " " + email.upper())
+    assert not vc.owned_by_email(rec, "altro@example.com")
+    assert not vc.owned_by_email(rec, "") and not vc.owned_by_email(rec, None)
+    assert not vc.owned_by_email(None, email)
 
 
 def test_rename_device_dal_link_di_gestione(tmp_path):

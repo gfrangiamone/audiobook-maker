@@ -644,15 +644,20 @@ def _account_rows_for(acct, page, q="", audio_only=False):
 
 def _account_voices_for(acct):
     """Voci campionate collegate, non terminali, con link alla gestione
-    attuale (/vc/<manage_token>/devices). Best-effort: [] su qualunque errore."""
+    attuale (/vc/<manage_token>/devices), se il browser che guarda puo' gia'
+    usarle (`here`) e dove abilitarlo (`use_url`). Best-effort: [] su
+    qualunque errore."""
     try:
         out = []
+        cid = _get_client_id()
         for vid in voice_clone.ids_for_email(acct["email"]):
             rec = voice_clone.store().get(vid)
             if rec is None or rec.get("state") in voice_clone._TERMINAL or not rec.get("manage_token"):
                 continue
-            out.append({"name": rec.get("name") or vid, "url": routes_voice_clone._vc_urls(rec)["manage_url"],
-                        "state": rec.get("state") or ""})
+            manage_url = routes_voice_clone._vc_urls(rec)["manage_url"]
+            out.append({"name": rec.get("name") or vid, "url": manage_url,
+                        "use_url": manage_url + "/use", "state": rec.get("state") or "",
+                        "here": bool(cid) and voice_clone.device_of(rec, cid) is not None})
         return out
     except Exception:  # noqa: BLE001
         return []

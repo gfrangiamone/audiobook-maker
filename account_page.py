@@ -65,7 +65,7 @@ _CSS = page_brand.BASE_CSS + (
     "color:var(--txm);border-radius:6px}button.del:hover{color:var(--err);border-color:var(--brd)}"
     "button.del svg{width:16px;height:16px}"
     ".voices{list-style:none;padding:0}.voices li{display:flex;align-items:center;gap:.8em;flex-wrap:wrap;"
-    "border-top:1px solid var(--brd);padding:.8em 0}.voices li b{flex:1 1 10em}"
+    "border-top:1px solid var(--brd);padding:.8em 0}.voices li b{flex:1 1 10em}.voices form{margin:0}"
     "dialog{border:1px solid var(--brd);border-radius:12px;padding:1.2em 1.4em;max-width:min(92vw,680px);"
     "background:var(--srf);color:var(--tx)}dialog::backdrop{background:rgba(0,0,0,.45)}"
     "dialog h2{margin:0 0 .4em;font-size:1.2em}dialog p{margin:.3em 0}"
@@ -754,11 +754,21 @@ def render_history(t, *, lang, account, rows, page, per_page, total, voices_coun
     if not voices:
         parts.append(f"<p>{_e(t['voices_empty'])}</p>")
     else:
+        # Una voce vale solo sui dispositivi abilitati: chi guarda da un altro
+        # browser la abilita qui, invece di crederla sparita dall'app.
+        if any(not v.get("here") and v.get("use_url") for v in voices):
+            parts.append(f"<p class=\"meta\">{_e(t['voices_device_note'])}</p>")
         parts.append("<ul class=\"voices\">")
         for v in voices:
             state = "ready" if v.get("state") == "ready" else "pending"
+            here = ""
+            if v.get("here"):
+                here = f"<span class=\"meta\">{_e(t['voice_here'])}</span>"
+            elif v.get("use_url"):
+                here = (f"<form method=\"post\" action=\"{_e(v['use_url'])}\">"
+                        f"<button class=\"primary\">{_e(t['voice_use_here'])}</button></form>")
             parts.append(f"<li><b>{_e(v['name'])}</b><span class=\"badge {'done' if state == 'ready' else 'running'}\">"
-                         f"{_e(t['vstate_' + state])}</span>"
+                         f"{_e(t['vstate_' + state])}</span>{here}"
                          f"<a class=\"btn\" href=\"{_e(v['url'])}\">{_e(t['voice_manage'])}</a></li>")
         parts.append("</ul>")
     if new_voice_url:

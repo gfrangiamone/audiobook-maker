@@ -895,6 +895,12 @@ _VC_PAGES_FALLBACK = {
     "th_device": "Device", "th_via": "Added via", "th_date": "Date",
     "revoke_btn": "Revoke", "delete_link": "Delete this voice",
     "via_creator": "Creation", "via_resume": "Email link", "via_code": "Voice code",
+    "via_account": "Your account",
+    "use_here_body": "This browser is not among the devices below, so the voice does not show up "
+                     "here. You are signed in with the account the voice belongs to: you can add it now.",
+    "use_here_btn": "Use on this device",
+    "toomany_account_body": "Too many devices have been added from your account. Revoke one from "
+                            "the list of devices, then try again.",
     "identity_lbl": "Introduction",
     "device_name_lbl": "Name of this device",
     "device_name_hint": "It lets you recognise this device later in the list of authorised devices.",
@@ -1078,13 +1084,27 @@ def vc_resume(token):
         return _vc_page(t["resume_title"], body, lang=lang)
     cid = _get_client_id()
     if cid and not voice_clone._has_cid(rec, cid):
-        resume_devices = [d for d in (rec.get("devices") or []) if d.get("via") == "resume"]
-        if len(resume_devices) >= RESUME_DEVICES_MAX:
+        if _vc_devices_full(rec, "resume"):
             body = f"<p>{html_mod.escape(t['toomany_body'])}</p>"
             return _vc_page(t["toomany_title"], body, status=409, lang=lang)
-        voice_clone.add_resume_device(rec["id"], cid, _vc_device_name(request.form.get("device_name")))
+        voice_clone.add_device(rec["id"], cid, _vc_device_name(request.form.get("device_name")),
+                               via="resume")
         _vc_log(rec, "VOICE_CLONE_RESUME")
     return _apply_no_cache(redirect(f"/?vc={rec['id']}", code=302))
+
+
+def _vc_devices_full(rec, via):
+    """Il tetto dei dispositivi entrati per `via` (link di ripresa, account):
+    oltre RESUME_DEVICES_MAX la voce non si allarga piu' da li'."""
+    return sum(1 for d in rec.get("devices") or [] if d.get("via") == via) >= RESUME_DEVICES_MAX
+
+
+def _vc_owner_account(rec):
+    """L'account connesso, se e' quello che possiede la voce; altrimenti None."""
+    acct = _current_account()
+    if not acct or not voice_clone.owned_by_email(rec, acct.get("email")):
+        return None
+    return acct
 
 
 def _vc_device_key(cid):
@@ -1150,7 +1170,7 @@ def vc_devices(token):
                   f"<button type=\"button\" data-cancel>{html_mod.escape(t['cancel_btn'])}</button></form>"
                   f"{presentazione}"
                   f"<div class=\"meta\">{html_mod.escape(t.get('via_' + via, via))} · {when} · {chiave}</div></li>")
-    body = (_vc_speed_section(rec, tok, coda, t) +
+    body = (_vc_use_here_section(rec, tok, mio, t) + _vc_speed_section(rec, tok, coda, t) +
             f"<p>{html_mod.escape(t['devices_intro'])}</p>"
             f"<ul class=\"devs\">{righe}</ul>{_VC_RENAME_JS}"
             f"<div class=\"actions\"><a class=\"btn danger end\" href=\"/vc/{tok}/delete\">"
@@ -1158,12 +1178,48 @@ def vc_devices(token):
     return _vc_page(t["devices_title"], body, lang=lang, tools_html=_vc_back_to_account(rec, t))
 
 
+def _vc_use_here_section(rec, tok, cid, t):
+    """«Usa su questo dispositivo» per il proprietario connesso all'account da
+    un browser che la voce non conosce: senza, chi genera i libri da un
+    browser diverso da quello della creazione la crede sparita (ticket del
+    28/10/2026) e l'unica via sarebbe il codice-voce, pensato per i terzi."""
+    if (cid and voice_clone._has_cid(rec, cid)) or _vc_owner_account(rec) is None:
+        return ""
+    return (f"<section class=\"card\"><p>{html_mod.escape(t['use_here_body'])}</p>"
+            f"<form method=\"post\" action=\"/vc/{tok}/devices/use\">"
+            f"<button class=\"primary\">{html_mod.escape(t['use_here_btn'])}</button></form></section>")
+
+
+@bp.route("/vc/<token>/devices/use", methods=["POST"])
+def vc_devices_use(token):
+    """Autorizza il browser corrente a nome del proprietario connesso (dalla
+    pagina dei dispositivi o dall'area personale) e riapre l'app sulla voce.
+    Chi non e' il proprietario, o non ha piu' la sessione, torna alla pagina
+    dei dispositivi senza che nulla cambi."""
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        return _vc_manage_gone(token)
+    cid = _get_client_id()
+    if _vc_owner_account(rec) is None or not cid:
+        return _apply_no_cache(redirect(f"/vc/{token}/devices", code=302))
+    if not voice_clone._has_cid(rec, cid):
+        if _vc_devices_full(rec, "account"):
+            lang = _vc_page_lang()
+            t = _vc_txt(lang)
+            body = f"<p>{html_mod.escape(t['toomany_account_body'])}</p>"
+            return _vc_page(t["toomany_title"], body, status=409, lang=lang)
+        voice_clone.add_device(rec["id"], cid, _vc_device_name(""), via="account")
+        _vc_log(rec, "VOICE_CLONE_ACCOUNT_DEVICE")
+    return _apply_no_cache(redirect(f"/?vc={rec['id']}", code=302))
+
+
 def _vc_back_to_account(rec, t):
     """«X» in testata che riporta all'area personale, solo se chi guarda e'
     connesso con l'account proprietario della voce: chi arriva dal link
     dell'email senza sessione non ha un'area a cui tornare."""
-    acct = _current_account()
-    if not acct or rec.get("owner_email_hash") != voice_clone.email_hash(acct.get("email") or ""):
+    if _vc_owner_account(rec) is None:
         return ""
     lbl = html_mod.escape(t["back_account"])
     return (f"<a class=\"btn icon-x\" href=\"/account?tab=voices\" title=\"{lbl}\" aria-label=\"{lbl}\">"

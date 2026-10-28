@@ -977,7 +977,7 @@ def test_pagina_voce_torna_all_area_personale_solo_al_proprietario(client, tmp_p
 def test_pagina_dispositivi_mostra_i_nomi_e_rinomina(client, tmp_path):
     rec = _paid(tmp_path)
     tok = rec["manage_token"]
-    vc.add_resume_device(rec["id"], "cid-r", "Tablet <cucina>")
+    vc.add_device(rec["id"], "cid-r", "Tablet <cucina>", via="resume")
     vc.store().update(rec["id"], {"devices": [dict(d, identity="Sono <b>Rita</b>") if d["cid"] == "cid-r" else d
                                               for d in vc.get(rec["id"])["devices"]]})
     vc.store().update(rec["id"], {"devices": [dict(d, name="") if d["cid"] == "cid-uno" else d
@@ -1189,3 +1189,72 @@ def test_prova_della_pagina_di_gestione(client, tmp_path):
     assert client.get(f"/vc/{tok}/demo.wav").status_code == 404
     assert client.post(f"/vc/{tok}/speed", data={"speed": "1.2"}).status_code in (302, 410)
     assert vc.speed_of(vc.get(rec["id"])) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# «Usa su questo dispositivo»: il proprietario connesso abilita il browser
+# ---------------------------------------------------------------------------
+def _come_account(monkeypatch, email):
+    monkeypatch.setattr(routes_account, "_current_account", lambda: {"id": 1, "email": email})
+
+
+def test_pagina_dispositivi_abilita_il_browser_del_proprietario(client, tmp_path, monkeypatch):
+    rec = _pronta(tmp_path)
+    tok = rec["manage_token"]
+    _come_account(monkeypatch, "U@example.com")
+    _cid(client, "cid-nuovo")
+    corpo = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"}).data.decode("utf-8")
+    assert "Usa su questo dispositivo" in corpo and f'action="/vc/{tok}/devices/use"' in corpo
+    r = client.post(f"/vc/{tok}/devices/use", headers={"User-Agent": UA_CHROME_WIN})
+    assert r.status_code == 302 and r.headers["Location"].endswith(f"/?vc={rec['id']}")
+    d = vc.device_of(vc.get(rec["id"]), "cid-nuovo")
+    assert d["via"] == "account" and d["name"] == "Chrome · Windows"
+    # da qui in poi la voce compare in questo browser e il riquadro sparisce
+    assert [v["id"] for v in client.get("/api/voice_clone/mine").get_json()["voices"]] == [rec["id"]]
+    corpo = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"}).data.decode("utf-8")
+    assert "Usa su questo dispositivo" not in corpo and "Il tuo account" in corpo
+    # un secondo clic non duplica il dispositivo
+    assert client.post(f"/vc/{tok}/devices/use").status_code == 302
+    assert len(vc.get(rec["id"])["devices"]) == 2
+
+
+def test_usa_qui_solo_al_proprietario_connesso(client, tmp_path, monkeypatch):
+    rec = _pronta(tmp_path)
+    tok = rec["manage_token"]
+    # il browser della creazione la usa gia': niente riquadro
+    _come_account(monkeypatch, "u@example.com")
+    assert "devices/use" not in client.get(f"/vc/{tok}/devices").data.decode("utf-8")
+    _cid(client, "cid-nuovo")
+    for email in ("altro@example.com", None):
+        if email:
+            _come_account(monkeypatch, email)
+        else:
+            monkeypatch.setattr(routes_account, "_current_account", lambda: None)
+        assert "devices/use" not in client.get(f"/vc/{tok}/devices").data.decode("utf-8")
+        r = client.post(f"/vc/{tok}/devices/use")
+        assert r.status_code == 302 and r.headers["Location"].endswith(f"/vc/{tok}/devices")
+        assert vc.device_of(vc.get(rec["id"]), "cid-nuovo") is None
+    assert client.post("/vc/sconosciuto/devices/use").status_code == 404
+
+
+def test_usa_qui_limita_i_dispositivi_dall_account(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(routes_voice_clone, "RESUME_DEVICES_MAX", 1)
+    rec = _pronta(tmp_path)
+    tok = rec["manage_token"]
+    _come_account(monkeypatch, "u@example.com")
+    _cid(client, "cid-a")
+    assert client.post(f"/vc/{tok}/devices/use").status_code == 302
+    _cid(client, "cid-b")
+    r = client.post(f"/vc/{tok}/devices/use", headers={"Accept-Language": "it"})
+    assert r.status_code == 409 and "Dal tuo account sono stati aggiunti troppi" in r.data.decode("utf-8")
+    assert vc.device_of(vc.get(rec["id"]), "cid-b") is None
+
+
+def test_area_personale_sa_se_la_voce_e_su_questo_browser(tmp_path):
+    rec = _pronta(tmp_path)
+    for cid, here in (("cid-uno", True), ("cid-nuovo", False)):
+        with audiobook_app.app.test_request_context(
+                "/account", headers={"Cookie": f"{audiobook_app._CLIENT_COOKIE_NAME}={cid}"}):
+            [v] = routes_account._account_voices_for({"email": "u@example.com"})
+        assert v["here"] is here
+        assert v["use_url"] == f"https://abm.test/vc/{rec['manage_token']}/devices/use"

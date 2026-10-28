@@ -204,6 +204,27 @@ def test_account_page_voices_tab(logged, monkeypatch):
     assert 'id="tab-books" hidden' in html and 'id="tab-voices">' in html
 
 
+def test_account_page_voices_usa_su_questo_dispositivo(logged, monkeypatch):
+    """La voce vale solo sui dispositivi abilitati: dal browser che non la
+    conosce l'area personale offre di abilitarlo, dove e' gia' abilitata lo dice."""
+    c, acct = logged
+    monkeypatch.setattr(routes_account, "_account_voices_for", lambda a: [
+        {"name": "Mia", "url": "https://abm.test/vc/mt1/devices", "state": "ready", "here": False,
+         "use_url": "https://abm.test/vc/mt1/devices/use"},
+        {"name": "Altra", "url": "https://abm.test/vc/mt2/devices", "state": "ready", "here": True,
+         "use_url": "https://abm.test/vc/mt2/devices/use"}])
+    html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
+    assert '<form method="post" action="https://abm.test/vc/mt1/devices/use">' in html
+    assert "mt2/devices/use" not in html
+    assert html.count(">Usa su questo dispositivo</button>") == 1 and ">su questo dispositivo<" in html
+    assert "solo sui dispositivi dove" in html
+    monkeypatch.setattr(routes_account, "_account_voices_for", lambda a: [
+        {"name": "Altra", "url": "https://abm.test/vc/mt2/devices", "state": "ready", "here": True,
+         "use_url": "https://abm.test/vc/mt2/devices/use"}])
+    html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
+    assert "Usa su questo dispositivo" not in html and "solo sui dispositivi dove" not in html
+
+
 def test_account_page_voices_empty(logged):
     c, acct = logged
     html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()

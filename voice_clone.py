@@ -1038,6 +1038,12 @@ def _has_cid(rec, cid):
     return any(d.get("cid") == cid for d in rec.get("devices") or [])
 
 
+def owned_by_email(rec, email):
+    """La voce e' di chi e' connesso con questo indirizzo: l'account l'ha
+    provato con il codice d'accesso, come l'email di consegna della voce."""
+    return bool(rec) and bool((email or "").strip()) and rec.get("owner_email_hash") == email_hash(email)
+
+
 def is_owner(rec, cid):
     """Predicato unico di proprieta' (m1): il dispositivo che ha creato la
     voce (`via == "creator"`), non il primo della lista ne' un dispositivo
@@ -1456,16 +1462,17 @@ def revoke_device(manage_token, cid):
         return bool(rec) and _drop_device(rec, cid)
 
 
-def add_resume_device(clone_id, cid, device_name, now=None):
-    """Autorizza il dispositivo arrivato dal link di ripresa. False se era
-    gia' dentro (o la voce non c'e'): nessun duplicato nella lista."""
+def add_device(clone_id, cid, device_name, *, via, now=None):
+    """Autorizza il dispositivo arrivato dal link di ripresa (`via="resume"`)
+    o dall'account del proprietario (`via="account"`). False se era gia'
+    dentro (o la voce non c'e'): nessun duplicato nella lista."""
     t = _now(now)
     with _lock:
         rec = get(clone_id)
         if rec is None or _has_cid(rec, cid):
             return False
         devices = list(rec.get("devices") or []) + [
-            {"cid": cid, "added_at": t, "via": "resume", "name": normalize_device_name(device_name)}]
+            {"cid": cid, "added_at": t, "via": via, "name": normalize_device_name(device_name)}]
         store().update(rec["id"], {"devices": devices})
         return True
 

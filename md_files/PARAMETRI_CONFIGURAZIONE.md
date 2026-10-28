@@ -534,7 +534,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 - `CONFIRM_LOCK_SEC = 900` (15 minuti) — durata del lock post-esaurimento tentativi.
 - `STALE_INFLIGHT_SEC = 3600` (1 ora) — `paid`/`demos_generating` senza cambio di stato oltre questa soglia vengono rilanciati dallo sweeper (guardia anti-stallo, I1).
 - `RESEND_MAX = 3` / `RESEND_WINDOW_SEC = 86400` — resend manuale (§ sotto): 3 invii per voce in una finestra scorrevole di 24h, tracciata in `rec["resend_ts"]` (non un bucket per-IP).
-- `RESUME_DEVICES_MAX = 10` (in `audiobook_app.py`) — dispositivi diversi che possono autorizzarsi tramite lo stesso link di resume (`/vc/<token>/resume`) prima del 409.
+- `RESUME_DEVICES_MAX = 10` (in `routes_voice_clone.py`) — dispositivi diversi che possono autorizzarsi tramite lo stesso link di resume (`/vc/<token>/resume`) prima del 409; lo stesso tetto, contato a parte, vale per i dispositivi aggiunti dal proprietario connesso all'account (`/vc/<token>/devices/use`, `via="account"`).
 
 **Rate limit (in `audiobook_app.py`, `_ip_rl_check`):**
 
