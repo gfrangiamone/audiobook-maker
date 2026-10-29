@@ -463,6 +463,21 @@ def test_il_minuto_finisce_nel_dataset_delle_code(tmp_path, monkeypatch):
     assert "testa" not in rec
 
 
+def test_il_dataset_delle_code_non_scrive_il_token_della_voce_campionata(
+        tmp_path, monkeypatch):
+    import voice_utils
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    token = "ef" * 16
+    job = {"voxcpm_actual": {"code_tagliate_dettaglio": [
+        {"capitolo": 1, "testa": 2, "chunk": 3, "coda_attesa": "fine."}]}}
+    generation_engine._write_voxcpm_tails_dataset(
+        "j2", job, voice_utils.VOXCPM_MINE_PREFIX + token, "it", "completed")
+    (fp,) = list(tmp_path.glob("voxcpm_code_tagliate_*.jsonl"))
+    raw = fp.read_text(encoding="utf-8")
+    assert token not in raw
+    assert json.loads(raw.strip())["voice_id"] == voice_utils.CLONED_VOICE_LOG_LABEL
+
+
 def test_combinato_legacy_scorpora_la_quota_ai(audit_isolato):
     """Job in volo pagato prima dello scorporo: total_eur 0 (stima TTS sotto
     soglia) e floor intero in payment_amount_eur. L'audit TTS ne prende solo

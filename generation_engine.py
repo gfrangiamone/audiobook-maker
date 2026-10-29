@@ -231,6 +231,7 @@ from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 from voice_utils import is_premium_voice as _is_premium_voice
 from voice_utils import is_cloned_voice as _is_cloned_voice, parse_rate_pct as _parse_rate_pct, rate_step as _rate_step
+from voice_utils import voice_for_log as _voice_for_log
 
 
 def _retention_for_job(job):
@@ -5471,7 +5472,9 @@ def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
             # esistono, e un `or -1` li trasformerebbe in "non lo so".
             _cap = r.get("capitolo")
             _chk = r.get("chunk")
-            rec = {"ts": ts, "job_id": job_id, "voice_id": voice_id,
+            # Voce campionata: il token e' un segreto, nel dataset va
+            # l'etichetta (il clone si ritrova dal job nell'audit VoxCPM).
+            rec = {"ts": ts, "job_id": job_id, "voice_id": _voice_for_log(voice_id),
                    "language": language, "outcome": outcome,
                    "capitolo": -1 if _cap is None else int(_cap),
                    "chunk": -1 if _chk is None else int(_chk)}

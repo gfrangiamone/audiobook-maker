@@ -15,7 +15,8 @@ lingua e non chiede nuove liste da mantenere. L'esito non blocca: avvisa, e
 l'utente conferma. Un libro bilingue, o un testo con molte citazioni, deve
 poter essere letto lo stesso.
 
-Modulo **foglia**: stdlib + `semantic_judge`, nessun import dal progetto.
+Modulo **foglia**: stdlib + `semantic_judge` e le foglie `i18n`, `env_utils`,
+`voice_utils`.
 
 Configurazione (env):
   ABM_VOICELANG_MODE      off | observe | on        (default: observe)
@@ -26,6 +27,7 @@ Configurazione (env):
 
 from i18n import norm_lang as _norm_lang
 from env_utils import env_float as _env_float, env_int as _env_int, env_str
+from voice_utils import voice_for_log
 from datetime import datetime, timezone
 
 import semantic_judge as sj
@@ -184,7 +186,8 @@ def write_audit(probs, voice_lang, declared_lang, mismatch, *, job_id="",
             "ts": datetime.now(timezone.utc).isoformat(),
             "mode": mode(),
             "job_id": str(job_id or "")[:40],
-            "voice": str(voice or "")[:60],
+            # Voce campionata: il token e' un segreto, va l'etichetta.
+            "voice": str(voice_for_log(voice) or "")[:60],
             "voice_language": voice_lang or "",
             "declared_language": declared_lang or "",
             "book_language": probs.get("language", ""),

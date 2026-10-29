@@ -238,6 +238,18 @@ def test_audit_survives_a_missing_data_dir(env, monkeypatch):
     vg.write_audit({"matches": 0.1, "language": "es"}, "it", "es", True)
 
 
+def test_audit_never_writes_a_cloned_voice_token(env):
+    """Il token della voce campionata e' un segreto: nell'audit l'etichetta."""
+    import json
+    import voice_utils
+    token = "cd" * 16
+    vg.write_audit({"matches": 0.1, "language": "es"}, "it", "es", True,
+                   job_id="J1", voice=voice_utils.VOXCPM_MINE_PREFIX + token)
+    (line,) = audit_lines(env)
+    assert token not in line
+    assert json.loads(line)["voice"] == voice_utils.CLONED_VOICE_LOG_LABEL
+
+
 # --------------------------------------------------------------------------
 # fail-open
 # --------------------------------------------------------------------------
