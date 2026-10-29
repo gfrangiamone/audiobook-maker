@@ -2,6 +2,7 @@
 from pathlib import Path
 
 APP = Path("static/js/app.js").read_text(encoding="utf-8")
+I18N = Path("templates/_fragments/i18n_data.js").read_text(encoding="utf-8")
 
 
 def test_has_request_combined_estimate():
@@ -68,14 +69,13 @@ def test_cache_key_includes_jobid():
     assert "jobId" in body, "cache key must include jobId"
 
 
-def test_free_quota_network_note_in_every_quota_message():
-    """Credito finito sulla connessione (`quota_scope: network`): stima,
-    nota del popup di pagamento e 402 passano tutti dallo stesso testo, e il
-    contesto del popup aperto dal 402 porta lo scope."""
-    assert "function _freeQuotaExhaustedText(scope,fallback)" in APP
-    assert "'free_quota_network'" in APP
-    assert "_freeQuotaExhaustedText(data.quota_scope," in APP
-    assert "_freeQuotaExhaustedText(estimate.quota_scope," in APP
-    assert "_freeQuotaExhaustedText(d.quota_scope," in APP
-    assert "quota_scope:d.quota_scope||''" in APP
-    assert "t('free_quota_exhausted')" not in APP
+def test_free_quota_exhausted_one_text_without_network_hint():
+    """Stima, nota del popup di pagamento e 402 passano dallo stesso testo,
+    qualunque chiave abbia finito il credito: la nota «accedi con il tuo
+    account» sulla rete (28/10/2026) indicava come aggirarla con un account
+    nuovo, e la UI non riceve piu' la chiave che ha negato."""
+    helper = APP[APP.find("function _freeQuotaExhaustedText(fallback)"):APP.find("function _freeCapNote")]
+    assert "t('free_quota_exhausted')" in helper
+    assert APP.count("_freeQuotaExhaustedText(") == 4
+    assert "free_quota_network" not in APP and "quota_scope" not in APP
+    assert "free_quota_network" not in I18N

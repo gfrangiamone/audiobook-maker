@@ -161,6 +161,17 @@ def current_account_email():
     return (_current_account() or {}).get("email") or ""
 
 
+def current_account_is_subscriber():
+    """True se la richiesta corrente ha la sessione di un account con un
+    abbonamento pagato in vigore (`accounts.is_subscriber`, non un regalo);
+    False senza sessione o fuori da una richiesta. A chi lo ha l'anti-abuso
+    non blocca la generazione e la quota gratuita PREMIUM non conta la rete:
+    un account gratuito invece si apre in dieci minuti con un'email nuova."""
+    if not has_request_context():
+        return False
+    return accounts.is_subscriber(_current_account())
+
+
 def _acct_cookie_secure():
     return cookie_secure()      # regola unica della app (E2)
 

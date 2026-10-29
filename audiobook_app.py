@@ -943,12 +943,14 @@ def _premium_quota_who(job=None):
     di decisione e consumo di una richiesta: cid di `_quota_client_id`, IP
     fissato sul job all'analyze (stima, ordine PayPal e avvio vedono la stessa
     rete anche se la connessione cambia nel frattempo), account della
-    sessione, app con device push registrato. Il recovery, senza richiesta,
-    passa il cid nudo: la generazione ha gia' addebitato tutte le chiavi."""
+    sessione con il suo abbonamento, app con device push registrato. Il
+    recovery, senza richiesta, passa il cid nudo: la generazione ha gia'
+    addebitato tutte le chiavi."""
     cid = _quota_client_id(job)
     ip = (job.get("client_ip") if isinstance(job, dict) else "") or client_ip()
     app_device = _client_platform() in ("android", "ios") and _has_fresh_device(cid)
     return free_quota.who(cid, ip=ip, account_email=routes_account.current_account_email(),
+                          subscriber=routes_account.current_account_is_subscriber(),
                           app_device=app_device)
 
 
@@ -5169,7 +5171,7 @@ def api_generate():
     # sui cookie di prima). Il messaggio non spiega il perche': spiegare le
     # feature insegnerebbe al bot come aggirarle.
     _abuse_group = _abuse_group_of(job)
-    if not _premium_req and not accounts.is_subscriber(routes_account._current_account()):
+    if not _premium_req and not routes_account.current_account_is_subscriber():
         try:
             _abuse_blocked = abuse_watch.is_blocked(_abuse_group, client_id)
         except Exception:
@@ -6867,9 +6869,6 @@ def api_combined_estimate():
         "total_eur": total,
         "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
         "quota_exhausted": bool(_quota_dec and _quota_dec["quota_exhausted"]),
-        # `network`: credito della connessione esaurito (ABM_FREE_QUOTA_NET_KEY
-        # a `on`), la UI invita ad accedere per usare il proprio.
-        "quota_scope": (_quota_dec or {}).get("quota_scope", ""),
         # Libro sopra il cap della gratuita' (solo VoxCPM, vedi
         # free_quota._premium_free_max_chars): il totale e' il floor per
         # generazione, non il listino, e la quota mensile puo' essere ancora

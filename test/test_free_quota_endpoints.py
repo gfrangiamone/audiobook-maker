@@ -126,9 +126,9 @@ def test_estimate_and_order_agree_when_quota_exhausted(client, jb, tmp_path, mon
 
 
 def test_estimate_dice_quando_il_credito_e_finito_sulla_rete(client, jb, tmp_path, monkeypatch):
-    """Con la chiave di rete applicata la stima porta `quota_scope: network`
-    e lo snapshot mostra il consumo della connessione: la UI spiega che si
-    puo' accedere per usare il proprio credito invece di un prezzo muto."""
+    """Con la chiave di rete applicata la stima dice che il credito e' finito
+    e lo snapshot mostra il consumo della connessione, ma non quale chiave
+    l'ha finito: spiegarlo insegnerebbe a cambiare rete o account."""
     monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
     monkeypatch.setenv("ABM_PREMIUM_MIN_COST_EUR", "0.50")
@@ -145,5 +145,5 @@ def test_estimate_dice_quando_il_credito_e_finito_sulla_rete(client, jb, tmp_pat
     assert r.status_code == 200, r.get_data(as_text=True)
     body = r.get_json()
     assert body["quota_exhausted"] is True
-    assert body["quota_scope"] == "network"
+    assert "quota_scope" not in body
     assert body["free_quota"]["used_eur"] == pytest.approx(1.99)

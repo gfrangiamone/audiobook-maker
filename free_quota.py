@@ -11,10 +11,11 @@ Identita' di quota (`who()`): il cid da solo si azzera cancellando il cookie
 10 EUR di listino in tre giorni). Accanto al cid si contano l'email
 dell'account della sessione (`mail:<hash>`, come la quota voci standard) e la
 rete della connessione (`net:<hash>`, IPv4 esatto o /64), e si decide sulla
-piu' consumata. La rete non si conta per chi ha fatto l'accesso ne' per l'app
-con un device registrato: e' li' che stanno i falsi positivi (NAT condivisi,
-reti mobili) e quelle identita' non si azzerano con un cookie. La rete passa
-da `ABM_FREE_QUOTA_NET_KEY` (off/observe/on, vedi `net_mode`).
+piu' consumata. La rete non si conta per chi e' connesso con un abbonamento
+pagato ne' per l'app con un device registrato: identita' che non si azzerano
+con un cookie. Un account gratuito invece la conta: il 28/10/2026 lo stesso
+lettore aveva gia' aperto tre account su caselle diverse in meno di un giorno.
+La rete passa da `ABM_FREE_QUOTA_NET_KEY` (off/observe/on, vedi `net_mode`).
 Nessun dato personale in chiaro: cid anonimo e hash salati di email e rete.
 Best-effort, thread-safe, scrittura atomica: nessuna eccezione propagata.
 """
@@ -92,17 +93,20 @@ def _norm_client(client_id):
         return cid
 
 
-def who(client_id, *, ip="", account_email="", app_device=False):
+def who(client_id, *, ip="", account_email="", subscriber=False, app_device=False):
     """Identita' di quota di una richiesta.
 
     `account_email` e' l'email dell'account della sessione (verificata dal
     login), non quella digitata per la consegna: il gate email delle voci
     standard ha mostrato che un indirizzo non verificato si cambia come un
-    cookie. Con l'account, o dall'app con un device push registrato
-    (`app_device`), la rete non si conta.
+    cookie. L'account aggiunge la sua chiave ma non toglie la rete: anche
+    un'email verificata si cambia (tre account gratuiti dello stesso lettore
+    fra il 27 e il 28/10/2026). La rete non si conta solo con un abbonamento
+    pagato in vigore (`subscriber`) o dall'app con un device push registrato
+    (`app_device`).
     """
     net = ""
-    if not account_email and not app_device and net_mode() != "off":
+    if not subscriber and not app_device and net_mode() != "off":
         h = network_hash(ip)
         net = _NET_PREFIX + h if h else ""
     return Who(_norm_client(client_id), free_tts_quota.mail_key(account_email), net)
@@ -199,13 +203,12 @@ def snapshot(client_id):
 
 def client_fields(dec):
     """Campi della decisione che il client legge in un 402 di quota:
-    consumo, limite, cap del libro e `quota_scope` (`network` quando a
-    esaurire la gratuita' e' la rete, per la nota «accedi»)."""
+    consumo, limite e cap del libro. Non la chiave che ha negato
+    (`quota_key`): vedi `decision()`."""
     return {
         "quota_used_eur": dec["quota_used_eur"],
         "quota_limit_eur": dec["quota_limit_eur"],
         "free_cap_exceeded": bool(dec.get("free_cap_exceeded")),
-        "quota_scope": dec.get("quota_scope", ""),
     }
 
 
@@ -280,10 +283,10 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
     TTS della stima: pesa il cap come pesa il listino.
 
     `client_id` e' un `Who` (vedi `who()`) o un cid nudo. Si decide sulla
-    chiave applicata piu' consumata (`quota_key`); a quota esaurita
-    `quota_scope` dice se a negare e' stata la rete (`network`) o il client
-    (`client`). In `observe` la rete non decide: se avrebbe negato, il
-    risultato porta `net_would_charge` e `net_used_eur`.
+    chiave applicata piu' consumata (`quota_key`: `cid`, `mail` o `net`,
+    solo per i log: al client non si dice quale chiave ha negato, spiegarlo
+    insegnerebbe a cambiare rete). In `observe` la rete non decide: se
+    avrebbe negato, il risultato porta `net_would_charge` e `net_used_eur`.
     """
     try:
         list_total = round(float(list_total_eur or 0.0), 2)
@@ -347,5 +350,4 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
     floor = _premium_floor_eur(voice_id)
     out["due_eur"] = round(max(list_total, floor), 2)
     out["quota_exhausted"] = True
-    out["quota_scope"] = "network" if kind == "net" else "client"
     return out

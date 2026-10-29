@@ -3,7 +3,9 @@
 Un romanzo letto a pezzi da 0,10-0,15 EUR su 7 cid ruotati a quota esaurita:
 la quota contava solo sul cookie. `free_quota.who()` aggiunge l'account della
 sessione (`mail:`) e la rete della connessione (`net:`, IPv4 esatto o /64),
-la decisione guarda la piu' consumata. `ABM_FREE_QUOTA_NET_KEY` decide se la
+la decisione guarda la piu' consumata. Dal 29/10/2026 la rete vale anche per
+gli account gratuiti (lo stesso lettore ne aveva aperti tre): ne sono esenti
+solo l'abbonamento pagato e l'app con un device registrato. `ABM_FREE_QUOTA_NET_KEY` decide se la
 rete e' spenta, osservata (default) o applicata.
 """
 import pytest
@@ -119,8 +121,8 @@ def test_who_include_rete_e_account(fq):
     assert w2.mail == free_tts_quota.mail_key("reader@example.com") != ""
 
 
-def test_who_senza_rete_per_account_app_e_modo_off(fq, monkeypatch):
-    assert fq.who("c", ip=IP, account_email="a@b.it").net == ""
+def test_who_senza_rete_per_abbonato_app_e_modo_off(fq, monkeypatch):
+    assert fq.who("c", ip=IP, account_email="a@b.it", subscriber=True).net == ""
     assert fq.who("c", ip=IP, app_device=True).net == ""
     assert fq.who("c", ip="").net == ""
     monkeypatch.setenv("ABM_FREE_QUOTA_NET_KEY", "off")
@@ -141,11 +143,11 @@ def test_net_mode(fq, monkeypatch, raw, mode):
 
 def test_consume_addebita_tutte_le_chiavi_anche_in_observe(fq):
     w = fq.who("cid1", ip=IP, account_email="a@b.it")
-    assert w.net == ""  # con l'account la rete non c'e'
-    w = fq.who("cid1", ip=IP)
+    assert w.net and w.mail  # l'account gratuito conta anche la rete
     assert fq.consume(w, 0.30, "g1") == pytest.approx(0.30)
     fq.consume(w, 0.30, "g1")  # retry: idempotente su ogni chiave
     assert fq._LEDGER.used("cid1") == pytest.approx(0.30)
+    assert fq._LEDGER.used(w.mail) == pytest.approx(0.30)
     assert fq._LEDGER.used(w.net) == pytest.approx(0.30)
 
 
@@ -190,7 +192,7 @@ def test_on_nega_il_cookie_nuovo_sulla_stessa_rete(fq, monkeypatch):
     assert dec["is_free"] is False
     assert dec["quota_exhausted"] is True
     assert dec["quota_key"] == "net"
-    assert dec["quota_scope"] == "network"
+    assert "quota_scope" not in dec
     assert dec["quota_used_eur"] == pytest.approx(1.95)
     assert dec["due_eur"] == pytest.approx(0.50)
     assert fq.snapshot(fq.who("cid-new", ip=IP))["used_eur"] == pytest.approx(1.95)
@@ -203,11 +205,32 @@ def test_on_altra_rete_resta_libera(fq, monkeypatch):
     assert dec["is_free"] is True
 
 
-def test_on_chi_accede_usa_il_proprio_credito(fq, monkeypatch):
+def test_on_account_gratuito_non_riapre_la_rete(fq, monkeypatch):
+    """29/10/2026: lo stesso lettore aveva tre account gratuiti su caselle
+    diverse. Con la rete esaurita, accedere con un account nuovo non basta."""
     monkeypatch.setenv("ABM_FREE_QUOTA_NET_KEY", "on")
     _exhaust_network(fq)
-    me = fq.who("cid-new", ip=IP, account_email="vicino@example.com")
+    me = fq.who("cid-new", ip=IP, account_email="nuovo@example.com")
+    assert me.net and me.mail
+    dec = fq.decision(me, VOICE, 0.10, "g-new")
+    assert dec["is_free"] is False and dec["quota_key"] == "net"
+
+
+def test_on_abbonato_usa_il_proprio_credito(fq, monkeypatch):
+    monkeypatch.setenv("ABM_FREE_QUOTA_NET_KEY", "on")
+    _exhaust_network(fq)
+    me = fq.who("cid-new", ip=IP, account_email="vicino@example.com", subscriber=True)
     assert fq.decision(me, VOICE, 0.10, "g-new")["is_free"] is True
+
+
+def test_account_gratuito_addebita_anche_la_rete(fq):
+    """Il consumo di un account gratuito pesa anche sulla rete: un account
+    nuovo sulla stessa connessione non riparte da zero."""
+    fq.consume(fq.who("cid-a", ip=IP, account_email="uno@example.com"), 1.95, "g1")
+    assert fq._LEDGER.used("net:" + client_identity.network_hash(IP)) == pytest.approx(1.95)
+    fq.consume(fq.who("cid-b", ip=IP, account_email="abbonata@example.com",
+                      subscriber=True), 0.30, "g2")
+    assert fq._LEDGER.used("net:" + client_identity.network_hash(IP)) == pytest.approx(1.95)
 
 
 def test_on_app_con_device_usa_il_proprio_credito(fq, monkeypatch):
@@ -224,7 +247,6 @@ def test_account_su_un_cookie_nuovo_ritrova_il_proprio_consumo(fq):
     dec = fq.decision(fq.who("cid-b", account_email="me@example.com"), VOICE, 0.10, "g2")
     assert dec["is_free"] is False
     assert dec["quota_key"] == "mail"
-    assert dec["quota_scope"] == "client"
 
 
 def test_on_retry_della_stessa_generazione_resta_gratis(fq, monkeypatch):
@@ -253,7 +275,5 @@ def test_client_fields(fq, monkeypatch):
         "quota_used_eur": pytest.approx(1.95),
         "quota_limit_eur": pytest.approx(2.00),
         "free_cap_exceeded": False,
-        "quota_scope": "network",
     }
-    free = fq.decision("cid-other", VOICE, 0.10)
-    assert fq.client_fields(free)["quota_scope"] == ""
+    assert dec["quota_key"] == "net"

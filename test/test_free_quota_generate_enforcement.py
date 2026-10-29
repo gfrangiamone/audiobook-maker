@@ -16,6 +16,7 @@ import audiobook_app
 import free_quota
 import gemini_tts
 import payment
+import routes_account
 import speechify_tts
 from epub_to_tts import BookInfo, Chapter
 
@@ -579,8 +580,8 @@ NET_IP = "46.185.190.253"
 
 def test_gemini_net_on_cookie_nuovo_sulla_rete_esaurita_402_network(client, env, monkeypatch):
     """Con la rete applicata la decisione legge l'IP fissato sul job
-    all'analyze (non quello della richiesta, qui 127.0.0.1) e il 402 dice
-    alla UI che a esaurire il credito e' stata la connessione."""
+    all'analyze (non quello della richiesta, qui 127.0.0.1) e il 402 non dice
+    quale chiave ha esaurito il credito."""
     monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
     monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
     monkeypatch.setenv("ABM_FREE_QUOTA_NET_KEY", "on")
@@ -592,7 +593,7 @@ def test_gemini_net_on_cookie_nuovo_sulla_rete_esaurita_402_network(client, env,
     assert r.status_code == 402, r.get_data(as_text=True)
     body = r.get_json()
     assert body["error_code"] == "free_quota_exhausted"
-    assert body["quota_scope"] == "network"
+    assert "quota_scope" not in body
     assert body["quota_used_eur"] == pytest.approx(1.99)
     assert env["run_calls"] == []
     assert free_quota.used_eur(CID) == pytest.approx(0.0)
@@ -618,3 +619,32 @@ def test_gemini_net_observe_parte_gratis_e_registra_would_charge(client, env, mo
     list_price = free_quota.used_eur(CID)
     assert list_price > 0
     assert free_quota._LEDGER.used(net.net) == pytest.approx(1.99 + list_price)
+
+
+@pytest.mark.parametrize("acct,status", [
+    ({"id": 7, "email": "nuovo@example.com", "plan": "free"}, 402),
+    ({"id": 8, "email": "regalo@example.com", "plan": "sub_5", "plan_until": None,
+      "plan_source": "gift"}, 402),
+    ({"id": 9, "email": "abbonata@example.com", "plan": "sub_10", "plan_until": None,
+      "plan_source": "paid"}, 200),
+])
+def test_gemini_net_on_account_gratuito_non_riapre_la_rete(client, env, monkeypatch, acct, status):
+    """29/10/2026: lo stesso lettore della rotazione dei cookie aveva tre
+    account gratuiti su caselle diverse. Con la rete esaurita l'accesso con
+    un account nuovo non riapre la gratuita'; la riapre solo un abbonamento
+    pagato in vigore."""
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
+    monkeypatch.setenv("ABM_FREE_QUOTA_NET_KEY", "on")
+    monkeypatch.setattr(routes_account, "_current_account", lambda: acct)
+    job = _mk_job("fq-net-acct", 5000)
+    job["client_ip"] = NET_IP
+    free_quota.consume(free_quota.who("cid_rotated_before", ip=NET_IP), 1.99, "preload_net")
+
+    r = _post_generate(client, "fq-net-acct", GEMINI_VOICE)
+    assert r.status_code == status, r.get_data(as_text=True)
+    if status == 402:
+        assert r.get_json()["error_code"] == "free_quota_exhausted"
+        assert env["run_calls"] == []
+    else:
+        assert env["run_calls"] == [("fq-net-acct", GEMINI_VOICE)]
