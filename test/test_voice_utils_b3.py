@@ -39,6 +39,18 @@ def test_clone_token_matches_the_two_historical_parsers(voice, strict, lax):
     assert voxcpm_tts.voice_clone_token(voice) == lax
 
 
+def test_premium_log_voice_includes_cloned_label():
+    # Nel business log la voce campionata e' l'etichetta, non l'id col token.
+    assert vu.CLONED_VOICE_LOG_LABEL == "user-voice"
+    assert vu.is_premium_log_voice(vu.CLONED_VOICE_LOG_LABEL)
+    assert not vu.is_premium_voice(vu.CLONED_VOICE_LOG_LABEL)
+    for v in ("gemini:flash31:Kore", "speechify:simba:harper_32",
+              "voxcpm:v2:it-IT/Marco", "voxcpm:mine:" + "a" * 32):
+        assert vu.is_premium_log_voice(v), v
+    for v in ("it-IT-DiegoNeural", "", None, "user-voice-x", "USER-VOICE"):
+        assert not vu.is_premium_log_voice(v), v
+
+
 def test_engine_for_voice():
     assert vu.engine_for_voice("gemini:flash31:Zephyr") == "gemini"
     assert vu.engine_for_voice("speechify:simba-3.2:x") == "speechify"

@@ -667,6 +667,8 @@ LLM_OPT_GROWTH_TOLERANCE = env_float("ABM_LLM_OPT_GROWTH_TOLERANCE", 0.05, floor
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_premium_voice as _is_premium_voice
+from voice_utils import is_premium_log_voice as _is_premium_log_voice
+from voice_utils import CLONED_VOICE_LOG_LABEL as _CLONED_VOICE_LOG_LABEL
 from voice_utils import is_speechify_voice as _is_speechify_voice
 # Interruttore per modello PREMIUM (ABM_<MODELLO>_ENABLE, default abilitato).
 from voice_utils import voice_model_enabled as _voice_model_enabled
@@ -2674,7 +2676,7 @@ def _voice_for_log(voice):
     altra voce (edge-tts, gemini:, speechify:, voxcpm:v2:...)."""
     try:
         if voice and voice.startswith(voice_clone.VOICE_ID_PREFIX):
-            return "user-voice"
+            return _CLONED_VOICE_LOG_LABEL
     except Exception:
         pass
     return voice
@@ -2932,10 +2934,9 @@ def _parse_log_sessions(ym):
         # la voce di destinazione gia' in fase di ottimizzazione AI. Si
         # guarda la voce della RIGA, non l'ultima vista sulla sessione:
         # un'anteprima premium seguita da un OPTIMIZE senza voce non conta.
+        # La voce campionata nel log e' un'etichetta, non `voxcpm:mine:`.
         premium_started = (
-            operation in _PREMIUM_START_OPS
-            and (_is_gemini_voice(voice) or _is_speechify_voice(voice)
-                 or _is_voxcpm_voice(voice))
+            operation in _PREMIUM_START_OPS and _is_premium_log_voice(voice)
         )
         is_m4b = operation.startswith(_M4B_OP_PREFIX)
         if sid not in sessions:

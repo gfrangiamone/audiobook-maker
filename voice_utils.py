@@ -149,6 +149,19 @@ def clone_token(voice, *, strict=True):
     return tok
 
 
+# Etichetta neutra che il business log scrive al posto di una voce campionata
+# (audiobook_app._voice_for_log): il token e' un segreto e non va su disco.
+CLONED_VOICE_LOG_LABEL = "user-voice"
+
+
+def is_premium_log_voice(voice):
+    """True se la colonna voce di una riga del business log indica una voce
+    PREMIUM: un id dei tre motori oppure l'etichetta della voce campionata
+    (VoxCPM). Solo per le righe del log: a runtime l'etichetta non e' un id
+    di voce e vale `is_premium_voice`."""
+    return is_premium_voice(voice) or voice == CLONED_VOICE_LOG_LABEL
+
+
 def engine_for_voice(voice):
     """Motore TTS dal prefisso del voice id: 'gemini', 'speechify', 'voxcpm'
     o 'edge' (tutto il resto, incluse voci vuote)."""

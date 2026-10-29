@@ -29,6 +29,7 @@ import user_stats
 from env_utils import env_int
 from page_brand import render_page as _render_page
 from routes_admin_audit import _ACTIVE_JOB_STATUSES
+from voice_utils import is_premium_voice
 
 bp = Blueprint("admin_logs", __name__)
 
@@ -177,6 +178,20 @@ def _session_in_progress(s, sid):
     return False
 
 
+def _session_premium(s, sid):
+    """Sessione del filtro PREMIUM: avvio reale con voce PREMIUM nel log
+    (`premium_started`, vedi _parse_log_sessions) oppure job in corso con voce
+    PREMIUM in memoria. Come per lo stato in corso, il job runtime e' la fonte
+    autoritativa: senza questo ramo un job premium in corso (scheda gialla se
+    pagato) restava fuori dal filtro finche' il log non portava la sua voce."""
+    if s.get("premium_started"):
+        return True
+    if not _session_in_progress(s, sid):
+        return False
+    job = _jobs().get(sid) or {}
+    return is_premium_voice(job.get("voice") or job.get("opt_voice") or "")
+
+
 def _last_n_days(n):
     today = datetime.now().date()
     return [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
@@ -300,7 +315,7 @@ def _log_session_filters(sid, s, client_session_count):
         "email": "EMAIL_SENT" in s["events"],
         "recurring": bool(cid) and client_session_count.get(cid, 0) >= 2,
         "identified": bool(cid),
-        "gemini": bool(s.get("premium_started")),
+        "gemini": _session_premium(s, sid),
         "translation": bool(set(s["events"]) & _LOG_TR_OPS),
         "platform": s.get("platform", "") or "",
         "transferred": bool(s.get("transferred", False)),
@@ -634,9 +649,9 @@ def admin_logs():
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
     # Sessioni che hanno realmente avviato il libro con voci PREMIUM (Gemini,
     # Speechify/Simba o VoxCPM: stessa tasca di pagamento/rimborso) — esclude
-    # le anteprime. Il flag e' calcolato in _parse_log_sessions su GENERATE o
-    # su OPTIMIZE con voce (wizard combinato, ancora in ottimizzazione AI).
-    gemini_started = sum(1 for s in sessions.values() if s.get("premium_started"))
+    # le anteprime. Stesso criterio del filtro (_session_premium): GENERATE o
+    # OPTIMIZE con voce premium nel log, o job in corso con voce premium.
+    gemini_started = sum(1 for sid, s in sessions.items() if _session_premium(s, sid))
     # Sessioni di traduzione: qualunque evento del flusso traduzione.
     tr_count = sum(1 for s in sessions.values()
                    if set(s["events"]) & _LOG_TR_OPS)

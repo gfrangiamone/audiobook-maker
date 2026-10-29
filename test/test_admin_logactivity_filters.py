@@ -170,6 +170,62 @@ def test_premium_filter_not_fooled_by_earlier_premium_voice(monkeypatch):
     assert 'data-gemini="0"' in html
 
 
+def _premium_stat_count(html):
+    stat = html[html.index('data-filter="gemini"'):]
+    return stat[stat.index('<div class="num">') + len('<div class="num">'):stat.index('</div>')]
+
+
+def test_premium_filter_counts_cloned_voice_log_label(monkeypatch):
+    """La voce campionata finisce nel log come etichetta neutra (il token e'
+    un segreto): il GENERATE con quell'etichetta e' un avvio PREMIUM."""
+    import datetime
+    import voice_utils
+    logged = audiobook_app._voice_for_log(voice_utils.VOXCPM_MINE_PREFIX + "ab" * 16)
+    assert not voice_utils.is_premium_voice(logged)
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f'SID_CLONE # {ts} # "book.epub" # GENERATE # cid6 # 1.2.3.6 # {logged} # it # ',
+    ]
+    html = _page_with_log(monkeypatch, lines)
+    assert 'data-gemini="1"' in html
+    assert _premium_stat_count(html) == "1"
+
+
+def _running_job(voice, paid_eur):
+    return {"status": "generating", "voice": voice, "progress_current": 1,
+            "progress_total": 10,
+            "payment": {"token": "t", "total_eur": paid_eur, "method": "paypal"}}
+
+
+def test_premium_filter_counts_running_premium_job(monkeypatch):
+    """Regressione be7udP_BVEdRTGZBGlEULw: job premium pagato in corso (scheda
+    gialla) senza una riga di avvio premium nel log. Il filtro e il contatore
+    PREMIUM devono seguire il job in memoria, come lo stato in corso."""
+    import datetime
+    import voice_utils
+    sid = "be7udP_BVEdRTGZBGlEULw"
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [f'{sid} # {ts} # "book.epub" # ANALYZE # cid5 # 1.2.3.5 # # it # ']
+    monkeypatch.setitem(audiobook_app.jobs, sid,
+                        _running_job(voice_utils.VOXCPM_MINE_PREFIX + "cd" * 16, 4.5))
+    html = _page_with_log(monkeypatch, lines)
+    assert 'class="card card-in-progress card-paid" data-status="in_progress"' in html
+    assert 'data-gemini="1"' in html
+    assert _premium_stat_count(html) == "1"
+
+
+def test_premium_filter_ignores_running_standard_voice_job(monkeypatch):
+    import datetime
+    sid = "RUN_STD"
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [f'{sid} # {ts} # "book.epub" # GENERATE # cid4 # 1.2.3.4 # it-IT-DiegoNeural # it # ']
+    monkeypatch.setitem(audiobook_app.jobs, sid, _running_job("it-IT-DiegoNeural", 0))
+    html = _page_with_log(monkeypatch, lines)
+    assert 'data-status="in_progress"' in html
+    assert 'data-gemini="0"' in html
+    assert _premium_stat_count(html) == "0"
+
+
 def test_api_optimize_logs_auto_generate_voice():
     """/api/optimize con auto_generate scrive la voce di destinazione
     sull'evento OPTIMIZE, cosi' il pannello admin la vede subito."""
