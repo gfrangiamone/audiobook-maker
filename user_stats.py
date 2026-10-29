@@ -25,6 +25,8 @@ from datetime import datetime
 # Unica fonte per "voce PREMIUM": Gemini, Speechify e VoxCPM. La copia locale
 # precedente ignorava VoxCPM e classificava quei job come standard.
 from voice_utils import is_premium_voice  # noqa: F401  (riesportato)
+# Le voci qui vengono dal log: la voce campionata e' l'etichetta neutra.
+from voice_utils import is_premium_log_voice
 
 # Evento che marca una generazione TTS portata a termine.
 COMPLETE_OP = "COMPLETE"
@@ -104,7 +106,7 @@ def user_key(s, ip_fallback=True):
 
 def cohort_of(s):
     """Coorte della sessione (variante B: voce premium OR pagamento incassato)."""
-    if is_premium_voice(s.get("voice", "")):
+    if is_premium_log_voice(s.get("voice", "")):
         return "premium"
     if PAID_OPS & s.get("events", frozenset()):
         return "premium"
@@ -313,7 +315,7 @@ def language_stats(sessions, payments, ym=""):
     for s in sessions.values():
         if COMPLETE_OP not in s["events"]:
             continue
-        premium = is_premium_voice(s.get("voice", ""))
+        premium = is_premium_log_voice(s.get("voice", ""))
         k = _lang_key(s.get("lang", ""))
         if k == "?":
             meta["libri_senza_lingua" if premium
@@ -558,7 +560,7 @@ def power_users(rows, since, min_jobs=5, quota_table=None, top=10, month_ym=None
             }
         recent = ts >= since_str
         in_month = ts.startswith(month_ym)
-        premium = is_premium_voice(voice)
+        premium = is_premium_log_voice(voice)
         if op == "GENERATE":
             if premium:
                 if recent:

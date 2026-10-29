@@ -28,6 +28,13 @@ def test_cohort_voce_premium():
     assert user_stats.cohort_of({"voice": "speechify:scott", "events": set()}) == "premium"
 
 
+def test_cohort_voce_campionata_dal_log():
+    """Nel log la voce campionata e' l'etichetta neutra, non l'id col token."""
+    import voice_utils
+    s = {"voice": voice_utils.CLONED_VOICE_LOG_LABEL, "events": {"COMPLETE"}}
+    assert user_stats.cohort_of(s) == "premium"
+
+
 def test_cohort_pagamento_su_voce_standard():
     """Variante B: l'ottimizzazione AI pagata conta come premium anche su Edge."""
     s = {"voice": "it-IT-DiegoNeural", "events": {"GENERATE", "PAYMENT_CAPTURED"}}

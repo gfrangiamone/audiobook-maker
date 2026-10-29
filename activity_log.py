@@ -10,8 +10,8 @@ Il modo arriva a ogni chiamata da ABM_ACTIVITY_DB: `off` (default) solo
 file; `dual` file piu' copia in activity.db, letture dal file; `db` dedup e
 letture sul DB, file sempre scritto. Fino alla fase 4 il file e' il
 registro completo e il DB un indice ricostruibile (`sync_month`). Nessun
-import dal progetto oltre ad activity_db: la cartella arriva con
-`configure()`.
+import dal progetto oltre alle foglie activity_db e voice_utils: la
+cartella arriva con `configure()`.
 """
 import contextlib
 import os
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import activity_db
+from voice_utils import voice_for_log
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 _YM_RE = re.compile(r"^\d{4}-\d{2}\Z")
@@ -271,7 +272,10 @@ def log(job_id, filename, op, client_id="", ip="", voice="", lang="",
         key = (job_id, op) if epoch is None else (job_id, op, epoch)
     # I campi possono arrivare dal client (job_id di un body JSON, nome file,
     # voce): un a capo falsificherebbe righe intere del log (S3, 2026-10-12).
-    # Nel file entrano senza caratteri di controllo.
+    # Nel file entrano senza caratteri di controllo. Il token di una voce
+    # campionata e' un segreto: su disco va solo l'etichetta neutra, per
+    # qualunque evento (COMPLETE ed EMAIL_SENT lo scrivevano in chiaro).
+    voice = voice_for_log(voice)
     job_id, op, client_id, ip, voice, lang, platform = (
         _clean_field(v) for v in (job_id, op, client_id, ip, voice, lang, platform))
     filename = _clean_field(filename, quoted=True)

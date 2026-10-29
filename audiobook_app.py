@@ -668,7 +668,11 @@ LLM_OPT_GROWTH_TOLERANCE = env_float("ABM_LLM_OPT_GROWTH_TOLERANCE", 0.05, floor
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_premium_voice as _is_premium_voice
 from voice_utils import is_premium_log_voice as _is_premium_log_voice
-from voice_utils import CLONED_VOICE_LOG_LABEL as _CLONED_VOICE_LOG_LABEL
+# C2: l'id di una voce campionata (voxcpm:mine:<token>) non deve mai finire
+# in un log/dossier/digest persistito - il token e' un segreto. Ogni chiamante
+# che passa una voce a _abuse_note/_admin_notify_generation la filtra da qui;
+# il business log la filtra da se' (activity_log.log), per qualunque evento.
+from voice_utils import voice_for_log as _voice_for_log
 from voice_utils import is_speechify_voice as _is_speechify_voice
 # Interruttore per modello PREMIUM (ABM_<MODELLO>_ENABLE, default abilitato).
 from voice_utils import voice_model_enabled as _voice_model_enabled
@@ -2666,21 +2670,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             generation_engine._set_job_status(job, "error")
 
 #  -  -  Activity log  -  -
-
-def _voice_for_log(voice):
-    """C2: l'id di una voce campionata (voxcpm:mine:<token>) non deve mai
-    finire scritto in un log/dossier/digest persistito - il token e' un
-    segreto (vedi vincoli globali della feature voci campionate). Ogni
-    chiamante che passa una voce a _log_activity/_abuse_note/
-    _admin_notify_generation deve filtrarla da qui. Passthrough per ogni
-    altra voce (edge-tts, gemini:, speechify:, voxcpm:v2:...)."""
-    try:
-        if voice and voice.startswith(voice_clone.VOICE_ID_PREFIX):
-            return _CLONED_VOICE_LOG_LABEL
-    except Exception:
-        pass
-    return voice
-
 
 def _voice_public_label(voice):
     """Nome voce presentabile all'utente (mai il nome del provider AI/TTS,

@@ -51,6 +51,14 @@ def test_premium_log_voice_includes_cloned_label():
         assert not vu.is_premium_log_voice(v), v
 
 
+def test_voice_for_log_hides_only_cloned_token():
+    assert vu.voice_for_log("voxcpm:mine:" + "a" * 32) == vu.CLONED_VOICE_LOG_LABEL
+    assert vu.voice_for_log("voxcpm:mine:") == vu.CLONED_VOICE_LOG_LABEL
+    for v in ("voxcpm:v2:it-IT/Marco", "gemini:flash31:Kore", "it-IT-DiegoNeural",
+              "", None, "size_mb=2.0 pct=10", vu.CLONED_VOICE_LOG_LABEL):
+        assert vu.voice_for_log(v) == v, v
+
+
 def test_engine_for_voice():
     assert vu.engine_for_voice("gemini:flash31:Zephyr") == "gemini"
     assert vu.engine_for_voice("speechify:simba-3.2:x") == "speechify"

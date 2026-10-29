@@ -63,6 +63,21 @@ def _ops_now():
 
 # ---------------------------------------------------------------- scrittura
 
+def test_voce_campionata_scritta_come_etichetta(log_dir):
+    """Il token della voce campionata non va su disco, per nessun evento
+    (COMPLETE ed EMAIL_SENT lo scrivevano in chiaro): resta l'etichetta."""
+    import voice_utils
+    cloned = voice_utils.VOXCPM_MINE_PREFIX + "ab" * 16
+    for op in ("GENERATE", "COMPLETE", "EMAIL_SENT"):
+        activity_log.log("J1", "a.epub", op, voice=cloned)
+    activity_log.log("J1", "a.epub", "M4B_END", voice="elapsed_s=4.0 pct=100")
+    rows = activity_log.month_rows(_ym(datetime.now()))
+    assert [r.voice for r in rows] == [voice_utils.CLONED_VOICE_LOG_LABEL] * 3 + [
+        "elapsed_s=4.0 pct=100"]
+    raw = (log_dir / f"activity_{_ym(datetime.now())}.log").read_text(encoding="utf-8")
+    assert "ab" * 16 not in raw
+
+
 def test_andata_e_ritorno_con_cancelletto_e_platform_vuota(log_dir):
     activity_log.log("J1", "Saga # 2.epub", "GENERATE", client_id="c1",
                      ip="1.2.3.4", voice="it-IT-X", lang="it")

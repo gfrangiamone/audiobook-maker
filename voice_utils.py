@@ -149,9 +149,16 @@ def clone_token(voice, *, strict=True):
     return tok
 
 
-# Etichetta neutra che il business log scrive al posto di una voce campionata
-# (audiobook_app._voice_for_log): il token e' un segreto e non va su disco.
+# Etichetta neutra che log, dossier e digest scrivono al posto di una voce
+# campionata: il token e' un segreto e non va su disco.
 CLONED_VOICE_LOG_LABEL = "user-voice"
+
+
+def voice_for_log(voice):
+    """La voce come va scritta in un log/dossier/digest persistito: la voce
+    campionata (`voxcpm:mine:<token>`) diventa `CLONED_VOICE_LOG_LABEL`,
+    ogni altro valore passa invariato (anche non stringhe e payload liberi)."""
+    return CLONED_VOICE_LOG_LABEL if is_cloned_voice(voice) else voice
 
 
 def is_premium_log_voice(voice):
