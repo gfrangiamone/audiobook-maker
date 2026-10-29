@@ -9,8 +9,9 @@ import audiobook_app as app
 import gemini_tts
 import payment
 import routes_admin_audit
+import subscriptions
 import voice_clone_audit
-from test.test_subscriptions import T0, DAY, _paid, _sub_of, _vouchers_of, sub_env  # noqa: F401
+from test.test_subscriptions import T0, DAY, _change, _paid, _sub_of, _vouchers_of, sub_env  # noqa: F401
 
 
 H = {"X-Admin-Token": "secret"}
@@ -104,13 +105,69 @@ def test_subscription_revenue_audit_counts_payments_once(sub_env, monkeypatch):
     a = d["aggregates"]
     assert (d["count"], a["count"], a["revenue_eur"], a["refunded_eur"]) == (2, 2, 5.0, 5.0)
     assert a["paypal_fees_eur"] == pytest.approx(0.52) and a["net_margin_eur"] == pytest.approx(4.48)
-    assert a["voucher_spent_eur"] == 1.5 and a["voucher_eur"] == 10.0
+    assert a["voucher_spent_eur"] == 1.5 and a["voucher_eur"] == 5.0      # il revocato non conta
 
     later = _day(T0 + 60 + DAY)
     assert c.get(f"/admin/api/subscription_revenue_audit?date_from={later}", headers=H).get_json()["count"] == 0
     earlier = _day(T0 + 60 - DAY)
     assert c.get(f"/admin/api/subscription_revenue_audit?date_to={earlier}", headers=H).get_json()["count"] == 0
     assert c.get("/admin/api/subscription_revenue_audit?limit=1", headers=H).get_json()["count"] == 2
+
+
+def test_revoked_voucher_counts_only_what_was_spent(sub_env, monkeypatch):
+    """Fra i voucher emessi un revocato vale solo la parte spesa prima della revoca."""
+    c = _admin(monkeypatch)
+    acct, ext = _paid(sub_env, "rev@x.it")
+    code = next(k for k, v in payment.iter_vouchers() if v.get("account_id") == acct["id"])
+    payment._voucher_consume(code, 2.0, job_id="j1", service="voxcpm", account_id=acct["id"])
+    assert c.post("/admin/api/subscriptions/refund", headers=H,
+                  json={"sub_id": _sub_of(ext)["id"], "payment_id": "SALE" + ext[2:],
+                        "end_now": True}).status_code == 200
+    d = c.get("/admin/api/subscription_revenue_audit", headers=H).get_json()
+    row = d["records"][0]
+    assert row["voucher_revoked"] and (row["voucher_eur"], row["voucher_spent_eur"]) == (5.0, 2.0)
+    assert (d["aggregates"]["voucher_eur"], d["aggregates"]["voucher_spent_eur"]) == (2.0, 2.0)
+
+
+def test_admin_cancel_state():
+    f = subscriptions._admin_cancel_state
+    assert f("active", None, "") == ""
+    assert f("active", T0, "user") == "running"            # chiesta, PayPal non ha ancora confermato
+    assert f("cancelled", T0, "user") == "running"
+    assert f("past_due", T0, "provider") == "running"
+    assert f("active", T0, "plan_change") == ""            # prosegue nella riga del nuovo piano
+    assert f("ended", T0, "user") == "ended" and f("ended", None, "") == "ended"
+    assert f("replaced", T0, "plan_change") == "" and f("abandoned", None, "") == ""
+
+
+def test_subscription_revenue_audit_flags_cancelled_subscriptions(sub_env, monkeypatch):
+    """Disdetto ma in corso: stato, fine dei benefici, motivo e ripresa programmata;
+    chiuso dal rimborso admin; un abbonamento attivo resta senza segno."""
+    c = _admin(monkeypatch)
+    _paid(sub_env, "attivo@x.it")
+    gone, gext = _paid(sub_env, "disdetto@x.it")
+    end = _sub_of(gext)["period_end"]
+    subscriptions.request_cancel(gone["id"], "user", now=T0 + DAY)
+    back, bext = _paid(sub_env, "ripresa@x.it")
+    subscriptions.request_cancel(back["id"], "user", now=T0 + DAY)
+    _change(sub_env, back, "sub_5", T0 + 2 * DAY)
+    shut, sext = _paid(sub_env, "chiuso@x.it")
+    assert c.post("/admin/api/subscriptions/refund", headers=H,
+                  json={"sub_id": _sub_of(sext)["id"], "payment_id": "SALE" + sext[2:],
+                        "end_now": True}).status_code == 200
+
+    rows = {x["email"]: x for x in c.get("/admin/api/subscription_revenue_audit",
+                                         headers=H).get_json()["records"]}
+    assert (rows["attivo@x.it"]["sub_cancel"], rows["attivo@x.it"]["resume_at"]) == ("", None)
+    r = rows["disdetto@x.it"]
+    assert (r["sub_cancel"], r["sub_status"], r["sub_period_end"]) == ("running", "cancelled", end)
+    assert (r["cancel_reason"], r["cancel_requested_at"]) == ("user", T0 + DAY)
+    assert r["cancel_confirmed_at"] and r["resume_at"] is None
+    assert (rows["ripresa@x.it"]["sub_cancel"], rows["ripresa@x.it"]["resume_at"]) == (
+        "running", _sub_of(bext)["period_end"])
+    r = rows["chiuso@x.it"]
+    assert (r["sub_cancel"], r["sub_status"], r["cancel_reason"]) == ("ended", "ended", "admin_refund")
+    assert r["sub_ended_at"]
 
 
 def test_subscription_revenue_audit_needs_the_token(sub_env, monkeypatch):
@@ -129,3 +186,9 @@ def test_premium_page_has_subscriptions_tab_in_totals(monkeypatch):
     assert "window._subLoaded = true;\n  subFetch();" in body and '_h === "#tab-subscriptions"' in body
     for cell in ("subMark(r._sub_voucher)", "subMark(r.sub_voucher)"):
         assert cell in body
+    # Disdetta sulla riga piu' recente di ogni abbonamento, popup "Abbonamento" della
+    # tab Utenti anche qui, con la rilettura della lista da cui lo si e' aperto.
+    assert "${cancel}</td>" in body and "latest ? subCancelCell(r)" in body
+    assert 'data-acc-sub-open="${escAttr(r.account_id)}">Abbonamento</button>' in body
+    assert "accSubReload = subFetch; accSubOpen(" in body and "accSubReload = accFetch; accSubOpen(" in body
+    assert "(accSubReload || accFetch)();" in body

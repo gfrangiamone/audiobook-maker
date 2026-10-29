@@ -47,6 +47,7 @@
   @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.55}}
   tr.row-live{background:rgba(139,92,246,.10)}
   tr.row-live td{border-bottom-color:rgba(139,92,246,.30)}
+  tr.row-cancelled{background:rgba(245,158,11,.10)}
   .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
   .toggle-row input{width:auto}
   .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(139,92,246,.18);color:var(--accent);margin-left:6px}
@@ -438,7 +439,7 @@
       <div class="agg-box"><div class="agg-label">Fee PayPal</div><div class="agg-value" id="subAggFees">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Margine netto = Ricavi - fee PayPal. I costi dei servizi pagati con i voucher dell'abbonamento sono nelle tab dei servizi.">Margine netto</div><div class="agg-value" id="subAggNet">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Pagamenti rimborsati, stornati o rifiutati: restano in tabella con ricavo zero.">Rimborsati</div><div class="agg-value" id="subAggRefunded">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Voucher emessi dai pagamenti del periodo e quanto ne e' gia' stato speso.">Voucher spesi / emessi</div><div class="agg-value" id="subAggVouchers">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Voucher emessi dai pagamenti del periodo e quanto ne e' gia' stato speso. Un voucher revocato conta fra gli emessi solo per la parte spesa prima della revoca.">Voucher spesi / emessi</div><div class="agg-value" id="subAggVouchers">-</div></div>
     </div>
   </div>
   <div class="panel">
@@ -1445,6 +1446,28 @@
     "reversed":  ["badge-err", "Stornato"],
     "rejected":  ["badge-warn", "Rifiutato (rimborsato)"],
   };
+  const SUB_CANCEL_REASON = {
+    "user": "dall'utente", "provider": "da PayPal", "admin": "dall'admin",
+    "admin_refund": "con il rimborso admin", "account_deleted": "account cancellato",
+  };
+  // Disdetta dell'abbonamento, sulla riga piu' recente di ciascuno: disdetto
+  // con i benefici in corso fino a fine periodo, oppure chiuso.
+  function subCancelCell(r){
+    if (r.sub_cancel === "running") {
+      const why = SUB_CANCEL_REASON[r.cancel_reason] || r.cancel_reason || "";
+      const tip = `Disdetto il ${accDay(r.cancel_requested_at)}${why ? " (" + why + ")" : ""}`
+        + (r.cancel_confirmed_at ? ", confermato da PayPal" : ", conferma di PayPal in attesa")
+        + ": i benefici restano fino a fine periodo.";
+      return `<br><span class="badge badge-warn" title="${escAttr(tip)}">Disdetto</span>`
+        + `<br><small>attivo fino al ${accDay(r.sub_period_end)}</small>`
+        + (r.resume_at ? `<br><small>ripresa dal ${accDay(r.resume_at)}</small>` : "");
+    }
+    if (r.sub_cancel === "ended") {
+      return `<br><span class="badge badge-muted">Chiuso</span>`
+        + (r.sub_ended_at ? `<br><small>il ${accDay(r.sub_ended_at)}</small>` : "");
+    }
+    return "";
+  }
   async function subFetch(){
     const p = new URLSearchParams();
     const df=$("subDateFrom").value, dt=$("subDateTo").value;
@@ -1468,17 +1491,23 @@
   function subRender(recs, total){
     const tb = $("subRecordsBody");
     if (!recs.length){ tb.innerHTML='<tr><td colspan="10" class="empty-msg">Nessun pagamento trovato.</td></tr>'; return; }
+    const seen = new Set();
     tb.innerHTML = recs.map(r=>{
       const [bcls,blab] = SUB_PAY_STATE[r.state]||["badge-muted", r.state||"?"];
+      const latest = !seen.has(r.subscription_id);
+      seen.add(r.subscription_id);
+      const cancel = latest ? subCancelCell(r) : "";
+      const rowCls = latest && r.sub_cancel === "running" ? ' class="row-cancelled"' : "";
       const mail = r.email ? esc(r.email) : '<span style="color:var(--muted)">(rimossa)</span>';
       const plan = esc(ACC_PLAN_LABEL[r.plan]||r.plan||"-") + (r.kind === "prepaid" ? "<br><small>prepagato</small>" : "");
       const net = Number(r.net_margin_eur||0);
       const voucher = r.voucher_code && r.voucher_code !== "-"
         ? `<code>${esc(r.voucher_code)}</code><br><small>${fmtEur(r.voucher_spent_eur)} / ${fmtEur(r.voucher_eur)}${r.voucher_revoked ? " &middot; revocato" : ""}</small>`
         : (r.voucher_due_at ? `<small>dal ${accDay(r.voucher_due_at)}</small>` : "-");
-      return `<tr>
+      return `<tr${rowCls}>
         <td>${vcaDate(r.paid_at)}</td>
-        <td>${mail}<br><code>${esc(r.account_id)}</code></td>
+        <td>${mail}<br><code>${esc(r.account_id)}</code>`
+        + `<div style="margin-top:4px"><button type="button" class="btn-sm secondary" data-acc-sub-open="${escAttr(r.account_id)}">Abbonamento</button></div></td>
         <td>${plan}</td>
         <td>${accDay(r.period_start)} &rarr; ${accDay(r.period_end)}</td>
         <td>${fmtEur(r.amount_eur)}</td>
@@ -1486,11 +1515,16 @@
         <td>${fmtEur(r.paypal_fee_eur)}</td>
         <td class="${net>=0?"delta-positive":"delta-negative"}">${fmtEur(net)}</td>
         <td>${voucher}</td>
-        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span>${cancel}</td>
       </tr>`;
     }).join("") + auditTruncNote(recs.length, total, 10);
   }
   $("subRefreshBtn").addEventListener("click", subFetch);
+  // Stesso popup della tab Utenti registrati; dopo un'azione si rilegge questa lista.
+  $("subRecordsBody").addEventListener("click", (e)=>{
+    const sb = e.target.closest("button[data-acc-sub-open]");
+    if (sb) { accSubReload = subFetch; accSubOpen(sb.dataset.accSubOpen); }
+  });
 
   // ===================== Utenti registrati =====================
   const ACC_STATE_BADGE = {
@@ -1565,7 +1599,8 @@
     "scheduled": "passaggio programmato", "replaced": "sostituito da un cambio di piano",
   };
   const ACC_SUB_LIVE = ["activating", "active", "past_due", "cancelled", "switching", "scheduled"];
-  let accSubAccount = "";
+  // accSubReload: la lista da cui si e' aperto il popup, riletta dopo un'azione.
+  let accSubAccount = "", accSubReload = null;
   function accDay(ts){ return ts ? new Date(Number(ts)*1000).toISOString().slice(0, 10) : "-"; }
   function accSubRender(v){
     const a = v.account||{};
@@ -1624,7 +1659,7 @@
         headers:{"X-Admin-Token":ADMIN_TOKEN, "Content-Type":"application/json"}, body: JSON.stringify(body)});
       if (!r.ok) { accSubError("Errore "+r.status+": "+await accErrText(r)); btn.disabled = false; return; }
       if (accSubAccount === id) await accSubOpen(id);
-      accFetch();
+      (accSubReload || accFetch)();
     } catch (e) { accSubError("Errore di rete: "+e.message); btn.disabled = false; }
   }
   // Popup del regalo: un solo modale, riempito all'apertura con la riga della tabella.
@@ -1828,7 +1863,7 @@
     const btn = e.target.closest("button[data-acc-gift-open]");
     if (btn) accGiftOpen(btn.dataset.accGiftOpen);
     const sb = e.target.closest("button[data-acc-sub-open]");
-    if (sb) accSubOpen(sb.dataset.accSubOpen);
+    if (sb) { accSubReload = accFetch; accSubOpen(sb.dataset.accSubOpen); }
   });
   $("accSubModal").addEventListener("click", (e)=>{
     if (e.target === e.currentTarget) { $("accSubModal").hidden = true; accSubAccount = ""; return; }

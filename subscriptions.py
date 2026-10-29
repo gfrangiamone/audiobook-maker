@@ -1403,11 +1403,26 @@ def live_account_ids():
             f"SELECT DISTINCT account_id FROM subscriptions WHERE status IN ({marks})", LIVE)]
 
 
+def _admin_cancel_state(sub_status, cancel_requested_at, cancel_reason):
+    """Disdetta dell'abbonamento di un pagamento per la tab Abbonamenti:
+    "running" se disdetto con i benefici ancora in corso fino a fine periodo,
+    "ended" se chiuso, "" altrimenti. La disdetta di un cambio di piano non
+    conta: l'abbonamento prosegue nella riga che lo sostituisce."""
+    if sub_status == "ended":
+        return "ended"
+    if sub_status in LIVE and (sub_status == "cancelled" or (
+            cancel_requested_at and cancel_reason != "plan_change")):
+        return "running"
+    return ""
+
+
 def admin_payments(since=None, until=None):
     """Pagamenti di abbonamento per la tab Abbonamenti del cruscotto audit, piu'
     recenti prima: `since`/`until` sono epoch su `paid_at` (`until` escluso).
-    Ogni riga porta piano e account (email vuota se cancellato) e il voucher
-    emesso: codice mascherato, importo e quanto ne e' gia' stato speso."""
+    Ogni riga porta piano e account (email vuota se cancellato), il voucher
+    emesso (codice mascherato, importo e quanto ne e' gia' stato speso) e la
+    disdetta dell'abbonamento (`sub_cancel`, vedi `_admin_cancel_state`), con
+    la data della ripresa se l'account ne ha una programmata."""
     if not _ready():
         return []
     where, args = [], []
@@ -1417,12 +1432,19 @@ def admin_payments(since=None, until=None):
     if until is not None:
         where.append("p.paid_at<?")
         args.append(int(until))
+    marks = ",".join("?" * len(NEXT))
     with db.tx() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT p.*, s.plan, s.account_id FROM subscription_payments p "
+            "SELECT p.*, s.plan, s.account_id, s.status AS sub_status, "
+            "s.period_end AS sub_period_end, s.ended_at AS sub_ended_at, "
+            "s.cancel_requested_at, s.cancel_reason, s.cancel_confirmed_at "
+            "FROM subscription_payments p "
             "JOIN subscriptions s ON s.id=p.subscription_id"
             + (" WHERE " + " AND ".join(where) if where else "")
             + " ORDER BY p.paid_at DESC, p.payment_id", args)]
+        resume_at = {r[0]: r[1] for r in c.execute(
+            f"SELECT account_id, start_at FROM subscriptions WHERE status IN ({marks}) "
+            "AND change_kind='resume'", NEXT)}
     vouchers = dict(payment.iter_vouchers())
     emails = {}
     out = []
@@ -1437,7 +1459,15 @@ def admin_payments(since=None, until=None):
                     "voucher_code": payment.mask_code(p["voucher_code"]),
                     "voucher_eur": round(float(v.get("amount_eur") or 0), 2),
                     "voucher_spent_eur": payment.voucher_spent_eur(v),
-                    "voucher_revoked": bool(v.get("revoked"))})
+                    "voucher_revoked": bool(v.get("revoked")),
+                    "sub_status": p["sub_status"],
+                    "sub_cancel": _admin_cancel_state(p["sub_status"], p["cancel_requested_at"],
+                                                      p["cancel_reason"]),
+                    "sub_period_end": p["sub_period_end"], "sub_ended_at": p["sub_ended_at"],
+                    "cancel_requested_at": p["cancel_requested_at"],
+                    "cancel_reason": p["cancel_reason"],
+                    "cancel_confirmed_at": p["cancel_confirmed_at"],
+                    "resume_at": resume_at.get(aid)})
     return out
 
 

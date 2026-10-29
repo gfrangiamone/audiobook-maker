@@ -1413,8 +1413,11 @@ def admin_api_subscription_revenue_audit():
         rev += revenue
         fees += fee
         refunded += amount - revenue
-        voucher += float(r.get("voucher_eur") or 0)
-        spent += float(r.get("voucher_spent_eur") or 0)
+        # Un voucher revocato conta fra gli emessi solo per quanto se n'era
+        # speso prima della revoca: il resto non e' mai stato a disposizione.
+        v_spent = float(r.get("voucher_spent_eur") or 0)
+        voucher += v_spent if r.get("voucher_revoked") else float(r.get("voucher_eur") or 0)
+        spent += v_spent
     agg = {
         "count": len(rows),
         "revenue_eur": round(rev, 4),
