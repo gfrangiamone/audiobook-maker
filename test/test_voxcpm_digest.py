@@ -263,6 +263,29 @@ def test_il_marker_sopravvive_a_un_riavvio(digest, tmp_path):
         encoding="utf-8") == "2026-09-01"
 
 
+def test_senza_cartella_dati_niente_digest_e_niente_marker_nella_cwd(
+        tmp_path, monkeypatch):
+    """Il ciclo di pulizia dei test girava il digest con la cartella fissata
+    all'import sulla cwd: il marker finiva nella root del repo."""
+    import voxcpm_digest as vd
+    monkeypatch.setattr(vd, "_DATA_DIR", None)
+    monkeypatch.delenv("ABM_DATA_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert vd.giorno_arretrato(oggi=date(2026, 9, 3)) is None
+    vd.segna_inviato("2026-09-02")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_la_cartella_dati_si_legge_a_ogni_chiamata(tmp_path, monkeypatch):
+    import voxcpm_digest as vd
+    monkeypatch.setattr(vd, "_DATA_DIR", None)
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    assert vd.giorno_arretrato(oggi=date(2026, 9, 3)) == "2026-09-02"
+    vd.segna_inviato("2026-09-02")
+    assert (tmp_path / "voxcpm_digest_last.txt").read_text(
+        encoding="utf-8") == "2026-09-02"
+
+
 # ---------------------------------------------------------------------------
 # La mail
 # ---------------------------------------------------------------------------

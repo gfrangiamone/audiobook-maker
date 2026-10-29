@@ -37,8 +37,20 @@ from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 # memoria perche' un riavvio del server non deve ne' saltare un giorno ne'
 # rispedirlo: il digest arriva una volta sola per giorno, comunque vada il
 # processo.
-_DATA_DIR = Path(env_str("ABM_DATA_DIR", "."))
-_code_tagliate = _MonthlyJsonl("voxcpm_code_tagliate", lambda: _DATA_DIR)
+_DATA_DIR = None      # i test la fissano; altrimenti ABM_DATA_DIR a ogni chiamata
+
+
+def _data_dir():
+    """La cartella dei dati, o None senza ABM_DATA_DIR. Il vecchio ripiego
+    sulla cwd, fissato all'import, faceva scrivere il marker nella cartella
+    corrente: nei test, la root del repo (dal ciclo di pulizia in background)."""
+    if _DATA_DIR is not None:
+        return Path(_DATA_DIR)
+    d = env_str("ABM_DATA_DIR")
+    return Path(d) if d else None
+
+
+_code_tagliate = _MonthlyJsonl("voxcpm_code_tagliate", lambda: _data_dir() or Path("."))
 _MARKER = "voxcpm_digest_last.txt"
 
 # Quanti job elencare per esteso. Oltre, la mail diventa un tabulato che
@@ -221,19 +233,25 @@ def riepilogo(giorno):
 # ---------------------------------------------------------------------------
 
 def _marker_path():
-    return _DATA_DIR / _MARKER
+    d = _data_dir()
+    return d / _MARKER if d is not None else None
 
 
 def ultimo_inviato():
     """La data dell'ultimo giorno gia' riepilogato, o '' se non c'e'."""
+    fp = _marker_path()
+    if fp is None:
+        return ""
     try:
-        return _marker_path().read_text(encoding="utf-8").strip()[:10]
+        return fp.read_text(encoding="utf-8").strip()[:10]
     except (OSError, ValueError):
         return ""
 
 
 def segna_inviato(giorno):
     fp = _marker_path()
+    if fp is None:
+        return
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(giorno, encoding="utf-8")
 
@@ -245,7 +263,12 @@ def giorno_arretrato(oggi=None):
     parziali, e il digest del giorno dopo non potrebbe correggerli. Alla prima
     accensione non si spedisce l'arretrato di un mese: si prende soltanto
     ieri e si riparte da li'.
+
+    Senza cartella dei dati non c'e' un posto per il marker: niente digest,
+    altrimenti partirebbe a ogni giro del ciclo di pulizia.
     """
+    if _marker_path() is None:
+        return None
     oggi = oggi or date.today()
     ieri = (oggi - timedelta(days=1)).isoformat()
     if ultimo_inviato() >= ieri:
