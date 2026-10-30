@@ -128,6 +128,56 @@ def test_i_puntini_non_arrivano_al_worker(tmp_path, monkeypatch):
         "per un affare umano, il paragone", "Non lo so."]
 
 
+# -- Le file di numeri (tabelle appiattite dal PDF) -----------------------
+#
+# 30/10/2026, job wUwQYx3g: VoxCPM non chiudeva la sequenza su queste righe,
+# il chunk superava i 180 s del worker e il libro cadeva dopo tre tentativi.
+# I casi sono i chunk 81, 82 e 91 del capitolo 7 di quel libro.
+
+@pytest.mark.parametrize("testo,atteso", [
+    ("globalen Maßstab. Angaben in % 1850 1870 1890 1913 1920 1930 1940. "
+     "Vereinigtes Königreich. 59 (70) 53 (64) 32 (50) 14 (28) 16 (44) 11 (27) "
+     "11 (24). Preußen/ Kaiserreich. 3 (4) 13 (16) 16 (25) 21 (40) 14 (38) "
+     "14 (33) 17 (36).",
+     "globalen Maßstab. Angaben in %. Vereinigtes Königreich. Preußen/ Kaiserreich."),
+    # Caselle vuote dentro e in testa alla fila; la nota a pie' di pagina
+    # con tre numeri resta.
+    ("Österreich-Ungarn. 6 (7) 4 (5) 4 (6) 4 (8) — — —. Italien — 0 1 (1) "
+     "1 (2) 1 (3) 2 (5) 2 (4). USA 15 16 35 47 62 54 49. Mearsheimer, 2001, "
+     "s. 71, 220. 38 Vgl.",
+     "Österreich-Ungarn. Italien. USA. Mearsheimer, 2001, s. 71, 220. 38 Vgl."),
+    # Migliaia col punto; una fila senza segno finale non ne inventa uno.
+    ("Frankreich 1.000 2.500 2.500 2.500 8.660 680 640 k. A. Russland/ "
+     "Sowjetunion. 1.210 1.920 2.530 4.600 13.700 260 1.300 22.400.",
+     "Frankreich k. A. Russland/ Sowjetunion."),
+    # Prosa con numeri: sotto la soglia non si tocca nulla, spazi compresi.
+    ("Zwischen 1914 und 1918, also in  vier Jahren, fielen 2,5 Mio. Soldaten.",
+     "Zwischen 1914 und 1918, also in  vier Jahren, fielen 2,5 Mio. Soldaten."),
+    ("Nel 1913, 1920, 1930 e 1940 la quota scese.",
+     "Nel 1913, 1920, 1930 e 1940 la quota scese."),
+    ("Il trattino — da solo — resta.", "Il trattino — da solo — resta."),
+    # Un chunk di sole cifre resterebbe vuoto: torna com'era.
+    ("1850 1870 1890 1913 1920 1930 1940.", "1850 1870 1890 1913 1920 1930 1940."),
+    ("", ""),
+])
+def test_togli_file_di_numeri(testo, atteso):
+    assert voxcpm_tts.togli_file_di_numeri(testo) == atteso
+
+
+def test_le_tabelle_non_arrivano_al_worker(tmp_path, monkeypatch):
+    """Il worker riceve il chunk senza la fila, e il segno della giunzione si
+    legge sul testo ripulito."""
+    finto = FintoRunJob(esito_ok())
+    monkeypatch.setattr(voxcpm_tts, "run_job", finto)
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    voxcpm_tts.synthesize_chapter(
+        ["USA 15 16 35 47 62 54 49. Fonte:", "Testo normale, senza tabelle."],
+        VOCE, str(tmp_path / "cap.pcm"))
+    entrata = finto.payload[0]["input"]
+    assert entrata["chunks"] == ["USA. Fonte", "Testo normale, senza tabelle."]
+    assert entrata["giunti"] == [":", ""]
+
+
 # -- I puntini sul confine di chunk --------------------------------------
 #
 # split_text_into_chunks tratta i puntini come fine frase, quindi il taglio

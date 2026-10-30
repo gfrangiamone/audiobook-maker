@@ -1336,6 +1336,63 @@ def normalizza_puntini(testo):
     return _PUNTINI_RE.sub(_sostituisci, testo)
 
 
+# --- file di numeri ---------------------------------------------------------
+# Le tabelle di un PDF arrivano appiattite in righe di soli numeri: «59 (70)
+# 53 (64) 32 (50) 14 (28)», «1.300 1.540 3.000 13.250». Su quelle righe VoxCPM
+# non chiude la sequenza: il chunk supera i 180 s del worker, che si spegne
+# come motore compromesso, e il capitolo ricade a ogni ritentativo perche' il
+# testo e' lo stesso (30/10/2026, job wUwQYx3g: chunk 81, 82 e 91 del
+# capitolo 7 su tre worker, libro perso all'80%). In un audiolibro una fila
+# di cifre non si ascolta comunque: si toglie dal chunk che parte per il
+# worker e restano le etichette («Vereinigtes Königreich.»). Sul chunk e non
+# sul capitolo (`prepara_capitolo`): il piano non cambia, e i chunk gia'
+# sintetizzati di un job interrotto restano riusabili.
+_FILA_MIN_NUMERI = 5
+_NUMERO_RE = re.compile(r"[(\[]?[-+−]?\d[\d.,:/'’]*%?[)\]]?[.,;:]?")
+# Le caselle vuote della tabella: contano come parte della fila, non come numeri.
+_CASELLA_VUOTA_RE = re.compile(r"[—–-]+[.,;:]?")
+_FINE_FRASE = ".!?;:"
+
+
+def togli_file_di_numeri(testo):
+    """Toglie le file di almeno `_FILA_MIN_NUMERI` numeri di seguito.
+
+    Un numero e' una cifra con i suoi separatori, la percentuale e le
+    parentesi («1.300», «(70)», «15%», «1940.»); dentro la fila valgono anche
+    le caselle vuote («— — —»). Il segno che chiudeva la fila passa alla
+    parola prima, cosi' «Russland 6 (7) ... 13 (28).» diventa «Russland.» e la
+    frase dopo non ci si incolla. Un testo senza file torna identico; uno che
+    resterebbe senza lettere pure: un chunk vuoto il worker non lo sintetizza.
+    """
+    if not testo:
+        return testo
+    tenute, fila = [], []
+    tolto = False
+
+    def _chiudi_fila():
+        nonlocal tolto
+        if sum(1 for p in fila if _NUMERO_RE.fullmatch(p)) < _FILA_MIN_NUMERI:
+            tenute.extend(fila)
+        else:
+            tolto = True
+            fine = fila[-1][-1]
+            if fine in _FINE_FRASE and tenute and tenute[-1][-1] not in _FINE_FRASE + ",":
+                tenute[-1] += fine
+        fila.clear()
+
+    for parola in testo.split():
+        if _NUMERO_RE.fullmatch(parola) or _CASELLA_VUOTA_RE.fullmatch(parola):
+            fila.append(parola)
+            continue
+        _chiudi_fila()
+        tenute.append(parola)
+    _chiudi_fila()
+    pulito = " ".join(tenute)
+    if not tolto or not any(c.isalpha() for c in pulito):
+        return testo
+    return pulito
+
+
 # Segni che a fine enunciato restano sospesi: la frase continua nel chunk
 # dopo, ma per il modello quello e' tutto il testo che c'e'.
 _CODA_SOSPESA = ",;:"
@@ -1650,6 +1707,14 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     capitolo = key or os.path.basename(str(dest_path))
     motivo_rifaccio = ""
     tentativo, rimbalzi, riconsegne, risottomissioni = 0, 0, 0, 0
+    # Il chunk come lo legge il modello. `pulisci_coda` e `segno_sospeso`
+    # partono da qui, cosi' testo e pausa della giunzione restano coerenti.
+    normalizzati = [normalizza_puntini(c) for c in chunks]
+    pronti = [togli_file_di_numeri(c) for c in normalizzati]
+    _tabelle = [i for i, (a, b) in enumerate(zip(normalizzati, pronti)) if a != b]
+    if _tabelle:
+        _LOG.warning("capitolo %s: tolte file di numeri (tabelle) dai chunk %s",
+                     capitolo, ", ".join(str(i) for i in _tabelle[:20]))
 
     def _riconsegna(e):
         # La sintesi c'e' stata, e' l'audio a non essere arrivato: si rifa'
@@ -1672,10 +1737,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
         payload = {"input": {
             "action": "generate",
-            "chunks": [pulisci_coda(normalizza_puntini(c)) for c in chunks],
+            "chunks": [pulisci_coda(c) for c in pronti],
             # Elenco parallelo: per ogni chunk il segno debole tolto dalla
             # coda. Il worker ci misura la pausa della giunzione.
-            "giunti": [segno_sospeso(normalizza_puntini(c)) for c in chunks],
+            "giunti": [segno_sospeso(c) for c in pronti],
             **clone,
             "cfg": CFG_READ,
             "concurrency": conc,
