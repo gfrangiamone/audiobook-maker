@@ -6,6 +6,8 @@ pubbliche, le mappe lingua -> hreflang / og:locale con i relativi tag
 lo importano `audiobook_app`, `account_page`, `guide_content`,
 `templates/index_page`, che non possono importare l'entry point.
 """
+import hashlib
+import re
 from pathlib import Path
 
 from i18n import LANGS as SITE_LANGS
@@ -14,14 +16,37 @@ from i18n import LANGS as SITE_LANGS
 # un'estensione), lette una volta. `render_page` sostituisce i segnaposto
 # alla lettera, nell'ordine dato: nessuna interpretazione di graffe o `%`.
 PAGES_DIR = Path(__file__).resolve().parent / "templates" / "pages"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 _page_cache: dict = {}
+
+# "/static/<path>?v=__APP_VERSION__" dentro pagine e frammenti HTML.
+_STATIC_REF_RE = re.compile(r'(/static/[^"?\s]+)\?v=__APP_VERSION__"')
+
+
+def static_fingerprint(url_path: str) -> str:
+    """Impronta breve (sha1, 8 cifre esadecimali) del file statico servito a url_path.
+
+    File assente o illeggibile: "0", cosi' l'URL resta valido.
+    """
+    try:
+        data = (STATIC_DIR / url_path[len("/static/"):]).read_bytes()
+    except OSError:
+        return "0"
+    return hashlib.sha1(data).hexdigest()[:8]
+
+
+def bust_static_refs(html, prefix=""):
+    """Cache-busting degli asset statici (serviti con max-age di un anno):
+    `?v=__APP_VERSION__` diventa `?v=<prefix><impronta del file>`."""
+    return _STATIC_REF_RE.sub(
+        lambda m: f'{m.group(1)}?v={prefix}{static_fingerprint(m.group(1))}"', html)
 
 
 def page_template(name):
     html = _page_cache.get(name)
     if html is None:
         path = PAGES_DIR / (name if "." in name else f"{name}.html")
-        html = path.read_text(encoding="utf-8")
+        html = bust_static_refs(path.read_text(encoding="utf-8"))
         _page_cache[name] = html
     return html
 

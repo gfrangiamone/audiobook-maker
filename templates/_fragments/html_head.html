@@ -917,7 +917,7 @@ __REVIEWS_LD__
           <div class="donate-body"><span data-t="donate_footer_desc"></span> <b data-t="donate_footer_bold"></b></div>
           <div class="donate-btns">
             <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span data-t="donate_coffee"></span></a>
-            <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span data-t="donate_paypal"></span></a>
+            <a href="https://www.paypal.com/donate/?hosted_button_id=QY5ZEBUULE4PQ" target="_blank" rel="noopener" class="donate-btn donate-paypal" data-donate-popup>💙 <span data-t="donate_paypal"></span></a>
           </div>
         </div>
 
@@ -1161,9 +1161,26 @@ __REVIEWS_LD__
         <div class="dm-btns">
           <div class="dm-row">
             <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee" onclick="onDonateModal('donate')">☕ <span data-t="donate_coffee"></span></a>
-            <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal" onclick="onDonateModal('donate')">💙 <span data-t="donate_paypal"></span></a>
+            <a href="https://www.paypal.com/donate/?hosted_button_id=QY5ZEBUULE4PQ" target="_blank" rel="noopener" class="donate-btn donate-paypal" data-donate-popup onclick="onDonateModal('donate')">💙 <span data-t="donate_paypal"></span></a>
           </div>
           <button class="dm-already" onclick="onDonateModal('already')" data-t="donate_modal_already"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAYPAL DONATION OVERLAY (finestra PayPal aperta da static/js/donate_popup.js) -->
+  <div class="modal-overlay" id="ppDonateOverlay" role="dialog" aria-modal="true" aria-labelledby="ppDonateTitle">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <h2 id="ppDonateTitle">💙 <span data-t="donate_paypal"></span></h2>
+        <button class="modal-close" data-pp-close aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="pp-donate-msg" data-t="donate_pp_body"></p>
+        <div class="dm-btns">
+          <button class="donate-btn donate-paypal" data-pp-reopen data-t="donate_pp_reopen"></button>
+          <button class="dm-already" data-pp-close data-t="donate_pp_close"></button>
         </div>
       </div>
     </div>

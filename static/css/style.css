@@ -378,6 +378,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .dm-already:hover{border-color:var(--ok);color:var(--ok);background:rgba(34,197,94,.06);transform:translateY(-1px)}
 .dm-btns .donate-btn{flex:1;justify-content:center;padding:12px 18px;border-radius:10px;font-size:.9rem}
 @media(max-width:500px){.dm-btns .dm-row{flex-direction:column}}
+/* Overlay della finestra PayPal (static/js/donate_popup.js) */
+.pp-donate-msg{font-size:.88rem;color:var(--txd);line-height:1.6;text-align:center;margin:4px 0 18px}
+button.donate-btn{cursor:pointer;font-family:inherit;justify-content:center}
 
 /* ═══ PROGRESS ═══ */
 .pa{padding:20px 0}

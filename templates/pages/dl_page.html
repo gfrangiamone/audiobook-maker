@@ -52,6 +52,16 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 .donate-coffee:hover{background:#ffd000;transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,208,0,.4)}
 .donate-paypal{background:#003087;color:#fff;border-color:#002070}
 .donate-paypal:hover{background:#002070;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,48,135,.35)}
+.pp-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;justify-content:center;align-items:center;padding:20px}
+.pp-ov.open{display:flex}
+.pp-box{position:relative;background:#fff;border-radius:14px;padding:26px 22px 20px;max-width:380px;width:100%;box-sizing:border-box;box-shadow:0 10px 40px rgba(0,0,0,.25);text-align:center}
+.pp-x{position:absolute;top:8px;right:10px;border:none;background:none;font-size:1.6rem;line-height:1;color:#888;cursor:pointer;padding:4px 8px}
+.pp-x:hover{color:#333}
+.pp-title{font-size:1.05rem;font-weight:700;color:#2c2a26;margin:0 24px 10px}
+.pp-msg{font-size:.88rem;color:#6b6760;line-height:1.5;margin:0 0 18px}
+.pp-box .donate-btn{width:100%;box-sizing:border-box;cursor:pointer;font-family:inherit;margin-bottom:10px}
+.pp-close{width:100%;padding:10px;border-radius:8px;border:1.5px solid #ddd;background:#f8f9fa;color:#555;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit}
+.pp-close:hover{border-color:#999;color:#333}
 @media (max-width:520px){
   body{align-items:flex-start;padding:12px 0}
   .box{padding:24px 16px;border-radius:12px;max-width:100%;margin:0 8px}
@@ -81,7 +91,16 @@ __P8__
   <div class="donate-body"><span id="donBody"></span> <b id="donBodyBold"></b></div>
   <div class="donate-btns">
     <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span id="donCoffee"></span></a>
-    <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span id="donPaypal"></span></a>
+    <a href="https://www.paypal.com/donate/?hosted_button_id=QY5ZEBUULE4PQ" target="_blank" rel="noopener" class="donate-btn donate-paypal" data-donate-popup>💙 <span id="donPaypal"></span></a>
+  </div>
+</div>
+<div class="pp-ov" id="ppDonateOverlay" role="dialog" aria-modal="true" aria-labelledby="ppTitle">
+  <div class="pp-box">
+    <button class="pp-x" data-pp-close aria-label="Close">&times;</button>
+    <div class="pp-title" id="ppTitle"></div>
+    <p class="pp-msg" id="ppMsg"></p>
+    <button class="donate-btn donate-paypal" data-pp-reopen id="ppReopen"></button>
+    <button class="pp-close" data-pp-close id="ppClose"></button>
   </div>
 </div>
 <div class="share-row">
@@ -104,13 +123,13 @@ __P8__
 (function(){
   /* ── Donate i18n (browser language) ── */
   var DL={
-    it:{title:'❤️ Ti è stato utile questo strumento?',body:'Audiobook Maker è un’app gratuita, non richiede iscrizione ed è senza pubblicità. Una donazione aiuta a coprire i costi di esercizio e lo sviluppo di nuove funzionalità.',bodyBold:'Per donazioni da €5 o più, riceverai un coupon di valore equivalente da utilizzare per i servizi PREMIUM di ottimizzazione AI del testo e TTS Audiobook Maker (VoxCPM2).',coffee:'Offrimi un caffè',paypal:'Donazione PayPal'},
-    fr:{title:'❤️ Cet outil vous a été utile ?',body:'Audiobook Maker est un logiciel open source, gratuit, sans inscription et sans publicité. Un don aide à couvrir les frais d’exploitation et le développement de nouvelles fonctionnalités.',bodyBold:'Pour les dons de 5€ ou plus, vous recevrez un coupon de valeur équivalente à utiliser pour les services PREMIUM d’optimisation IA du texte et TTS Audiobook Maker (VoxCPM2).',coffee:'Offrez-moi un café',paypal:'Don PayPal'},
-    es:{title:'❤️ ¿Te ha resultado útil esta herramienta?',body:'Audiobook Maker es software open source, gratuito, sin registro y sin publicidad. Una donación ayuda a cubrir los costes operativos y el desarrollo de nuevas funciones.',bodyBold:'Para donaciones de 5€ o más, recibirás un cupón de valor equivalente para usar en los servicios PREMIUM de optimización IA del texto y TTS Audiobook Maker (VoxCPM2).',coffee:'Invítame a un café',paypal:'Donación PayPal'},
-    de:{title:'❤️ War dieses Tool nützlich für dich?',body:'Audiobook Maker ist Open Source, kostenlos, ohne Registrierung und werbefrei. Eine Spende hilft, die Betriebskosten und die Entwicklung neuer Funktionen zu decken.',bodyBold:'Für Spenden ab 5€ erhalten Sie einen Gutschein im gleichen Wert für die PREMIUM-Dienste KI-Textoptimierung und TTS Audiobook Maker (VoxCPM2).',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende'},
-    zh:{title:'❤️ 这个工具对您有帮助吗？',body:'Audiobook Maker 是开源软件，免费、无需注册且无广告。捐赠有助于支付运营成本和新功能的开发。',bodyBold:'捐赠5欧元或以上，您将获得等值优惠券，可用于 AI 文本优化和 TTS Audiobook Maker (VoxCPM2) 高级服务。',coffee:'请我喝咖啡',paypal:'PayPal 捐款'},
-    en:{title:'❤️ Did you find this tool useful?',body:'Audiobook Maker is open source, free, no registration required and ad-free. A donation helps cover operating costs and the development of new features.',bodyBold:'For donations of €5 or more, you’ll receive a coupon of equal value to use for the PREMIUM services of AI text optimization and TTS Audiobook Maker (VoxCPM2).',coffee:'Buy me a coffee',paypal:'PayPal donation'},
-    hi:{title:'❤️ क्या यह टूल आपके लिए उपयोगी रहा?',body:'Audiobook Maker एक ओपन सोर्स ऐप है, मुफ्त, बिना पंजीकरण और बिना विज्ञापन. ऐक दान संचालन लागत और नई सुविधाओं के विकास में मदद करता है.',bodyBold:'€5 या अधिक के दान पर, आपको AI टेक्स्ट ऑप्टिमाइज़ेशन और TTS Audiobook Maker (VoxCPM2) की PREMIUM सेवाओं के लिए समान मूल्य का कूपन मिलेगा.',coffee:'मुझे कॉफ़ी पिलाएं',paypal:'PayPal दान'}
+    it:{title:'❤️ Ti è stato utile questo strumento?',body:'Audiobook Maker è un’app gratuita, non richiede iscrizione ed è senza pubblicità. Una donazione aiuta a coprire i costi di esercizio e lo sviluppo di nuove funzionalità.',bodyBold:'Per donazioni da €5 o più, riceverai un coupon di valore equivalente da utilizzare per i servizi PREMIUM di ottimizzazione AI del testo e TTS Audiobook Maker (VoxCPM2).',coffee:'Offrimi un caffè',paypal:'Donazione PayPal',ppBody:'Completa la donazione nella finestra PayPal. Se non la vedi, riaprila con il pulsante qui sotto.',ppReopen:'Riapri la finestra PayPal',ppClose:'Chiudi'},
+    fr:{title:'❤️ Cet outil vous a été utile ?',body:'Audiobook Maker est un logiciel open source, gratuit, sans inscription et sans publicité. Un don aide à couvrir les frais d’exploitation et le développement de nouvelles fonctionnalités.',bodyBold:'Pour les dons de 5€ ou plus, vous recevrez un coupon de valeur équivalente à utiliser pour les services PREMIUM d’optimisation IA du texte et TTS Audiobook Maker (VoxCPM2).',coffee:'Offrez-moi un café',paypal:'Don PayPal',ppBody:'Finalisez votre don dans la fenêtre PayPal. Si vous ne la voyez pas, rouvrez-la avec le bouton ci-dessous.',ppReopen:'Rouvrir la fenêtre PayPal',ppClose:'Fermer'},
+    es:{title:'❤️ ¿Te ha resultado útil esta herramienta?',body:'Audiobook Maker es software open source, gratuito, sin registro y sin publicidad. Una donación ayuda a cubrir los costes operativos y el desarrollo de nuevas funciones.',bodyBold:'Para donaciones de 5€ o más, recibirás un cupón de valor equivalente para usar en los servicios PREMIUM de optimización IA del texto y TTS Audiobook Maker (VoxCPM2).',coffee:'Invítame a un café',paypal:'Donación PayPal',ppBody:'Completa tu donación en la ventana de PayPal. Si no la ves, vuelve a abrirla con el botón de abajo.',ppReopen:'Volver a abrir la ventana de PayPal',ppClose:'Cerrar'},
+    de:{title:'❤️ War dieses Tool nützlich für dich?',body:'Audiobook Maker ist Open Source, kostenlos, ohne Registrierung und werbefrei. Eine Spende hilft, die Betriebskosten und die Entwicklung neuer Funktionen zu decken.',bodyBold:'Für Spenden ab 5€ erhalten Sie einen Gutschein im gleichen Wert für die PREMIUM-Dienste KI-Textoptimierung und TTS Audiobook Maker (VoxCPM2).',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende',ppBody:'Schließen Sie Ihre Spende im PayPal-Fenster ab. Wenn Sie es nicht sehen, öffnen Sie es mit der Schaltfläche unten erneut.',ppReopen:'PayPal-Fenster erneut öffnen',ppClose:'Schließen'},
+    zh:{title:'❤️ 这个工具对您有帮助吗？',body:'Audiobook Maker 是开源软件，免费、无需注册且无广告。捐赠有助于支付运营成本和新功能的开发。',bodyBold:'捐赠5欧元或以上，您将获得等值优惠券，可用于 AI 文本优化和 TTS Audiobook Maker (VoxCPM2) 高级服务。',coffee:'请我喝咖啡',paypal:'PayPal 捐款',ppBody:'请在 PayPal 窗口中完成捐赠。如果看不到该窗口，请点击下方按钮重新打开。',ppReopen:'重新打开 PayPal 窗口',ppClose:'关闭'},
+    en:{title:'❤️ Did you find this tool useful?',body:'Audiobook Maker is open source, free, no registration required and ad-free. A donation helps cover operating costs and the development of new features.',bodyBold:'For donations of €5 or more, you’ll receive a coupon of equal value to use for the PREMIUM services of AI text optimization and TTS Audiobook Maker (VoxCPM2).',coffee:'Buy me a coffee',paypal:'PayPal donation',ppBody:'Complete your donation in the PayPal window. If you can’t see it, reopen it with the button below.',ppReopen:'Reopen the PayPal window',ppClose:'Close'},
+    hi:{title:'❤️ क्या यह टूल आपके लिए उपयोगी रहा?',body:'Audiobook Maker एक ओपन सोर्स ऐप है, मुफ्त, बिना पंजीकरण और बिना विज्ञापन. ऐक दान संचालन लागत और नई सुविधाओं के विकास में मदद करता है.',bodyBold:'€5 या अधिक के दान पर, आपको AI टेक्स्ट ऑप्टिमाइज़ेशन और TTS Audiobook Maker (VoxCPM2) की PREMIUM सेवाओं के लिए समान मूल्य का कूपन मिलेगा.',coffee:'मुझे कॉफ़ी पिलाएं',paypal:'PayPal दान',ppBody:'PayPal विंडो में अपना दान पूरा करें. अगर विंडो दिखाई नहीं दे रही है, तो नीचे दिए गए बटन से उसे फिर से खोलें.',ppReopen:'PayPal विंडो फिर से खोलें',ppClose:'बंद करें'}
   };
   /* Lingua del box donazione = lingua della PAGINA (server-side `lang`), come
      tutto il resto della pagina. Prima usava navigator.language del browser,
@@ -123,6 +142,10 @@ __P8__
   document.getElementById('donBodyBold').textContent=d.bodyBold;
   document.getElementById('donCoffee').textContent=d.coffee;
   document.getElementById('donPaypal').textContent=d.paypal;
+  document.getElementById('ppTitle').textContent='💙 '+d.paypal;
+  document.getElementById('ppMsg').textContent=d.ppBody;
+  document.getElementById('ppReopen').textContent=d.ppReopen;
+  document.getElementById('ppClose').textContent=d.ppClose;
   /* ── Share links ── */
   var S='__P13__';
   var T='__P14__';
@@ -177,4 +200,6 @@ __P8__
     });
   });
 })();
-</script></body></html>
+</script>
+<script defer src="/static/js/donate_popup.js?v=__APP_VERSION__"></script>
+</body></html>
