@@ -68,6 +68,10 @@
     "Sì, la conversione con le voci Standard è gratuita, entro una quota mensile generosa che basta per molti libri. Non richiede registrazione, non chiede carta di credito e non inserisce pubblicità nei file audio generati. Il progetto open source è sostenuto da donazioni volontarie della community. Tutte le funzioni principali, inclusa la conversione text-to-speech e la generazione M4B, sono disponibili gratuitamente per tutti gli utenti."
    ],
    [
+    "Posso vendere o pubblicare gli audiolibri creati con Audiobook Maker?",
+    "Prima di tutto, pubblicare o vendere un audiolibro presuppone sempre i pieni diritti sul testo di partenza: devi esserne l'autore o detenerne i diritti di pubblicazione, oppure l'opera deve essere di pubblico dominio nei paesi in cui la distribuisci. Se hai usato la traduzione, ti servono anche i diritti per pubblicare la traduzione. Per il resto dipende dalla voce. Gli audiolibri creati con le voci Standard gratuite sono solo per uso personale e non commerciale: queste voci provengono da un servizio di terze parti i cui termini non ci danno alcun diritto di concedere l'audio in licenza per la vendita. Gli audiolibri creati con le voci PREMIUM, compresa una voce campionata dalla tua registrazione, possono essere venduti e distribuiti commercialmente: i file restano interamente tuoi, senza royalty e senza obbligo di citare Audiobook Maker. Condizioni: dichiara chiaramente che la narrazione è generata con AI (basta una riga nella descrizione del prodotto) e non presentarla mai come un'interpretazione umana; non usare l'audio per addestrare o clonare altri modelli di voce AI; campiona solo la tua voce o quella di un narratore che ha dato il consenso scritto; rispetta le regole dello store in cui vendi: alcuni, come Audible (ACX), non accettano narrazioni AI. Questa risposta descrive le nostre condizioni attuali e non costituisce consulenza legale."
+   ],
+   [
     "Audiobook Maker è un'alternativa gratuita a Speechify?",
     "Sì. A differenza di Speechify che richiede un abbonamento a pagamento, Audiobook Maker è gratuito con le voci Standard, non richiede registrazione e offre centinaia di voci AI neurali in decine di lingue, con una quota mensile gratuita generosa. Puoi trovare un confronto dettagliato con strumenti simili su AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
@@ -160,6 +164,10 @@
    [
     "Is the service really free?",
     "Yes, conversion with the Standard voices is free, within a generous monthly quota that covers many books. No registration is required, no credit card is asked for, and no advertisements are inserted into generated audio files. The open-source project is supported by voluntary community donations. All core features, including text-to-speech conversion and M4B generation, are available free of charge to all users."
+   ],
+   [
+    "Can I sell or publish audiobooks made with Audiobook Maker?",
+    "First of all, publishing or selling an audiobook always requires full rights to the original text: you must be its author or hold its publishing rights, or the work must be in the public domain in the countries where you distribute it. If you used the translation feature, you also need the right to publish the translation. Beyond that, it depends on the voice. Audiobooks made with the free Standard voices are for personal, non-commercial use only: these voices come from a third-party service whose terms give us no right to license the audio for sale. Audiobooks made with PREMIUM voices, including a voice cloned from your own recording, can be sold and distributed commercially: you keep full ownership of the files, with no royalties and no credit to Audiobook Maker required. Conditions: state clearly that the narration is AI-generated (a line in the product description is enough) and never present it as a human performance; do not use the audio to train or clone other AI voice models; clone only your own voice or that of a narrator who has given written consent; follow the rules of the store where you sell: some, such as Audible (ACX), do not accept AI narration. This answer describes our current conditions and is not legal advice."
    ],
    [
     "Is Audiobook Maker a free alternative to Speechify?",
@@ -256,6 +264,10 @@
     "Oui, la conversion avec les voix Standard est gratuite, dans la limite d'un quota mensuel généreux qui suffit pour de nombreux livres. Pas d'inscription requise, pas de carte de crédit demandée et pas de publicité dans les fichiers audio générés. Le projet open source est soutenu par des dons volontaires de la communauté. Toutes les fonctions principales, y compris la conversion text-to-speech et la génération M4B, sont disponibles gratuitement pour tous les utilisateurs."
    ],
    [
+    "Puis-je vendre ou publier les livres audio créés avec Audiobook Maker ?",
+    "Avant tout, publier ou vendre un livre audio suppose toujours de détenir tous les droits sur le texte d'origine : vous devez en être l'auteur ou en détenir les droits de publication, ou l'œuvre doit appartenir au domaine public dans les pays où vous la diffusez. Si vous avez utilisé la traduction, il vous faut aussi le droit de publier la traduction. Pour le reste, tout dépend de la voix. Les livres audio créés avec les voix Standard gratuites sont réservés à un usage personnel et non commercial : ces voix proviennent d'un service tiers dont les conditions ne nous donnent aucun droit de concéder l'audio sous licence pour la vente. Les livres audio créés avec les voix PREMIUM, y compris une voix clonée à partir de votre propre enregistrement, peuvent être vendus et diffusés commercialement : les fichiers vous appartiennent entièrement, sans redevance ni obligation de citer Audiobook Maker. Conditions : indiquez clairement que la narration est générée par IA (une ligne dans la description du produit suffit) et ne la présentez jamais comme une interprétation humaine ; n'utilisez pas l'audio pour entraîner ou cloner d'autres modèles de voix IA ; ne clonez que votre propre voix ou celle d'un narrateur ayant donné son consentement écrit ; respectez les règles de la boutique où vous vendez : certaines, comme Audible (ACX), n'acceptent pas la narration par IA. Cette réponse décrit nos conditions actuelles et ne constitue pas un conseil juridique."
+   ],
+   [
     "Audiobook Maker est-il une alternative gratuite à Speechify ?",
     "Oui. Contrairement à Speechify qui nécessite un abonnement payant, Audiobook Maker est gratuit avec les voix Standard, ne nécessite pas d'inscription et propose des centaines de voix IA neuronales dans des dizaines de langues, avec un quota mensuel gratuit généreux. Vous pouvez trouver une comparaison détaillée avec des outils similaires sur AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
@@ -348,6 +360,10 @@
    [
     "¿El servicio es realmente gratuito?",
     "Sí, la conversión con las voces Estándar es gratuita, dentro de una cuota mensual amplia que alcanza para muchos libros. No se requiere registro, no se pide tarjeta de crédito y no hay publicidad en los archivos de audio generados. El proyecto de código abierto se sostiene con donaciones voluntarias de la comunidad. Todas las funcciones principales, incluida la conversión text-to-speech y la generación M4B, están disponibles gratuitamente para todos los usuarios."
+   ],
+   [
+    "¿Puedo vender o publicar los audiolibros creados con Audiobook Maker?",
+    "Ante todo, publicar o vender un audiolibro siempre requiere tener todos los derechos sobre el texto original: debes ser su autor o tener sus derechos de publicación, o la obra debe ser de dominio público en los países donde la distribuyes. Si usaste la traducción, también necesitas el derecho a publicar la traducción. Por lo demás, depende de la voz. Los audiolibros creados con las voces Estándar gratuitas son solo para uso personal y no comercial: estas voces proceden de un servicio de terceros cuyos términos no nos dan ningún derecho a licenciar el audio para su venta. Los audiolibros creados con las voces PREMIUM, incluida una voz clonada a partir de tu propia grabación, pueden venderse y distribuirse comercialmente: los archivos son totalmente tuyos, sin regalías y sin obligación de mencionar Audiobook Maker. Condiciones: indica claramente que la narración está generada con IA (basta una línea en la descripción del producto) y nunca la presentes como una interpretación humana; no uses el audio para entrenar ni clonar otros modelos de voz de IA; clona solo tu propia voz o la de un narrador que haya dado su consentimiento por escrito; respeta las normas de la tienda donde vendas: algunas, como Audible (ACX), no aceptan narraciones con IA. Esta respuesta describe nuestras condiciones actuales y no constituye asesoramiento legal."
    ],
    [
     "¿Es Audiobook Maker una alternativa gratuita a Speechify?",
@@ -444,6 +460,10 @@
     "Ja, mit den Standard-Stimmen ist Audiobook Maker kostenlos, im Rahmen eines großzügigen Monatskontingents, das für viele Bücher reicht. Keine Registrierung erforderlich, keine Kreditkarte nötig und keine Werbung in den erzeugten Audiodateien. Das Open-Source-Projekt wird durch freiwillige Community-Spenden unterstützt. Alle Kernfunktionen, einschließlich Text-to-Speech-Konvertierung und M4B-Erzeugung, sind für alle Nutzer kostenlos verfügbar."
    ],
    [
+    "Darf ich mit Audiobook Maker erstellte Hörbücher verkaufen oder veröffentlichen?",
+    "Zuallererst setzt das Veröffentlichen oder Verkaufen eines Hörbuchs immer die vollen Rechte am Ausgangstext voraus: Sie müssen der Autor sein oder die Veröffentlichungsrechte besitzen, oder das Werk muss in den Ländern, in denen Sie es vertreiben, gemeinfrei sein. Wenn Sie die Übersetzungsfunktion genutzt haben, brauchen Sie außerdem das Recht, die Übersetzung zu veröffentlichen. Im Übrigen hängt es von der Stimme ab. Mit den kostenlosen Standard-Stimmen erstellte Hörbücher sind nur für den persönlichen, nicht kommerziellen Gebrauch bestimmt: Diese Stimmen stammen von einem Drittanbieterdienst, dessen Bedingungen uns kein Recht geben, das Audio für den Verkauf zu lizenzieren. Mit PREMIUM-Stimmen erstellte Hörbücher, einschließlich einer aus Ihrer eigenen Aufnahme geklonten Stimme, dürfen kommerziell verkauft und vertrieben werden: Die Dateien gehören vollständig Ihnen, ohne Lizenzgebühren und ohne Pflicht, Audiobook Maker zu nennen. Bedingungen: Weisen Sie deutlich darauf hin, dass die Erzählung KI-generiert ist (eine Zeile in der Produktbeschreibung genügt), und geben Sie sie nie als menschliche Sprecherleistung aus; verwenden Sie das Audio nicht, um andere KI-Stimmmodelle zu trainieren oder zu klonen; klonen Sie nur Ihre eigene Stimme oder die eines Sprechers, der schriftlich zugestimmt hat; halten Sie sich an die Regeln des Shops, in dem Sie verkaufen: Einige, etwa Audible (ACX), akzeptieren keine KI-Erzählung. Diese Antwort beschreibt unsere aktuellen Bedingungen und ist keine Rechtsberatung."
+   ],
+   [
     "Ist Audiobook Maker eine kostenlose Alternative zu Speechify?",
     "Ja. Im Gegensatz zu Speechify, das ein kostenpflichtiges Abonnement erfordert, ist Audiobook Maker mit den Standard-Stimmen kostenlos, benötigt keine Registrierung und bietet Hunderte neuronale KI-Stimmen in Dutzenden von Sprachen, mit großzügigem kostenlosem Monatskontingent. Einen detaillierten Vergleich mit ähnlichen Tools finden Sie auf AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."
    ],
@@ -538,6 +558,10 @@
     "是的，使用标准语音时 Audiobook Maker 免费，每月有充足的免费额度，足够转换许多本书。无需注册，无需信用卡，生成的音频文件中也没有任何广告。这个开源项目由社区自愿捐赠支持。所有核心功能，包括文字转语音转换和 M4B 生成，均对所有用户免费开放。"
    ],
    [
+    "我可以出售或发布用 Audiobook Maker 制作的有声书吗？",
+    "首先，发布或出售有声书始终以拥有原始文本的全部权利为前提：您必须是作者或拥有出版权，或者该作品在您发行的国家/地区属于公有领域。如果您使用了翻译功能，还需要拥有发布该译本的权利。除此之外，取决于所用的语音。使用免费标准语音制作的有声书仅限个人非商业用途：这些语音来自第三方服务，其条款未授予我们将音频授权用于销售的任何权利。使用 PREMIUM 语音（包括用您自己的录音克隆的声音）制作的有声书可以商业销售和发行：文件完全归您所有，无需支付版税，也无需注明 Audiobook Maker。条件：明确说明旁白由 AI 生成（在商品描述中写一行即可），绝不将其冒充为真人演绎；不得使用该音频训练或克隆其他 AI 语音模型；只克隆您自己的声音，或已书面同意的朗读者的声音；遵守销售平台的规则：部分平台（如 Audible 的 ACX）不接受 AI 旁白。本回答说明的是我们当前的条件，不构成法律意见。"
+   ],
+   [
     "Audiobook Maker 是 Speechify 的免费替代品吗？",
     "是的。与 Speechify 需要付费订阅不同，Audiobook Maker 使用标准语音免费，无需注册，并提供数十种语言的数百种神经网络 AI 语音，每月有充足的免费额度。您可以在 AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/) 上找到与类似工具的详细对比。"
    ],
@@ -630,6 +654,10 @@
    [
     "क्या सेवा वास्तव में मुफ़्त है?",
     "हाँ, Standard आवाज़ों के साथ Audiobook Maker एक उदार मासिक सीमा के भीतर मुफ़्त है, जो कई किताबों के लिए काफ़ी है. कोई पंजीकरण आवश्यक नहीं, कोई क्रेडिट कार्ड नहीं, और जनरेट की गई ऑडियो फ़ाइलों में कोई विज्ञापन नहीं. यह ओपन सोर्स परियोजना सामुदायिक स्वैच्छिक दान द्वारा समर्थित है. टेक्स्ट-टू-स्पीच रूपांतरण और M4B जनरेशन सहित सभी मुख्य सुविधाएँ सभी उपयोगकर्ताओं के लिए मुफ़्त रूप से उपलब्ध हैं."
+   ],
+   [
+    "क्या Audiobook Maker से बनाई गई ऑडियोबुक बेची या प्रकाशित की जा सकती हैं?",
+    "सबसे पहले, किसी ऑडियोबुक को प्रकाशित करने या बेचने के लिए मूल पाठ पर पूरे अधिकार होना हमेशा ज़रूरी है: आप उसके लेखक हों या आपके पास उसके प्रकाशन अधिकार हों, या वह रचना उन देशों में सार्वजनिक डोमेन में हो जहाँ आप उसे वितरित करते हैं. अगर आपने अनुवाद सुविधा का उपयोग किया है, तो आपको अनुवाद प्रकाशित करने का अधिकार भी चाहिए. इसके अलावा, यह आवाज़ पर निर्भर करता है. मुफ़्त Standard आवाज़ों से बनी ऑडियोबुक केवल निजी, गैर-व्यावसायिक उपयोग के लिए हैं: ये आवाज़ें एक तृतीय-पक्ष सेवा से आती हैं, जिसकी शर्तें हमें ऑडियो को बिक्री के लिए लाइसेंस देने का कोई अधिकार नहीं देतीं. PREMIUM आवाज़ों से बनी ऑडियोबुक, जिनमें आपकी अपनी रिकॉर्डिंग से क्लोन की गई आवाज़ भी शामिल है, व्यावसायिक रूप से बेची और वितरित की जा सकती हैं: फ़ाइलें पूरी तरह आपकी रहती हैं, बिना रॉयल्टी के और Audiobook Maker का उल्लेख किए बिना. शर्तें: साफ़ बताएँ कि कथन AI से बनाया गया है (उत्पाद विवरण में एक पंक्ति काफ़ी है) और इसे कभी मानवीय प्रस्तुति के रूप में न दिखाएँ; ऑडियो का उपयोग अन्य AI आवाज़ मॉडल को प्रशिक्षित या क्लोन करने के लिए न करें; केवल अपनी आवाज़ या ऐसे वाचक की आवाज़ क्लोन करें जिसने लिखित सहमति दी हो; जिस स्टोर पर आप बेचते हैं उसके नियमों का पालन करें: कुछ स्टोर, जैसे Audible (ACX), AI कथन स्वीकार नहीं करते. यह उत्तर हमारी वर्तमान शर्तों का वर्णन करता है और कानूनी सलाह नहीं है."
    ],
    [
     "क्या Audiobook Maker Speechify का मुफ़्त विकल्प है?",
