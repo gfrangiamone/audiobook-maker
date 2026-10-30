@@ -145,6 +145,45 @@ def test_cooldown_counter():
     assert rl.cooldown_counter(store, "f", cooldown_sec=30, max_count=2, now=80) == ("exhausted", None)
 
 
+def test_cooldown_counter_same_client_passes_free():
+    """Lo stesso client ripassa senza contare ne' aspettare; un client nuovo
+    rispetta cooldown e tetto come prima."""
+    store = {}
+    cc = lambda now, client: rl.cooldown_counter(store, "f", cooldown_sec=30, max_count=2,
+                                                 now=now, client=client)
+    assert cc(0, "1.1.1.1") == ("ok", 1)
+    for now in (1, 5, 6, 30, 200):
+        assert cc(now, "1.1.1.1") == ("ok", 1)
+    assert store["f"]["count"] == 1 and store["f"]["last_download"] == 0
+    assert cc(210, "2.2.2.2") == ("last", 0)
+    store.clear()
+    assert cc(0, "1.1.1.1") == ("ok", 1)
+    assert cc(10, "2.2.2.2") == ("cooldown", 20)
+    assert cc(40, "2.2.2.2") == ("last", 0)
+    assert cc(41, "2.2.2.2") == ("ok", 0)
+    assert cc(42, "1.1.1.1") == ("ok", 0)
+    assert cc(80, "3.3.3.3") == ("exhausted", None)
+
+
+def test_cooldown_counter_without_client_counts_every_call():
+    """Client assente o vuoto (nessun IP): comportamento storico per GET."""
+    store = {}
+    for client in (None, ""):
+        store.clear()
+        assert rl.cooldown_counter(store, "f", cooldown_sec=30, max_count=2, now=0, client=client) == ("ok", 1)
+        assert rl.cooldown_counter(store, "f", cooldown_sec=30, max_count=2, now=10, client=client) == ("cooldown", 20)
+        assert "clients" not in store["f"]
+
+
+def test_cooldown_counter_legacy_record_without_clients():
+    """Un record senza `clients` (scritto prima del fix o da un test) non rompe
+    e il client che arriva viene contato come nuovo."""
+    store = {"f": {"count": 1, "last_download": 0}}
+    assert rl.cooldown_counter(store, "f", cooldown_sec=30, max_count=3, now=40,
+                               client="1.1.1.1") == ("ok", 1)
+    assert store["f"]["clients"] == {"1.1.1.1"}
+
+
 def test_leaves():
     import ast, pathlib
     for mod, allowed in ((ci, {"hashlib", "ipaddress", "re", "env_utils"}), (rl, {"time"})):

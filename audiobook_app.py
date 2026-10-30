@@ -19,7 +19,7 @@ import i18n as _i18n
 import retry_util
 import seo_ld
 from ratelimit import cooldown_counter as _cooldown_counter, sliding_check as _sliding_check
-from client_identity import EMAIL_RE as _ACCT_EMAIL_RE, ip_salt as _ip_salt, mask_email as _mask_email_ci, salted_hash as _salted_hash
+from client_identity import EMAIL_RE as _ACCT_EMAIL_RE, ip_salt as _ip_salt, mask_email as _mask_email_ci, network_of as _network_of, salted_hash as _salted_hash
 from fileio import atomic_write_json, data_dir, load_json
 from env_utils import env_bool, env_float, env_int, env_str
 import shutil
@@ -1987,13 +1987,15 @@ def _share_link_for(token):
     return f"{base}/s/{token}"
 
 
-_download_tracking = {}  # file_path -> {"count": int, "last_download": float}
+_download_tracking = {}  # file_path -> {"count": int, "last_download": float, "clients": set}
 _DL_THROTTLE_SEC = 30
 _DL_MAX_DOWNLOADS = 5
 
 
-def _check_download_throttle(file_path):
+def _check_download_throttle(file_path, client=None):
     """Check and update download throttle for a file path.
+    `client` = rete del richiedente: tetto e cooldown contano i richiedenti
+    distinti, non le GET (vedi ratelimit.cooldown_counter).
     Returns (status, info):
       ('ok', remaining)        -> allowed; remaining = additional downloads still permitted after this one
       ('last', 0)              -> allowed but this is the last permitted download (file will be removed on next attempt)
@@ -2004,7 +2006,8 @@ def _check_download_throttle(file_path):
         return ("ok", None)
     status, info = _cooldown_counter(_download_tracking, file_path,
                                      cooldown_sec=_DL_THROTTLE_SEC,
-                                     max_count=_DL_MAX_DOWNLOADS, now=time.time())
+                                     max_count=_DL_MAX_DOWNLOADS, now=time.time(),
+                                     client=client)
     if status == "exhausted":
         try:
             os.remove(file_path)
@@ -2016,14 +2019,15 @@ def _check_download_throttle(file_path):
     return (status, info)
 
 
-def _check_cold_throttle(key):
+def _check_cold_throttle(key, client=None):
     """Come _check_download_throttle ma keyed sulla chiave S3 (il file locale
     non esiste più). Su max download ritorna 'deleted' (cap per-worker) ma NON
     cancella l'oggetto cold condiviso: la rimozione cold è di competenza solo
     della retention cleanup. Mantiene la semantica anti-redistribuzione per-worker."""
     status, info = _cooldown_counter(_download_tracking, key,
                                      cooldown_sec=_DL_THROTTLE_SEC,
-                                     max_count=_DL_MAX_DOWNLOADS, now=time.time())
+                                     max_count=_DL_MAX_DOWNLOADS, now=time.time(),
+                                     client=client)
     if status == "exhausted":
         # cap per-worker raggiunto; NON cancellare l'oggetto cold condiviso
         # (lo fa solo la retention cleanup _delete_cold_for_job). Il counter è
@@ -2087,6 +2091,7 @@ def _find_files_in_outputs(job_dir, pattern):
 
 
 def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, conditional=True, **kwargs):
+    requester = _network_of(client_ip())
     # --- Cold storage tier ---
     # Se il file locale è stato evacuato (finestra calda scaduta) ma esiste su
     # cold storage, applica il throttle sulla chiave e fai redirect 302 al
@@ -2101,7 +2106,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
                 pass
             cold_status, cold_info = "ok", None
             if not (is_probe_cold or bypass_throttle):
-                cold_status, cold_info = _check_cold_throttle(key)
+                cold_status, cold_info = _check_cold_throttle(key, requester)
                 if cold_status == "cooldown":
                     lang = _get_browser_lang() or "en"
                     return routes_dl._render_dl_cooldown_page(lang, cold_info), 429
@@ -2137,7 +2142,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
             _apply_no_cache(response)
         return response
 
-    status, info = _check_download_throttle(file_path)
+    status, info = _check_download_throttle(file_path, requester)
     if status == "cooldown":
         lang = _get_browser_lang() or "en"
         return routes_dl._render_dl_cooldown_page(lang, info), 429

@@ -88,14 +88,23 @@ def throttle_ok(last_sent, key, min_interval, now=None):
     return True
 
 
-def cooldown_counter(store, key, *, cooldown_sec, max_count, now=None):
+def cooldown_counter(store, key, *, cooldown_sec, max_count, now=None, client=None):
     """Contatore con cooldown fra un uso e l'altro e tetto totale (download).
     Ritorna `("cooldown", secondi)`, `("exhausted", None)` se il tetto era
     gia' raggiunto (lo stato resta: chi chiama decide se cancellare),
     `("last", 0)` se questo e' l'ultimo uso permesso, `("ok", residui)`.
-    `store[key] = {"count": n, "last_download": ts}`."""
+    `store[key] = {"count": n, "last_download": ts, "clients": {...}}`.
+
+    Con `client` (la rete del richiedente) tetto e cooldown valgono fra
+    richiedenti distinti: un client gia' contato su `key` ripassa con
+    `("ok", residui)` senza contare ne' aspettare. Un telefono apre il link
+    nel browser, lo interrompe dopo pochi KB e lo ripassa al download manager
+    pochi secondi dopo: contato a ogni GET, prendeva 429 e dopo cinque
+    tentativi il file veniva cancellato (ticket 30/10/2026)."""
     now = time.time() if now is None else now
     rec = store.get(key)
+    if client and rec and client in rec.get("clients", ()):
+        return "ok", max(max_count - rec["count"], 0)
     if rec:
         elapsed = now - rec["last_download"]
         if elapsed < cooldown_sec:
@@ -108,7 +117,9 @@ def cooldown_counter(store, key, *, cooldown_sec, max_count, now=None):
         rec["count"] = new_count
         rec["last_download"] = now
     else:
-        store[key] = {"count": new_count, "last_download": now}
+        rec = store[key] = {"count": new_count, "last_download": now}
+    if client:
+        rec.setdefault("clients", set()).add(client)
     if new_count >= max_count:
         return "last", 0
     return "ok", max_count - new_count
