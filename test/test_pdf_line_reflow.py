@@ -220,6 +220,72 @@ def test_narrow_box_wrap_is_not_paragraph_break():
     assert P._block_geometry_breaks(vlines, (54, 540)) == [None, None, None]
 
 
+# ── Un blocco PyMuPDF per riga stampata (ticket 2026-11-01) ──
+# PDF generato da un tool: interlinea 21 pt su corpo 12, ogni riga e' un blocco
+# a se'. La strategia outline (estrazione per pagina) unisce le righe solo
+# dentro il blocco: un paragrafo per riga, e _ensure_heading_pause mette un
+# punto in coda a ognuna ("he had never. felt the distance").
+
+_NAMES = ["Herb", "Mary", "Tom", "Nick", "Ruth", "Walter", "Edith", "Frank", "Alice", "George"]
+
+
+def _story_paragraph(name):
+    # Tre righe stampate, le prime due spezzate a meta' frase.
+    return [f"{name} had travelled away before, but he had never",
+            "felt the distance begin in his chest, the way it did",
+            "on that cold morning at the station."]
+
+
+def _outline_pdf(path, chapters, pitch=21):
+    """chapters: (titolo, [righe]). Una pagina per capitolo, outline dei titoli."""
+    doc = fitz.open()
+    toc = []
+    for i, (title, lines) in enumerate(chapters, 1):
+        page = doc.new_page()
+        y = 73
+        page.insert_text((72, y), title, fontsize=12)
+        for t in lines:
+            y += pitch
+            page.insert_text((72, y), t, fontsize=12)
+        toc.append([1, title, i])
+    doc.set_toc(toc)
+    doc.save(path)
+    doc.close()
+
+
+def test_outline_pdf_one_block_per_line_is_reflowed(tmp_path):
+    from text_reflow import prepare_tts_text
+    pdf = tmp_path / "lines.pdf"
+    chapters = [(f"Chapter {w}", [l for n in _NAMES for l in _story_paragraph(f"{n} {w}")])
+                for w in ("One", "Two")]
+    _outline_pdf(str(pdf), chapters)
+    doc = fitz.open(str(pdf))
+    page = doc[0]
+    assert len(P._text_blocks(page)) > 20  # il layout del ticket: un blocco per riga
+    doc.close()
+    info = P.parse_pdf(str(pdf))
+    assert [c.title for c in info.chapters] == ["Chapter One", "Chapter Two"]
+    text = info.chapters[0].text
+    assert "Herb One had travelled away before, but he had never felt the distance " \
+           "begin in his chest, the way it did on that cold morning at the station." in text
+    assert "never\n\nfelt" not in text
+    # Ogni paragrafo resta separato dal successivo (la riga prima chiude la frase).
+    assert text.count("\n\n") >= len(_NAMES) - 1
+    assert "never. felt" not in prepare_tts_text(text)
+    assert info.chapters[0].char_count == len(text)
+    assert info.total_chars == sum(c.char_count for c in info.chapters)
+
+
+def test_outline_pdf_wellformed_blocks_untouched(tmp_path):
+    # Stesso layout a un blocco per riga, ma ogni riga chiude la frase (dialoghi,
+    # paragrafi brevi): sotto soglia, i paragrafi restano come sono.
+    pdf = tmp_path / "ok.pdf"
+    lines = [f"“Where is {n}?” she asked." for n in _NAMES] * 3
+    _outline_pdf(str(pdf), [("Chapter One", lines), ("Chapter Two", lines)])
+    info = P.parse_pdf(str(pdf))
+    assert info.chapters[0].text.count("\n\n") == len(lines) - 1
+
+
 def test_dialogue_dash_after_full_line_opens_paragraph():
     # Testo a bandiera: la riga prima della battuta arriva quasi al margine.
     def ln(x1, y, t):

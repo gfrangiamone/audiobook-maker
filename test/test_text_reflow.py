@@ -89,6 +89,34 @@ def test_short_book_untouched():
     assert R.reflow_book(["\n\n".join(_LINES)]) is None
 
 
+# ── epub_to_tts.reflow_broken_paragraphs (comune a EPUB e PDF) ──
+
+def _book(texts):
+    from book_model import BookInfo, Chapter
+    return BookInfo(chapters=[Chapter(index=i, title=f"C{i}", text=t)
+                              for i, t in enumerate(texts, 1)])
+
+
+def test_book_reflow_rewrites_text_and_counts():
+    import epub_to_tts as E
+    import pdf_to_tts as P
+    assert P.reflow_broken_paragraphs is E.reflow_broken_paragraphs  # una sola copia
+    info = _book([_converted_book(), _converted_book(3)])
+    assert E.reflow_broken_paragraphs(info) is True
+    expected = R.reflow_book([_converted_book(), _converted_book(3)])
+    assert [c.text for c in info.chapters] == expected
+    for c in info.chapters:
+        assert c.word_count == len(c.text.split()) and c.char_count == len(c.text)
+
+
+def test_book_reflow_wellformed_untouched():
+    import epub_to_tts as E
+    info = _book([_wellformed_book()])
+    before = info.chapters[0].text
+    assert E.reflow_broken_paragraphs(info) is False
+    assert info.chapters[0].text == before
+
+
 # ── TXT ──
 
 def test_txt_converted_from_pdf_is_reflowed(tmp_path):

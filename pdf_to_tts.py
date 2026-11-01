@@ -63,7 +63,7 @@ from text_reflow import (
 from book_model import (BookInfo, Chapter, NON_CONTENT_TITLE_PHRASES as NON_CONTENT_TITLES,
                         title_is_non_content as _title_is_non_content, print_book_info)
 from epub_to_tts import (
-    clean_text_for_tts, is_content_chapter,
+    clean_text_for_tts, is_content_chapter, reflow_broken_paragraphs,
     is_chapter_marker_line as _is_chapter_marker_line, write_chapter_files,
 )
 
@@ -1289,6 +1289,15 @@ def parse_pdf(pdf_path: str) -> BookInfo:
                 text=cleaned.strip(),
                 source_file=os.path.basename(pdf_path),
             ))
+
+    # ── Paragrafi spezzati a metà frase ──
+    # Le strategie per pagina (outline, indice visuale, documento singolo)
+    # ricompongono le righe solo dentro il blocco PyMuPDF: un PDF con un blocco
+    # per riga stampata esce con un paragrafo per riga, e _ensure_heading_pause
+    # mette un punto in coda a ognuna (ticket 2026-11-01: 1.596 punti finti su
+    # 176k caratteri, lettura "meccanica"). Stessa regola a soglia dell'EPUB.
+    if reflow_broken_paragraphs(info):
+        print("[pdf] Paragrafi spezzati a metà frase: ricomposti")
 
     info.recompute_totals()
 

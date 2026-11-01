@@ -1132,6 +1132,23 @@ def _section_position(idx, total):
     return "middle"
 
 
+def reflow_broken_paragraphs(info: BookInfo) -> bool:
+    """Ricompone i paragrafi spezzati a metà frase (una riga stampata per
+    paragrafo: EPUB convertiti da PDF, PDF con un blocco per riga), solo se il
+    difetto è sistematico nel libro (`text_reflow.reflow_book`). Comune a
+    EPUB e PDF.
+
+    Ritorna True se ha riscritto i capitoli. I totali del libro restano al
+    chiamante (`info.recompute_totals()`)."""
+    reflowed = reflow_book([ch.text for ch in info.chapters])
+    if reflowed is None:
+        return False
+    for ch, text in zip(info.chapters, reflowed):
+        ch.text = text
+        ch.__post_init__()  # word_count/char_count dal testo nuovo
+    return True
+
+
 def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     """Parsa un file EPUB ed estrae capitoli ottimizzati per TTS."""
     # Pre-flight zip-bomb / total-size guard: ebooklib.read_epub() carica tutto
@@ -1446,12 +1463,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     # Un <p> per ogni riga stampata: ogni a-capo diventa una pausa di
     # paragrafo. Si ricompone solo se il difetto è sistematico nel libro
     # (text_reflow.book_needs_reflow), mai sui libri ben composti.
-    _reflowed = reflow_book([c.text for c in info.chapters])
-    if _reflowed is not None:
-        for _ch, _txt in zip(info.chapters, _reflowed):
-            _ch.text = _txt
-            _ch.word_count = len(_txt.split())
-            _ch.char_count = len(_txt)
+    reflow_broken_paragraphs(info)
 
     info.recompute_totals()
 
