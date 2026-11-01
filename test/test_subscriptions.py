@@ -855,7 +855,12 @@ def test_resume_upgrade_prepaid(sub_env):
 
 # ------------------------------------------------------------------ fase 2b: email del buono
 
-def test_deferred_voucher_sends_one_voucher_email(sub_env):
+def test_deferred_voucher_sends_one_voucher_email(sub_env, monkeypatch):
+    # I buoni nascono con l'ora vera e scadono a 30 giorni, mentre `e1` e' un mese di
+    # calendario dopo T0: nei mesi da 30 giorni (test del 01/11/2026) alla fine del
+    # periodo sono "in scadenza" e partono anche i promemoria. Qui si guarda la sola
+    # email del buono; i promemoria hanno i loro test (test_voucher_reminder_*).
+    monkeypatch.setenv("ABM_SUB_VOUCHER_REMIND_DAYS", "0")
     acct, old = _paid(sub_env, "mailv@x.it")
     e1 = _sub_of(old)["period_end"]
     new, _row = _change(sub_env, acct, "sub_10", T0 + 2 * DAY)
