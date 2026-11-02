@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, current_app, redirect, request, send_file
 
 import i18n as _i18n
+import indexnow
 import page_brand
 import privacy_content
 import routes_tokens
@@ -204,7 +205,8 @@ def seo_content_page(lang):
 
     html_lang = page_brand.html_lang(lang)
     c = seo_content.lang_content(lang)
-    title = html_mod.escape(c.get("heading", "Audiobook Maker"))
+    # `title` corto per la SERP (<= 60 caratteri), `heading` resta l'h1 della pagina.
+    title = html_mod.escape(c.get("title") or c.get("heading", "Audiobook Maker"))
     desc = html_mod.escape(c.get("direct_answer", ""))
     base = _base_url() or ""
     canonical = f'{base}/content/{lang}/' if base else ""
@@ -256,44 +258,66 @@ def guide_page_lang(guide_id, lang):
 
 
 #  -  -  -  sitemap.xml  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _file_lastmod(*paths) -> str:
+    """Data ISO (UTC) del piu' recente fra i file esistenti; oggi se nessuno esiste."""
+    stamps = []
+    for p in paths:
+        try:
+            stamps.append(os.path.getmtime(p))
+        except OSError:
+            continue
+    if not stamps:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(max(stamps), timezone.utc).strftime("%Y-%m-%d")
+
+
+def _guide_lastmod(guide_id: str, lang: str) -> str:
+    """lastmod di una guida in una lingua: codice comune, metadati e corpo.
+    Un title cambiato in meta.json deve cambiare la data (IndexNow la legge)."""
+    g = os.path.join(_HERE, "content", "guides")
+    return _file_lastmod(os.path.join(_HERE, "guide_content.py"),
+                         os.path.join(g, "meta.json"),
+                         os.path.join(g, guide_id, "meta.json"),
+                         os.path.join(g, guide_id, f"{lang}.html"))
+
+
 @bp.route("/sitemap.xml")
 def sitemap():
     """Sitemap con tutte le varianti linguistiche.
     Richiede ABM_BASE_URL configurato per gli URL assoluti (obbligatorio per Google).
     """
-    if not _base_url():
+    xml = sitemap_xml()
+    if xml is None:
         return "<!-- sitemap non disponibile: impostare ABM_BASE_URL -->", 200, {
             "Content-Type": "text/xml; charset=utf-8"
         }
+    return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
 
-    import os as _os
-    from datetime import date, datetime as _dt
 
-    def _file_lastmod(path: str) -> str:
-        """Return ISO date of file mtime, or today as a safe fallback."""
-        try:
-            return _dt.fromtimestamp(_os.path.getmtime(path), timezone.utc).strftime("%Y-%m-%d")   # UTC esplicito
-        except OSError:
-            return date.today().isoformat()
+def sitemap_xml():
+    """XML della sitemap, None senza ABM_BASE_URL. Lo legge anche `indexnow`
+    (fuori da una richiesta: niente `request` qui dentro)."""
+    if not _base_url():
+        return None
 
-    _here = _os.path.dirname(_os.path.abspath(__file__))
     # The home page reflects content from app + visible SEO + live user
     # reviews; pick the most recent of all three so Google sees a real change
     # signal whenever new feedback is approved.
-    candidates = [
-        _file_lastmod(_os.path.join(_here, "audiobook_app.py")),
-        _file_lastmod(_os.path.join(_here, "seo_content.py")),
-    ]
+    candidates = [_file_lastmod(os.path.join(_HERE, "audiobook_app.py"),
+                                os.path.join(_HERE, "seo_content.py"),
+                                os.path.join(_HERE, "content", "seo", "content.json"))]
     try:
         latest_review_ts = seo_reviews.build_reviews("en").get("latest_ts", 0)
         if latest_review_ts:
             candidates.append(
-                _dt.fromtimestamp(latest_review_ts, timezone.utc).strftime("%Y-%m-%d")
+                datetime.fromtimestamp(latest_review_ts, timezone.utc).strftime("%Y-%m-%d")
             )
     except Exception:
         pass
     home_lastmod = max(candidates)
-    guide_lastmod = _file_lastmod(_os.path.join(_here, "guide_content.py"))
 
     # Blocco alternates condiviso da tutti gli URL (page_brand.hreflang_links)
     def _alts(path_fn, x_default):
@@ -353,7 +377,7 @@ def sitemap():
         for lc in page_brand.SITE_LANGS:
             urls.append(f"""  <url>
     <loc>{_base_url()}{_guide_path(guide_id, lc)}</loc>
-    <lastmod>{guide_lastmod}</lastmod>
+    <lastmod>{_guide_lastmod(guide_id, lc)}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
 {guide_alternates}
@@ -364,7 +388,7 @@ def sitemap():
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
 {chr(10).join(urls)}
 </urlset>"""
-    return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
+    return xml
 
 
 #  -  -  -  robots.txt  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
@@ -548,6 +572,17 @@ def robots():
     llms_line = f"# LLM/AI agents index: {_base_url()}/llms.txt" if _base_url() else ""
     body = _render_page("robots.txt", {"__P0__": (sitemap_line), "__P1__": (llms_line)}).strip()
     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+# File chiave IndexNow (/<chiave>.txt): il motore lo scarica per verificare
+# che gli URL inviati da `indexnow` siano nostri. Le route .txt statiche
+# (robots, llms) hanno la precedenza su questa.
+@bp.route("/<name>.txt")
+def indexnow_key(name):
+    k = indexnow.key()
+    if not k or name != k:
+        return "Not found", 404
+    return k, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
 #  -  -  -  llms.txt  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -

@@ -3,7 +3,7 @@ seo_content.py — Testi SEO visibili iniettati server-side nel body HTML.
 
 Questo modulo genera un blocco <section> con:
   - Direct answer quotabile (primi 150 caratteri)
-  - H2 heading con keyword primaria
+  - H1 heading con keyword primaria (unico h1 di /content/<lang>/)
   - Paragrafo descrittivo denso di keyword
   - Tabella comparativa voci/lingue (dati citabili per GEO)
   - Audience targeting ("Ideale per...")
@@ -112,7 +112,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         {kt_box_html}
 
         <div class="seo-section" style="border-bottom:1px solid var(--brd,#d5d0c8); padding:0.8rem 0">
-            <h2 style="font-size:1.25rem; color:var(--tx,#2c2a26); font-weight:600; margin-bottom:0.5rem">{escape(c["heading"])}</h2>
+            <h1 style="font-size:1.25rem; color:var(--tx,#2c2a26); font-weight:600; margin-bottom:0.5rem">{escape(c["heading"])}</h1>
             <p style="margin-left:0.5rem">{escape(c["text"])}</p>
         </div>
 
@@ -207,7 +207,7 @@ def build_seo_content_html(lang: str) -> str:
 #seoContent .seo-section > summary h2,
 #seoContent .seo-section > summary h3,
 #seoContent .seo-section > summary strong { margin:0; display:inline }
-#seoContent .seo-section h2 { font-size:1.25rem; color:var(--tx,#2c2a26); font-weight:600 }
+#seoContent .seo-section h1, #seoContent .seo-section h2 { font-size:1.25rem; color:var(--tx,#2c2a26); font-weight:600 }
 #seoContent .seo-section h3 { font-size:1.1rem; color:var(--tx,#2c2a26); font-weight:600 }
 #seoContent .seo-section > summary strong { font-size:1rem; color:var(--tx,#2c2a26) }
 /* ── Inner content of collapsible sections ── */

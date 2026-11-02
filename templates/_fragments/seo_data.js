@@ -29,7 +29,7 @@ ld:"Audiobook Maker",
 features:["Conversión de EPUB a audiolibro MP3/M4B (con capítulos)","Conversión de PDF a audiolibro MP3/M4B (con capítulos)","Más de 400 voces neuronales de IA","Más de 50 idiomas compatibles","Selección de capítulos y vista previa","Generación de feed RSS de Podcast","Notificación por correo electrónico para conversiones largas","No se requiere registro","Cuota mensual gratuita amplia","Funciona en el navegador"]
 },
 de:{
-title:"Hörbuch mit KI kostenlos erstellen – PDF & EPUB umwandeln | Audiobook Maker",
+title:"Hörbuch mit KI kostenlos erstellen | Audiobook Maker",
 desc:"Hörbuch mit KI kostenlos erstellen: PDF oder E-Book hochladen, natürliche deutsche Stimme wählen, MP3 oder M4B mit Kapiteln laden. Ohne Installation.",
 kw:"epub zu hörbuch konverter, pdf zu hörbuch, m4b mit kapiteln erstellen, hörbuch erstellen kostenlos, text to speech deutsch, sprachsynthese buch, ebook in audio umwandeln, hörbuch für legasthenie, barrierefreies hörbuch, elevenlabs alternative kostenlos, podcast rss generator, audiobook maker",
 ld:"Audiobook Maker",

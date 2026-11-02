@@ -1279,6 +1279,13 @@ Endpoint admin: `GET /api/admin/load_stats?window=24h|7d|28d|month` (richiede au
 
 ---
 
+## IndexNow (`indexnow.py`)
+- `ABM_INDEXNOW_KEY` (default vuoto = spento): chiave IndexNow, 8-128 caratteri `a-z A-Z 0-9 -` (valore malformato = spento, avviso una volta). Pubblica per costruzione: servita su `/<chiave>.txt` (`routes_pages.indexnow_key`). Letta a ogni chiamata (`indexnow.py:key`).
+- Costanti (`indexnow.py`): `_BOOT_DELAY_SEC` 120 (attesa dopo il boot, oltre la finestra healthz del deploy), `_ATTEMPTS` 3 su 429/5xx con backoff base 5 s, `_TIMEOUT_SEC` 20. Endpoint `https://api.indexnow.org/indexnow`.
+- Invio solo con `ABM_BASE_URL` https e host non locale (`is_public_base`). Stato `<ABM_DATA_DIR>/_indexnow_sent.json` = {url: lastmod inviato}, riscritto a ogni invio riuscito con i soli URL della sitemap corrente.
+
+---
+
 ## Link store app mobile (pagina /get-app)
 - `ABM_PLAY_STORE_URL`: URL Play Store dell'app. Se vuoto, il bottone Play è
   mostrato ma disabilitato. Valore al rilascio:

@@ -161,6 +161,7 @@ import routes_mobile
 import routes_account
 import routes_pages
 import routes_health
+import indexnow
 from book_model import Chapter, WORDS_PER_MINUTE
 import cleanup
 import tts_engines
@@ -8560,7 +8561,7 @@ _SEO_DATA = {
         "crumb":   "Convertidor online",
     },
     "de": {
-        "title":   "Hörbuch mit KI kostenlos erstellen – PDF & EPUB umwandeln | Audiobook Maker",
+        "title":   "Hörbuch mit KI kostenlos erstellen | Audiobook Maker",
         "tagline": "Kostenloser EPUB- & PDF-zu-Hörbuch-Konverter",
         "subtitle":"Konvertieren Sie EPUBs und PDFs in Hörbücher mit neuronalen Stimmen",
         "desc":    "Hörbuch mit KI kostenlos erstellen: PDF oder E-Book hochladen, natürliche deutsche Stimme wählen, MP3 oder M4B mit Kapiteln laden. Ohne Installation.",
@@ -8855,6 +8856,8 @@ def _ensure_background_threads():
         threading.Thread(target=cleanup._account_maintenance_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=recovery._recover_orphan_jobs, daemon=True).start()
+    # IndexNow: URL della sitemap cambiati, una volta per boot (spento senza chiave).
+    indexnow.start(routes_pages.sitemap_xml, lambda: BASE_URL)
     # Rientro automatico su Cloudflare: il sorvegliante delle sonde. Parte
     # sempre che gemini_tts sia caricato, anche senza failover in corso - e'
     # lui a notare quello che un riavvio ha trovato gia' aperto sul disco.
