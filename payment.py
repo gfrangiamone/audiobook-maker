@@ -923,6 +923,32 @@ def _is_paid_job_done(job_id: str) -> bool:
     return any(r.get("job_id") == job_id for r in _paid_jobs_done)
 
 
+def paid_job_ids() -> set:
+    """Job con un pagamento previsto, per i conteggi della console admin:
+    registro `_paid_jobs_done`, ordini PayPal legati al job (capture, consumo,
+    claim) e addebiti dei buoni (anche di abbonamento). Nessuno dei tre store
+    si sfoltisce, e un rimborso successivo non toglie il job. Serve l'unione:
+    claim, wizard combinato, ottimizzazione e traduzione non passano da
+    `consume_payment_token` e quindi non scrivono `_paid_jobs_done`."""
+    with _paid_jobs_lock:
+        ids = {r.get("job_id") for r in _paid_jobs_done if isinstance(r, dict)}
+    with _payments_lock:
+        for pay in _payments.values():
+            if isinstance(pay, dict):
+                ids.update((pay.get("used_for_job"), pay.get("used_job_id"), pay.get("job_id")))
+    with _vouchers_lock:
+        for v in _vouchers.values():
+            for u in (v.get("uses") if isinstance(v, dict) else None) or []:
+                try:
+                    if isinstance(u, dict) and float(u.get("amount_eur") or 0) > 0:
+                        ids.add(u.get("job_id"))
+                except (TypeError, ValueError):
+                    continue
+    ids.discard(None)
+    ids.discard("")
+    return ids
+
+
 def _recover_orphaned_voucher_charges(jobs):
     """Recovery all'avvio: cerca addebiti voucher recenti (ultime 2 ore) il cui
     job_id non e ne in memoria (``jobs``) ne tra quelli completati con successo

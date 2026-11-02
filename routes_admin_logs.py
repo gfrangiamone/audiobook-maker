@@ -25,6 +25,7 @@ from flask import Blueprint, Response, jsonify, request
 import activity_log
 import free_tts_quota
 import metrics_store
+import payment
 import user_stats
 from env_utils import env_int
 from page_brand import render_page as _render_page
@@ -190,6 +191,34 @@ def _session_premium(s, sid):
         return False
     job = _jobs().get(sid) or {}
     return is_premium_voice(job.get("voice") or job.get("opt_voice") or "")
+
+
+def _job_paid(job):
+    """Job in memoria con pagamento (PayPal o voucher, indifferente)."""
+    paym = (job or {}).get("payment") or {}
+    try:
+        return float(paym.get("total_eur", 0) or 0) > 0
+    except (TypeError, ValueError):
+        return bool(paym)
+
+
+def _session_paid(s, sid, paid_ids):
+    """Sessione con un pagamento previsto: token consumato nel registro
+    `payment.paid_job_ids()` (voucher, abbonamento, PayPal), capture PayPal
+    nel log (`PAYMENT_CAPTURED`) o pagamento sul job in memoria."""
+    if sid in paid_ids or user_stats.PAID_OPS & set(s["events"]):
+        return True
+    return _job_paid(_jobs().get(sid))
+
+
+def _paid_users_html(group, paid_ids, t):
+    """Riga sotto il totale di un riquadro (PREMIUM, Traduzioni): sessioni
+    del gruppo con pagamento previsto e utenti unici, paganti o no (client_id,
+    IP come ripiego: stessa identita' delle Statistiche utente)."""
+    paid = sum(1 for sid, s in group if _session_paid(s, sid, paid_ids))
+    users = len({u for u in (user_stats.user_key(s) for _, s in group) if u})
+    return (f'<span>💳 {paid} {t["sub_paid"]}</span> '
+            f'<span>👤 {users} {t["sub_users"]}</span>')
 
 
 def _last_n_days(n):
@@ -359,13 +388,9 @@ def _log_card_html(sid, s, client_session_count, client_color_map, now):
     is_paid = False
     if is_progress:
         job = _jobs().get(sid)
-        # Job con pagamento (PayPal o voucher, indifferente): la card
-        # in corso viene evidenziata in giallo acceso invece del rosso.
-        _paym = (job or {}).get("payment") or {}
-        try:
-            is_paid = float(_paym.get("total_eur", 0) or 0) > 0
-        except (TypeError, ValueError):
-            is_paid = bool(_paym)
+        # Job con pagamento: la card in corso viene evidenziata in giallo
+        # acceso invece del rosso.
+        is_paid = _job_paid(job)
         pct_html = ""
         if job:
             st = job.get("status", "")
@@ -558,6 +583,7 @@ def admin_logs():
             "collapse": "Aggrega", "expand": "Mostra tutti",
             "no_activity": "Nessuna attività registrata per",
             "gemini_started": "PREMIUM", "translations": "Traduzioni",
+            "sub_paid": "pagati", "sub_users": "utenti",
             "eta_label": "Stima completamento gen.",
         },
         "en": {
@@ -568,6 +594,7 @@ def admin_logs():
             "collapse": "Collapse", "expand": "Show all",
             "no_activity": "No activity recorded for",
             "gemini_started": "PREMIUM", "translations": "Translations",
+            "sub_paid": "paid", "sub_users": "users",
             "eta_label": "ETA",
         },
         "fr": {
@@ -578,6 +605,7 @@ def admin_logs():
             "collapse": "Regrouper", "expand": "Tout afficher",
             "no_activity": "Aucune activité enregistrée pour",
             "gemini_started": "PREMIUM", "translations": "Traductions",
+            "sub_paid": "payés", "sub_users": "utilisateurs",
             "eta_label": "ETA",
         },
         "de": {
@@ -588,6 +616,7 @@ def admin_logs():
             "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
             "no_activity": "Keine Aktivitäten aufgezeichnet für",
             "gemini_started": "PREMIUM", "translations": "Übersetzungen",
+            "sub_paid": "bezahlt", "sub_users": "Nutzer",
             "eta_label": "ETA",
         },
         "es": {
@@ -598,6 +627,7 @@ def admin_logs():
             "collapse": "Agrupar", "expand": "Mostrar todos",
             "no_activity": "No hay actividad registrada para",
             "gemini_started": "PREMIUM", "translations": "Traducciones",
+            "sub_paid": "pagados", "sub_users": "usuarios",
             "eta_label": "ETA",
         },
         "zh": {
@@ -608,6 +638,7 @@ def admin_logs():
             "collapse": "收起", "expand": "全部显示",
             "no_activity": "没有活动记录",
             "gemini_started": "PREMIUM", "translations": "翻译",
+            "sub_paid": "付费", "sub_users": "用户",
             "eta_label": "预计剩余",
         },
         "hi": {
@@ -618,6 +649,7 @@ def admin_logs():
             "collapse": "संक्षिप्त करें", "expand": "सभी दिखाएं",
             "no_activity": "कोई गतिविधि दर्ज नहीं",
             "gemini_started": "PREMIUM", "translations": "अनुवाद",
+            "sub_paid": "भुगतान", "sub_users": "उपयोगकर्ता",
             "eta_label": "शेष",
         },
     }
@@ -651,10 +683,17 @@ def admin_logs():
     # Speechify/Simba o VoxCPM: stessa tasca di pagamento/rimborso) — esclude
     # le anteprime. Stesso criterio del filtro (_session_premium): GENERATE o
     # OPTIMIZE con voce premium nel log, o job in corso con voce premium.
-    gemini_started = sum(1 for sid, s in sessions.items() if _session_premium(s, sid))
+    premium_sessions = [(sid, s) for sid, s in sessions.items() if _session_premium(s, sid)]
+    gemini_started = len(premium_sessions)
     # Sessioni di traduzione: qualunque evento del flusso traduzione.
-    tr_count = sum(1 for s in sessions.values()
-                   if set(s["events"]) & _LOG_TR_OPS)
+    tr_sessions = [(sid, s) for sid, s in sessions.items() if set(s["events"]) & _LOG_TR_OPS]
+    tr_count = len(tr_sessions)
+    try:
+        _paid_ids = payment.paid_job_ids()
+    except Exception:
+        _paid_ids = set()
+    premium_sub = _paid_users_html(premium_sessions, _paid_ids, t)
+    tr_sub = _paid_users_html(tr_sessions, _paid_ids, t)
     # Sessioni originatesi da piattaforma mobile (android/ios).
     mobile_count = sum(
         1 for s in sessions.values()
@@ -753,7 +792,7 @@ def admin_logs():
     _f_pay_i = _funnel["payment_from_app"]["ios"]
     _f_conv = f"{_funnel['conversion_rate'] * 100:.1f}%"
 
-    html = _render_page("admin_log_activity", {"__P0__": (FAVICON_B64), "__P1__": (ym), "__P2__": ("<span class='label'>" + t["months"] + ":</span>" + months_nav if months_nav else ""), "__P3__": (t["collapse"]), "__P4__": (total_sessions), "__P5__": (t["sessions"]), "__P6__": (gen_completed), "__P7__": (t["gen_completed"]), "__P8__": (gen_in_progress), "__P9__": (t["in_progress"]), "__P10__": (gen_cancelled), "__P11__": (t["cancelled"]), "__P12__": (unique_clients), "__P13__": (t["unique_clients"]), "__P14__": (returning_clients), "__P15__": (t["recurring"]), "__P16__": (tr_count), "__P17__": (t["translations"]), "__P18__": (gemini_started), "__P19__": (t["gemini_started"]), "__P20__": (mobile_count), "__P21__": (transferred_count), "__P22__": (_f_open), "__P23__": (_f_open_a), "__P24__": (_f_open_i), "__P25__": (_f_web), "__P26__": (_f_web_a), "__P27__": (_f_web_i), "__P28__": (_f_pay), "__P29__": (_f_pay_a), "__P30__": (_f_pay_i), "__P31__": (_f_conv), "__P32__": (cards_html if cards_html else "<div class='empty'><div class='icon'>📮</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"), "__P33__": (us_months_nav), "__P34__": (t["expand"]), "__P35__": (t["eta_label"])})
+    html = _render_page("admin_log_activity", {"__P0__": (FAVICON_B64), "__P1__": (ym), "__P2__": ("<span class='label'>" + t["months"] + ":</span>" + months_nav if months_nav else ""), "__P3__": (t["collapse"]), "__P4__": (total_sessions), "__P5__": (t["sessions"]), "__P6__": (gen_completed), "__P7__": (t["gen_completed"]), "__P8__": (gen_in_progress), "__P9__": (t["in_progress"]), "__P10__": (gen_cancelled), "__P11__": (t["cancelled"]), "__P12__": (unique_clients), "__P13__": (t["unique_clients"]), "__P14__": (returning_clients), "__P15__": (t["recurring"]), "__P16__": (tr_count), "__P17__": (t["translations"]), "__P18__": (gemini_started), "__P19__": (t["gemini_started"]), "__P20__": (mobile_count), "__P21__": (transferred_count), "__P22__": (_f_open), "__P23__": (_f_open_a), "__P24__": (_f_open_i), "__P25__": (_f_web), "__P26__": (_f_web_a), "__P27__": (_f_web_i), "__P28__": (_f_pay), "__P29__": (_f_pay_a), "__P30__": (_f_pay_i), "__P31__": (_f_conv), "__P32__": (cards_html if cards_html else "<div class='empty'><div class='icon'>📮</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"), "__P33__": (us_months_nav), "__P34__": (t["expand"]), "__P35__": (t["eta_label"]), "__P36__": (premium_sub), "__P37__": (tr_sub)})
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 

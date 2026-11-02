@@ -226,6 +226,79 @@ def test_premium_filter_ignores_running_standard_voice_job(monkeypatch):
     assert _premium_stat_count(html) == "0"
 
 
+def _premium_stat_sub(html):
+    stat = html[html.index('data-filter="gemini"'):]
+    start = stat.index('<div class="stat-sub">') + len('<div class="stat-sub">')
+    return stat[start:stat.index('</div>', start)]
+
+
+def test_premium_stat_shows_paid_and_unique_users(monkeypatch):
+    """Il riquadro PREMIUM mostra, sotto il totale, i job con pagamento
+    (registro dei token consumati, capture nel log) e gli utenti unici."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    voice = "gemini:flash31:Kore"
+    lines = [
+        # Pagato con buono/abbonamento: solo nel registro dei token consumati.
+        f'P_VOUCHER # {ts} # "a.epub" # GENERATE # cidA # 1.1.1.1 # {voice} # it # ',
+        # Pagato con PayPal: capture nel log.
+        f'P_PAYPAL # {ts} # "b.epub" # PAYMENT_CAPTURED #  #  #  #  # ',
+        f'P_PAYPAL # {ts} # "b.epub" # GENERATE # cidA # 1.1.1.1 # {voice} # it # ',
+        # Gratuito (quota premium), altro utente senza cookie: conta l'IP.
+        f'P_FREE # {ts} # "c.epub" # GENERATE #  # 2.2.2.2 # {voice} # it # ',
+        # Pagato ma a voce standard: fuori dal riquadro PREMIUM.
+        f'S_PAID # {ts} # "d.epub" # GENERATE # cidB # 3.3.3.3 # it-IT-DiegoNeural # it # ',
+    ]
+    _paid_stores(monkeypatch, done=["P_VOUCHER", "S_PAID"])
+    html = _page_with_log(monkeypatch, lines)
+    assert _premium_stat_count(html) == "3"
+    assert _premium_stat_sub(html) == "<span>💳 2 paid</span> <span>👤 2 users</span>"
+
+
+def _paid_stores(monkeypatch, done=(), payments=None, vouchers=None):
+    import payment
+    monkeypatch.setattr(payment, "_paid_jobs_done",
+                        [{"job_id": j, "purpose": "gemini", "ts": 0} for j in done])
+    monkeypatch.setattr(payment, "_payments", payments or {})
+    monkeypatch.setattr(payment, "_vouchers", vouchers or {})
+
+
+def test_paid_job_ids_covers_claims_and_voucher_uses(monkeypatch):
+    """Claim PayPal (wizard, ottimizzazione, traduzione) e addebiti buono non
+    scrivono `_paid_jobs_done`: il conteggio admin li deve vedere lo stesso.
+    Una riga di rimborso del buono non conta come pagamento."""
+    import payment
+    _paid_stores(monkeypatch, done=["D1"],
+                 payments={"O1": {"used_job_id": "CLAIM"}, "O2": {"job_id": "CAPT"},
+                           "O3": {"used_for_job": "USED"}},
+                 vouchers={"V1": {"uses": [{"job_id": "VOUCH", "amount_eur": 1.5},
+                                           {"job_id": "REFONLY", "amount_eur": -1.5}]}})
+    assert payment.paid_job_ids() == {"D1", "CLAIM", "CAPT", "USED", "VOUCH"}
+
+
+def _tr_stat(html):
+    stat = html[html.index('data-filter="translation"'):]
+    num = stat[stat.index('<div class="num">') + len('<div class="num">'):stat.index('</div>')]
+    start = stat.index('<div class="stat-sub">') + len('<div class="stat-sub">')
+    return num, stat[start:stat.index('</div>', start)]
+
+
+def test_translation_stat_shows_paid_and_unique_users(monkeypatch):
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f'T_PAID # {ts} # "a.epub" # TRANSLATE # cidA # 1.1.1.1 # en>it # it # ',
+        f'T_VOUCH # {ts} # "b.epub" # TRANSLATE # cidA # 1.1.1.1 # en>it +AI # it # ',
+        f'T_FREE # {ts} # "c.epub" # TRANSLATE # cidB # 2.2.2.2 # en>fr # it # ',
+        f'G_PAID # {ts} # "d.epub" # GENERATE # cidC # 3.3.3.3 # gemini:flash31:Kore # it # ',
+    ]
+    _paid_stores(monkeypatch, payments={"O1": {"used_job_id": "T_PAID"},
+                                        "O2": {"used_job_id": "G_PAID"}},
+                 vouchers={"V1": {"uses": [{"job_id": "T_VOUCH", "amount_eur": 2.0}]}})
+    html = _page_with_log(monkeypatch, lines)
+    assert _tr_stat(html) == ("3", "<span>💳 2 paid</span> <span>👤 2 users</span>")
+
+
 def test_api_optimize_logs_auto_generate_voice():
     """/api/optimize con auto_generate scrive la voce di destinazione
     sull'evento OPTIMIZE, cosi' il pannello admin la vede subito."""

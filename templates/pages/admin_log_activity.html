@@ -39,6 +39,9 @@ body{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:var
 .stat.stat-green .num{color:var(--green)} .stat.stat-red .num{color:var(--red)} .stat.stat-orange .num{color:var(--orange)} .stat.stat-gemini .num{color:#a78bfa} .stat.stat-tr .num{color:#facc15}
 .stat .lbl{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}
 .stat-eta{font-size:.62rem;color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.4px;min-height:.9rem}
+.stat-sub{font-size:.62rem;color:#a78bfa;font-weight:600;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.2px;line-height:1.35}
+.stat-sub span{white-space:nowrap;display:inline-block}
+.stat.stat-tr .stat-sub{color:#facc15}
 .stat-eta .eta-lbl{color:var(--text-dim);font-weight:600;margin-right:4px;letter-spacing:.2px}
 .day-group{margin:0 12px 6px}
 .day-header{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}
@@ -99,7 +102,7 @@ body{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:var
 .empty{text-align:center;padding:60px 20px;color:var(--text-dim)} .empty .icon{font-size:3rem;margin-bottom:12px}
 @media(max-width:600px){
 .header{padding:12px 14px;gap:8px} .header h1{font-size:.78rem} .header .period{font-size:1.1rem}
-.stats{grid-template-columns:repeat(4,1fr);gap:6px;padding:10px 12px} .stat{padding:8px 6px} .stat .num{font-size:1.2rem} .stat .lbl{font-size:.58rem}
+.stats{grid-template-columns:repeat(4,1fr);gap:6px;padding:10px 12px} .stat{padding:8px 6px} .stat .num{font-size:1.2rem} .stat .lbl{font-size:.58rem} .stat-sub{font-size:.55rem}
 .months-nav{padding:8px 12px;gap:4px} .day-group{margin:0 8px 4px} .day-cards{grid-template-columns:1fr;gap:8px;padding:8px 0 2px} .card{padding:12px} .btn{padding:6px 10px;font-size:.68rem}
 .header-actions{margin-left:0;width:100%;justify-content:flex-end}
 }
@@ -129,8 +132,8 @@ body{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:var
     <div class="stat stat-red" data-filter="cancelled" onclick="filterCards('cancelled',this)"><div class="num">__P10__</div><div class="lbl">__P11__</div></div>
     <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">__P12__</div><div class="lbl">__P13__</div></div>
     <div class="stat" data-filter="recurring" onclick="filterCards('recurring',this)"><div class="num">__P14__</div><div class="lbl">__P15__</div></div>
-    <div class="stat stat-tr" data-filter="translation" onclick="filterCards('translation',this)" title="Sessioni con attività di traduzione"><div class="num">__P16__</div><div class="lbl">__P17__</div></div>
-    <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci PREMIUM (esclude anteprime)"><div class="num">__P18__</div><div class="lbl">__P19__</div></div>
+    <div class="stat stat-tr" data-filter="translation" onclick="filterCards('translation',this)" title="Sessioni con attività di traduzione; sotto: quante con pagamento (PayPal, buono o abbonamento) e utenti unici, paganti o no"><div class="num">__P16__</div><div class="lbl">__P17__</div><div class="stat-sub">__P37__</div></div>
+    <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci PREMIUM (esclude anteprime); sotto: quante con pagamento (PayPal, buono o abbonamento) e utenti unici, paganti o no"><div class="num">__P18__</div><div class="lbl">__P19__</div><div class="stat-sub">__P36__</div></div>
     <div class="stat" data-filter="mobile" onclick="filterCards('mobile',this)" title="Sessioni originate da app mobile (android/ios)"><div class="num">__P20__</div><div class="lbl">Da mobile</div></div>
     <div class="stat" data-filter="transferred" onclick="filterCards('transferred',this)" title="Sessioni web trasferite alla app mobile"><div class="num">__P21__</div><div class="lbl">Spostati su mobile</div></div>
 </div>
