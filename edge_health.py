@@ -133,6 +133,21 @@ def snapshot(now=None):
     return snap
 
 
+# Sopra questa quota di chiamate in silenzio sulla finestra il guasto e' del
+# servizio, non di un singolo libro (vedi `service_ok`).
+_SERVICE_OK_MAX_FAIL_PCT = 50.0
+
+
+def service_ok(now=None):
+    """True se edge-tts sta servendo gli altri: almeno `ABM_EDGE_ALERT_MIN_CALLS`
+    chiamate nella finestra e non piu' di meta' finite in silenzio. Con poche
+    chiamate (un solo job attivo) non si sa: False."""
+    now = time.time() if now is None else float(now)
+    with _lock:
+        snap = _snapshot_locked(now)
+    return snap["calls"] >= _thresholds()[0] and snap["fail_pct"] <= _SERVICE_OK_MAX_FAIL_PCT
+
+
 def _breach(snap, min_calls, fail_pct, retry_pct):
     """Motivo dell'allerta ("" = sotto soglia)."""
     if snap["calls"] < min_calls:

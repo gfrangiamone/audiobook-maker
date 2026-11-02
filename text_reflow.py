@@ -652,6 +652,52 @@ def _sanitize_tts_text(text: str):
     return clean
 
 
+# Uzbeko: le voci uz-UZ di edge-tts leggono solo l'alfabeto latino. Il 02/11/2026
+# un libro in cirillico ha avuto 65 chunk su 65 senza audio (NoAudioReceived a
+# ogni tentativo, anche sulla voce di ripiego), mentre la stessa frase in latino
+# passava 4 volte su 4. Tabella dell'alfabeto latino del 1995; "е" e "ц"
+# dipendono dalla lettera precedente (vedi `uzbek_cyrillic_to_latin`).
+_UZ_CYR_LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "ғ": "g'", "д": "d", "ё": "yo",
+    "ж": "j", "з": "z", "и": "i", "й": "y", "к": "k", "қ": "q", "л": "l",
+    "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t",
+    "у": "u", "ў": "o'", "ф": "f", "х": "x", "ҳ": "h", "ч": "ch", "ш": "sh",
+    "щ": "shch", "ъ": "'", "ы": "i", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+_UZ_CYR_VOWELS = frozenset("аеёиоуўэюя")
+_CYRILLIC_RE = re.compile(r"[Ѐ-ӿ]")
+
+
+def uzbek_cyrillic_to_latin(text):
+    """Uzbeko cirillico -> latino; il resto del testo passa invariato.
+
+    "е" diventa "ye" a inizio parola e dopo vocale, "ъ" o "ь", altrimenti
+    "e"; "ц" diventa "ts" dopo vocale, altrimenti "s". Una maiuscola seguita
+    (o preceduta) da maiuscole da' un digramma tutto maiuscolo ("ШАҲАР" ->
+    "SHAHAR"), altrimenti solo l'iniziale ("Шаҳар" -> "Shahar")."""
+    if not text or not _CYRILLIC_RE.search(text):
+        return text
+    out = []
+    for i, ch in enumerate(text):
+        low = ch.lower()
+        prev = text[i - 1].lower() if i else ""
+        if low == "е":
+            lat = "ye" if (not prev.isalpha() or prev in _UZ_CYR_VOWELS or prev in "ъь") else "e"
+        elif low == "ц":
+            lat = "ts" if prev in _UZ_CYR_VOWELS else "s"
+        else:
+            lat = _UZ_CYR_LAT.get(low)
+            if lat is None:
+                out.append(ch)
+                continue
+        if ch != low and lat:
+            nxt = text[i + 1] if i + 1 < len(text) else ""
+            caps = nxt.isupper() or (i > 0 and text[i - 1].isupper() and not nxt.islower())
+            lat = lat.upper() if caps else lat[0].upper() + lat[1:]
+        out.append(lat)
+    return "".join(out)
+
+
 def spoken_title_prefix(ch, text):
     """Il titolo che il TTS legge in testa al capitolo, separatore compreso.
 

@@ -38,7 +38,7 @@ from slot_gate import SlotGate
 import tts_split
 from audio_utils import _concatenate_mp3, _generate_silence_mp3
 from env_utils import env_int, env_str
-from text_reflow import _sanitize_tts_text
+from text_reflow import _sanitize_tts_text, uzbek_cyrillic_to_latin
 from voice_utils import rate_speed_factor as _rate_speed_factor_vu
 
 # Endpoint websocket di edge-tts. Dal 10/10/2026 speech.platform.bing.com
@@ -390,6 +390,28 @@ async def _fallback_voice(voice, last_error):
     return _pick_standard_replacement(voice, catalog)
 
 
+# --- Interruzione anticipata di un job che non produce audio -----------------
+# 02/11/2026: un libro uzbeko in cirillico e' andato in silenzio a ogni chunk.
+# Ogni chunk consumava 12 tentativi (voce e ripiego) e due giri di ripasso:
+# circa 75 minuti per job prima del rimborso, rilanciato tre volte
+# dall'utente, con l'allerta admin fatta scattare da quel solo libro. Se i
+# primi `ABM_EDGE_EARLY_ABORT_CHUNKS` chunk del job sono tutti falliti mentre
+# edge-tts serve gli altri (`edge_health.service_ok`), il problema e' del
+# libro o della voce e il job si chiude subito. Con un guasto del servizio
+# (fallisce tutto) si va avanti: il ripasso a fine job puo' ancora
+# recuperare i chunk.
+def early_abort_chunks():
+    """Chunk iniziali tutti falliti oltre i quali il job si interrompe (0 = mai)."""
+    return env_int("ABM_EDGE_EARLY_ABORT_CHUNKS", 8, floor=0)
+
+
+def should_abort_job(failed, processed):
+    """True se i `processed` chunk processati sono tutti falliti, sono almeno
+    `early_abort_chunks()` e edge-tts funziona per gli altri job."""
+    n = early_abort_chunks()
+    return bool(n) and processed >= n and failed >= processed and edge_health.service_ok()
+
+
 def _has_speakable(text):
     """Almeno una lettera o cifra: "." o "· · ·" non producono audio e
     fallirebbero a ogni tentativo (e segnerebbero rotta una voce sana)."""
@@ -550,6 +572,9 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
     if clean is None:
         _generate_silence_mp3(output_path, duration_sec=1)
         return
+    # Le voci uz-UZ leggono solo l'uzbeko latino (vedi text_reflow._UZ_CYR_LAT)
+    if (voice or "").startswith("uz-"):
+        clean = uzbek_cyrillic_to_latin(clean)
 
     # Percorso "split-per-frase" per le voci Multilingual, anche quando lo e'
     # solo il ripiego di una voce standard rotta (`_fallback_voice`)

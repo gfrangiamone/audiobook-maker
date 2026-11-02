@@ -89,6 +89,7 @@ from tts_split import (
     _pick_sentence_slack,
     prepare_tts_text, _normalize_shouting,
 )
+import edge_engine
 from edge_engine import generate_chunk_mp3
 from premium_chunk import generate_chunk_pcm_gemini, _generate_silence_pcm, generate_chunk_pcm_speechify
 
@@ -5982,6 +5983,17 @@ class _GeminiQualityAbort(Exception):
         self.processed = processed
 
 
+class _EdgeAllFailedAbort(Exception):
+    """Sollevata dal loop di generazione edge quando i primi chunk sono tutti
+    falliti e il servizio funziona per gli altri job (vedi
+    `edge_engine.should_abort_job`): il job si chiude con la stessa uscita
+    di "tutti i chunk falliti" senza sintetizzare il resto del libro."""
+    def __init__(self, failed, processed):
+        super().__init__(f"edge all failed: {failed}/{processed}")
+        self.failed = failed
+        self.processed = processed
+
+
 class _AssemblyError(Exception):
     """Sollevata quando il montaggio finale dell'audio non produce un file integro.
 
@@ -6037,6 +6049,44 @@ _PREMIUM_AUDIT = {name: eng.audit_writer for name, eng in _tts_engines.ENGINES.i
 def _premium_engine(use_gemini, use_speechify, use_voxcpm):
     """Nome del motore premium in uso, o "" per Edge/Google."""
     return "gemini" if use_gemini else "speechify" if use_speechify else "voxcpm" if use_voxcpm else ""
+
+
+def _all_chunks_failed_exit(job_id, job, voice, info, engine, failed, total):
+    """F3 — Guardia output muto (qualsiasi engine tranne Gemini, che ha il suo
+    controllo di qualita'): se TUTTI i chunk sono falliti il file sarebbe
+    silenzio puro, non l'audiolibro richiesto. Consegnarlo via email (status
+    'partial') significa spedire all'utente un m4b completamente muto. Tipico
+    di un job mis-instradato dal recovery (voce vuota -> "Invalid voice ''" su
+    ogni chunk) o di un testo che la voce non legge (uzbeko cirillico,
+    02/11/2026). Errore + rimborso, MAI consegnare. `total` sono i chunk del
+    libro o, sull'interruzione anticipata edge, quelli gia' processati."""
+    _set_job_status(job, "error")
+    _user_msg = (
+        "Generazione interrotta: nessun segmento audio è stato sintetizzato "
+        "correttamente (voce non valida o servizio TTS non disponibile). "
+        "L'audio sarebbe stato completamente muto: rimborso integrale già emesso."
+    )
+    job["error"] = _user_msg
+    job["user_facing_error"] = _user_msg
+    print(f"[{job_id}] ALL CHUNKS FAILED ({failed}/{total}) "
+          f"engine={engine} -> error + refund, nessuna consegna.")
+    _eng = _premium_engine(False, engine == "speechify", engine == "voxcpm")
+    if _eng:
+        # Motore premium: il pagamento vive in job["payment"] (stessa
+        # tasca di Gemini); chiusura unica con audit, rimborso, avvisi
+        # a utente e admin, pending (prima: solo rimborso e audit).
+        _premium_fail(job_id, job, voice, info, _eng,
+                      "failed_all_chunks_refunded",
+                      f"all_chunks_failed: {failed}/{total}",
+                      reason_detail=f"all chunks failed ({failed}/{total})",
+                      chunks_total=total, chunks_failed=failed)
+        return
+    try:
+        # Edge: tasca LLM (payment_amount_eur), non job["payment"].
+        _refund_job_payment(job_id, job, f"all_chunks_failed: {failed}/{total}")
+    except Exception as _ref_err:
+        print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+    _mark_pending_failed(job_id, "failed_all_chunks_refunded")
 
 
 def _write_premium_audit(job_id, job, voice, info, outcome, engine):
@@ -7257,6 +7307,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             failed_chunks += 1
             _failed_idx.add(i)
             chunk_reuse.mark_failed(work_dir, i)
+            if engine == "edge" and edge_engine.should_abort_job(failed_chunks, i + 1):
+                print(f"[{job_id}] edge: primi {i + 1} chunk tutti falliti con il "
+                      f"servizio attivo per gli altri job -> stop generazione e refund.")
+                raise _EdgeAllFailedAbort(failed_chunks, i + 1)
             if use_gemini and _ea_ratio <= 1.0:
                 _proc = i + 1
                 if _proc >= _ea_min and (failed_chunks / _proc) > _ea_ratio:
@@ -7905,40 +7959,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                    failed_chunks, _tot_chunks_safe)
             return
 
-        # F3 — Guardia output muto (qualsiasi engine, in particolare edge-tts dove
-        # il blocco quality sopra NON si applica): se TUTTI i chunk sono falliti,
-        # il file prodotto è silenzio puro — non è l'audiolibro richiesto.
-        # Consegnarlo via email (status 'partial') significa spedire all'utente un
-        # m4b completamente muto. Tipico di un job mis-instradato dal recovery
-        # (voce vuota -> "Invalid voice ''" su ogni chunk). Trattare come errore +
-        # rimborso, MAI consegnare.
+        # F3 — Guardia output muto (vedi _all_chunks_failed_exit).
         if not use_gemini and failed_chunks >= _tot_chunks_safe:
-            _set_job_status(job, "error")
-            _user_msg = (
-                "Generazione interrotta: nessun segmento audio è stato sintetizzato "
-                "correttamente (voce non valida o servizio TTS non disponibile). "
-                "L'audio sarebbe stato completamente muto: rimborso integrale già emesso."
-            )
-            job["error"] = _user_msg
-            job["user_facing_error"] = _user_msg
-            print(f"[{job_id}] ALL CHUNKS FAILED ({failed_chunks}/{_tot_chunks_safe}) "
-                  f"engine={engine} -> error + refund, nessuna consegna.")
-            if use_speechify or use_voxcpm:
-                # Motore premium: il pagamento vive in job["payment"] (stessa
-                # tasca di Gemini); chiusura unica con audit, rimborso, avvisi
-                # a utente e admin, pending (prima: solo rimborso e audit).
-                _premium_fail(job_id, job, voice, info, _premium_engine(False, use_speechify, use_voxcpm),
-                              "failed_all_chunks_refunded",
-                              f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}",
-                              reason_detail=f"all chunks failed ({failed_chunks}/{_tot_chunks_safe})",
-                              chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks)
-                return
-            try:
-                # Edge: tasca LLM (payment_amount_eur), non job["payment"].
-                _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
-            except Exception as _ref_err:
-                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-            _mark_pending_failed(job_id, "failed_all_chunks_refunded")
+            _all_chunks_failed_exit(job_id, job, voice, info, engine,
+                                    failed_chunks, _tot_chunks_safe)
             return
 
         # Guardia output: un assembly fallito (es. ENOSPC / disco pieno, errore
@@ -8029,6 +8053,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # processati (denominatore = _qa.processed), senza completare il libro.
         _gemini_quality_refund(job_id, job, voice, info,
                                _qa.failed, _qa.processed, early=True)
+        return
+    except _EdgeAllFailedAbort as _ea:
+        job["failed_chunks"] = _ea.failed
+        job["total_chunks"] = max(1, int(total_chunks))
+        _all_chunks_failed_exit(job_id, job, voice, info, engine,
+                                _ea.failed, _ea.processed)
         return
     except _CancelledError:
         still_current = job.get("gen_epoch", 0) == my_epoch
