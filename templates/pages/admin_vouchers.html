@@ -20,12 +20,16 @@
   button.danger{background:var(--err)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-  .panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px 20px;flex-wrap:wrap;margin-bottom:14px}
+  .panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px 20px;flex-wrap:wrap;margin-bottom:14px}
   .panel-head h2{margin:0}
-  .summary{display:grid;grid-template-columns:1fr auto;gap:3px 18px;font-size:.85rem;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px}
-  .summary span{color:var(--muted)}
-  .summary b{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
-  @media(max-width:600px){.row,.row3{grid-template-columns:1fr}.summary{width:100%}}
+  /* Riepilogo in orizzontale (etichetta sopra, valore sotto) sulla riga del
+     titolo: in colonna occupava sei righe accanto a uno spazio vuoto. */
+  .summary{display:flex;flex-wrap:wrap;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 0}
+  .summary .sum-item{display:flex;flex-direction:column;gap:1px;padding:2px 14px;border-left:1px solid #334155}
+  .summary .sum-item:first-child{border-left:none}
+  .summary span{color:var(--muted);font-size:.72rem;white-space:nowrap}
+  .summary b{font-size:.95rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+  @media(max-width:600px){.row,.row3{grid-template-columns:1fr}.summary{width:100%;display:grid;grid-template-columns:1fr 1fr;row-gap:6px}.summary .sum-item{border-left:none}.summary span{white-space:normal}}
   .msg{padding:10px 14px;border-radius:6px;margin:12px 0;font-size:.9rem}
   .msg.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid var(--ok)}
   .msg.err{background:rgba(239,68,68,.15);color:var(--err);border:1px solid var(--err)}
@@ -232,7 +236,7 @@ function renderSummary(rows){
   ];
   if(revoked>=0.005)lines.push(['Revocato non utilizzato',eur(revoked),'var(--muted)']);
   document.getElementById('summary').innerHTML=lines.map(function(l){
-    return '<span>'+l[0]+'</span><b'+(l[2]?' style="color:'+l[2]+'"':'')+'>'+l[1]+'</b>';
+    return '<div class="sum-item"><span>'+l[0]+'</span><b'+(l[2]?' style="color:'+l[2]+'"':'')+'>'+l[1]+'</b></div>';
   }).join('');
 }
 
