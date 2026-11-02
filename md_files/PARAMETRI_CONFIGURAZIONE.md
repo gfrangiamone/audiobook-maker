@@ -12,7 +12,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore default | File | Riga |
 |-----------|---------------|------|------|
-| `ABM_DATA_DIR` | `"/var/lib/audiobook-maker/data"` | `audiobook_app.py` | 77 |
+| `ABM_DATA_DIR` | `"/var/lib/audiobook-maker/data"`. **In produzione** (`ABM_BASE_URL` https pubblico, `env_utils.is_public_https_url`) dev'essere impostata, esistere e non essere vuota, altrimenti l'avvio si rifiuta con `[startup] FATALE: ...` ed exit 1 (`fileio.data_dir_problem`, incidente 2026-11-02). In prod vive nel drop-in `audiobook-maker.service.d/datadir.conf`, separato da `override.conf` | `audiobook_app.py`, `fileio.py` | `data_dir_problem` |
+| `ABM_DATA_DIR_ALLOW_EMPTY` | vuoto (spento). `1` ammette in produzione una `ABM_DATA_DIR` esistente ma vuota: solo per la prima installazione di un server | `fileio.py` | `data_dir_problem` |
 | `ABM_PORT` | `5601` (porta di bind di `app.run`, utile per affiancare istanze separate sullo stesso host — es. test vs prod) | `audiobook_app.py` | 8341 |
 | `ABM_DEBUG` | `0` (Werkzeug debugger + auto-reload; valori truthy: `1`/`true`/`yes`/`on`). In produzione **deve** restare disattivato | `audiobook_app.py` | 8342 |
 | `ABM_SMTP_HOST` | `""` (vuoto) | `audiobook_app.py` | 91 |

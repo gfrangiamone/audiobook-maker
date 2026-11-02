@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 import requests
 
 import retry_util
-from env_utils import env_str
+from env_utils import env_str, is_public_https_url
 from fileio import data_path
 from monthly_ledger import JsonDoc
 
@@ -33,7 +33,6 @@ _ATTEMPTS = 3
 _TIMEOUT_SEC = 20
 _KEY_RE = re.compile(r"[A-Za-z0-9-]{8,128}")
 _ENTRY_RE = re.compile(r"<loc>([^<]+)</loc>\s*<lastmod>([^<]+)</lastmod>")
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 _DOC = JsonDoc(lambda: data_path("_indexnow_sent.json"))
 _warned_bad_key = False
@@ -58,15 +57,6 @@ def key() -> str:
                   flush=True)
         return ""
     return k
-
-
-def is_public_base(base_url: str) -> bool:
-    """Solo un https pubblico: in locale e in CI (http://localhost) non si invia nulla."""
-    u = urlparse(base_url or "")
-    host = (u.hostname or "").lower()
-    if u.scheme != "https" or not host:
-        return False
-    return host not in _LOCAL_HOSTS and not host.endswith((".localhost", ".test"))
 
 
 def sitemap_entries(xml: str) -> dict:
@@ -107,7 +97,7 @@ def sync(sitemap_fn, base_url_fn, *, post=None, sleep=time.sleep) -> int:
     """Invia gli URL cambiati; ritorna quanti ne sono stati accettati."""
     k = key()
     base = base_url_fn() or ""
-    if not k or not is_public_base(base):
+    if not k or not is_public_https_url(base):
         return 0
     entries = sitemap_entries(sitemap_fn() or "")
     if not entries:
@@ -137,7 +127,7 @@ def _run(sitemap_fn, base_url_fn):
 
 def start(sitemap_fn, base_url_fn):
     """Thread daemon di boot; non parte senza chiave o senza base https pubblica."""
-    if not key() or not is_public_base(base_url_fn() or ""):
+    if not key() or not is_public_https_url(base_url_fn() or ""):
         return None
     t = threading.Thread(target=_run, args=(sitemap_fn, base_url_fn), daemon=True,
                          name="indexnow")

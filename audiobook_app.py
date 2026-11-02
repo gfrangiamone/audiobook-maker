@@ -20,7 +20,7 @@ import retry_util
 import seo_ld
 from ratelimit import cooldown_counter as _cooldown_counter, sliding_check as _sliding_check
 from client_identity import EMAIL_RE as _ACCT_EMAIL_RE, ip_salt as _ip_salt, mask_email as _mask_email_ci, network_of as _network_of, salted_hash as _salted_hash
-from fileio import atomic_write_json, data_dir, load_json
+from fileio import atomic_write_json, data_dir, data_dir_problem, load_json
 from env_utils import env_bool, env_float, env_int, env_str
 import shutil
 import sys
@@ -417,6 +417,12 @@ def add_security_headers(response):
 
 # Directory di lavoro persistente (sopravvive ai restart del servizio)
 # Configurabile via ABM_DATA_DIR (default in fileio.DEFAULT_DATA_DIR).
+# In produzione una cartella dati sbagliata non si usa: meglio un avvio fallito
+# (il deploy lo vede su /healthz) che un'ora di job su una cartella vuota.
+_data_dir_problem = data_dir_problem()
+if _data_dir_problem:
+    print(f"[startup] FATALE: {_data_dir_problem}. Avvio rifiutato.", file=sys.stderr, flush=True)
+    sys.exit(1)
 _DATA_DIR = str(data_dir())
 UPLOAD_DIR = Path(_DATA_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

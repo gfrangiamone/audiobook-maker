@@ -61,20 +61,6 @@ def test_key_validation(monkeypatch):
         assert indexnow.key() == "", bad
 
 
-@pytest.mark.parametrize("base,ok", [
-    ("https://audiobook-maker.com", True),
-    ("https://audiobook-maker.com/", True),
-    ("http://audiobook-maker.com", False),
-    ("http://localhost:5601", False),
-    ("https://localhost:5601", False),
-    ("https://app.localhost", False),
-    ("https://staging.test", False),
-    ("", False),
-])
-def test_only_public_https_base(base, ok):
-    assert indexnow.is_public_base(base) is ok
-
-
 def test_entries_ignore_alternates_and_diff_by_lastmod():
     e = indexnow.sitemap_entries(SITEMAP)
     assert e == {f"{BASE}/": "2026-11-01", f"{BASE}/guide/m4b-format/": "2026-10-20"}

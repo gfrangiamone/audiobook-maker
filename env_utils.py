@@ -19,6 +19,7 @@ all'import, salvo dove il chiamante lo decide esplicitamente.
 """
 import os
 import sys
+from urllib.parse import urlparse
 
 _TRUE = frozenset({"1", "true", "yes", "on", "y", "t"})
 _FALSE = frozenset({"0", "false", "no", "off", "n", "f"})
@@ -86,3 +87,17 @@ def env_bool(name, default=False, *, fallback=None):
         return False
     _warn(name, raw, default)
     return bool(default)
+
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_public_https_url(url):
+    """True per un URL https con host pubblico (la produzione): in locale e in
+    CI `ABM_BASE_URL` e' http://localhost, e li' non si notifica nulla
+    all'esterno ne' si pretende una cartella dati gia' popolata."""
+    u = urlparse(url or "")
+    host = (u.hostname or "").lower()
+    if u.scheme != "https" or not host:
+        return False
+    return host not in _LOCAL_HOSTS and not host.endswith((".localhost", ".test"))

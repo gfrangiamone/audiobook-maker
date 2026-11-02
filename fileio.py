@@ -7,6 +7,8 @@ ripetuto in nove file):
 
 - `data_dir()` / `data_path(name)`: la cartella dati (`ABM_DATA_DIR`), letta
   a ogni chiamata perche' i test la cambiano per isolare lo stato;
+- `data_dir_problem()`: in produzione la cartella dati deve essere esplicita,
+  esistente e non vuota (l'avvio si rifiuta altrimenti);
 - `atomic_write_json` / `atomic_write_text`: tmp + fsync opzionale +
   `os.replace`, mai un file osservabile troncato; propagano le eccezioni;
 - `write_json_safe`: come sopra ma non solleva mai (True/False) e non lascia
@@ -25,7 +27,7 @@ import threading
 import time
 from pathlib import Path
 
-from env_utils import env_str
+from env_utils import env_bool, env_str, is_public_https_url
 
 DEFAULT_DATA_DIR = "/var/lib/audiobook-maker/data"
 
@@ -33,6 +35,33 @@ DEFAULT_DATA_DIR = "/var/lib/audiobook-maker/data"
 def data_dir():
     """Cartella dati persistente (`ABM_DATA_DIR`), letta a ogni chiamata."""
     return Path(env_str("ABM_DATA_DIR", DEFAULT_DATA_DIR))
+
+
+def data_dir_problem():
+    """Motivo per cui la cartella dati non va usata, None se va bene.
+
+    Solo in produzione (`ABM_BASE_URL` https pubblico): in locale e nei test il
+    default e' lecito. Incidente 2026-11-02: un override systemd riscritto senza
+    `ABM_DATA_DIR` ha fatto partire la produzione su DEFAULT_DATA_DIR vuota
+    (recovery senza descrittori, token, voucher e account invisibili, audit
+    vuoti). `ABM_DATA_DIR_ALLOW_EMPTY=1` solo per la prima installazione."""
+    if not is_public_https_url(env_str("ABM_BASE_URL")):
+        return None
+    raw = env_str("ABM_DATA_DIR")
+    if not raw:
+        return f"ABM_DATA_DIR non impostata (il default {DEFAULT_DATA_DIR} non e' la cartella dei dati)"
+    p = Path(raw)
+    if not p.is_dir():
+        return f"ABM_DATA_DIR={raw} non esiste"
+    if env_bool("ABM_DATA_DIR_ALLOW_EMPTY"):
+        return None
+    try:
+        empty = next(p.iterdir(), None) is None
+    except OSError as e:
+        return f"ABM_DATA_DIR={raw} illeggibile: {e}"
+    if empty:
+        return f"ABM_DATA_DIR={raw} e' vuota (prima installazione: ABM_DATA_DIR_ALLOW_EMPTY=1)"
+    return None
 
 
 def data_path(name):

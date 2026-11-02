@@ -67,4 +67,4 @@ def test_env_utils_is_a_leaf():
     src = pathlib.Path(eu.__file__).read_text(encoding="utf-8")
     mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
-    assert mods <= {"os", "sys"}
+    assert mods <= {"os", "sys", "urllib"}          # solo stdlib
