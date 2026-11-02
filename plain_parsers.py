@@ -1,6 +1,7 @@
 """plain_parsers — parser dei file di testo semplice (TXT) e di progetto (ABM).
 
-Modulo foglia (stdlib + `book_model`, `text_reflow`, `secure_archive`). Fino a
+Modulo foglia (stdlib + `charset_normalizer` + `book_model`, `text_reflow`,
+`secure_archive`). Fino a
 F1b (2026-10-10) `parse_txt` e `parse_abm` vivevano in `generation_engine`,
 che li riesporta con gli stessi nomi; `audiobook_app` li importa da qui.
 
@@ -11,29 +12,72 @@ stesso modo da qualunque formato. Il resto della pulizia EPUB/PDF (rumore
 di impaginazione, numeri di pagina) non si applica: un TXT scritto a mano o
 un ABM gia' ottimizzato non ne hanno bisogno.
 """
+import codecs
 import json
 import zipfile
 from pathlib import Path
+
+import charset_normalizer
 
 import text_reflow
 from book_model import BookInfo, Chapter
 from secure_archive import ZipSafetyError, check_zip_bomb, safe_zip_path
 
 
+# Codepage a 8 bit di alfabeti non latini: un TXT russo in cp1251 letto come
+# latin-1 diventava "Ãîâàðä Ô. Ëàâêðàôò" e la voce russa lo leggeva lettera per
+# lettera senza che nessun chunk fallisse (02/11/2026, royallib.com).
+_NON_LATIN_CODEPAGES = ("cp1251", "koi8_r", "koi8_u", "cp866", "mac_cyrillic",
+                        "iso8859_5", "cp1253", "iso8859_7", "cp1255", "iso8859_8",
+                        "cp1256", "iso8859_6", "cp874", "cp1258")
+# Quota di byte >= 0x80 fra le lettere oltre la quale il testo non e' una
+# lingua latina con qualche accento (francese, polacco, ceco stanno sotto il 20%).
+_NON_LATIN_HIGH_RATIO = 0.4
+# "ł" e "ą" in cp1250 sono "³" e "¹" in cp1252: in polacco fanno ~3% delle
+# lettere, nella prosa occidentale quasi mai.
+_CP1250_POLISH_MARKS = ("³", "¹")
+_CP1250_POLISH_MIN_RATIO = 0.005
+
+
+def decode_text_bytes(data):
+    """Decodifica il testo di un TXT o di un capitolo ABM.
+
+    UTF-8 (con o senza BOM) e BOM UTF-16/32 prima di tutto; poi, se quasi tutte
+    le lettere sono byte alti, una codepage non latina scelta da
+    charset_normalizer; altrimenti cp1252 (cp1250 se il testo ha l'aspetto del
+    polacco), con latin-1 come ultimo ripiego. charset_normalizer non si usa sui
+    testi latini: un italiano in latin-1 lo scambia per cp1250 ("città" -> "cittŕ")."""
+    for bom, enc in ((codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+                     (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16")):
+        if data.startswith(bom):
+            return data.decode(enc, errors="replace")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+
+    high = sum(1 for b in data if b >= 0x80)
+    ascii_letters = sum(1 for b in data if 0x41 <= b <= 0x5A or 0x61 <= b <= 0x7A)
+    if high and high / (high + ascii_letters) > _NON_LATIN_HIGH_RATIO:
+        best = charset_normalizer.from_bytes(data, cp_isolation=list(_NON_LATIN_CODEPAGES)).best()
+        if best is not None:
+            return str(best)
+
+    try:
+        text = data.decode("cp1252")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
+    letters = sum(1 for ch in text if ch.isalpha())
+    marks = sum(text.count(m) for m in _CP1250_POLISH_MARKS)
+    if letters and marks / letters > _CP1250_POLISH_MIN_RATIO:
+        return data.decode("cp1250", errors="replace")
+    return text
+
+
 def parse_txt(file_path):
     """Parse a plain text file into a one-chapter BookInfo."""
     path = Path(file_path)
-    # Try UTF-8 first, fall back to latin-1
-    for enc in ("utf-8", "utf-8-sig", "latin-1"):
-        try:
-            text = path.read_text(encoding=enc)
-            break
-        except (UnicodeDecodeError, ValueError):
-            continue
-    else:
-        text = path.read_text(encoding="latin-1", errors="replace")
-
-    text = text.strip()
+    text = decode_text_bytes(path.read_bytes()).strip()
     if not text:
         raise ValueError("Text file is empty")
 
@@ -105,12 +149,10 @@ def parse_abm(file_path):
                 print(f"[abm] WARNING: skipping unsafe chapter path '{raw_path}': {e}")
                 continue
             try:
-                ch_text = zf.read(ch_path).decode("utf-8").strip()
+                ch_text = decode_text_bytes(zf.read(ch_path)).strip()
             except KeyError:
                 print(f"[abm] WARNING: chapter file '{ch_path}' not found in archive, skipping")
                 continue
-            except UnicodeDecodeError:
-                ch_text = zf.read(ch_path).decode("latin-1", errors="replace").strip()
 
             if not ch_text:
                 continue

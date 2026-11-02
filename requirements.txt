@@ -18,6 +18,7 @@ beautifulsoup4>=4.12
 lxml>=5.0
 pymupdf>=1.24  # PDF (importato come fitz/pymupdf in pdf_to_tts)
 defusedxml>=0.7  # XML sicuro in secure_archive
+charset-normalizer>=3.0  # codepage dei TXT non UTF-8 in alfabeti non latini (plain_parsers)
 
 # --- motori TTS e LLM
 edge-tts>=7.3.1  # token Sec-MS-GEC v2: risolve i 403 dell'endpoint legacy (rany2/edge-tts#490)

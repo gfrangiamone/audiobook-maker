@@ -659,6 +659,8 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 | `BOOK_REFLOW_MIN_MEDIAN_LEN` | `40` (= `SOFT_BREAK_MIN_LINE`): lunghezza mediana minima dei paragrafi spezzati; i versi (righe corte) restano intatti | `text_reflow.py` | 39 |
 | `SOFT_BREAK_MIN_LINE` | `40`: su un confine di blocco/pagina PDF, riga più corta seguita da maiuscola = sottotitolo, fine paragrafo | `text_reflow.py` | 25 |
 | `SUSPENDED_HYPHEN_NEXT` | Congiunzioni dopo un trattino sospeso ("Hin- und", "pre- e post-"): il trattino non è sillabazione | `text_reflow.py` | 27 |
+| `_NON_LATIN_HIGH_RATIO` | `0.4`: TXT/capitolo ABM non UTF-8 in cui i byte ≥ 0x80 superano il 40% delle lettere → codepage non latina scelta da `charset_normalizer` fra `_NON_LATIN_CODEPAGES` (cp1251, koi8, cp1253, cp1256, …). Sotto soglia: cp1252, latin-1 se il byte non esiste in cp1252. Dal 02/11/2026 (libro russo cp1251 letto come latin-1) | `plain_parsers.py` | 35 / 30 |
+| `_CP1250_POLISH_MIN_RATIO` | `0.005`: testo latino decodificato cp1252 con "³"/"¹" (= "ł"/"ą" in cp1250) oltre lo 0,5% delle lettere → si rilegge in cp1250. Il ceco in cp1250 non ha questo segnale e resta cp1252 | `plain_parsers.py` | 39 |
 
 ---
 
