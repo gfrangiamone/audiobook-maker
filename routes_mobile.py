@@ -22,6 +22,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, redirect, request
 
+import free_catalog
 import metrics_store
 import storage_backend
 import storage_tiering
@@ -749,10 +750,32 @@ def _resolve_ready_file(dltok):
     return None, None
 
 
+# Un libro del catalogo gratuito non scade: l'app riceve comunque un TTL
+# (un anno) perche' le versioni installate si aspettano il campo.
+_CATALOG_SHARE_TTL_SEC = 365 * 24 * 3600
+
+
+def _share_base_url():
+    base = env_str("ABM_BASE_URL", "").rstrip("/")   # pattern env inline vietato nei moduli nuovi
+    if not base:
+        try:
+            base = request.url_root.rstrip("/")
+        except Exception:
+            base = ""
+    return base
+
+
 @bp.route("/api/share/claim/<token>")
 def api_share_claim(token):
     """Valida la share e ritorna l'URL di download share-scoped (/s/<token>/dl)
-    che impone il TTL. 404 sconosciuta, 410 scaduta."""
+    che impone il TTL. 404 sconosciuta, 410 scaduta. I token `fc-<book_id>`
+    sono i libri del catalogo gratuito (spec catalogo §7.6): permanenti, si
+    risolvono dal catalogo pubblico e non da `token_store`."""
+    book = free_catalog.book_for_share_token(token)
+    if book is not None:
+        return jsonify({"download_url": f"{_share_base_url()}/s/{token}/dl",
+                        "filename": free_catalog.file_name(book),
+                        "ttl_sec_remaining": _CATALOG_SHARE_TTL_SEC})
     info = _tkstore.share_tokens.get(token)
     if not isinstance(info, dict) or info.get("kind") not in SHARE_KINDS:
         return jsonify({"error": "invalid", "error_code": "invalid"}), 404
@@ -760,13 +783,7 @@ def api_share_claim(token):
     if not _share_alive(info, now):
         return jsonify({"error": "expired", "error_code": "expired"}), 410
     remaining = int(info.get("ttl_sec", _share_ttl_sec()) - (now - info.get("created_at", 0)))
-    base = env_str("ABM_BASE_URL", "").rstrip("/")   # pattern env inline vietato nei moduli nuovi
-    if not base:
-        try:
-            base = request.url_root.rstrip("/")
-        except Exception:
-            base = ""
-    return jsonify({"download_url": f"{base}/s/{token}/dl",
+    return jsonify({"download_url": f"{_share_base_url()}/s/{token}/dl",
                     "filename": info.get("filename"),
                     "ttl_sec_remaining": max(0, remaining)})
 
@@ -775,7 +792,13 @@ def api_share_claim(token):
 def share_download(token):
     """Consegna il file della share validando il TTL. ready → file locale via
     _send_file_throttled; upload → redirect alla presigned GET su R2;
-    archive → il libro nell'archivio online dell'account (R2 o job collegato)."""
+    archive → il libro nell'archivio online dell'account (R2 o job collegato);
+    catalogo gratuito (`fc-…`) → redirect al file sul bucket pubblico."""
+    book = free_catalog.book_for_share_token(token)
+    if book is not None:
+        _log_activity("", book["book_id"], "FREE_CATALOG_APP", "", client_ip(), "",
+                      book["book_id"][:2], platform="app")
+        return redirect(book["file"]["url"], code=302)
     info = _tkstore.share_tokens.get(token)
     if (not isinstance(info, dict)
             or info.get("kind") not in SHARE_KINDS

@@ -8638,7 +8638,10 @@ routes_pages.configure(
     HTML_ROOT_TEMPLATES=HTML_ROOT_TEMPLATES,
     base_url=lambda: BASE_URL,
     _detect_lang_from_request=lambda *a, **k: _detect_lang_from_request(*a, **k),
-    _apply_app_attribution=lambda *a, **k: _apply_app_attribution(*a, **k))
+    _apply_app_attribution=lambda *a, **k: _apply_app_attribution(*a, **k),
+    _qr_data_uri=lambda *a, **k: _qr_data_uri(*a, **k),
+    _log_activity=lambda *a, **k: _log_activity(*a, **k),
+    client_ip=lambda *a, **k: client_ip(*a, **k))
 app.register_blueprint(routes_pages.bp)
 # I deep link /t e /s riusano la pagina install del seam pagine.
 routes_tokens.configure(routes_pages._render_install_page)

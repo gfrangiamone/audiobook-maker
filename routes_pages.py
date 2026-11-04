@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, redirect, request, send_file
 
+import free_catalog
 import i18n as _i18n
 import indexnow
 import page_brand
@@ -43,7 +44,8 @@ _SUPPORTED_LANGS = None
 HTML_TEMPLATES = None
 HTML_ROOT_TEMPLATES = None
 
-FUNCS = ['_detect_lang_from_request', '_apply_app_attribution']
+FUNCS = ['_detect_lang_from_request', '_apply_app_attribution',
+         '_qr_data_uri', '_log_activity', 'client_ip']
 VALUES = ('base_url',)
 
 
@@ -71,6 +73,15 @@ def _detect_lang_from_request(*a, **k):
 
 def _apply_app_attribution(*a, **k):
     return _cfg["_apply_app_attribution"](*a, **k)
+
+def _qr_data_uri(*a, **k):
+    return _cfg["_qr_data_uri"](*a, **k)
+
+def _log_activity(*a, **k):
+    return _cfg["_log_activity"](*a, **k)
+
+def client_ip(*a, **k):
+    return _cfg["client_ip"](*a, **k)
 
 
 def _inject_reviews(template_html: str, lang: str) -> str:
@@ -255,6 +266,40 @@ def guide_page_lang(guide_id, lang):
         return "Guide not found", 404
     html = build_guide_html(guide_id, lang, _base_url(), __version__)
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+#  -  -  -  Catalogo audiolibri gratuiti (free_catalog)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+_HTML_TYPE = {"Content-Type": "text/html; charset=utf-8"}
+
+
+@bp.route("/free-audiobooks/")
+def free_catalog_root():
+    # Il pilota parte dall'italiano; la scelta della lingua arriva con le altre.
+    return redirect(f"{free_catalog.PATH}/it/", code=302)
+
+
+@bp.route("/free-audiobooks/<lang>/")
+def free_catalog_hub(lang):
+    page = free_catalog.hub_html(lang, _base_url() or "")
+    return (page, 200, _HTML_TYPE) if page else ("Not found", 404)
+
+
+@bp.route("/free-audiobooks/<lang>/<slug>/")
+def free_catalog_book(lang, slug):
+    page = free_catalog.book_html(lang, slug, _base_url() or "", _qr_data_uri)
+    return (page, 200, _HTML_TYPE) if page else ("Not found", 404)
+
+
+@bp.route("/free-audiobooks/dl/<lang>/<slug>.m4b")
+def free_catalog_download(lang, slug):
+    """Conta lo scaricamento e rimanda al file sul bucket pubblico: il server
+    non serve byte, quindi niente throttle ne' carico sul processo."""
+    book = free_catalog.book(lang, slug)
+    if book is None:
+        return "Not found", 404
+    _log_activity("", book["book_id"], "FREE_CATALOG_DL", "", client_ip(), "", lang,
+                  platform="web")
+    return redirect(book["file"]["url"], code=302)
 
 
 #  -  -  -  sitemap.xml  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
