@@ -56,10 +56,11 @@ _LANG_PRICE_FACTOR = {
     "zh": 3.3,
 }
 
-# Tariffa oraria della fascia GPU su cui gira l'endpoint. Default 0,69 $/h: la
-# RTX PRO 6000 Blackwell MIG 1g.24gb (4 vCPU, 47 GB RAM), l'unica fascia
-# selezionata. Da riverificare quando cambia la selezione: i listini cambiano.
-_USD_PER_HOUR = 0.69
+# Tariffa oraria della fascia GPU su cui gira l'endpoint. Default 0,75 $/h: la
+# RTX PRO 6000 Blackwell MIG 1g.24gb (4 vCPU, 47 GB RAM), "24 GB" nella console
+# RunPod. Era 0,69 fino al listino letto il 04/11/2026: i listini cambiano, da
+# riverificare anche quando cambia la selezione delle fasce.
+_USD_PER_HOUR = 0.75
 
 # Il listino per scheda. Ogni risposta del worker porta `gpu`, quindi il costo
 # di un job si calcola con la tariffa della macchina su cui e' davvero girato
@@ -72,7 +73,7 @@ _USD_PER_HOUR = 0.69
 # di qualsiasi `rtx pro 6000` non e' pedanteria, perche' la scheda intera e'
 # una fascia molto piu' cara della partizione che usiamo.
 _USD_PER_HOUR_BY_GPU = (
-    ("mig 1g.24gb", 0.69),
+    ("mig 1g.24gb", _USD_PER_HOUR),
     ("a40", 1.22),
     ("4090", 1.10),
 )
@@ -131,7 +132,7 @@ def usd_per_hour():
 def _tariffa_dichiarata():
     """Vero se la tariffa e' stata scritta a mano nell'ambiente.
 
-    Conta la PRESENZA della variabile, non il suo valore: chi scrive 0,69 sta
+    Conta la PRESENZA della variabile, non il suo valore: chi scrive 0,75 sta
     dichiarando quella tariffa per tutto l'endpoint, non lasciando il default.
     Ed e' l'ultima parola: il listino per scheda non si consulta piu'.
     """
@@ -169,7 +170,7 @@ def gpu_cost_usd(rows):
 
     Perche' non basta il conto sui caratteri: quello moltiplica una costante
     misurata una volta sola, su una scheda sola, con una forma di libro sola.
-    Non vede la scheda su cui il job e' davvero girato (0,69 contro 1,22 $/h),
+    Non vede la scheda su cui il job e' davvero girato (0,75 contro 1,22 $/h),
     non vede l'accensione del container, e soprattutto non vede i job rifatti
     e i rimbalzi — GPU comprata che non produce un carattere, cioe' proprio i
     job che costano di piu'.
@@ -625,41 +626,61 @@ class _Transitorio(Exception):
     5xx): retry_util lo ritenta, gli altri errori escono subito."""
 
 
-def _submit(payload, session, sleep):
+def _chiamata(ses, sleep, metodo, percorso, corpo=None):
+    """Una chiamata all'endpoint, coi ritentativi sui transitori. Ritorna il JSON.
+
+    Rete giu', 429 e 5xx si ritentano fino a `_SUBMIT_RETRIES` volte; un altro
+    4xx o un 2xx illeggibile no, perche' ripetere la stessa richiesta non li
+    cambia. `metodo` e' "post" o "get"; `percorso` parte da `/` (es. `/run`).
+
+    Raises:
+        _Transitorio: tentativi esauriti.
+        VoxcpmJobError: risposta definitiva sbagliata.
+    """
     def _once(_tentativo):
+        url = f"{_base()}{percorso}"
         try:
-            r = session.post(f"{_base()}/run", headers=_headers(),
-                             json=payload, timeout=60)
+            if metodo == "post":
+                r = ses.post(url, headers=_headers(), json=corpo, timeout=60)
+            else:
+                r = ses.get(url, headers=_headers(), timeout=60)
         except requests.RequestException as e:
             raise _Transitorio(str(e)) from e
         if r.status_code < 400:
             try:
-                return r.json()["id"]
-            except (ValueError, KeyError, TypeError) as e:
-                # Un 2xx senza un id valido non e' un transitorio da
-                # ritentare: e' una risposta che il worker non sa dare.
-                raise VoxcpmJobError(
-                    f"risposta di /run senza un id valido: {e}")
+                return r.json()
+            except ValueError as e:
+                raise VoxcpmJobError(f"risposta di {percorso} illeggibile: {e}")
         if r.status_code not in _HTTP_TRANSIENT:
             raise VoxcpmJobError(f"HTTP {r.status_code}: {r.text[:200]}")
         raise _Transitorio(f"HTTP {r.status_code}")
 
     def _avviso(tentativo, e, pausa):
         _LOG.warning(
-            "sottomissione del job fallita (%s), tentativo %d di %d: "
-            "riprovo fra %.0f s", e, tentativo + 1, _SUBMIT_RETRIES, pausa)
+            "chiamata %s fallita (%s), tentativo %d di %d: riprovo fra %.0f s",
+            percorso, e, tentativo + 1, _SUBMIT_RETRIES, pausa)
 
+    return _retry.retry_call(
+        _once, attempts=_SUBMIT_RETRIES, sleep=sleep, on_retry=_avviso,
+        is_retryable=lambda e: isinstance(e, _Transitorio),
+        wait=lambda t, _e: _retry.backoff(t, base=_SUBMIT_PAUSA_SEC, cap=_SUBMIT_PAUSA_MAX_SEC))
+
+
+def _submit(payload, session, sleep):
     try:
-        return _retry.retry_call(
-            _once, attempts=_SUBMIT_RETRIES, sleep=sleep, on_retry=_avviso,
-            is_retryable=lambda e: isinstance(e, _Transitorio),
-            wait=lambda t, _e: _retry.backoff(t, base=_SUBMIT_PAUSA_SEC, cap=_SUBMIT_PAUSA_MAX_SEC))
+        risposta = _chiamata(session, sleep, "post", "/run", payload)
     except _Transitorio as e:
         # Tipo dedicato, non `VoxcpmJobError` nudo: chi orchestra il capitolo
         # deve poter distinguere «il job non e' mai partito» da un guasto della
         # sintesi, ed e' su quel tipo che `synthesize_chapter` risottomette.
         raise VoxcpmSottomissioneFallita(
             f"esauriti i tentativi di sottomissione ({e})") from None
+    try:
+        return risposta["id"]
+    except (KeyError, TypeError) as e:
+        # Un 2xx senza un id valido non e' un transitorio da ritentare: e'
+        # una risposta che il worker non sa dare.
+        raise VoxcpmJobError(f"risposta di /run senza un id valido: {e}")
 
 
 # Tetto della GET /health chiamata dal campionatore di carico ogni 30 s: deve
@@ -720,6 +741,11 @@ def cancel_job(job_id, *, session=None):
 _TICK_ANNULLAMENTO_S = 1.0
 
 
+def _policy(tetto_exec):
+    """L'Execution Timeout chiesto a RunPod: il tetto del client piu' il margine."""
+    return {"executionTimeout": int((tetto_exec + _EXEC_TIMEOUT_MARGINE_S) * 1000)}
+
+
 def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
             queue_timeout=None, clock=time.time, on_queue=None, cancelled=None,
             on_billing=None, on_progress=None):
@@ -777,8 +803,7 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
     # tetto del client piu' il margine, cosi' i due non possono divergere.
     # Copia, non modifica: `synthesize_chapter` rilegge il suo payload.
     corpo = dict(payload)
-    corpo.setdefault("policy", {
-        "executionTimeout": int((tetto_exec + _EXEC_TIMEOUT_MARGINE_S) * 1000)})
+    corpo.setdefault("policy", _policy(tetto_exec))
     job_id = _submit(corpo, ses, sleep)
     try:
         return _attendi_esito(job_id, ses, sleep, attesa, tetto_exec,
@@ -896,6 +921,58 @@ def _residuo_di_avanzamento(out):
     return True
 
 
+def _esito_terminale(st, job_id, on_billing=None):
+    """L'esito di un job in stato terminale: l'`output` se e' riuscito,
+    altrimenti l'eccezione della tabella §9.4.
+
+    `st` ha la forma della risposta di `/status`, che e' anche quella delle
+    righe dei risultati di un batch (`status`, `output`, `error`,
+    `executionTime`, `delayTime`): i due trasporti si giudicano allo stesso
+    modo. La riga di fattura va a `on_billing` prima del verdetto.
+    """
+    stato = st.get("status")
+    out = st.get("output")
+    out = out if isinstance(out, dict) else {}
+    if _residuo_di_avanzamento(out):
+        # Il worker e' morto senza mai scrivere l'esito: quello che
+        # resta in `output` e' ancora una riga d'avanzamento, non un
+        # esito. Trattarla come assente riporta `dettaglio` qui sotto
+        # su `st.get("error")`.
+        out = {}
+    if on_billing is not None:
+        # Prima di decidere se questo e' un successo o un guasto: la
+        # GPU che si e' fermata a meta' l'abbiamo comprata lo stesso, e
+        # se la riga uscisse solo dal ramo riuscito il costo dei
+        # ritentativi sparirebbe dal conto. `executionTime` e
+        # `delayTime` sono millisecondi, e li mette RunPod, non il
+        # worker: sono la fattura, non il cronometro dell'handler.
+        _riga_costo(on_billing, st, out, job_id)
+    if stato == "COMPLETED" and not out.get("error"):
+        return out
+    # L'`output` per primo, quando c'e': il worker che rifiuta o che
+    # muore risponde con un dizionario — `engine_dead`, `bounced`, la
+    # scheda, la VRAM libera — mentre `error` di RunPod e' la sola
+    # stringa. Leggere prima quella butterebbe via proprio i campi
+    # messi li' per diagnosticare il guasto.
+    dettaglio = json.dumps(out) if out else json.dumps(
+        st.get("error") or st)
+    testo = f"job {job_id} {stato}: {_accorcia_dettaglio(dettaglio)}"
+    if out.get("error") and len(dettaglio) > (_DETTAGLIO_TESTA
+                                              + _DETTAGLIO_CODA):
+        # Su un'uscita lunga (chunk_samples, verifiche) la chiave
+        # `error` cade nel mezzo tagliato via: senza questa riga il
+        # motivo del guasto non resta in nessun log.
+        testo += f" | error: {str(out['error'])[:_DETTAGLIO_CODA]}"
+    if (stato in ("TIMED_OUT", "CANCELLED")
+            or _EXEC_TIMEOUT_RUNPOD in dettaglio.lower()):
+        # RunPod l'ha chiuso lei, non il worker: e' "partito e mai
+        # arrivato", cioe' esattamente VoxcpmBloccato (§9.4) — non un
+        # generico VoxcpmJobError non ritentabile. L'Execution Timeout
+        # dell'endpoint arriva come FAILED, ma e' lo stesso caso.
+        raise VoxcpmBloccato(testo, job_id)
+    raise _errore_del_job(out, testo, job_id, completo=dettaglio)
+
+
 def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
                     on_queue, cancelled=None, on_billing=None,
                     on_progress=None):
@@ -948,46 +1025,7 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
         if t_run is None and stato == "IN_PROGRESS":
             t_run = clock()
         if stato in ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"):
-            out = st.get("output")
-            out = out if isinstance(out, dict) else {}
-            if _residuo_di_avanzamento(out):
-                # Il worker e' morto senza mai scrivere l'esito: quello che
-                # resta in `output` e' ancora una riga d'avanzamento, non un
-                # esito. Trattarla come assente riporta `dettaglio` qui sotto
-                # su `st.get("error")`.
-                out = {}
-            if on_billing is not None:
-                # Prima di decidere se questo e' un successo o un guasto: la
-                # GPU che si e' fermata a meta' l'abbiamo comprata lo stesso, e
-                # se la riga uscisse solo dal ramo riuscito il costo dei
-                # ritentativi sparirebbe dal conto. `executionTime` e
-                # `delayTime` sono millisecondi, e li mette RunPod, non il
-                # worker: sono la fattura, non il cronometro dell'handler.
-                _riga_costo(on_billing, st, out, job_id)
-            if stato == "COMPLETED" and not out.get("error"):
-                return out
-            # L'`output` per primo, quando c'e': il worker che rifiuta o che
-            # muore risponde con un dizionario — `engine_dead`, `bounced`, la
-            # scheda, la VRAM libera — mentre `error` di RunPod e' la sola
-            # stringa. Leggere prima quella butterebbe via proprio i campi
-            # messi li' per diagnosticare il guasto.
-            dettaglio = json.dumps(out) if out else json.dumps(
-                st.get("error") or st)
-            testo = f"job {job_id} {stato}: {_accorcia_dettaglio(dettaglio)}"
-            if out.get("error") and len(dettaglio) > (_DETTAGLIO_TESTA
-                                                      + _DETTAGLIO_CODA):
-                # Su un'uscita lunga (chunk_samples, verifiche) la chiave
-                # `error` cade nel mezzo tagliato via: senza questa riga il
-                # motivo del guasto non resta in nessun log.
-                testo += f" | error: {str(out['error'])[:_DETTAGLIO_CODA]}"
-            if (stato in ("TIMED_OUT", "CANCELLED")
-                    or _EXEC_TIMEOUT_RUNPOD in dettaglio.lower()):
-                # RunPod l'ha chiuso lei, non il worker: e' "partito e mai
-                # arrivato", cioe' esattamente VoxcpmBloccato (§9.4) — non un
-                # generico VoxcpmJobError non ritentabile. L'Execution Timeout
-                # dell'endpoint arriva come FAILED, ma e' lo stesso caso.
-                raise VoxcpmBloccato(testo, job_id)
-            raise _errore_del_job(out, testo, job_id, completo=dettaglio)
+            return _esito_terminale(st, job_id, on_billing)
 
         # Dopo il blocco degli stati terminali, non prima: nessun parziale
         # puo' essere scambiato per un esito, e l'uscita dal ciclo resta
@@ -1563,6 +1601,222 @@ def _riga_coda_tagliata(d):
                misure))
 
 
+def _stats_vuote():
+    """Le misure di un capitolo prima di qualunque job: tutte a zero.
+
+    Una sola forma per `/run` e per il batch, cosi' l'accumulo in
+    `generation_engine` legge le stesse chiavi da entrambi.
+    """
+    return {"sample_rate": 0, "chars": 0, "audio_seconds": 0.0,
+            "tts_seconds": 0.0, "jobs": 0, "redone": 0, "bounced": 0,
+            # Strutturalmente sempre 0: un tentativo con chunk a silenzio
+            # non arriva mai al `return` sotto (si rifa' o solleva), quindi
+            # la consegna che esce da questo ciclo non ne ha mai.
+            "failed_chunks": 0, "bytes": 0,
+            # Campioni di ogni chunk dentro il PCM consegnato, in ordine:
+            # servono a chi manda piu' capitoli in un job solo per
+            # ritagliarli. Vuota se il worker non li manda.
+            "chunk_samples": [],
+            # Le code che il worker ha verificato e consegnato lo stesso,
+            # ancora tagliate dopo i suoi ritentativi. Non fanno fallire
+            # niente: sono l'unica traccia che resta di una frase finita a
+            # meta', e senza questo numero il difetto arriva nell'M4B senza
+            # che nessuno lo sappia.
+            "code_tagliate": 0,
+            # E per ognuna di quelle code, il giudizio che il worker le ha
+            # dato: la coda attesa e quella udita affiancate, con le misure.
+            # Senza questo il conteggio sopra dice che il difetto c'e' ma non
+            # che cosa sia, e su un numero non si tara niente.
+            "code_tagliate_dettaglio": [],
+            # Le tre misure che dicono quanto e' costata la verifica e
+            # quanto e' servita. `code_tagliate` da solo conta i falliti
+            # ma non i tentati: un capitolo con zero code tagliate puo'
+            # aver richiesto sei ritentativi o nessuno, e la differenza e'
+            # esattamente cio' che dice se la verifica sta lavorando.
+            "verifica_chunk": 0,       # chunk passati sotto l'ASR
+            "verifica_sospetti": 0,    # ritentativi giudicati necessari
+            # Necessari ma mai tentati: sopra il tetto (VERIFY_MAX_FRAC) il
+            # worker rigenera solo i rotti conclamati. Sono difettosi
+            # quanto i falliti, ma nessun tentativo li ha mancati.
+            "verifica_rinunciati": 0,
+            "verifica_giri": 0,        # giri di rigenerazione spesi
+            # La curva dei rientri: quanti chunk sono tornati sani al primo
+            # giro, quanti al secondo, quanti al terzo. `verifica_giri` dice
+            # quanti giri ha speso il capitolo, `code_tagliate` quanti chunk
+            # non sono rientrati: nessuno dei due dice se un giro in piu'
+            # pagherebbe. Questa lista si', perche' e' la sola che mostra se
+            # il recupero sta ancora rendendo quando i giri finiscono.
+            "verifica_rientri": [],
+            # Gli allarmi che il rilevatore ha visto e taciuto perche' la
+            # coda conteneva un numero: l'ASR scrive «1967» dove il testo
+            # dice «millenovecentosessantasette», e senza questa regola il
+            # chunk sano si ricomprava tre volte. Contarli e' l'unico modo
+            # di accorgersi se la regola smette di funzionare — una lingua
+            # nuova, una grafia che le tabelle non conoscono.
+            "verifica_numerali": 0,        # code con un numero dentro
+            "verifica_falsi_numerali": 0,  # di quelle, allarmi spenti
+            # Lo stesso per la regola della grafia, l'altro vizio del
+            # riconoscitore: «di se» dove il testo dice «disse». Contatore
+            # separato perche' i due difetti non si guastano insieme, e un
+            # totale unico nasconderebbe quale dei due sta cedendo.
+            "verifica_falsi_grafia": 0,
+            # Le code che solo la prova della parola assolveva («controcult»
+            # per «controcultura», 4 ottobre 2026): dal worker dc468e0 si
+            # ricomprano lo stesso. Quante erano, e quante un take nuovo ha
+            # letto per intero: la differenza e' cio' che resta in dubbio, e
+            # non sta in `code_tagliate`.
+            "verifica_dubbi": 0,
+            "verifica_dubbi_chiariti": 0,
+            # Le code dove Whisper era andato in loop su una parola tagliata
+            # («della L'Ori de L'Ori» per «della loro ideologia.», 5 ottobre
+            # 2026): dal worker 73a455c il loop si toglie prima del
+            # confronto, e qui si conta quante volte e' servito.
+            "verifica_ripetizioni": 0,
+            # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
+            # buttati via sono GPU comprata, ed e' il conto sui caratteri a
+            # non vederli.
+            "runpod": []}
+
+
+def _chunk_pronti(chunks, capitolo):
+    """I chunk come li legge il modello. `pulisci_coda` e `segno_sospeso`
+    partono da qui, cosi' testo e pausa della giunzione restano coerenti."""
+    normalizzati = [normalizza_puntini(c) for c in chunks]
+    pronti = [togli_file_di_numeri(c) for c in normalizzati]
+    _tabelle = [i for i, (a, b) in enumerate(zip(normalizzati, pronti)) if a != b]
+    if _tabelle:
+        _LOG.warning("capitolo %s: tolte file di numeri (tabelle) dai chunk %s",
+                     capitolo, ", ".join(str(i) for i in _tabelle[:20]))
+    return pronti
+
+
+def _payload_capitolo(pronti, clone, conc, lingua, speed, key, put_ttl=None):
+    """Il corpo di un job `generate` per un capitolo (o un lotto).
+
+    `pronti` sono i chunk di `_chunk_pronti`; `key` la chiave R2
+    dell'intermedio, vuota per l'audio inline; `put_ttl` la durata del link
+    di upload (None = quella di default, il batch la allunga).
+    """
+    import storage_backend
+
+    payload = {"input": {
+        "action": "generate",
+        "chunks": [pulisci_coda(c) for c in pronti],
+        # Elenco parallelo: per ogni chunk il segno debole tolto dalla
+        # coda. Il worker ci misura la pausa della giunzione.
+        "giunti": [segno_sospeso(c) for c in pronti],
+        **clone,
+        "cfg": CFG_READ,
+        "concurrency": conc,
+        # PCM grezzo, non WAV: i capitoli vengono concatenati byte a byte
+        # da `pcm_concat`, e un header WAV in mezzo finirebbe dentro
+        # l'audio come rumore.
+        "output_format": "pcm",
+        "language": lingua,
+    }}
+    if speed is not None:
+        # Il worker stira ogni chunk a questo passo prima di concatenare.
+        payload["input"]["speed"] = speed
+    if key:
+        payload["input"]["s3"] = {
+            "put_url": storage_backend.presigned_put_url(key, ttl=put_ttl),
+            "key": key,
+        }
+    return payload
+
+
+def _registra_esito(stats, out, inviati):
+    """Le misure di un job riuscito in `stats`. Ritorna gli indici dei chunk
+    caduti (lista vuota se nessuno). `inviati` sono i chunk del payload.
+
+    Raises:
+        VoxcpmJobError: risposta senza `failed_indices`.
+    """
+    if "failed_indices" not in out:
+        # Assente e' un worker che non rispetta il protocollo, non un
+        # worker senza chunk caduti: zero e assente non sono la
+        # stessa cosa, e confonderli terrebbe un capitolo che nessuno
+        # ha verificato.
+        raise VoxcpmJobError(
+            "risposta senza failed_indices: protocollo del worker "
+            "non rispettato: " + _riassunto(out))
+
+    stats["jobs"] += 1
+    stats["sample_rate"] = stats["sample_rate"] or int(
+        out.get("sample_rate") or 48000)
+    # Non `+=`: i caratteri e i secondi d'audio del capitolo sono
+    # quelli del tentativo che finisce per essere consegnato, non la
+    # somma coi tentativi scartati per silenzio. `tts_seconds` invece
+    # e' GPU pagata anche sul tentativo buttato via, e quella si
+    # somma davvero.
+    stats["chars"] = int(out.get("chars") or 0)
+    stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
+    try:
+        stats["chunk_samples"] = [
+            int(n) for n in (out.get("chunk_samples") or [])]
+    except (TypeError, ValueError):
+        stats["chunk_samples"] = []
+    # L'eco del passo applicato dal worker: e' la prova, nelle
+    # statistiche del job, che il PCM consegnato e' gia' stirato.
+    if "speed" in out:
+        stats["speed"] = float(out["speed"])
+    # Come `chars`: quello che conta e' il tentativo consegnato, non
+    # la somma con quelli buttati via.
+    _tagliate = out.get("chunks_difettosi") or []
+    stats["code_tagliate"] = len(_tagliate)
+    if _tagliate:
+        _LOG.warning(
+            "capitolo consegnato con %d code ancora tagliate "
+            "(chunk %s): il worker ha esaurito i suoi ritentativi",
+            len(_tagliate),
+            ", ".join(str(i) for i in _tagliate[:10]))
+        stats["code_tagliate_dettaglio"] = _dettaglio_code_tagliate(
+            _tagliate, out.get("verify_details") or {},
+            inviati,
+            campioni=out.get("chunk_samples"),
+            sample_rate=int(out.get("sample_rate") or 48000))
+        for _d in stats["code_tagliate_dettaglio"][
+                :_CODA_DIAGNOSI_LOG_MAX]:
+            _LOG.warning("coda tagliata: %s", _riga_coda_tagliata(_d))
+    # Come `chars`: le misure sono quelle del tentativo consegnato.
+    # Il blocco manca se la verifica era spenta o se il worker e'
+    # di una versione precedente, e allora restano gli zeri.
+    _ver = out.get("verify") or {}
+    if _ver:
+        stats["verifica_chunk"] = int(
+            _ver.get("chunks_verificati") or 0)
+        stats["verifica_sospetti"] = len(
+            _ver.get("sospetti_iniziali") or [])
+        stats["verifica_rinunciati"] = len(
+            _ver.get("rinunciati") or [])
+        stats["verifica_giri"] = int(_ver.get("giri") or 0)
+        # Assente sui worker precedenti: lista vuota, non zeri. Una
+        # lista di zeri direbbe «nessuno e' rientrato», che e' il
+        # contrario di «non lo sappiamo».
+        stats["verifica_rientri"] = [
+            int(x or 0) for x in (
+                _ver.get("rientri_per_giro") or [])]
+        stats["verifica_numerali"] = int(
+            _ver.get("numerali") or 0)
+        stats["verifica_falsi_numerali"] = int(
+            _ver.get("falsi_numerali") or 0)
+        # La gemella della precedente: gli allarmi spenti dalla
+        # regola della grafia. Assente sui worker precedenti, e lo
+        # zero e' la risposta giusta — quella regola li' non c'era.
+        stats["verifica_falsi_grafia"] = int(
+            _ver.get("falsi_grafia") or 0)
+        # Assenti sui worker prima di dc468e0, che i dubbi non li
+        # ricompravano: lo zero e' di nuovo la risposta giusta.
+        stats["verifica_dubbi"] = len(_ver.get("dubbi") or [])
+        stats["verifica_dubbi_chiariti"] = len(
+            _ver.get("dubbi_chiariti") or {})
+        # Assente prima del worker 73a455c: zero.
+        stats["verifica_ripetizioni"] = int(
+            _ver.get("ripetizioni") or 0)
+    stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
+    return out["failed_indices"] or []
+
+
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
                        on_progress=None, speed=None):
@@ -1631,75 +1885,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     lingua = _lingua_voce(voice_id)
     riposa = sleep or _dormi
     su_r2 = bool(key) and storage_backend.is_enabled()
-    stats = {"sample_rate": 0, "chars": 0, "audio_seconds": 0.0,
-             "tts_seconds": 0.0, "jobs": 0, "redone": 0, "bounced": 0,
-             # Strutturalmente sempre 0: un tentativo con chunk a silenzio
-             # non arriva mai al `return` sotto (si rifa' o solleva), quindi
-             # la consegna che esce da questo ciclo non ne ha mai.
-             "failed_chunks": 0, "bytes": 0,
-             # Campioni di ogni chunk dentro il PCM consegnato, in ordine:
-             # servono a chi manda piu' capitoli in un job solo per
-             # ritagliarli. Vuota se il worker non li manda.
-             "chunk_samples": [],
-             # Le code che il worker ha verificato e consegnato lo stesso,
-             # ancora tagliate dopo i suoi ritentativi. Non fanno fallire
-             # niente: sono l'unica traccia che resta di una frase finita a
-             # meta', e senza questo numero il difetto arriva nell'M4B senza
-             # che nessuno lo sappia.
-             "code_tagliate": 0,
-             # E per ognuna di quelle code, il giudizio che il worker le ha
-             # dato: la coda attesa e quella udita affiancate, con le misure.
-             # Senza questo il conteggio sopra dice che il difetto c'e' ma non
-             # che cosa sia, e su un numero non si tara niente.
-             "code_tagliate_dettaglio": [],
-             # Le tre misure che dicono quanto e' costata la verifica e
-             # quanto e' servita. `code_tagliate` da solo conta i falliti
-             # ma non i tentati: un capitolo con zero code tagliate puo'
-             # aver richiesto sei ritentativi o nessuno, e la differenza e'
-             # esattamente cio' che dice se la verifica sta lavorando.
-             "verifica_chunk": 0,       # chunk passati sotto l'ASR
-             "verifica_sospetti": 0,    # ritentativi giudicati necessari
-             # Necessari ma mai tentati: sopra il tetto (VERIFY_MAX_FRAC) il
-             # worker rigenera solo i rotti conclamati. Sono difettosi
-             # quanto i falliti, ma nessun tentativo li ha mancati.
-             "verifica_rinunciati": 0,
-             "verifica_giri": 0,        # giri di rigenerazione spesi
-             # La curva dei rientri: quanti chunk sono tornati sani al primo
-             # giro, quanti al secondo, quanti al terzo. `verifica_giri` dice
-             # quanti giri ha speso il capitolo, `code_tagliate` quanti chunk
-             # non sono rientrati: nessuno dei due dice se un giro in piu'
-             # pagherebbe. Questa lista si', perche' e' la sola che mostra se
-             # il recupero sta ancora rendendo quando i giri finiscono.
-             "verifica_rientri": [],
-             # Gli allarmi che il rilevatore ha visto e taciuto perche' la
-             # coda conteneva un numero: l'ASR scrive «1967» dove il testo
-             # dice «millenovecentosessantasette», e senza questa regola il
-             # chunk sano si ricomprava tre volte. Contarli e' l'unico modo
-             # di accorgersi se la regola smette di funzionare — una lingua
-             # nuova, una grafia che le tabelle non conoscono.
-             "verifica_numerali": 0,        # code con un numero dentro
-             "verifica_falsi_numerali": 0,  # di quelle, allarmi spenti
-             # Lo stesso per la regola della grafia, l'altro vizio del
-             # riconoscitore: «di se» dove il testo dice «disse». Contatore
-             # separato perche' i due difetti non si guastano insieme, e un
-             # totale unico nasconderebbe quale dei due sta cedendo.
-             "verifica_falsi_grafia": 0,
-             # Le code che solo la prova della parola assolveva («controcult»
-             # per «controcultura», 4 ottobre 2026): dal worker dc468e0 si
-             # ricomprano lo stesso. Quante erano, e quante un take nuovo ha
-             # letto per intero: la differenza e' cio' che resta in dubbio, e
-             # non sta in `code_tagliate`.
-             "verifica_dubbi": 0,
-             "verifica_dubbi_chiariti": 0,
-             # Le code dove Whisper era andato in loop su una parola tagliata
-             # («della L'Ori de L'Ori» per «della loro ideologia.», 5 ottobre
-             # 2026): dal worker 73a455c il loop si toglie prima del
-             # confronto, e qui si conta quante volte e' servito.
-             "verifica_ripetizioni": 0,
-             # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
-             # buttati via sono GPU comprata, ed e' il conto sui caratteri a
-             # non vederli.
-             "runpod": []}
+    stats = _stats_vuote()
 
     conc = concurrency()
     # La chiave porta job ABM e capitolo (`voxcpm/<job>/ch000001.pcm`): nel
@@ -1707,14 +1893,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     capitolo = key or os.path.basename(str(dest_path))
     motivo_rifaccio = ""
     tentativo, rimbalzi, riconsegne, risottomissioni = 0, 0, 0, 0
-    # Il chunk come lo legge il modello. `pulisci_coda` e `segno_sospeso`
-    # partono da qui, cosi' testo e pausa della giunzione restano coerenti.
-    normalizzati = [normalizza_puntini(c) for c in chunks]
-    pronti = [togli_file_di_numeri(c) for c in normalizzati]
-    _tabelle = [i for i, (a, b) in enumerate(zip(normalizzati, pronti)) if a != b]
-    if _tabelle:
-        _LOG.warning("capitolo %s: tolte file di numeri (tabelle) dai chunk %s",
-                     capitolo, ", ".join(str(i) for i in _tabelle[:20]))
+    pronti = _chunk_pronti(chunks, capitolo)
 
     def _riconsegna(e):
         # La sintesi c'e' stata, e' l'audio a non essere arrivato: si rifa'
@@ -1735,29 +1914,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             raise VoxcpmJobError("job annullato: nessun altro worker acceso")
         ultimo = tentativo >= SILENCE_RETRIES
 
-        payload = {"input": {
-            "action": "generate",
-            "chunks": [pulisci_coda(c) for c in pronti],
-            # Elenco parallelo: per ogni chunk il segno debole tolto dalla
-            # coda. Il worker ci misura la pausa della giunzione.
-            "giunti": [segno_sospeso(c) for c in pronti],
-            **clone,
-            "cfg": CFG_READ,
-            "concurrency": conc,
-            # PCM grezzo, non WAV: i capitoli vengono concatenati byte a byte
-            # da `pcm_concat`, e un header WAV in mezzo finirebbe dentro
-            # l'audio come rumore.
-            "output_format": "pcm",
-            "language": lingua,
-        }}
-        if speed is not None:
-            # Il worker stira ogni chunk a questo passo prima di concatenare.
-            payload["input"]["speed"] = speed
-        if su_r2:
-            payload["input"]["s3"] = {
-                "put_url": storage_backend.presigned_put_url(key),
-                "key": key,
-            }
+        payload = _payload_capitolo(pronti, clone, conc, lingua, speed,
+                                    key if su_r2 else "")
 
         try:
             out = run_job(payload, session=session, sleep=riposa,
@@ -1830,90 +1988,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                     pausa)
                 riposa(pausa)
         else:
-            if "failed_indices" not in out:
-                # Assente e' un worker che non rispetta il protocollo, non un
-                # worker senza chunk caduti: zero e assente non sono la
-                # stessa cosa, e confonderli terrebbe un capitolo che nessuno
-                # ha verificato.
-                raise VoxcpmJobError(
-                    "risposta senza failed_indices: protocollo del worker "
-                    "non rispettato: " + _riassunto(out))
-
-            stats["jobs"] += 1
-            stats["sample_rate"] = stats["sample_rate"] or int(
-                out.get("sample_rate") or 48000)
-            # Non `+=`: i caratteri e i secondi d'audio del capitolo sono
-            # quelli del tentativo che finisce per essere consegnato, non la
-            # somma coi tentativi scartati per silenzio. `tts_seconds` invece
-            # e' GPU pagata anche sul tentativo buttato via, e quella si
-            # somma davvero.
-            stats["chars"] = int(out.get("chars") or 0)
-            stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
-            try:
-                stats["chunk_samples"] = [
-                    int(n) for n in (out.get("chunk_samples") or [])]
-            except (TypeError, ValueError):
-                stats["chunk_samples"] = []
-            # L'eco del passo applicato dal worker: e' la prova, nelle
-            # statistiche del job, che il PCM consegnato e' gia' stirato.
-            if "speed" in out:
-                stats["speed"] = float(out["speed"])
-            # Come `chars`: quello che conta e' il tentativo consegnato, non
-            # la somma con quelli buttati via.
-            _tagliate = out.get("chunks_difettosi") or []
-            stats["code_tagliate"] = len(_tagliate)
-            if _tagliate:
-                _LOG.warning(
-                    "capitolo consegnato con %d code ancora tagliate "
-                    "(chunk %s): il worker ha esaurito i suoi ritentativi",
-                    len(_tagliate),
-                    ", ".join(str(i) for i in _tagliate[:10]))
-                stats["code_tagliate_dettaglio"] = _dettaglio_code_tagliate(
-                    _tagliate, out.get("verify_details") or {},
-                    payload["input"]["chunks"],
-                    campioni=out.get("chunk_samples"),
-                    sample_rate=int(out.get("sample_rate") or 48000))
-                for _d in stats["code_tagliate_dettaglio"][
-                        :_CODA_DIAGNOSI_LOG_MAX]:
-                    _LOG.warning("coda tagliata: %s", _riga_coda_tagliata(_d))
-            # Come `chars`: le misure sono quelle del tentativo consegnato.
-            # Il blocco manca se la verifica era spenta o se il worker e'
-            # di una versione precedente, e allora restano gli zeri.
-            _ver = out.get("verify") or {}
-            if _ver:
-                stats["verifica_chunk"] = int(
-                    _ver.get("chunks_verificati") or 0)
-                stats["verifica_sospetti"] = len(
-                    _ver.get("sospetti_iniziali") or [])
-                stats["verifica_rinunciati"] = len(
-                    _ver.get("rinunciati") or [])
-                stats["verifica_giri"] = int(_ver.get("giri") or 0)
-                # Assente sui worker precedenti: lista vuota, non zeri. Una
-                # lista di zeri direbbe «nessuno e' rientrato», che e' il
-                # contrario di «non lo sappiamo».
-                stats["verifica_rientri"] = [
-                    int(x or 0) for x in (
-                        _ver.get("rientri_per_giro") or [])]
-                stats["verifica_numerali"] = int(
-                    _ver.get("numerali") or 0)
-                stats["verifica_falsi_numerali"] = int(
-                    _ver.get("falsi_numerali") or 0)
-                # La gemella della precedente: gli allarmi spenti dalla
-                # regola della grafia. Assente sui worker precedenti, e lo
-                # zero e' la risposta giusta — quella regola li' non c'era.
-                stats["verifica_falsi_grafia"] = int(
-                    _ver.get("falsi_grafia") or 0)
-                # Assenti sui worker prima di dc468e0, che i dubbi non li
-                # ricompravano: lo zero e' di nuovo la risposta giusta.
-                stats["verifica_dubbi"] = len(_ver.get("dubbi") or [])
-                stats["verifica_dubbi_chiariti"] = len(
-                    _ver.get("dubbi_chiariti") or {})
-                # Assente prima del worker 73a455c: zero.
-                stats["verifica_ripetizioni"] = int(
-                    _ver.get("ripetizioni") or 0)
-            stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
-
-            bad = out["failed_indices"] or []
+            bad = _registra_esito(stats, out, payload["input"]["chunks"])
             if bad:
                 # Il worker mette un secondo di silenzio al posto della frase
                 # caduta e tira dritto, cosi' il capitolo resta allineato. Per
@@ -1993,6 +2068,239 @@ def _consegna(out, dest_path, key, su_r2, conc, n_chunk):
         f.write(dati)
     os.replace(tmp, dest_path)
     return len(dati)
+
+
+# --- Trasporto batch -------------------------------------------------------
+#
+# Le route `/batch` di RunPod (spec catalogo §5.3): i lotti di un libro partono
+# tutti insieme, girano su worker dedicati separati dal `/run` dei clienti e
+# restano in coda finche' RunPod non ha capacita' (entro 24 h, senza orario).
+# Il worker che finisce una richiesta trova subito la successiva: niente
+# riaccensioni fra un lotto e l'altro, qualunque sia l'idle timeout
+# dell'endpoint. Il payload e' quello di `synthesize_chapter`, l'esito si
+# giudica con `_esito_terminale` e l'audio arriva con `_consegna`: cambia solo
+# come si sottomette e si aspetta. Cio' che il batch non consegna lo rifa' il
+# chiamante con `/run`.
+
+# I link di upload devono sopravvivere all'attesa in coda: 7 giorni, il
+# massimo di una firma SigV4.
+_BATCH_PUT_TTL_S = 7 * 86400
+# RunPod accetta al massimo 10 MiB per chiamata; ogni payload porta il
+# campione della voce, quindi le richieste si mandano a gruppi.
+_BATCH_BODY_MAX_BYTES = 8 * 1024 * 1024
+_BATCH_PAGINA = 50
+_BATCH_FINITO = ("COMPLETED", "FAILED", "CANCELLED")
+_RICHIESTA_FINITA = ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT")
+
+
+def transport():
+    """Come si sottomettono i lotti: `run` (default) o `batch`."""
+    return "batch" if env_str("ABM_VOXCPM_TRANSPORT").strip().lower() == "batch" else "run"
+
+
+def batch_poll_seconds():
+    """Secondi fra due letture dello stato del batch. Floor a 5."""
+    return max(5.0, _f("ABM_VOXCPM_BATCH_POLL_S", 60.0))
+
+
+def batch_timeout_s():
+    """Tetto all'attesa del batch: oltre, si cancella e il resto va via `/run`.
+    RunPod promette il batch entro 24 h; il default lascia due ore di margine."""
+    return max(60.0, _f("ABM_VOXCPM_BATCH_TIMEOUT_S", 26 * 3600.0))
+
+
+def _chiamata_batch(ses, sleep, metodo, percorso, corpo=None):
+    """`_chiamata` con i tentativi esauriti tradotti nell'eccezione di dominio."""
+    try:
+        return _chiamata(ses, sleep, metodo, percorso, corpo)
+    except _Transitorio as e:
+        raise VoxcpmSottomissioneFallita(
+            f"{percorso}: esauriti i tentativi ({e})") from None
+
+
+def batch_create(payloads, *, session=None, sleep=time.sleep, on_batch_id=None):
+    """Crea il batch e lo finalizza. Ritorna l'id.
+
+    Il batch nasce vuoto e `on_batch_id` riceve l'id prima di qualunque altra
+    cosa (un id perso e' GPU pagata e irrecuperabile); poi le richieste
+    arrivano a gruppi sotto i 10 MiB e solo alla fine il batch si finalizza:
+    un batch rimasto in bozza non parte e non costa.
+    """
+    ses = session or requests
+    bid = _chiamata_batch(ses, sleep, "post", "/batch", [])["id"]
+    if on_batch_id is not None:
+        on_batch_id(bid)
+    gruppo, peso = [], 0
+    for p in payloads:
+        n = len(json.dumps(p))
+        if gruppo and peso + n > _BATCH_BODY_MAX_BYTES:
+            _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/requests",
+                            {"requests": gruppo})
+            gruppo, peso = [], 0
+        gruppo.append(p)
+        peso += n
+    if gruppo:
+        _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/requests",
+                        {"requests": gruppo})
+    _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/finalize")
+    return bid
+
+
+def batch_status(batch_id, *, session=None, sleep=time.sleep):
+    """Il riepilogo del batch (`status`, `requestTotal`, `requestCompleted`,
+    `requestFailed`, ...)."""
+    return _chiamata_batch(session or requests, sleep, "get", f"/batch/{batch_id}")
+
+
+def batch_requests(batch_id, *, session=None, sleep=time.sleep):
+    """Le richieste del batch con i loro esiti, pagina dopo pagina."""
+    ses = session or requests
+    offset = 0
+    while True:
+        pagina = _chiamata_batch(
+            ses, sleep, "get",
+            f"/batch/{batch_id}/requests?offset={offset}&limit={_BATCH_PAGINA}")
+        righe = pagina.get("requests") or []
+        yield from righe
+        if not pagina.get("hasMore") or not righe:
+            return
+        offset += len(righe)
+
+
+def batch_cancel(batch_id, *, session=None):
+    """Cancella il batch: le richieste in coda non si pagano. Non solleva mai,
+    come `cancel_job`: si chiama nei percorsi che stanno gia' uscendo."""
+    try:
+        _chiamata(session or requests, lambda _s: None, "post",
+                  f"/batch/{batch_id}/cancel")
+    except Exception as e:      # noqa: BLE001 - best effort, per definizione
+        _LOG.warning("batch %s non cancellato: %s", batch_id, e)
+
+
+def _attendi_batch(batch_id, ses, sleep, clock, cancelled, on_counts):
+    """Aspetta che il batch finisca, a letture di `batch_poll_seconds`.
+
+    Annullamento: il batch si cancella e sale `VoxcpmAnnullato`. Oltre
+    `batch_timeout_s` si cancella e si torna: quello che e' finito si raccoglie
+    lo stesso, il resto lo rifa' `/run`. Una lettura che non passa non ferma
+    niente: il batch vive per conto suo, si riprova al giro dopo.
+    """
+    t0 = clock()
+    while True:
+        if cancelled is not None and cancelled():
+            batch_cancel(batch_id, session=ses)
+            raise VoxcpmAnnullato(f"batch {batch_id} annullato", batch_id)
+        try:
+            st = batch_status(batch_id, session=ses, sleep=sleep)
+        except VoxcpmSottomissioneFallita as e:
+            _LOG.warning("stato del batch %s non letto (%s): riprovo", batch_id, e)
+            st = {}
+        if on_counts is not None and st:
+            fatti = int(st.get("requestCompleted") or 0) + int(st.get("requestFailed") or 0)
+            on_counts(fatti, int(st.get("requestTotal") or 0))
+        if st.get("status") in _BATCH_FINITO:
+            return
+        if clock() - t0 > batch_timeout_s():
+            _LOG.warning("batch %s non finito in %.0f h: lo cancello, il resto va "
+                         "via /run", batch_id, batch_timeout_s() / 3600)
+            batch_cancel(batch_id, session=ses)
+            return
+        rimanente = batch_poll_seconds()
+        while rimanente > 0:
+            if cancelled is not None and cancelled():
+                break
+            tick = min(_TICK_ANNULLAMENTO_S, rimanente)
+            sleep(tick)
+            rimanente -= tick
+
+
+def synthesize_batch(items, voice_id, *, speed=None, batch_id=None,
+                     on_batch_id=None, cancelled=None, on_counts=None,
+                     session=None, sleep=time.sleep, clock=time.time):
+    """Sintetizza piu' lotti in un batch RunPod. Scrive il PCM di ogni lotto.
+
+    Args:
+        items: `[{"chunks": [...], "dest": path, "key": chiave_r2}, ...]`, un
+            elemento per lotto. Le chiavi devono essere uniche: e' la chiave
+            R2, che le righe del batch riportano nel loro `input`, a
+            ricollegare ogni esito al suo lotto.
+        voice_id, speed: come `synthesize_chapter`.
+        batch_id: un batch gia' creato da riprendere (riavvio del server):
+            niente si risottomette. Un batch rimasto in bozza si cancella e si
+            ricrea.
+        on_batch_id: riceve l'id appena il batch esiste, per persisterlo.
+        cancelled: predicato senza argomenti; vero -> batch cancellato e
+            `VoxcpmAnnullato`.
+        on_counts: callback `(finite, totali)` a ogni lettura dello stato.
+
+    Returns:
+        `(esiti, scartate)`: `esiti` allineata a `items`, con le misure del
+        lotto (forma di `_stats_vuote`, `bytes` scritti in `dest`) o None se il
+        batch non l'ha consegnato; `scartate` sono le righe di fattura delle
+        richieste che non hanno consegnato niente, GPU pagata da mettere
+        comunque nel conto.
+
+    Raises:
+        VoxcpmUnavailable: R2 spento (il batch consegna solo da li').
+        VoxcpmAnnullato: annullamento.
+        VoxcpmSottomissioneFallita: il batch non si e' potuto creare.
+    """
+    import storage_backend
+
+    if not storage_backend.is_enabled():
+        raise VoxcpmUnavailable("il trasporto batch consegna solo via R2")
+    ses = session or requests
+    conc = concurrency()
+    pronti = [_chunk_pronti(it["chunks"], it["key"]) for it in items]
+    inviati = [[pulisci_coda(c) for c in pr] for pr in pronti]
+    posto = {it["key"]: i for i, it in enumerate(items)}
+
+    if batch_id:
+        stato = batch_status(batch_id, session=ses, sleep=sleep).get("status")
+        if stato == "DRAFT":
+            batch_cancel(batch_id, session=ses)
+            batch_id = None
+    if not batch_id:
+        clone = clone_block(voice_id)
+        lingua = _lingua_voce(voice_id)
+        payloads = []
+        for it, pr in zip(items, pronti):
+            p = _payload_capitolo(pr, clone, conc, lingua, speed, it["key"],
+                                  put_ttl=_BATCH_PUT_TTL_S)
+            p["policy"] = _policy(job_timeout_s())
+            payloads.append(p)
+        batch_id = batch_create(payloads, session=ses, sleep=sleep,
+                                on_batch_id=on_batch_id)
+    _attendi_batch(batch_id, ses, sleep, clock, cancelled, on_counts)
+
+    esiti, scartate = [None] * len(items), []
+    for riga in batch_requests(batch_id, session=ses, sleep=sleep):
+        if riga.get("status") not in _RICHIESTA_FINITA:
+            continue
+        chiave = ((riga.get("input") or {}).get("s3") or {}).get("key")
+        i = posto.get(chiave)
+        righe = []
+        try:
+            out = _esito_terminale(riga, riga.get("id", ""), righe.append)
+            if i is None or esiti[i] is not None:
+                raise VoxcpmJobError(f"richiesta {riga.get('id')} senza un lotto")
+            stats = _stats_vuote()
+            stats["runpod"] = righe
+            bad = _registra_esito(stats, out, inviati[i])
+            if bad:
+                raise VoxcpmJobError(f"{len(bad)} chunk a silenzio (chunk {bad[:10]})")
+            stats["bytes"] = _consegna(out, items[i]["dest"], chiave, True, conc,
+                                       len(inviati[i]))
+        except VoxcpmJobError as e:
+            _LOG.warning("batch %s: lotto %s non consegnato (%s), andra' via /run",
+                         batch_id, chiave, _breve(e))
+            scartate.extend(righe)
+            continue
+        esiti[i] = stats
+    for it, esito in zip(items, esiti):
+        if esito is None:
+            _cancella_intermedio(it["key"])
+    return esiti, scartate
 
 
 def jobs_in_flight():

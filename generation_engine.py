@@ -4210,6 +4210,78 @@ def _voxcpm_ritaglia_lotto(lotto, stats, sorgente, work_dir):
     return fuori
 
 
+def _voxcpm_batch(lotti, plan, voice, passo, work_dir, job_id, cancelled, job):
+    """I lotti del libro in un batch RunPod. Ritorna `{primo_chunk: risultati}`.
+
+    I risultati hanno la forma di quelli di `_uno` in `_voxcpm_pre_pass`
+    (`[(ci, indici, stats), ...]`, i lotti di piu' capitoli gia' ritagliati),
+    cosi' il giro dei lotti li accumula come gli altri. I lotti che il batch
+    non consegna non compaiono e li rifa' `/run`; la GPU che hanno speso
+    entra comunque nel conto del job. L'id del batch si persiste nel job e nel
+    descrittore appena esiste: dopo un riavvio si riprende quel batch invece di
+    pagarne un altro.
+    """
+    items = []
+    for lotto in lotti:
+        tutti = [i for _, indici in lotto for i in indici]
+        dest = (chunk_reuse.chunk_path(work_dir, tutti[0], "pcm") if len(lotto) == 1
+                else work_dir / f"lotto_{tutti[0]:06d}.pcm")
+        items.append({"chunks": [plan[i]["text"] for i in tutti], "dest": str(dest),
+                      "key": _voxcpm_chiave(job_id, lotto[0][0])})
+
+    def _salva_id(batch_id):
+        print(f"[{job_id}] VoxCPM: batch {batch_id} con {len(items)} lotti", flush=True)
+        if job is None:
+            return
+        job["voxcpm_batch_id"] = batch_id
+        try:
+            pending_jobs.patch(job_id, {"voxcpm_batch_id": batch_id})
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.patch (voxcpm_batch_id) failed (non-fatal): {_e}",
+                  flush=True)
+
+    def _conta(finiti, totali):
+        if job is not None:
+            job["progress_message"] = (f"Sintesi vocale in coda di lavorazione: "
+                                       f"{finiti} di {totali} lotti")
+
+    try:
+        esiti, scartate = voxcpm_tts.synthesize_batch(
+            items, voice, speed=passo, batch_id=(job or {}).get("voxcpm_batch_id"),
+            on_batch_id=_salva_id, cancelled=cancelled, on_counts=_conta)
+    except voxcpm_tts.VoxcpmAnnullato:
+        raise _CancelledError("Job cancelled") from None
+    except voxcpm_tts.VoxcpmJobError as e:
+        print(f"[{job_id}] VoxCPM: batch non utilizzabile ({e}): tutti i lotti via /run",
+              flush=True)
+        return {}
+
+    fuori, persi = {}, list(scartate)
+    for lotto, item, stats in zip(lotti, items, esiti):
+        if stats is None:
+            continue
+        testa = lotto[0][1][0]
+        if len(lotto) == 1:
+            fuori[testa] = [(lotto[0][0], lotto[0][1], stats)]
+            continue
+        try:
+            fuori[testa] = _voxcpm_ritaglia_lotto(lotto, stats, item["dest"], work_dir)
+        except _LottoNonDivisibile as e:
+            print(f"[{job_id}] VoxCPM: lotto del batch non ritagliabile ({e}): via /run",
+                  flush=True)
+            persi.extend(stats.get("runpod") or [])
+        finally:
+            try:
+                os.remove(item["dest"])
+            except OSError:
+                pass
+    if job is not None and persi:
+        _va = job["voxcpm_actual"]
+        _va.setdefault("runpod", []).extend(persi)
+        cost_carry.write(work_dir, "voxcpm", _va)
+    return fuori
+
+
 # Quanto vale la sintesi VoxCPM sulla barra, rispetto all'assemblaggio: 9 a
 # 1, cioe' 90% e 10%. Non e' una stima del tempo — e' un ordine di grandezza
 # onesto. La sintesi e' un job GPU per capitolo (minuti); l'assemblaggio
@@ -4418,6 +4490,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
 
     def _uno(lotto):
         """Sintetizza un lotto. Ritorna `[(ci, indici, stats), ...]`."""
+        # Gia' consegnato dal batch (`_voxcpm_batch`): niente `/run`.
+        fatto = dal_batch.pop(lotto[0][1][0], None)
+        if fatto is not None:
+            return fatto
         if len(lotto) == 1 or not lotti_ok.is_set():
             return [_sintetizza(ci, indici, indici, str(
                 chunk_reuse.chunk_path(work_dir, indici[0], "pcm")))
@@ -4504,6 +4580,13 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     # dall'ordine, e la prima eccezione (in ordine di capitolo, per
     # determinismo del messaggio) si rilancia solo dopo aver drenato tutte le
     # future.
+    # Trasporto batch (`ABM_VOXCPM_TRANSPORT=batch`, catalogo): tutti i lotti in
+    # un batch RunPod prima del giro qui sotto, che per i lotti consegnati
+    # raccoglie soltanto e per gli altri ripiega su `/run`.
+    dal_batch = {}
+    if voxcpm_tts.transport() == "batch" and lotti:
+        dal_batch = _voxcpm_batch(lotti, plan, voice, passo, work_dir, job_id,
+                                  cancelled, job)
     with _cf.ThreadPoolExecutor(max_workers=voxcpm_tts.jobs_in_flight()) as _ex:
         future_a_posizione = {_ex.submit(_uno, lotto): posizione
                               for posizione, lotto in enumerate(lotti)}

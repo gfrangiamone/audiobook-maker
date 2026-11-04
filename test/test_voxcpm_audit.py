@@ -63,7 +63,7 @@ def job_con_fattura(charged=1.00):
 
 
 def test_il_costo_viene_dai_secondi_quando_ci_sono(audit_isolato, monkeypatch):
-    # 1200 s di esecuzione piu' 148 s di accensione, a 0,69 $/h. Il conto sui
+    # 1200 s di esecuzione piu' 148 s di accensione, a 0,75 $/h. Il conto sui
     # caratteri darebbe $0,2275 per gli stessi 250.000 caratteri: sono due
     # numeri diversi, e questo e' quello che RunPod fattura.
     monkeypatch.delenv("ABM_VOXCPM_USD_PER_HOUR", raising=False)
@@ -77,8 +77,8 @@ def test_il_costo_viene_dai_secondi_quando_ci_sono(audit_isolato, monkeypatch):
     assert r["gpu_cold_start_seconds"] == 148.0
     assert r["gpu_cold_starts"] == 1
     assert r["gpu_card"] == MIG
-    assert r["gpu_usd_per_hour"] == 0.69
-    atteso_usd = 1348.0 / 3600.0 * 0.69
+    assert r["gpu_usd_per_hour"] == 0.75
+    atteso_usd = 1348.0 / 3600.0 * 0.75
     assert r["cost_usd_actual"] == round(atteso_usd, 6)
     assert r["google_cost_eur_actual"] == round(atteso_usd * 0.86, 4)
     assert r["margin_eur_actual"] == round(1.00 - r["google_cost_eur_actual"], 4)

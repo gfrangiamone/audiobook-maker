@@ -22,7 +22,7 @@ MIG = "NVIDIA RTX PRO 6000 Blackwell MIG 1g.24gb"
 
 @pytest.fixture(autouse=True)
 def tariffa_di_default(monkeypatch):
-    """Nessuna tariffa dichiarata: vale il listino, con 0,69 come ripiego.
+    """Nessuna tariffa dichiarata: vale il listino, con 0,75 come ripiego.
 
     La variabile si toglie davvero dall'ambiente perche' la sua PRESENZA e'
     il segnale che decide chi ha l'ultima parola, non il suo valore.
@@ -40,9 +40,9 @@ def riga(exec_s=60.0, queue_s=0.0, worker="w1", gpu=MIG):
 
 def test_un_ora_di_mig_costa_la_tariffa_di_listino():
     c = voxcpm_tts.gpu_cost_usd([riga(exec_s=3600.0)])
-    assert c["cost_usd"] == pytest.approx(0.69)
+    assert c["cost_usd"] == pytest.approx(0.75)
     assert c["gpu"] == MIG
-    assert c["usd_per_hour"] == 0.69
+    assert c["usd_per_hour"] == 0.75
 
 
 def test_la_scheda_decide_la_tariffa_non_una_media():
@@ -55,7 +55,7 @@ def test_la_scheda_decide_la_tariffa_non_una_media():
 
 def test_una_scheda_sconosciuta_ripiega_sulla_tariffa_dichiarata():
     c = voxcpm_tts.gpu_cost_usd([riga(exec_s=3600.0, gpu="NVIDIA H200")])
-    assert c["cost_usd"] == pytest.approx(0.69)
+    assert c["cost_usd"] == pytest.approx(0.75)
 
 
 def test_l_accensione_si_paga_una_volta_sola_per_worker():
@@ -68,7 +68,7 @@ def test_l_accensione_si_paga_una_volta_sola_per_worker():
     assert c["cold_start_seconds"] == pytest.approx(148.0)
     assert c["exec_seconds"] == pytest.approx(200.0)
     assert c["gpu_seconds"] == pytest.approx(348.0)
-    assert c["cost_usd"] == pytest.approx(348.0 / 3600.0 * 0.69)
+    assert c["cost_usd"] == pytest.approx(348.0 / 3600.0 * 0.75)
 
 
 def test_due_worker_sono_due_accensioni():
@@ -86,7 +86,7 @@ def test_una_coda_breve_non_e_un_accensione():
     assert c["cold_starts"] == 0
     # Il costo si arrotonda al micro-dollaro: sotto quella cifra non c'e'
     # fattura, e confrontare oltre misurerebbe l'arrotondamento.
-    assert c["cost_usd"] == pytest.approx(100.0 / 3600.0 * 0.69, abs=1e-6)
+    assert c["cost_usd"] == pytest.approx(100.0 / 3600.0 * 0.75, abs=1e-6)
 
 
 def test_la_tariffa_dichiarata_vince_sul_listino(monkeypatch):

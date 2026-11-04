@@ -1611,6 +1611,8 @@ def _build_job_descriptor(job, phase):
         # Passo VoxCPM congelato al primo avvio (velocita' della voce
         # campionata): il recovery non deve rileggere quella corrente.
         "voxcpm_voice_pace": job.get("voxcpm_voice_pace"),
+        # Batch RunPod in corso (trasporto batch): il recovery lo riprende.
+        "voxcpm_batch_id": job.get("voxcpm_batch_id"),
         "original_filename": fname,
         "client_id": job.get("client_id", ""),
         "client_ip": job.get("client_ip", ""),

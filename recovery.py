@@ -311,6 +311,8 @@ def _reenqueue_orphan(job_id, rec):
         # Senza questa riga un job Speechify recuperato ripartiva in tono neutro.
         "speechify_emotion": rec.get("speechify_emotion", ""),
         "voxcpm_voice_pace": rec.get("voxcpm_voice_pace"),
+        # Il batch gia' creato si riprende, non si ripaga.
+        "voxcpm_batch_id": rec.get("voxcpm_batch_id"),
         "email_registered": True,
         "client_id": rec.get("client_id", ""),
         # Slot imputato al client originale: il recovery NON e' soggetto al
