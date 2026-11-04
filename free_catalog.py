@@ -436,11 +436,11 @@ def _preview_html(b, t):
     })
 
 
-def _android_intent(host, path, fallback, package):
-    """Link Android all'app: Chrome non devia all'App Link una navigazione
-    https sullo stesso dominio, l'intent si'. App assente -> `fallback`."""
-    return (f"intent://{host}{path}#Intent;scheme=abm;package={package};"
-            f"S.browser_fallback_url={urllib.parse.quote(fallback, safe='')};end")
+def _app_button(href, t, cls):
+    """Il bottone che porta il libro nella libreria dell'app (solo telefono)."""
+    return (f'<a class="fc-btn {cls}" href="{_esc(href)}"><svg viewBox="0 0 24 24" aria-hidden="true">'
+            f'<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>'
+            f'{_esc(t["app_library_btn"])}</a>')
 
 
 def _related_html(lang, b, t):
@@ -534,11 +534,16 @@ def _scheda_html(lang, b, t):
     return "\n".join(out)
 
 
-def book_html(lang, slug, base_url, qr_data_uri, *, android_package="", stores_html=""):
+def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""):
     """Pagina di un libro pubblicato, o None. `qr_data_uri(text)` -> data URI
-    PNG del QR (stringa vuota se non disponibile); `stores_html` sono i badge
-    degli store, gia' pronti. Sul web solo l'anteprima: il libro intero si
-    ascolta nell'app (o si scarica)."""
+    PNG del QR (stringa vuota se non disponibile); `app_url(https_url)` -> il
+    deep link dell'app per il telefono della richiesta, vuoto dal computer;
+    `stores_html` sono i badge degli store, gia' pronti. Sul web solo
+    l'anteprima: il libro intero si ascolta nell'app (o si scarica).
+
+    Dal telefono il QR non serve: al suo posto il bottone "Scarica nella
+    libreria", che apre l'app sul libro (o, su Android, la pagina degli store
+    se l'app manca), come la pagina di download di ABM."""
     b = book(lang, slug)
     if b is None:
         return None
@@ -547,11 +552,9 @@ def book_html(lang, slug, base_url, qr_data_uri, *, android_package="", stores_h
     canonical = f"{base_url}{PATH}/{lang}/{b['slug']}/"
     hub = f"{PATH}/{lang}/"
     token = share_token(b)
-    host = urllib.parse.urlsplit(base_url).netloc or "audiobook-maker.com"
     share_url = f"{base_url}/s/{token}"
-    qr = qr_data_uri(share_url) or ""
-    android = (_android_intent(host, f"/s/{token}", share_url, android_package)
-               if android_package else share_url)
+    app_href = app_url(share_url) if app_url else ""
+    qr = "" if app_href else (qr_data_uri(share_url) or "")
     # L'invito porta il libro, non l'id voce: l'id contiene il nome del motore,
     # che nella pagina non deve comparire. La SPA risolve `fc` nella voce.
     cta = "/?" + urllib.parse.urlencode(
@@ -566,18 +569,20 @@ def book_html(lang, slug, base_url, qr_data_uri, *, android_package="", stores_h
         "__CHIPS__": _chips([_duration(f["duration_s"], t), t["chapters_n"].format(n=len(f["chapters"])),
                              _size(f["bytes"], t), b["first_published"] and str(int(b["first_published"]))]),
         "__DL_HREF__": _esc(download_path(lang, b)), "__DL_LABEL__": _esc(t["download"]),
-        "__DL_HINT__": _esc(t["download_hint"]), "__APP_LIBRARY__": _esc(t["app_library"]),
-        "__APP_OPEN_HREF__": _esc(f"abm://{host}/s/{token}"), "__APP_OPEN__": _esc(t["app_open"]),
-        "__APP_ANDROID_HREF__": _esc(android),
+        # Dal telefono il primo bottone e' quello dell'app, il file viene dopo.
+        "__DL_CLASS__": "" if app_href else "fc-btn-primary",
+        "__APP_BTN__": _app_button(app_href, t, "fc-btn-primary") if app_href else "",
+        "__DL_HINT__": _esc(t["download_hint"]),
         "__SCHEDA_LINK__": _esc(t["scheda_link"]),
         "__PREVIEW__": _preview_html(b, t),
         "__CHAPTERS_LABEL__": _esc(t["chapters_n"].format(n=len(f["chapters"]))),
         "__CHAPTERS__": _chapters_html(f),
         "__APP_TITLE__": _esc(t["app_title"]), "__APP_TEXT__": _esc(t["app_text"]),
-        "__APP_QR_IMG__": (f'<img src="{_esc(qr)}" alt="{_esc(t["app_qr_alt"])}" width="152" height="152">'
-                           if qr else ""),
-        "__APP_QR_HINT__": _esc(t["app_qr_hint"]), "__APP_WIFI__": _esc(t["app_wifi"]),
-        "__APP_GET__": _esc(t["app_get"]), "__STORES__": stores_html,
+        "__APP_QR__": (f'<div class="fc-app-qr"><img src="{_esc(qr)}" alt="{_esc(t["app_qr_alt"])}" '
+                       f'width="152" height="152"></div>' if qr else ""),
+        "__APP_ACTION__": (_app_button(app_href, t, "fc-btn-primary") if app_href
+                           else f'<p>{_esc(t["app_qr_hint"])}</p>' if qr else ""),
+        "__APP_WIFI__": _esc(t["app_wifi"]), "__STORES__": stores_html,
         "__ABOUT__": _esc(t["about"]), "__DESCRIPTION__": _paragraphs(b["description"]),
         "__SYNTHETIC__": _esc(t["synthetic"]), "__EBOOK__": _ebook_html(b, t),
         "__SCHEDA_TITLE__": _esc(t["scheda_title"]), "__SCHEDA__": _scheda_html(lang, b, t),

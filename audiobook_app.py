@@ -8641,7 +8641,11 @@ routes_pages.configure(
     _apply_app_attribution=lambda *a, **k: _apply_app_attribution(*a, **k),
     _qr_data_uri=lambda *a, **k: _qr_data_uri(*a, **k),
     _log_activity=lambda *a, **k: _log_activity(*a, **k),
-    client_ip=lambda *a, **k: client_ip(*a, **k))
+    client_ip=lambda *a, **k: client_ip(*a, **k),
+    _ua_is_ios=lambda *a, **k: _ua_is_ios(*a, **k),
+    _ua_is_android=lambda *a, **k: _ua_is_android(*a, **k),
+    _app_scheme_url=lambda *a, **k: _app_scheme_url(*a, **k),
+    _android_intent_url=lambda *a, **k: _android_intent_url(*a, **k))
 app.register_blueprint(routes_pages.bp)
 # I deep link /t e /s riusano la pagina install del seam pagine.
 routes_tokens.configure(routes_pages._render_install_page)

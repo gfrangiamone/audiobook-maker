@@ -132,7 +132,9 @@ def test_hub_lists_books_with_status_and_escapes(catalog, client):
 
 
 def test_book_page_has_preview_chapters_download_and_app(catalog, client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_qr_data_uri", lambda text: "data:image/png;base64,QR")
+    qr_di = []
+    monkeypatch.setattr(audiobook_app, "_qr_data_uri",
+                        lambda text: qr_di.append(text) or "data:image/png;base64,QR")
     r = client.get("/free-audiobooks/it/storia-di-una-capinera/")
     assert r.status_code == 200
     page = r.get_data(as_text=True)
@@ -142,7 +144,7 @@ def test_book_page_has_preview_chapters_download_and_app(catalog, client, monkey
     assert "I primi 5 minuti" in page
     assert "<time>1:35</time>" in page and "data-t=" not in page
     assert 'href="/free-audiobooks/dl/it/storia-di-una-capinera.m4b"' in page
-    assert "/s/fc-it-capinera" in page                 # app e QR puntano alla share
+    assert qr_di and qr_di[0].endswith("/s/fc-it-capinera")   # il QR punta alla share
     assert 'src="data:image/png;base64,QR"' in page
     assert 'class="stores"' in page                    # badge degli store nell'invito
     assert "Apple Books" not in page
@@ -152,13 +154,40 @@ def test_book_page_has_preview_chapters_download_and_app(catalog, client, monkey
     assert "gemini" not in low and "voxcpm" not in low and "runpod" not in low
 
 
-def test_book_page_links_the_app_on_android_and_ios(catalog, monkeypatch):
+def test_book_page_on_a_phone_shows_the_library_button_not_the_qr(catalog):
     page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
-                                  lambda text: "", android_package="it.abm.app")
-    assert ('href="intent://abm.test/s/fc-it-capinera#Intent;scheme=abm;package=it.abm.app;'
-            'S.browser_fallback_url=https%3A%2F%2Fabm.test%2Fs%2Ffc-it-capinera;end"') in page
+                                  lambda text: "data:image/png;base64,QR",
+                                  app_url=lambda url: url.replace("https://", "abm://"))
     assert 'href="abm://abm.test/s/fc-it-capinera"' in page
+    assert "Scarica nella libreria" in page
+    assert "data:image/png;base64,QR" not in page          # il QR serve solo dal computer
     assert "Su Android e iOS il file M4B si apre con l&#x27;app Audiobook Maker &amp; Player." in page
+
+
+def test_book_page_from_a_computer_shows_the_qr(catalog):
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR",
+                                  app_url=lambda url: "")
+    assert 'src="data:image/png;base64,QR"' in page
+    assert "Scarica nella libreria" not in page
+
+
+@pytest.mark.parametrize("ua, atteso", [
+    ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)",
+     'href="abm://localhost:5601/s/fc-it-capinera"'),
+    ("Mozilla/5.0 (Linux; Android 15; Pixel 9)",
+     'href="intent://localhost:5601/s/fc-it-capinera#Intent;scheme=abm;'
+     'package=it.abm.audiobook_maker_mobile;'
+     'S.browser_fallback_url=http%3A%2F%2Flocalhost%3A5601%2Fs%2Ffc-it-capinera;end"'),
+])
+def test_the_route_uses_abm_deep_links_per_platform(catalog, client, monkeypatch, ua, atteso):
+    # Gli stessi link della pagina di download: abm:// su iOS, intent:// con la
+    # pagina degli store come ripiego su Android.
+    monkeypatch.setattr(audiobook_app, "BASE_URL", "http://localhost:5601")
+    r = client.get("/free-audiobooks/it/storia-di-una-capinera/", headers={"User-Agent": ua})
+    page = r.get_data(as_text=True)
+    assert atteso.replace("&", "&amp;") in page or atteso in page
+    assert "User-Agent" in r.headers.get("Vary", "")
 
 
 def test_book_page_without_preview_has_no_audio(catalog, client):

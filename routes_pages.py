@@ -45,7 +45,8 @@ HTML_TEMPLATES = None
 HTML_ROOT_TEMPLATES = None
 
 FUNCS = ['_detect_lang_from_request', '_apply_app_attribution',
-         '_qr_data_uri', '_log_activity', 'client_ip']
+         '_qr_data_uri', '_log_activity', 'client_ip',
+         '_ua_is_ios', '_ua_is_android', '_app_scheme_url', '_android_intent_url']
 VALUES = ('base_url',)
 
 
@@ -82,6 +83,18 @@ def _log_activity(*a, **k):
 
 def client_ip(*a, **k):
     return _cfg["client_ip"](*a, **k)
+
+def _ua_is_ios(*a, **k):
+    return _cfg["_ua_is_ios"](*a, **k)
+
+def _ua_is_android(*a, **k):
+    return _cfg["_ua_is_android"](*a, **k)
+
+def _app_scheme_url(*a, **k):
+    return _cfg["_app_scheme_url"](*a, **k)
+
+def _android_intent_url(*a, **k):
+    return _cfg["_android_intent_url"](*a, **k)
 
 
 def _inject_reviews(template_html: str, lang: str) -> str:
@@ -287,9 +300,21 @@ def free_catalog_hub(lang):
 @bp.route("/free-audiobooks/<lang>/<slug>/")
 def free_catalog_book(lang, slug):
     page = free_catalog.book_html(lang, slug, _base_url() or "", _qr_data_uri,
-                                  android_package=_APP_PACKAGE,
+                                  app_url=_app_url_for_device,
                                   stores_html=_install_buttons_html(lang))
-    return (page, 200, _HTML_TYPE) if page else ("Not found", 404)
+    # La pagina cambia col dispositivo (bottone dell'app al posto del QR).
+    return (page, 200, {**_HTML_TYPE, "Vary": "User-Agent"}) if page else ("Not found", 404)
+
+
+def _app_url_for_device(https_url):
+    """Il deep link dell'app per il telefono della request, come nella pagina
+    di download (`routes_dl`): `abm://` su iOS, `intent://` con ripiego sulla
+    pagina degli store su Android. Vuoto altrove (computer: si mostra il QR)."""
+    if _ua_is_ios():
+        return _app_scheme_url(https_url)
+    if _ua_is_android():
+        return _android_intent_url(https_url)
+    return ""
 
 
 @bp.route("/free-audiobooks/dl/<lang>/<slug>.m4b")

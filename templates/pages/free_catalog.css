@@ -112,14 +112,14 @@ svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-l
 .fc-app h2{font-size:1.2rem;margin-bottom:6px}
 .fc-app p{margin:0 0 10px}
 .fc-app .fc-hint{margin:10px 0 0}
-.fc-app .fc-touch .fc-btn{width:100%}
+.fc-app .fc-btn{width:100%;margin-bottom:12px}
 .fc-app .stores{display:flex;flex-wrap:wrap;gap:10px}
 .fc-app .store-badge{display:inline-block;line-height:0}
 .fc-app .store-badge svg{display:block;height:40px;width:auto}
 .fc-app .store-badge.btn-disabled{opacity:.45}
-.fc-app-qr{display:none;flex:none}
+.fc-app-qr{flex:none}
 .fc-app-qr img{display:block;border-radius:12px;background:#fff;padding:6px;border:1px solid var(--brd)}
-.fc-pointer{display:none}
+
 .fc-desc p{color:var(--tx);font-size:1.02rem}
 .fc-ebook{background:var(--srf);border:1px solid var(--brd);border-radius:18px;padding:16px 18px}
 .fc-ebook h2{font-size:1.2rem;margin-bottom:6px}
@@ -156,10 +156,4 @@ svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-l
   .fc-bactions .fc-btn{width:auto}
   .fc-sgrid{grid-template-columns:1fr 1fr}
   .fc-sgroup:last-child{grid-column:1/-1}
-}
-/* app: QR dal computer, pulsante dal telefono */
-.fc-btn-app{display:inline-flex}
-@media (hover:hover) and (pointer:fine){
-  .fc-btn-app,.fc-touch{display:none!important}
-  .fc-app-qr,.fc-pointer{display:block}
 }
