@@ -83,7 +83,9 @@ def _dict(value):
 
 def _valid_file(f):
     """File pubblicato: URL, durata positiva, capitoli dentro il file; i dati
-    tecnici (formato, bitrate, checksum) sono facoltativi."""
+    tecnici (formato, bitrate, checksum) e l'anteprima sono facoltativi.
+    L'anteprima e' un file a parte (i primi minuti): sul web si ascolta solo
+    quella, il libro intero va nell'app o si scarica."""
     f = _dict(f)
     url, duration = _url(f.get("url")), _num(f.get("duration_s"))
     if not url or not duration or duration <= 0:
@@ -96,7 +98,11 @@ def _valid_file(f):
         chapters.append({"title": _text(ch.get("title")), "start_s": float(start)})
     chapters.sort(key=lambda c: c["start_s"])
     sha = _text(f.get("sha256")).lower()
+    preview_url, preview_s = _url(f.get("preview_url")), _num(f.get("preview_s"))
+    if not preview_url or not preview_s or preview_s <= 0:
+        preview_url, preview_s = "", 0
     return {"url": url, "duration_s": float(duration), "bytes": int(_num(f.get("bytes")) or 0),
+            "preview_url": preview_url, "preview_s": float(preview_s),
             "chapters": chapters, "format": _text(f.get("format")) or "M4B",
             "codec": _text(f.get("codec")), "bitrate_kbps": _num(f.get("bitrate_kbps")),
             "sample_rate": _num(f.get("sample_rate")), "channels": _num(f.get("channels")),
@@ -411,9 +417,30 @@ def hub_html(lang, base_url):
 
 def _chapters_html(f):
     return "\n".join(
-        f'<li><button type="button" data-t="{int(c["start_s"])}">'
-        f'<span>{_esc(c["title"]) or "&nbsp;"}</span><time>{_clock(c["start_s"])}</time></button></li>'
+        f'<li><span>{_esc(c["title"]) or "&nbsp;"}</span><time>{_clock(c["start_s"])}</time></li>'
         for c in f["chapters"])
+
+
+def _preview_html(b, t):
+    """Anteprima ascoltabile sul web ('' se il catalogo non ne ha una)."""
+    f = b["file"]
+    if not f["preview_url"]:
+        return ""
+    return page_brand.render_page("free_catalog_preview.html", {
+        "__LABEL__": _esc(t["preview_title"]),
+        "__VOICE__": _esc(t["voice"].format(voice=b["voice_label"] or t["voice_default"])),
+        "__SRC__": _esc(f["preview_url"]),
+        "__NOTE__": _esc(t["preview_note"].format(
+            min=max(1, int(f["preview_s"] / 60 + 0.5)), duration=_duration(f["duration_s"], t))),
+        "__APP_LINK__": _esc(t["preview_app_link"]),
+    })
+
+
+def _android_intent(host, path, fallback, package):
+    """Link Android all'app: Chrome non devia all'App Link una navigazione
+    https sullo stesso dominio, l'intent si'. App assente -> `fallback`."""
+    return (f"intent://{host}{path}#Intent;scheme=abm;package={package};"
+            f"S.browser_fallback_url={urllib.parse.quote(fallback, safe='')};end")
 
 
 def _related_html(lang, b, t):
@@ -507,9 +534,11 @@ def _scheda_html(lang, b, t):
     return "\n".join(out)
 
 
-def book_html(lang, slug, base_url, qr_data_uri):
+def book_html(lang, slug, base_url, qr_data_uri, *, android_package="", stores_html=""):
     """Pagina di un libro pubblicato, o None. `qr_data_uri(text)` -> data URI
-    PNG del QR (stringa vuota se non disponibile)."""
+    PNG del QR (stringa vuota se non disponibile); `stores_html` sono i badge
+    degli store, gia' pronti. Sul web solo l'anteprima: il libro intero si
+    ascolta nell'app (o si scarica)."""
     b = book(lang, slug)
     if b is None:
         return None
@@ -519,7 +548,10 @@ def book_html(lang, slug, base_url, qr_data_uri):
     hub = f"{PATH}/{lang}/"
     token = share_token(b)
     host = urllib.parse.urlsplit(base_url).netloc or "audiobook-maker.com"
-    qr = qr_data_uri(f"{base_url}/s/{token}") or ""
+    share_url = f"{base_url}/s/{token}"
+    qr = qr_data_uri(share_url) or ""
+    android = (_android_intent(host, f"/s/{token}", share_url, android_package)
+               if android_package else share_url)
     # L'invito porta il libro, non l'id voce: l'id contiene il nome del motore,
     # che nella pagina non deve comparire. La SPA risolve `fc` nella voce.
     cta = "/?" + urllib.parse.urlencode(
@@ -534,17 +566,18 @@ def book_html(lang, slug, base_url, qr_data_uri):
         "__CHIPS__": _chips([_duration(f["duration_s"], t), t["chapters_n"].format(n=len(f["chapters"])),
                              _size(f["bytes"], t), b["first_published"] and str(int(b["first_published"]))]),
         "__DL_HREF__": _esc(download_path(lang, b)), "__DL_LABEL__": _esc(t["download"]),
-        "__DL_HINT__": _esc(t["download_hint"]),
+        "__DL_HINT__": _esc(t["download_hint"]), "__APP_LIBRARY__": _esc(t["app_library"]),
         "__APP_OPEN_HREF__": _esc(f"abm://{host}/s/{token}"), "__APP_OPEN__": _esc(t["app_open"]),
+        "__APP_ANDROID_HREF__": _esc(android),
         "__SCHEDA_LINK__": _esc(t["scheda_link"]),
-        "__AUDIO_LABEL__": _esc(t["listen"]), "__AUDIO_SRC__": _esc(f["url"]),
-        "__VOICE__": _esc(t["voice"].format(voice=b["voice_label"] or t["voice_default"])),
-        "__CHAPTERS_LABEL__": _esc(t["chapters"]), "__CHAPTERS__": _chapters_html(f),
-        "__APP_TITLE__": _esc(t["app_title"]),
+        "__PREVIEW__": _preview_html(b, t),
+        "__CHAPTERS_LABEL__": _esc(t["chapters_n"].format(n=len(f["chapters"]))),
+        "__CHAPTERS__": _chapters_html(f),
+        "__APP_TITLE__": _esc(t["app_title"]), "__APP_TEXT__": _esc(t["app_text"]),
         "__APP_QR_IMG__": (f'<img src="{_esc(qr)}" alt="{_esc(t["app_qr_alt"])}" width="152" height="152">'
                            if qr else ""),
         "__APP_QR_HINT__": _esc(t["app_qr_hint"]), "__APP_WIFI__": _esc(t["app_wifi"]),
-        "__APP_GET__": _esc(t["app_get"]),
+        "__APP_GET__": _esc(t["app_get"]), "__STORES__": stores_html,
         "__ABOUT__": _esc(t["about"]), "__DESCRIPTION__": _paragraphs(b["description"]),
         "__SYNTHETIC__": _esc(t["synthetic"]), "__EBOOK__": _ebook_html(b, t),
         "__SCHEDA_TITLE__": _esc(t["scheda_title"]), "__SCHEDA__": _scheda_html(lang, b, t),

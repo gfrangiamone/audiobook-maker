@@ -286,7 +286,9 @@ def free_catalog_hub(lang):
 
 @bp.route("/free-audiobooks/<lang>/<slug>/")
 def free_catalog_book(lang, slug):
-    page = free_catalog.book_html(lang, slug, _base_url() or "", _qr_data_uri)
+    page = free_catalog.book_html(lang, slug, _base_url() or "", _qr_data_uri,
+                                  android_package=_APP_PACKAGE,
+                                  stores_html=_install_buttons_html(lang))
     return (page, 200, _HTML_TYPE) if page else ("Not found", 404)
 
 

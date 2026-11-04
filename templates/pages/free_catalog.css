@@ -101,18 +101,25 @@ svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-l
 .fc-player-head h2{margin:0;font-size:1.25rem}
 .fc-voice{font-size:.85rem;color:var(--txd);margin:0}
 .fc-player audio{width:100%;display:block}
-.fc-chapters{border:0;padding:0;margin:12px 0 0;background:none}
-.fc-chapters summary{padding:6px 2px;font-weight:600}
+.fc-player .fc-hint{margin-top:10px}
+.fc-chapters{background:var(--srf);border:1px solid var(--brd);border-radius:18px;padding:10px 16px}
+.fc-chapters summary{padding:6px 2px;font-weight:600;cursor:pointer}
 .fc-chapters ol{list-style:none;padding:0;margin:6px 0 0;max-height:340px;overflow:auto;border-top:1px solid var(--brd)}
-.fc-chapters li{margin:0}
-.fc-chapters button{width:100%;min-height:44px;display:flex;justify-content:space-between;gap:12px;align-items:center;padding:8px 6px;border:0;border-bottom:1px solid var(--brd);background:none;font:inherit;font-size:.92rem;color:var(--tx);text-align:left;cursor:pointer}
-.fc-chapters button:hover{background:var(--srf2)}
-.fc-chapters button time{color:var(--txm);font-variant-numeric:tabular-nums;flex:none}
-.fc-chapters button.on{color:var(--ac);font-weight:700}
-.fc-app{display:none;gap:18px;align-items:center}
+.fc-chapters li{margin:0;display:flex;justify-content:space-between;gap:12px;align-items:center;padding:8px 6px;border-bottom:1px solid var(--brd);font-size:.92rem}
+.fc-chapters li:last-child{border-bottom:0}
+.fc-chapters time{color:var(--txm);font-variant-numeric:tabular-nums;flex:none}
+.fc-app{display:flex;gap:18px;align-items:flex-start;border-color:var(--ac)}
 .fc-app h2{font-size:1.2rem;margin-bottom:6px}
-.fc-app p{margin:0}
+.fc-app p{margin:0 0 10px}
+.fc-app .fc-hint{margin:10px 0 0}
+.fc-app .fc-touch .fc-btn{width:100%}
+.fc-app .stores{display:flex;flex-wrap:wrap;gap:10px}
+.fc-app .store-badge{display:inline-block;line-height:0}
+.fc-app .store-badge svg{display:block;height:40px;width:auto}
+.fc-app .store-badge.btn-disabled{opacity:.45}
+.fc-app-qr{display:none;flex:none}
 .fc-app-qr img{display:block;border-radius:12px;background:#fff;padding:6px;border:1px solid var(--brd)}
+.fc-pointer{display:none}
 .fc-desc p{color:var(--tx);font-size:1.02rem}
 .fc-ebook{background:var(--srf);border:1px solid var(--brd);border-radius:18px;padding:16px 18px}
 .fc-ebook h2{font-size:1.2rem;margin-bottom:6px}
@@ -153,6 +160,6 @@ svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-l
 /* app: QR dal computer, pulsante dal telefono */
 .fc-btn-app{display:inline-flex}
 @media (hover:hover) and (pointer:fine){
-  .fc-btn-app{display:none!important}
-  .fc-app{display:flex}
+  .fc-btn-app,.fc-touch{display:none!important}
+  .fc-app-qr,.fc-pointer{display:block}
 }

@@ -30,6 +30,7 @@ def _book(**over):
          "file": {"url": "https://files.example/m4b/it/capinera.m4b", "bytes": 120_000_000,
                   "duration_s": 12600, "format": "M4B", "codec": "aac", "bitrate_kbps": 64,
                   "sample_rate": 48000, "channels": 1, "sha256": "ab" * 32,
+                  "preview_url": "https://files.example/preview/it/capinera.m4a", "preview_s": 300,
                   "chapters": [{"title": "I", "start_s": 95}, {"title": "Introduzione", "start_s": 0}]}}
     b.update(over)
     return b
@@ -130,20 +131,51 @@ def test_hub_lists_books_with_status_and_escapes(catalog, client):
     assert "/static/js/free_catalog.js?v=" in page
 
 
-def test_book_page_has_player_chapters_download_and_app(catalog, client, monkeypatch):
+def test_book_page_has_preview_chapters_download_and_app(catalog, client, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_qr_data_uri", lambda text: "data:image/png;base64,QR")
     r = client.get("/free-audiobooks/it/storia-di-una-capinera/")
     assert r.status_code == 200
     page = r.get_data(as_text=True)
-    assert 'src="https://files.example/m4b/it/capinera.m4b"' in page
-    assert 'data-t="95"' in page
+    # Sul web solo l'anteprima: il file intero non va in un player.
+    assert 'src="https://files.example/preview/it/capinera.m4a"' in page
+    assert 'src="https://files.example/m4b/it/capinera.m4b"' not in page
+    assert "I primi 5 minuti" in page
+    assert "<time>1:35</time>" in page and "data-t=" not in page
     assert 'href="/free-audiobooks/dl/it/storia-di-una-capinera.m4b"' in page
-    assert "/s/fc-it-capinera" in page                 # abm:// e QR puntano alla share
+    assert "/s/fc-it-capinera" in page                 # app e QR puntano alla share
     assert 'src="data:image/png;base64,QR"' in page
+    assert 'class="stores"' in page                    # badge degli store nell'invito
+    assert "Apple Books" not in page
     assert '"@type": "Audiobook"' in page
     assert "<p>Secondo paragrafo.</p>" in page
     low = page.lower()
     assert "gemini" not in low and "voxcpm" not in low and "runpod" not in low
+
+
+def test_book_page_links_the_app_on_android_and_ios(catalog, monkeypatch):
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "", android_package="it.abm.app")
+    assert ('href="intent://abm.test/s/fc-it-capinera#Intent;scheme=abm;package=it.abm.app;'
+            'S.browser_fallback_url=https%3A%2F%2Fabm.test%2Fs%2Ffc-it-capinera;end"') in page
+    assert 'href="abm://abm.test/s/fc-it-capinera"' in page
+    assert "Su Android e iOS il file M4B si apre con l&#x27;app Audiobook Maker &amp; Player." in page
+
+
+def test_book_page_without_preview_has_no_audio(catalog, client):
+    b = _book()
+    b["file"] = {k: v for k, v in b["file"].items() if k not in ("preview_url", "preview_s")}
+    catalog([b])
+    page = client.get("/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
+    assert "<audio" not in page and 'id="fc-app"' in page
+
+
+def test_preview_needs_url_and_positive_length():
+    f = free_catalog._valid_file({"url": "/x.m4b", "duration_s": 100,
+                                  "preview_url": "javascript:alert(1)", "preview_s": 60})
+    assert f["preview_url"] == "" and f["preview_s"] == 0
+    f = free_catalog._valid_file({"url": "/x.m4b", "duration_s": 100,
+                                  "preview_url": "/p.m4a", "preview_s": 0})
+    assert f["preview_url"] == ""
 
 
 def test_book_page_without_qr_has_no_broken_image(catalog, client, monkeypatch):
