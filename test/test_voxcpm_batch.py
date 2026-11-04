@@ -121,9 +121,20 @@ def test_il_batch_nasce_vuoto_e_l_id_si_salva_prima_delle_richieste(monkeypatch)
     assert bid == "b1"
     assert visti == [("b1", 1)]                       # subito dopo la creazione
     assert ses.chiamate[0] == ("post", "/batch", [])
-    gruppi = [c[2]["requests"] for c in ses.chiamate if c[1] == "/batch/b1/requests"]
+    # Il corpo dell'aggiunta e' un array, non `{"requests": [...]}`.
+    gruppi = [c[2] for c in ses.chiamate if c[1] == "/batch/b1/requests"]
     assert [len(g) for g in gruppi] == [1, 1, 1]
+    assert all(isinstance(g, list) for g in gruppi)
     assert ses.chiamate[-1][1] == "/batch/b1/finalize"
+
+
+def test_una_bozza_rifiutata_si_cancella_subito():
+    ses = Sessione({("post", "/batch"): [Risposta({"id": "b1"})],
+                    ("post", "/batch/b1/requests"): [Risposta({"detail": "bad"}, 400)],
+                    ("post", "/batch/b1/cancel"): [Risposta({})]})
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        voxcpm_tts.batch_create([{"input": {}}], session=ses, sleep=dormi)
+    assert ses.chiamate[-1] == ("post", "/batch/b1/cancel", None)
 
 
 def test_batch_riuscito_consegna_ogni_lotto(tmp_path, ambiente):
@@ -152,7 +163,7 @@ def test_batch_riuscito_consegna_ogni_lotto(tmp_path, ambiente):
     assert conti[-1] == (2, 2)
     assert ambiente == {}                              # intermedi cancellati
     # Il payload e' quello di `/run`, con link di upload da 7 giorni e la policy.
-    inviati = [c[2]["requests"] for c in ses.chiamate if c[1] == "/batch/b1/requests"][0]
+    inviati = [c[2] for c in ses.chiamate if c[1] == "/batch/b1/requests"][0]
     assert inviati[0]["input"]["action"] == "generate"
     assert inviati[0]["input"]["speed"] == 0.9
     assert inviati[0]["input"]["s3"]["put_url"].endswith(f"ttl={7 * 86400}")

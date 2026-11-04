@@ -2130,19 +2130,26 @@ def batch_create(payloads, *, session=None, sleep=time.sleep, on_batch_id=None):
     bid = _chiamata_batch(ses, sleep, "post", "/batch", [])["id"]
     if on_batch_id is not None:
         on_batch_id(bid)
-    gruppo, peso = [], 0
-    for p in payloads:
-        n = len(json.dumps(p))
-        if gruppo and peso + n > _BATCH_BODY_MAX_BYTES:
-            _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/requests",
-                            {"requests": gruppo})
-            gruppo, peso = [], 0
-        gruppo.append(p)
-        peso += n
-    if gruppo:
-        _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/requests",
-                        {"requests": gruppo})
-    _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/finalize")
+    try:
+        # Il corpo dell'aggiunta e' un array, come quello della creazione: la
+        # forma `{"requests": [...]}` della documentazione l'API la rifiuta
+        # con un 400 (04/11/2026).
+        gruppo, peso = [], 0
+        for p in payloads:
+            n = len(json.dumps(p))
+            if gruppo and peso + n > _BATCH_BODY_MAX_BYTES:
+                _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/requests", gruppo)
+                gruppo, peso = [], 0
+            gruppo.append(p)
+            peso += n
+        if gruppo:
+            _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/requests", gruppo)
+        _chiamata_batch(ses, sleep, "post", f"/batch/{bid}/finalize")
+    except BaseException:
+        # Una bozza a meta' non parte e non costa, ma resta fra i batch attivi
+        # dell'endpoint (dieci al massimo): si toglie subito.
+        batch_cancel(bid, session=ses)
+        raise
     return bid
 
 
