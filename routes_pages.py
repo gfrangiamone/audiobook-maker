@@ -18,7 +18,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from flask import Blueprint, current_app, redirect, request, send_file
+from flask import Blueprint, current_app, redirect, request, send_file, send_from_directory
 
 import free_catalog
 import i18n as _i18n
@@ -302,6 +302,16 @@ def free_catalog_download(lang, slug):
     return redirect(book["file"]["url"], code=302)
 
 
+@bp.route("/free-audiobooks/files/<path:name>")
+def free_catalog_file(name):
+    """Solo sviluppo: copertine e M4B da una cartella locale, con Range per
+    il player. Senza `ABM_FREE_CATALOG_FILES_DIR` (produzione) e' un 404."""
+    root = free_catalog.local_files_dir()
+    if not root:
+        return "Not found", 404
+    return send_from_directory(root, name, conditional=True)
+
+
 #  -  -  -  sitemap.xml  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -426,6 +436,16 @@ def sitemap_xml():
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
 {guide_alternates}
+  </url>""")
+
+    # Catalogo audiolibri gratuiti: indice per lingua e un URL per ogni libro
+    # pubblicato (gli "in arrivo" non hanno pagina). IndexNow li prende da qui.
+    for loc, lastmod, priority in free_catalog.sitemap_entries(_base_url()):
+        urls.append(f"""  <url>
+    <loc>{html_mod.escape(loc)}</loc>
+    <lastmod>{lastmod}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>{priority}</priority>
   </url>""")
 
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>

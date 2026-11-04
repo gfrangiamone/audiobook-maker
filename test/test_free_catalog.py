@@ -7,6 +7,7 @@ import pytest
 
 import audiobook_app
 import free_catalog
+import routes_pages
 import seo_ld
 
 
@@ -18,17 +19,25 @@ def _book(**over):
          "description": "Primo paragrafo.\n\nSecondo paragrafo.",
          "voice_label": "Bruno", "voice_id": "voxcpm:v2:it-IT/Bruno",
          "source": {"site": "Wikisource", "url": "https://it.wikisource.org/wiki/X",
-                    "license": "pubblico dominio"},
+                    "ebook_url": "https://ws-export.example/?format=epub&page=X",
+                    "license": "pubblico dominio", "edition": "Treves 1871"},
+         "rights": {"eu_pd": True, "us_pd": True},
+         "production": {"generated_at": "2026-12-12"},
+         "chars": 184219,
+         "cover": {"url": "https://files.example/covers/it/capinera.jpg",
+                   "thumb": "https://files.example/covers/it/capinera-thumb.jpg"},
          "published_at": "2026-12-20",
          "file": {"url": "https://files.example/m4b/it/capinera.m4b", "bytes": 120_000_000,
-                  "duration_s": 12600,
+                  "duration_s": 12600, "format": "M4B", "codec": "aac", "bitrate_kbps": 64,
+                  "sample_rate": 48000, "channels": 1, "sha256": "ab" * 32,
                   "chapters": [{"title": "I", "start_s": 95}, {"title": "Introduzione", "start_s": 0}]}}
     b.update(over)
     return b
 
 
 _COMING = {"book_id": "it-coming", "slug": "in-arrivo", "title": "In arrivo",
-           "author": {"name": "Matilde Serao", "died": 1927}, "status": "coming"}
+           "author": {"name": "Matilde Serao", "died": 1927, "sex": "f"}, "status": "coming",
+           "est_duration_s": 19200}
 
 
 @pytest.fixture
@@ -146,6 +155,83 @@ def test_book_page_without_qr_has_no_broken_image(catalog, client, monkeypatch):
 def test_coming_and_unknown_books_are_404(catalog, client):
     assert client.get("/free-audiobooks/it/in-arrivo/").status_code == 404
     assert client.get("/free-audiobooks/it/nessuno/").status_code == 404
+
+
+def test_list_shows_covers_and_hm_durations_not_death_dates(catalog, client):
+    page = client.get("/free-audiobooks/it/").get_data(as_text=True)
+    assert 'src="https://files.example/covers/it/capinera-thumb.jpg"' in page
+    assert ">3:30<" in page          # pubblicato: durata reale ore:minuti
+    assert ">~5:20<" in page         # in arrivo: stima
+    assert "1922" not in page and "1927" not in page and "†" not in page
+    assert 'class="fc-shelf"' in page   # scaffale dei disponibili
+
+
+def test_book_without_cover_falls_back_to_initials(catalog, client):
+    catalog([_book(cover=None)])
+    page = client.get("/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
+    assert "fc-noimg" in page and "--cover:" not in page
+
+
+def test_book_page_has_full_details_and_source_ebook(catalog, client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_qr_data_uri", lambda text: "")
+    page = client.get("/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
+    assert 'id="fc-scheda"' in page
+    for text in ("184.219 caratteri", "64 kbps · 48 kHz · mono", "M4B · AAC", "Treves 1871",
+                 "Bruno (voce sintetica)", "12/12/2026", "20/12/2026", "1840–1922",
+                 "<code>it-capinera</code>", "abababababababab…"):
+        assert text in page, text
+    assert 'href="https://ws-export.example/?format=epub&amp;page=X"' in page
+    assert 'href="https://it.wikisource.org/wiki/X"' in page
+    assert 'src="https://files.example/covers/it/capinera.jpg"' in page
+    assert "--cover:url(" in page
+
+
+def test_unsafe_urls_are_dropped():
+    b = free_catalog._valid_book(_book(cover={"url": "javascript:alert(1)",
+                                              "thumb": "https://x/a b.jpg"},
+                                       source={"site": "S", "url": "https://x/'), url(evil"}))
+    assert b["cover"] == {"url": "", "thumb": ""}
+    assert b["source"]["url"] == ""
+
+
+def test_scheda_uses_gendered_death_year_when_birth_is_missing(catalog):
+    t = free_catalog._t("it")
+    assert free_catalog._life({"died": 1927, "sex": "f"}, t) == "morta nel 1927"
+    assert free_catalog._life({"died": 1922}, t) == "morto nel 1922"
+    assert free_catalog._years({"died": 1922}) == ""
+
+
+def test_sitemap_lists_hub_and_published_books_only(catalog):
+    entries = free_catalog.sitemap_entries("https://x")
+    locs = [e[0] for e in entries]
+    assert locs == ["https://x/free-audiobooks/it/",
+                    "https://x/free-audiobooks/it/storia-di-una-capinera/"]
+    assert entries[1][1] == "2026-12-20"
+    monkeypatch_base = routes_pages._cfg["base_url"]
+    try:
+        routes_pages._cfg["base_url"] = lambda: "https://x"
+        xml = routes_pages.sitemap_xml()
+    finally:
+        routes_pages._cfg["base_url"] = monkeypatch_base
+    assert "<loc>https://x/free-audiobooks/it/storia-di-una-capinera/</loc>" in xml
+    assert "in-arrivo" not in xml
+
+
+def test_sitemap_without_catalog_has_no_entries(monkeypatch):
+    monkeypatch.delenv("ABM_FREE_CATALOG_SOURCE", raising=False)
+    free_catalog.invalidate_cache()
+    assert free_catalog.sitemap_entries("https://x") == []
+
+
+def test_local_files_route_only_in_development(client, tmp_path, monkeypatch):
+    (tmp_path / "covers").mkdir()
+    (tmp_path / "covers" / "a.jpg").write_bytes(b"JPEGDATA")
+    monkeypatch.delenv("ABM_FREE_CATALOG_FILES_DIR", raising=False)
+    assert client.get("/free-audiobooks/files/covers/a.jpg").status_code == 404
+    monkeypatch.setenv("ABM_FREE_CATALOG_FILES_DIR", str(tmp_path))
+    r = client.get("/free-audiobooks/files/covers/a.jpg")
+    assert r.status_code == 200 and r.data == b"JPEGDATA"
+    assert client.get("/free-audiobooks/files/../secret.txt").status_code == 404
 
 
 def test_root_redirects_to_italian(client):

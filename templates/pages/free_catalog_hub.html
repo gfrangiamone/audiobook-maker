@@ -1,26 +1,55 @@
-<header class="fc-head">
-<h1>__H1__</h1>
-<p class="fc-intro">__INTRO__</p>
-<p class="fc-count">__COUNT__</p>
-</header>
-<div class="fc-tools">
-  <div class="fc-search">
-    <label for="fc-q">__SEARCH_LABEL__</label>
-    <input type="search" id="fc-q" placeholder="__SEARCH_PH__" autocomplete="off" enterkeyhint="search">
+<section class="fc-hero">
+  <div class="fc-hero-text">
+    <p class="fc-kicker">__KICKER__</p>
+    <h1>__H1__</h1>
+    <p class="fc-intro">__INTRO__</p>
+    <ul class="fc-chips">__CHIPS__</ul>
   </div>
-  <div class="fc-filters" role="group">
-    <button type="button" class="on" data-f="all" aria-pressed="true">__F_ALL__</button>
-    <button type="button" data-f="published" aria-pressed="false">__F_PUBLISHED__</button>
-    <button type="button" data-f="coming" aria-pressed="false">__F_COMING__</button>
+  <div class="fc-hero-art" aria-hidden="true">__HERO_COVERS__</div>
+</section>
+
+__SHELF__
+
+<section class="fc-catalog" id="catalogo">
+  <h2>__ALL_TITLE__</h2>
+  <div class="fc-tools">
+    <div class="fc-search">
+      <label for="fc-q">__SEARCH_LABEL__</label>
+      <div class="fc-search-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <input type="search" id="fc-q" placeholder="__SEARCH_PH__" autocomplete="off" enterkeyhint="search">
+      </div>
+    </div>
+    <div class="fc-filters" role="group">
+      <button type="button" class="on" data-f="all" aria-pressed="true">__F_ALL__</button>
+      <button type="button" data-f="published" aria-pressed="false">__F_PUBLISHED__</button>
+      <button type="button" data-f="coming" aria-pressed="false">__F_COMING__</button>
+    </div>
   </div>
-</div>
-<div class="fc-list" id="fc-list">
+  <div class="fc-list" id="fc-list">
 __CARDS__
-</div>
-<p class="fc-empty" id="fc-empty" hidden>__EMPTY__</p>
-<aside class="box fc-cta">
+  </div>
+  <p class="fc-empty" id="fc-empty" hidden>__EMPTY__</p>
+</section>
+
+<section class="fc-steps">
+  <div class="fc-step">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>
+    <div><strong>__STEP1_T__</strong><p>__STEP1__</p></div>
+  </div>
+  <div class="fc-step">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+    <div><strong>__STEP2_T__</strong><p>__STEP2__</p></div>
+  </div>
+  <div class="fc-step">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>
+    <div><strong>__STEP3_T__</strong><p>__STEP3__</p></div>
+  </div>
+</section>
+
+<aside class="fc-cta">
   <h2>__CTA_TITLE__</h2>
   <p>__CTA_TEXT__</p>
-  <a class="cta" href="/?utm_source=catalog&amp;utm_campaign=hub">__CTA_BTN__</a>
+  <a class="fc-btn fc-btn-primary" href="/?utm_source=catalog&amp;utm_campaign=hub">__CTA_BTN__</a>
 </aside>
 <script src="/static/js/free_catalog.js?v=__APP_VERSION__" defer></script>
