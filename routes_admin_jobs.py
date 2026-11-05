@@ -2,6 +2,7 @@
 
 Blueprint `admin_jobs`: `/api/admin/suspend` (sospensione del servizio),
 `/admin/api/job/<id>/copy-qr` (copia amministrativa verso l'app),
+`/admin/api/job/<id>/generation` (dati di generazione per il catalogo gratuito),
 `/admin/job/<id>/forensic.zip`, `/api/admin/load_stats`,
 `/api/admin/user_stats` (con cache per mese), `/api/admin/jobs_progress`,
 `/api/paypal_debug_order/<id>`, `/api/active_jobs`; con gli helper della
@@ -207,6 +208,26 @@ def admin_api_job_copy_qr(job_id):
     url = f"{base}/t/{tok}"
     qr = _qr_data_uri(url)
     return jsonify({"available": True, "url": url, "qr": qr, "job_id": job_id, **extra})
+
+
+# Campi del job che la produzione del catalogo gratuito copia nella scheda di
+# generazione del libro (repo abm-free-catalog, spec catalogo §8.2): parametri,
+# ripieghi, inserto e costi. Niente testi, email, token o pagamenti.
+_GENERATION_FIELDS = ("status", "voice", "rate", "gen_lang", "gemini_accent", "output_format",
+                      "ai_optimized", "failed_chunks", "failed_chunks_ratio", "m4b_failed",
+                      "gemini_edge_fallback_chunks", "gemini_model_fallback_chunks",
+                      "gemini_resplit_chunks", "catalog_intro", "gemini_actual", "voxcpm_actual",
+                      "start_time", "assembly_started_at", "completed_at")
+
+
+@bp.route("/admin/api/job/<path:job_id>/generation", methods=["GET"])
+@admin_required
+def admin_api_job_generation(job_id):
+    """Dati di generazione di un job ancora in memoria (`_GENERATION_FIELDS`)."""
+    job = _jobs().get(job_id)
+    if job is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"job_id": job_id, **{k: job[k] for k in _GENERATION_FIELDS if k in job}})
 
 
 @bp.route("/admin/job/<path:job_id>/forensic.zip", methods=["GET"])
