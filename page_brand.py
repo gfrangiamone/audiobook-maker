@@ -231,12 +231,14 @@ def seo_head(*, desc="", keywords="", canonical="", hreflang="", og_type="", og_
     return "\n".join(lines)
 
 
-def public_page(*, lang, title, crumb, body, footer, home="/", head="", css=""):
+def public_page(*, lang, title, crumb, body, footer, home="/", head="", css="", tools=""):
     """Pagina pubblica (guide, privacy, supporto) sulla shell unica
     templates/pages/public_shell.html: head SEO da `seo_head`, breadcrumb
     «Audiobook Maker › crumb», corpo, footer, CSS aggiuntivo della pagina.
-    `title`, `crumb`, `body`, `footer` sono HTML gia' pronto."""
+    `title`, `crumb`, `body`, `footer` sono HTML gia' pronto; `tools` va a
+    destra del breadcrumb (es. il selettore della lingua del catalogo)."""
     return render_page("public_shell", {
         "__LANG__": html_lang(lang), "__TITLE__": title, "__HEAD__": head, "__CSS__": css,
-        "__HOME__": home, "__CRUMB__": crumb, "__BODY__": body, "__FOOTER__": footer,
+        "__HOME__": home, "__CRUMB__": crumb, "__TOOLS__": tools, "__BODY__": body,
+        "__FOOTER__": footer,
     })

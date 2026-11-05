@@ -64,6 +64,17 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 /* Lingua di lettura del libro: in evidenza nel catalogo multilingua (05/11/2026). */
 .fc-lang{display:inline-flex;align-items:center;gap:5px;font-size:.8rem;font-weight:700;line-height:1;padding:4px 10px 4px 8px;border-radius:999px;color:var(--ac);background:color-mix(in srgb,var(--ac) 15%,transparent);border:1px solid color-mix(in srgb,var(--ac) 45%,transparent)}
 .fc-lang svg{width:14px;height:14px;flex:none}
+/* Selettore della lingua della pagina, a destra del percorso. */
+.fc-uilang{position:relative;font-size:.85rem;flex:none;margin:0;padding:0;border:0;background:none}
+.fc-uilang summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:700;padding:6px 12px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--tx)}
+.fc-uilang summary::-webkit-details-marker{display:none}
+.fc-uilang summary::after{content:"▾";font-size:.75em;color:var(--txm)}
+.fc-uilang summary svg{width:15px;height:15px}
+.fc-uilang ul{position:absolute;right:0;top:calc(100% + 6px);z-index:20;list-style:none;margin:0;padding:6px;min-width:150px;background:var(--srf);border:1px solid var(--brd);border-radius:12px;box-shadow:var(--fc-shadow)}
+.fc-uilang li{margin:0}
+.fc-uilang a{display:block;padding:7px 10px;border-radius:8px;color:var(--tx);text-decoration:none}
+.fc-uilang a:hover{background:var(--srf2)}
+.fc-uilang a[aria-current]{font-weight:700;color:var(--ac)}
 /* Batte `.fc-shelf-item span` (blocco, testo grigio), che vale anche per il badge. */
 .fc-shelf-item .fc-lang{display:inline-flex;font-size:.8rem;color:var(--ac);margin:6px 0 2px}
 /* Durata sulla riga dell'autore, come nelle schede dell'indice. */

@@ -36,7 +36,8 @@ details p{margin-top:8px}
 a{color:var(--ac);text-decoration:none}
 a:hover{color:var(--ach);text-decoration:underline}
 code{background:var(--srf2);padding:2px 6px;border-radius:4px;font-size:0.9em}
-.breadcrumb{font-size:0.85rem;color:var(--txm);margin-bottom:20px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}
+.breadcrumb{font-size:0.85rem;color:var(--txm)}
 .breadcrumb a{color:var(--txm)}
 .langswitch{font-size:.85rem;margin-bottom:18px}
 .updated{font-size:.85rem;color:var(--txm);margin:6px 0 24px}
@@ -48,7 +49,7 @@ footer{margin-top:48px;padding-top:24px;border-top:1px solid var(--brd);font-siz
 __CSS__</style>
 </head>
 <body>
-<nav class="breadcrumb"><a href="__HOME__">Audiobook Maker</a> &rsaquo; __CRUMB__</nav>
+<div class="topbar"><nav class="breadcrumb"><a href="__HOME__">Audiobook Maker</a> &rsaquo; __CRUMB__</nav>__TOOLS__</div>
 __BODY__
 <footer>__FOOTER__</footer>
 </body>

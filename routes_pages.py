@@ -285,36 +285,56 @@ def guide_page_lang(guide_id, lang):
 _HTML_TYPE = {"Content-Type": "text/html; charset=utf-8"}
 
 
+def _catalog_choice():
+    """Lingua scelta per le pagine del catalogo: ?lang (selettore della
+    pagina), poi il cookie della SPA."""
+    return [(request.args.get("lang") or "").strip().lower(),
+            (request.cookies.get("abm_lang") or "").strip().lower()]
+
+
+def _catalog_page(page, vary):
+    """Risposta di una pagina del catalogo; una lingua scelta col selettore
+    (?lang) resta nel cookie della SPA e vale per il resto del sito."""
+    if not page:
+        return "Not found", 404
+    resp = current_app.make_response((page, 200, {**_HTML_TYPE, "Vary": vary}))
+    chosen = (request.args.get("lang") or "").strip().lower()
+    if chosen in _i18n.LANGS and chosen in free_catalog.ui_langs():
+        resp.set_cookie("abm_lang", chosen, max_age=31536000, path="/", samesite="Lax",
+                        secure=request.is_secure)
+    return resp
+
+
 @bp.route("/free-audiobooks/")
 def free_catalog_root():
     """Indice unico del catalogo, nella lingua dell'interfaccia (?lang, cookie
-    della SPA, Accept-Language). Il filtro parte sulla lingua dell'utente se in
-    quella lingua c'e' almeno un libro pubblicato, altrimenti su tutte."""
-    scelta = [(request.args.get("lang") or "").strip().lower(),
-              (request.cookies.get("abm_lang") or "").strip().lower()]
-    ui = _i18n.choose_lang(scelta + [_detect_lang_from_request()], _i18n.LANGS)
+    della SPA, Accept-Language) fra quelle con i testi del catalogo. Il filtro
+    parte sulla lingua dell'utente se in quella lingua c'e' almeno un libro
+    pubblicato, altrimenti su tutte."""
+    scelta = _catalog_choice()
+    ui = free_catalog.ui_lang(scelta + [_detect_lang_from_request()], "en")
     # Il filtro guarda anche le lingue del catalogo che il sito non ha (pt, nl).
     preset = free_catalog.preset_lang(scelta + [_i18n.browser_lang(
         request.headers.get("Accept-Language", ""), supported=free_catalog.LANGS, ranked=True)])
-    page = free_catalog.index_html(ui, _base_url() or "", preset)
-    if not page:
-        return "Not found", 404
-    return page, 200, {**_HTML_TYPE, "Vary": "Accept-Language, Cookie"}
+    return _catalog_page(free_catalog.index_html(ui, _base_url() or "", preset),
+                         "Accept-Language, Cookie")
 
 
 @bp.route("/free-audiobooks/<lang>/")
 def free_catalog_hub(lang):
-    page = free_catalog.hub_html(lang, _base_url() or "")
-    return (page, 200, _HTML_TYPE) if page else ("Not found", 404)
+    ui = free_catalog.ui_lang(_catalog_choice(), lang)
+    return _catalog_page(free_catalog.hub_html(lang, _base_url() or "", ui=ui), "Cookie")
 
 
 @bp.route("/free-audiobooks/<lang>/<slug>/")
 def free_catalog_book(lang, slug):
+    ui = free_catalog.ui_lang(_catalog_choice(), lang)
     page = free_catalog.book_html(lang, slug, _base_url() or "", _qr_data_uri,
                                   app_url=_app_url_for_device,
-                                  stores_html=_install_buttons_html(lang))
-    # La pagina cambia col dispositivo (bottone dell'app al posto del QR).
-    return (page, 200, {**_HTML_TYPE, "Vary": "User-Agent"}) if page else ("Not found", 404)
+                                  stores_html=_install_buttons_html(ui), ui=ui)
+    # La pagina cambia col dispositivo (bottone dell'app al posto del QR) e
+    # con la lingua scelta (cookie).
+    return _catalog_page(page, "User-Agent, Cookie")
 
 
 def _app_url_for_device(https_url):

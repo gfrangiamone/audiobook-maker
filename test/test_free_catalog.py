@@ -619,3 +619,22 @@ def test_csp_ammette_lo_storage_per_copertine_e_anteprime(client, monkeypatch):
     assert "https://acct.r2.cloudflarestorage.com" in img and "https://acct.r2.cloudflarestorage.com" in media
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     assert "cloudflarestorage" not in client.get("/it/").headers["Content-Security-Policy"]
+
+
+def test_selettore_della_lingua_della_pagina(catalog, client):
+    # Solo le lingue con tutti i testi del catalogo; la scelta resta nel cookie.
+    assert free_catalog.ui_langs()[:2] == ["it", "en"]
+    page = client.get("/free-audiobooks/", headers={"Accept-Language": "it"}).get_data(as_text=True)
+    sw = re.search(r'<details class="fc-uilang">.*?</details>', page, flags=re.S).group(0)
+    assert 'href="/free-audiobooks/?lang=en"' in sw and 'href="/free-audiobooks/?lang=it"' in sw
+    assert re.search(r'lang="it" aria-current="true">Italiano<', sw)
+
+    r = client.get("/free-audiobooks/it/storia-di-una-capinera/?lang=en")
+    html = r.get_data(as_text=True)
+    assert '<html lang="en">' in html and "abm_lang=en" in r.headers.get("Set-Cookie", "")
+    assert 'href="/free-audiobooks/it/storia-di-una-capinera/?lang=it"' in html
+    # Senza scelta la scheda resta nella lingua del libro; col cookie segue la scelta.
+    assert '<html lang="it">' in audiobook_app.app.test_client().get(
+        "/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
+    assert '<html lang="en">' in client.get("/free-audiobooks/it/").get_data(as_text=True)
+    assert "Cookie" in r.headers["Vary"]

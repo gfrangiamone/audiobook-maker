@@ -369,6 +369,43 @@ def _t(lang):
     return i18n.pick(i18n.load("free_catalog"), lang)
 
 
+# Nome di ogni lingua dell'interfaccia nella lingua stessa (selettore della pagina).
+UI_LANG_NAMES = {"it": "Italiano", "en": "English", "fr": "Français", "es": "Español",
+                 "de": "Deutsch", "zh": "中文", "hi": "हिन्दी", "pt": "Português", "nl": "Nederlands"}
+
+
+def ui_langs():
+    """Lingue in cui le pagine del catalogo hanno tutti i testi (i18n/free_catalog.json,
+    stesse chiavi dell'inglese): solo queste si offrono nel selettore."""
+    texts = i18n.load("free_catalog")
+    need = set(texts.get("en") or {})
+    return [l for l in UI_LANG_NAMES if need and need <= set(texts.get(l) or {})]
+
+
+def ui_lang(requested, fallback):
+    """Lingua dell'interfaccia: la prima di `requested` (?lang, cookie) che ha i
+    testi, altrimenti `fallback` (lingua del libro o del browser)."""
+    ok = ui_langs()
+    return next((l for l in requested if l in ok), fallback)
+
+
+def _ui_switch(current, path, t):
+    """Selettore della lingua della pagina: link `?lang=` (senza JS, la rotta
+    ricorda la scelta nel cookie della SPA). Vuoto con una sola lingua."""
+    langs = ui_langs()
+    if len(langs) < 2:
+        return ""
+    current_attr = ' aria-current="true"'
+    items = "".join(
+        f'<li><a href="{_esc(path)}?lang={l}" hreflang="{l}" lang="{l}"'
+        f'{current_attr if l == current else ""}>{_esc(UI_LANG_NAMES[l])}</a></li>'
+        for l in langs)
+    return (f'<details class="fc-uilang"><summary title="{_esc(t["ui_lang_label"])}">'
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/>'
+            '<path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>'
+            f'{_esc(current.upper())}</summary><ul>{items}</ul></details>')
+
+
 def _esc(value):
     return html.escape(str(value or ""), quote=True)
 
@@ -533,7 +570,7 @@ def _lang_options(langs, preset, t):
     return "".join(opts)
 
 
-def _catalog_html(ui_lang, base_url, *, preset, canonical_path):
+def _catalog_html(ui_lang, base_url, *, preset, canonical_path, path=None):
     """L'indice del catalogo: tutti i libri di tutte le lingue, con ricerca e
     filtri (stato, lingua). `preset` e' la lingua gia' scelta nel filtro ("" =
     tutte); senza JS si vede la lista intera. None se il catalogo e' spento."""
@@ -578,23 +615,24 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path):
             ("Audiobook Maker", f"{base_url}/"), (t["crumb"], canonical)]))])
     return page_brand.public_page(
         lang=ui_lang, title=_esc(t["hub_title"]), crumb=_esc(t["crumb"]), body=body,
-        footer=_footer(t), head=head, css=_css())
+        footer=_footer(t), head=head, css=_css(),
+        tools=_ui_switch(ui_lang, path or canonical_path, t))
 
 
 def index_html(ui_lang, base_url, preset=""):
     """L'indice unico (`/free-audiobooks/`) nella lingua dell'interfaccia, col
     filtro sulla lingua `preset` (vedi `preset_lang`)."""
-    return _catalog_html(ui_lang, base_url, preset=preset if preset in LANGS else "",
+    return _catalog_html(ui_lang, base_url, preset=preset if preset in LANGS else "", path=f"{PATH}/",
                          canonical_path=f"{PATH}/")
 
 
-def hub_html(lang, base_url):
+def hub_html(lang, base_url, ui=None):
     """Lo stesso indice per una lingua (`/free-audiobooks/<lang>/`): pagina a
     se' per i motori di ricerca, col filtro gia' su `lang`. None se la lingua
     non ha catalogo."""
     if lang not in LANGS or books(lang) is None:
         return None
-    return _catalog_html(lang, base_url, preset=lang, canonical_path=f"{PATH}/{lang}/")
+    return _catalog_html(ui or lang, base_url, preset=lang, canonical_path=f"{PATH}/{lang}/")
 
 
 def _voice_text(b, t, key):
@@ -719,7 +757,7 @@ def _scheda_html(lang, b, t):
     return "\n".join(out)
 
 
-def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""):
+def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html="", ui=None):
     """Pagina di un libro pubblicato, o None. `qr_data_uri(text)` -> data URI
     PNG del QR (stringa vuota se non disponibile); `app_url(https_url)` -> il
     deep link dell'app per il telefono della richiesta, vuoto dal computer;
@@ -732,7 +770,10 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
     b = book(lang, slug)
     if b is None:
         return None
-    t = _t(lang)
+    # Interfaccia nella lingua scelta dal visitatore (selettore, cookie) o in
+    # quella del libro; il libro, i suoi link e i dati per i motori restano suoi.
+    ui = ui or lang
+    t = _t(ui)
     f = b["file"]
     canonical = f"{base_url}{PATH}/{lang}/{b['slug']}/"
     hub = f"{PATH}/{lang}/"
@@ -798,4 +839,5 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
     title = _esc(t["book_title"].format(title=b["title"], author=b["author"]["name"]))
     crumb = f'<a href="{hub}">{_esc(t["crumb"])}</a> &rsaquo; {_esc(b["title"])}'
     return page_brand.public_page(
-        lang=lang, title=title, crumb=crumb, body=body, footer=_footer(t), head=head, css=_css())
+        lang=ui, title=title, crumb=crumb, body=body, footer=_footer(t), head=head, css=_css(),
+        tools=_ui_switch(ui, f"{PATH}/{lang}/{b['slug']}/", t))
