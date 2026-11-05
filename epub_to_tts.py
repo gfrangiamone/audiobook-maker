@@ -738,6 +738,33 @@ def is_chapter_marker_line(text: str) -> bool:
     return not rest or not rest[0].islower()
 
 
+# Titolo fatto del numero del capitolo, romano o arabo, con l'eventuale
+# sottotitolo ("XLIII", "12.", "IV. Gli altarini"): l'indice di molti EPUB
+# (Wikisource, Gutenberg) non porta la parola "capitolo".
+_BARE_CHAPTER_NUMBER_RE = re.compile(
+    r"^\s*(?:[IVXLCDM]{1,8}|\d{1,3})\s*(?:[.:)\-–—]\s*\S.*|[.:)]?)\s*$")
+
+
+def is_short_numbered_chapter(text: str, title: str, after_content: bool) -> bool:
+    """Sezione sotto le soglie di `is_content_chapter` che e' comunque un
+    capitolo: titolo da capitolo ("XLIII", "Capitolo 12", "Epilogo") dopo
+    almeno un capitolo gia' tenuto, e testo oltre il titolo.
+
+    Sono le lettere di una riga dei romanzi epistolari e i capitoli di una
+    frase, che la soglia di lunghezza scambiava per frontespizi: Storia di
+    una capinera perdeva in silenzio le lettere XLIII e XLIV (catalogo
+    gratuito, 05/11/2026). Frontespizio e colophon stanno prima del primo
+    capitolo o hanno un titolo da apparato, quindi restano fuori.
+    """
+    if not after_content or not title or _title_is_non_content(title):
+        return False
+    t = title.strip()
+    if not (_BARE_CHAPTER_NUMBER_RE.match(t) or is_chapter_marker_line(t)):
+        return False
+    # "\n" in coda: la pagina col solo titolo ("XLIII") resta vuota.
+    return bool(_remove_duplicate_heading((text or "").strip() + "\n", title).strip())
+
+
 def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> bool:
     """
     Determina se un blocco di testo è un capitolo con contenuto narrativo reale.
@@ -1388,8 +1415,10 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         raw_text = html_to_text(html_content)
         clean = clean_text_for_tts(raw_text)
 
-        # Filtra capitoli vuoti o non-contenuto
-        if not is_content_chapter(clean, title):
+        # Filtra capitoli vuoti o non-contenuto (un capitolo breve col suo
+        # numero, dopo altri capitoli, resta: is_short_numbered_chapter)
+        if not is_content_chapter(clean, title) and not is_short_numbered_chapter(
+                clean, "" if title_is_synthetic else title, bool(info.chapters)):
             # ── Fallback: tenta di recuperare sotto-sezioni narrative ──
             # Documenti misti (es. back-matter con Epilogo + Note + Indice)
             # possono fallire come blocco unico ma contenere sezioni valide.
