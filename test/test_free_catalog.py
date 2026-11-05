@@ -438,3 +438,18 @@ def test_voce_malformata_l_invito_resta_senza_voce(catalog):
     page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
                                   lambda text: "data:image/png;base64,QR")
     assert "voice=" not in page and "utm_source=catalog" in page
+
+
+def test_il_link_del_libro_senza_app_invita_a_installarla(catalog, client):
+    r = client.get("/s/fc-it-capinera", headers={"Accept-Language": "de-DE,de;q=0.9"})
+    page = r.get_data(as_text=True)
+    assert r.status_code == 200
+    assert "Dieses Hörbuch in der App hören" in page
+    assert "Storia di una capinera" in page and "Giovanni Verga" in page
+    page = client.get("/s/fc-it-capinera", headers={"Accept-Language": "fr-FR"}).get_data(as_text=True)
+    assert "Ascolta questo audiolibro nell&#x27;app" in page          # lingua del libro
+
+
+def test_libro_ritirato_resta_la_pagina_generica(catalog, client):
+    page = client.get("/s/fc-it-ritirato", headers={"Accept-Language": "it"}).get_data(as_text=True)
+    assert "importare il processo" in page

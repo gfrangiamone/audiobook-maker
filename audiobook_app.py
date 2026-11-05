@@ -147,6 +147,7 @@ from text_reflow import paren_strip_flags, trim_preview as _trim_preview
 import assembly_queue
 import load_metrics
 import token_store as _tkstore
+import free_catalog
 import routes_tokens
 import routes_admin_audit
 import routes_admin_logs
@@ -8657,7 +8658,9 @@ routes_pages.configure(
     _android_intent_url=lambda *a, **k: _android_intent_url(*a, **k))
 app.register_blueprint(routes_pages.bp)
 # I deep link /t e /s riusano la pagina install del seam pagine.
-routes_tokens.configure(routes_pages._render_install_page)
+routes_tokens.configure(routes_pages._render_install_page,
+                        catalog_book=free_catalog.book_for_share_token,
+                        catalog_langs=free_catalog.LANGS)
 app.register_blueprint(routes_tokens.bp)
 routes_health.configure(jobs=lambda: jobs, jobs_lock=_jobs_lock, data_dir=lambda: UPLOAD_DIR)
 app.register_blueprint(routes_health.bp)

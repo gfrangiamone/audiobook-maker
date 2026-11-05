@@ -82,7 +82,14 @@
     "khz": "{n} kHz",
     "mono": "mono",
     "stereo": "stereo",
-    "lang_names": {"it": "Italiano", "en": "Inglese", "de": "Tedesco", "pt": "Portoghese", "nl": "Olandese", "es": "Spagnolo"},
+    "lang_names": {
+      "it": "Italiano",
+      "en": "Inglese",
+      "de": "Tedesco",
+      "pt": "Portoghese",
+      "nl": "Olandese",
+      "es": "Spagnolo"
+    },
     "g_work": "L'opera",
     "g_audio": "L'audiolibro",
     "g_rights": "Fonte e diritti",
@@ -107,7 +114,9 @@
     "m_edition": "Edizione",
     "m_license": "Licenza del testo",
     "m_pd_eu": "Pubblico dominio UE",
-    "m_pd_us": "Pubblico dominio USA"
+    "m_pd_us": "Pubblico dominio USA",
+    "landing_title": "Ascolta questo audiolibro nell'app",
+    "landing_text": "«{title}» di {author}, gratis in Audiobook Maker & Player: se l'app è installata, questo link la apre e scarica il libro nella tua libreria. Altrimenti installala:"
   },
   "en": {
     "hub_title": "Free audiobooks of the great classics | Audiobook Maker",
@@ -192,7 +201,14 @@
     "khz": "{n} kHz",
     "mono": "mono",
     "stereo": "stereo",
-    "lang_names": {"it": "Italian", "en": "English", "de": "German", "pt": "Portuguese", "nl": "Dutch", "es": "Spanish"},
+    "lang_names": {
+      "it": "Italian",
+      "en": "English",
+      "de": "German",
+      "pt": "Portuguese",
+      "nl": "Dutch",
+      "es": "Spanish"
+    },
     "g_work": "The work",
     "g_audio": "The audiobook",
     "g_rights": "Source and rights",
@@ -217,6 +233,24 @@
     "m_edition": "Edition",
     "m_license": "Text licence",
     "m_pd_eu": "Public domain (EU)",
-    "m_pd_us": "Public domain (US)"
+    "m_pd_us": "Public domain (US)",
+    "landing_title": "Listen to this audiobook in the app",
+    "landing_text": "“{title}” by {author}, free in Audiobook Maker & Player: if the app is installed, this link opens it and downloads the book to your library. Otherwise, install it:"
+  },
+  "de": {
+    "landing_title": "Dieses Hörbuch in der App hören",
+    "landing_text": "„{title}“ von {author}, kostenlos in Audiobook Maker & Player: Ist die App installiert, öffnet dieser Link sie und lädt das Buch in deine Bibliothek. Sonst installiere sie:"
+  },
+  "es": {
+    "landing_title": "Escucha este audiolibro en la app",
+    "landing_text": "«{title}» de {author}, gratis en Audiobook Maker & Player: si tienes la app instalada, este enlace la abre y descarga el libro en tu biblioteca. Si no, instálala:"
+  },
+  "pt": {
+    "landing_title": "Ouça este audiolivro no app",
+    "landing_text": "“{title}”, de {author}, grátis no Audiobook Maker & Player: se o app estiver instalado, este link o abre e baixa o livro na sua biblioteca. Se não, instale-o:"
+  },
+  "nl": {
+    "landing_title": "Luister dit luisterboek in de app",
+    "landing_text": "‘{title}’ van {author}, gratis in Audiobook Maker & Player: als de app geïnstalleerd is, opent deze link hem en zet het boek in je bibliotheek. Zo niet, installeer hem dan:"
   }
 }
