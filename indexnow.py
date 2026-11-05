@@ -8,7 +8,10 @@ verifica scaricando `<base>/<chiave>.txt`, servito da `routes_pages`.
 Al boot un thread aspetta `_BOOT_DELAY_SEC` (il deploy verifica /healthz per
 60 s e fa rollback se fallisce: si notifica solo una versione rimasta su),
 legge la sitemap e invia in un solo POST gli URL il cui `lastmod` differisce
-da quello dell'ultimo invio riuscito. `lastmod` ha la grana del giorno, quindi
+da quello dell'ultimo invio riuscito; poi ripete ogni `ABM_INDEXNOW_EVERY_SEC`
+(default un'ora, 0 = solo al boot), cosi' i libri pubblicati nel catalogo
+gratuito senza un deploy arrivano ai motori entro l'ora (decisione utente
+05/11/2026). `lastmod` ha la grana del giorno, quindi
 un URL parte al massimo una volta al giorno anche con piu' deploy.
 
 Stato: `<data dir>/_indexnow_sent.json` = {url: lastmod inviato}; contiene
@@ -23,7 +26,7 @@ from urllib.parse import urlparse
 import requests
 
 import retry_util
-from env_utils import env_str, is_public_https_url
+from env_utils import env_int, env_str, is_public_https_url
 from fileio import data_path
 from monthly_ledger import JsonDoc
 
@@ -93,8 +96,9 @@ def submit(urls, base_url: str, k: str, *, post=None, sleep=time.sleep) -> int:
         return e.status
 
 
-def sync(sitemap_fn, base_url_fn, *, post=None, sleep=time.sleep) -> int:
-    """Invia gli URL cambiati; ritorna quanti ne sono stati accettati."""
+def sync(sitemap_fn, base_url_fn, *, post=None, sleep=time.sleep, quiet=False) -> int:
+    """Invia gli URL cambiati; ritorna quanti ne sono stati accettati.
+    `quiet` tace il "nessun URL cambiato" dei giri periodici."""
     k = key()
     base = base_url_fn() or ""
     if not k or not is_public_https_url(base):
@@ -104,7 +108,8 @@ def sync(sitemap_fn, base_url_fn, *, post=None, sleep=time.sleep) -> int:
         return 0
     urls = changed_urls(entries, _DOC.read())
     if not urls:
-        print("[indexnow] nessun URL cambiato", flush=True)
+        if not quiet:
+            print("[indexnow] nessun URL cambiato", flush=True)
         return 0
     status = submit(urls, base, k, post=post, sleep=sleep)
     if status not in (200, 202):
@@ -117,16 +122,28 @@ def sync(sitemap_fn, base_url_fn, *, post=None, sleep=time.sleep) -> int:
     return len(urls)
 
 
-def _run(sitemap_fn, base_url_fn):
-    time.sleep(_BOOT_DELAY_SEC)
-    try:
-        sync(sitemap_fn, base_url_fn)
-    except Exception as e:  # noqa: BLE001 - mai far cadere il processo per un ping SEO
-        print(f"[indexnow] invio fallito: {e}", flush=True)
+def every_sec() -> int:
+    """Intervallo fra i giri dopo quello di boot (0 = solo al boot)."""
+    return env_int("ABM_INDEXNOW_EVERY_SEC", 3600, floor=0)
+
+
+def _run(sitemap_fn, base_url_fn, *, sleep=time.sleep, rounds=None):
+    sleep(_BOOT_DELAY_SEC)
+    done = 0
+    while True:
+        try:
+            sync(sitemap_fn, base_url_fn, quiet=done > 0)
+        except Exception as e:  # noqa: BLE001 - mai far cadere il processo per un ping SEO
+            print(f"[indexnow] invio fallito: {e}", flush=True)
+        done += 1
+        if not every_sec() or (rounds is not None and done >= rounds):
+            return
+        sleep(every_sec())
 
 
 def start(sitemap_fn, base_url_fn):
-    """Thread daemon di boot; non parte senza chiave o senza base https pubblica."""
+    """Thread daemon (boot, poi ogni `every_sec()`); non parte senza chiave o
+    senza base https pubblica."""
     if not key() or not is_public_https_url(base_url_fn() or ""):
         return None
     t = threading.Thread(target=_run, args=(sitemap_fn, base_url_fn), daemon=True,

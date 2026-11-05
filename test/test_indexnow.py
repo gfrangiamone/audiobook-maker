@@ -126,3 +126,18 @@ def test_sitemap_xml_outside_request_feeds_indexnow(monkeypatch):
     assert len(e) == xml.count("<loc>")
     monkeypatch.setattr(audiobook_app, "BASE_URL", "")
     assert rp.sitemap_xml() is None
+
+
+def test_dopo_il_boot_ricontrolla_la_sitemap_periodicamente(on, monkeypatch):
+    # I libri del catalogo si pubblicano senza deploy: il thread non si ferma
+    # al giro di boot, ripete ogni ABM_INDEXNOW_EVERY_SEC (05/11/2026).
+    monkeypatch.setenv("ABM_INDEXNOW_EVERY_SEC", "3600")
+    calls, sleeps = [], []
+    monkeypatch.setattr(indexnow, "sync", lambda *a, **k: calls.append(k.get("quiet")))
+    indexnow._run(lambda: "", lambda: "https://example.com", sleep=sleeps.append, rounds=3)
+    assert calls == [False, True, True]
+    assert sleeps == [indexnow._BOOT_DELAY_SEC, 3600, 3600]
+    monkeypatch.setenv("ABM_INDEXNOW_EVERY_SEC", "0")
+    calls.clear()
+    indexnow._run(lambda: "", lambda: "https://example.com", sleep=lambda s: None)
+    assert calls == [False]
