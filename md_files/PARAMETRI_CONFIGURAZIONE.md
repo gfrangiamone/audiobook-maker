@@ -1067,6 +1067,7 @@ Dal 05/11/2026 (v3.175.0). In produzione il catalogo sta nel bucket R2 **privato
 | `ABM_FREE_CATALOG_TTL_SEC` | `600` | Durata della cache di un catalogo per lingua, in secondi. | `free_catalog.py` | 235 |
 | `ABM_FREE_CATALOG_FILES_DIR` | *(vuoto)* | Solo sviluppo: cartella servita su `/free-audiobooks/files/` al posto del bucket. | `free_catalog.py` | 317 |
 | `FILE_REDIRECT_MAX_AGE` | `3600` | `Cache-Control` del 302 di un file verso R2, sotto la durata dell'URL firmato (`ABM_S3_PRESIGN_TTL_SEC`, 6 h). Si firmano solo le chiavi `m4b/`, `preview/`, `covers/` scritte da catalog_cli (`_FILE_KEY_RE`). | `free_catalog.py` | 58 |
+| `NEW_DAYS` | `3` | Giorni in cui un libro pubblicato resta nello scaffale "Nuovi audiolibri aggiunti al catalogo!" in cima all'indice (da `published_at`; senza libri nuovi lo scaffale non c'e'). | `free_catalog.py` | 58 |
 | `SCHEMA_VERSION` | `1` | Versione dello schema del catalogo accettata (contratto con il repo `abm-free-catalog`, copia in `test/fixtures/free_catalog/`). | `free_catalog.py` | 44 |
 | `LANGS` | `it en de pt nl es` | Lingue del catalogo (pt e nl non sono lingue del sito). | `free_catalog.py` | 46 |
 | `SHARE_PREFIX` | `"fc-"` | Prefisso dei token di condivisione permanenti `/s/fc-<book_id>`. | `free_catalog.py` | 52 |

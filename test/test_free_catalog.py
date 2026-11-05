@@ -254,7 +254,24 @@ def test_list_shows_covers_and_hm_durations_not_death_dates(catalog, client):
     assert ">3:30<" in page          # pubblicato: durata reale ore:minuti
     assert ">~5:20<" in page         # in arrivo: stima
     assert "1922" not in page and "1927" not in page and "†" not in page
-    assert 'class="fc-shelf"' in page   # scaffale dei disponibili
+    assert 'class="fc-shelf"' not in page   # pubblicato il 20/12: non e' fra i nuovi
+
+
+def test_scaffale_dei_nuovi_solo_per_i_libri_degli_ultimi_tre_giorni(catalog, client):
+    from datetime import date, datetime, timedelta, timezone
+    today = datetime.now(timezone.utc).date()
+    catalog([_book(published_at=today.isoformat()),
+             _book(book_id="it-vecchio", slug="vecchio", title="Vecchio",
+                   published_at=(today - timedelta(days=10)).isoformat()), dict(_COMING)])
+    page = client.get("/free-audiobooks/it/").get_data(as_text=True)
+    start = page.index('class="fc-shelf"')
+    shelf = page[start:page.index("</section>", start)]
+    assert "Nuovi audiolibri aggiunti al catalogo!" in page and "Disponibili ora" not in page
+    assert "storia-di-una-capinera" in shelf and "/vecchio/" not in shelf
+    items = [("it", {"status": "published", "published_at": d}) for d in
+             ("2026-11-05", "2026-11-02", "2026-11-01", "2026-11-09", "", "x")]
+    got = free_catalog.new_books(items, today=date(2026, 11, 5))
+    assert [b["published_at"] for _, b in got] == ["2026-11-05", "2026-11-02"]
 
 
 def test_book_without_cover_falls_back_to_initials(catalog, client):

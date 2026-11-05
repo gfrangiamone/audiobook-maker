@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import i18n
 import page_brand
@@ -53,6 +53,9 @@ SHARE_PREFIX = "fc-"
 PATH = "/free-audiobooks"
 FILES_PATH = PATH + "/files"
 STATUSES = ("published", "coming")
+# Un libro resta "nuovo" (scaffale in cima all'indice) per NEW_DAYS giorni dalla
+# pubblicazione (decisione utente 05/11/2026).
+NEW_DAYS = 3
 # Cache del redirect di un file verso R2: meno della durata dell'URL firmato
 # (`ABM_S3_PRESIGN_TTL_SEC`, 6 h di default).
 FILE_REDIRECT_MAX_AGE = 3600
@@ -456,6 +459,21 @@ def _card(lang, b, t):
     })
 
 
+def new_books(items, today=None):
+    """Libri pubblicati negli ultimi NEW_DAYS giorni [(lingua, libro)], dal piu'
+    recente; una data di pubblicazione illeggibile o futura non conta."""
+    today = today or datetime.now(timezone.utc).date()
+    out = []
+    for lang, b in items:
+        try:
+            day = datetime.strptime((b.get("published_at") or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if b["status"] == "published" and today - timedelta(days=NEW_DAYS) <= day <= today:
+            out.append((day, lang, b))
+    return [(lang, b) for _, lang, b in sorted(out, key=lambda x: x[0], reverse=True)]
+
+
 def _shelf(items, t, title):
     """Scaffale orizzontale di libri pubblicati [(lingua, libro)] ('' se non ce ne sono)."""
     if not items:
@@ -502,6 +520,7 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path):
     t = _t(ui_lang)
     canonical = f"{base_url}{canonical_path}"
     pubs = [(l, b) for l, b in items if b["status"] == "published"]
+    fresh = new_books(items)
     in_preset = [(l, b) for l, b in items if not preset or l == preset]
     art = [b for l, b in sorted(in_preset, key=lambda x: x[1]["status"] != "published")
            if b["cover"]["url"]][:3]
@@ -512,7 +531,7 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path):
         "__CHIPS__": _chips([t["hub_count"].format(n=len(pubs), total=len(items)),
                              t["chip_m4b"], t["chip_free"]]),
         "__HERO_COVERS__": "".join(_cover_img(b, size=200, cls="fc-hero-cover", lazy=False) for b in art),
-        "__SHELF__": _shelf(pubs, t, t["shelf_available"]),
+        "__SHELF__": _shelf(fresh, t, t["shelf_new"]),
         "__STEP1_T__": _esc(t["step1_title"]), "__STEP1__": _esc(t["step1"]),
         "__STEP2_T__": _esc(t["step2_title"]), "__STEP2__": _esc(t["step2"]),
         "__STEP3_T__": _esc(t["step3_title"]), "__STEP3__": _esc(t["step3"]),
