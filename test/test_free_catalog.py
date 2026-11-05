@@ -2,6 +2,7 @@
 catalogo pubblico, pagine indice e libro, download contato, import nell'app
 con i token di condivisione `fc-<book_id>`."""
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import audiobook_app
 import free_catalog
 import routes_pages
 import seo_ld
+import storage_backend
 
 
 def _book(**over):
@@ -485,3 +487,73 @@ def test_le_pagine_per_lingua_si_dichiarano_alternative(catalog, client, tmp_pat
     assert '<link rel="alternate" hreflang="it" href="' in page and '/free-audiobooks/it/">' in page
     assert '<link rel="alternate" hreflang="en" href="' in page
     assert 'hreflang="x-default"' in page and 'hreflang="de"' not in page   # de senza catalogo
+
+
+# --- bucket privato (decisione utente 05/11/2026) ------------------------------
+
+_FILES = "/free-audiobooks/files"
+
+
+@pytest.fixture
+def bucket_catalog(monkeypatch):
+    """Catalogo sul bucket privato: R2 finto e file con URL relativi."""
+    b = _book(cover={"url": f"{_FILES}/covers/it/storia-di-una-capinera.jpg",
+                     "thumb": f"{_FILES}/covers/it/storia-di-una-capinera-thumb.jpg"})
+    b["file"] = dict(b["file"], url=f"{_FILES}/m4b/it/storia-di-una-capinera.m4b",
+                     preview_url=f"{_FILES}/preview/it/storia-di-una-capinera.m4a")
+    doc = {"schema_version": 1, "lang": "it", "books": [b]}
+    signed, read = [], []
+
+    def get_bytes(key, bucket=None):
+        read.append((bucket, key))
+        return json.dumps(doc).encode("utf-8") if key == "catalog/it.json" else None
+
+    def presign(key, download_name=None, ttl=None, bucket=None):
+        signed.append((bucket, key, download_name))
+        return f"https://r2.example/{bucket}/{key}?sig=1"
+    for name in ("ABM_FREE_CATALOG_SOURCE", "ABM_FREE_CATALOG_FILES_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ABM_FREE_CATALOG_BUCKET", "catalogo-abm")
+    monkeypatch.setenv("ABM_FREE_CATALOG_TTL_SEC", "0")
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "get_bytes", get_bytes)
+    monkeypatch.setattr(storage_backend, "presigned_get_url", presign)
+    free_catalog.invalidate_cache()
+    yield signed, read
+    free_catalog.invalidate_cache()
+
+
+def test_catalogo_dal_bucket_e_file_con_url_firmati(bucket_catalog, client, monkeypatch):
+    signed, read = bucket_catalog
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    assert [b["slug"] for b in free_catalog.books("it")] == ["storia-di-una-capinera"]
+    assert ("catalogo-abm", "catalog/it.json") in read
+
+    r = client.get(f"{_FILES}/covers/it/storia-di-una-capinera.jpg")
+    assert r.status_code == 302
+    assert r.headers["Location"] == "https://r2.example/catalogo-abm/covers/it/storia-di-una-capinera.jpg?sig=1"
+    assert f"max-age={free_catalog.FILE_REDIRECT_MAX_AGE}" in r.headers["Cache-Control"]
+    # Si firmano solo i file che scrive catalog_cli, non il resto del bucket.
+    assert client.get(f"{_FILES}/catalog/it.json").status_code == 404
+    assert client.get(f"{_FILES}/m4b/it/x.mp3").status_code == 404
+
+    book = free_catalog.book("it", "storia-di-una-capinera")
+    for url in ("/free-audiobooks/dl/it/storia-di-una-capinera.m4b", "/s/fc-it-capinera/dl"):
+        r = client.get(url)
+        assert r.status_code == 302, url
+        assert r.headers["Location"].startswith("https://r2.example/catalogo-abm/m4b/it/"), url
+        assert signed[-1][2] == free_catalog.file_name(book)        # "<Titolo> - <Autore>.m4b"
+
+    page = client.get("/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
+    og = re.search(r"<meta[^>]+og:image[^>]*>", page).group(0)
+    assert 'content="http' in og and "/covers/it/storia-di-una-capinera.jpg" in og
+
+
+def test_senza_r2_il_bucket_non_accende_il_catalogo(monkeypatch):
+    for name in ("ABM_FREE_CATALOG_SOURCE", "ABM_FREE_CATALOG_FILES_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ABM_FREE_CATALOG_BUCKET", "catalogo-abm")
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
+    free_catalog.invalidate_cache()
+    assert free_catalog.files_bucket() == ""
+    assert free_catalog.bucket_file_url("covers/it/x.jpg") is None

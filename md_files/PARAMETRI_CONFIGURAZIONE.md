@@ -1058,16 +1058,18 @@ Dal 05/11/2026 (v3.174.0). Con la cartella impostata, l'M4B a file unico di un l
 
 ### 7.14 Catalogo audiolibri gratuiti (`free_catalog.py`, `catalog_stats.py`)
 
-Dal 05/11/2026 (v3.175.0). Senza `ABM_FREE_CATALOG_SOURCE` il catalogo e' vuoto (pagine "in arrivo"). Attribuzione: `utm_source=catalog` sulle CTA delle schede, contatori `web_visit_from_catalog` e `payment_from_catalog` di `metrics_store`, `acquisition_source` negli audit premium.
+Dal 05/11/2026 (v3.175.0). In produzione il catalogo sta nel bucket R2 **privato** `ABM_FREE_CATALOG_BUCKET`, letto con le credenziali `ABM_S3_*` di `storage_backend` (il token deve coprire anche quel bucket): `catalog/<lang>.json` letto dal server, file (M4B, anteprime, copertine) con URL relativi `/free-audiobooks/files/<chiave>` serviti con 302 a un URL firmato (decisione utente 05/11/2026, v3.176.0: il dominio dei file su Cloudflare avrebbe richiesto di spostare il DNS del sito). Senza bucket ne' `ABM_FREE_CATALOG_SOURCE` il catalogo e' spento (404). Attribuzione: `utm_source=catalog` sulle CTA delle schede, contatori `web_visit_from_catalog` e `payment_from_catalog` di `metrics_store`, `acquisition_source` negli audit premium.
 
 | Variabile / costante | Default | Descrizione | File | Riga |
 |---|---|---|---|---|
-| `ABM_FREE_CATALOG_SOURCE` | *(vuoto, catalogo vuoto)* | Sorgente di `catalog/<lang>.json`: URL http(s) o percorso locale con il segnaposto `{lang}`. Lingua senza file = nessun libro; file illeggibile o non valido = resta l'ultimo letto. | `free_catalog.py` | 63 |
-| `ABM_FREE_CATALOG_TTL_SEC` | `600` | Durata della cache di un catalogo per lingua, in secondi. | `free_catalog.py` | 200 |
-| `ABM_FREE_CATALOG_FILES_DIR` | *(vuoto)* | Solo sviluppo: cartella servita su `/free-audiobooks/files/` al posto del bucket pubblico. | `free_catalog.py` | 282 |
-| `SCHEMA_VERSION` | `1` | Versione dello schema del catalogo accettata (contratto con il repo `abm-free-catalog`). | `free_catalog.py` | 35 |
-| `LANGS` | `it en de pt nl es` | Lingue del catalogo (pt e nl non sono lingue del sito). | `free_catalog.py` | 37 |
-| `SHARE_PREFIX` | `"fc-"` | Prefisso dei token di condivisione permanenti `/s/fc-<book_id>`. | `free_catalog.py` | 43 |
+| `ABM_FREE_CATALOG_BUCKET` | *(vuoto, spento)* | Bucket R2 privato del catalogo (`catalogo-abm`). Vale solo con R2 attivo (`storage_backend.is_enabled`). | `free_catalog.py` | 81 |
+| `ABM_FREE_CATALOG_SOURCE` | *(vuoto)* | Solo sviluppo, vince sul bucket: sorgente di `catalog/<lang>.json`, URL http(s) o percorso locale con il segnaposto `{lang}`. Lingua senza file = nessun libro; file illeggibile o non valido = resta l'ultimo letto (vale anche per il bucket). | `free_catalog.py` | 86 |
+| `ABM_FREE_CATALOG_TTL_SEC` | `600` | Durata della cache di un catalogo per lingua, in secondi. | `free_catalog.py` | 235 |
+| `ABM_FREE_CATALOG_FILES_DIR` | *(vuoto)* | Solo sviluppo: cartella servita su `/free-audiobooks/files/` al posto del bucket. | `free_catalog.py` | 317 |
+| `FILE_REDIRECT_MAX_AGE` | `3600` | `Cache-Control` del 302 di un file verso R2, sotto la durata dell'URL firmato (`ABM_S3_PRESIGN_TTL_SEC`, 6 h). Si firmano solo le chiavi `m4b/`, `preview/`, `covers/` scritte da catalog_cli (`_FILE_KEY_RE`). | `free_catalog.py` | 58 |
+| `SCHEMA_VERSION` | `1` | Versione dello schema del catalogo accettata (contratto con il repo `abm-free-catalog`, copia in `test/fixtures/free_catalog/`). | `free_catalog.py` | 44 |
+| `LANGS` | `it en de pt nl es` | Lingue del catalogo (pt e nl non sono lingue del sito). | `free_catalog.py` | 46 |
+| `SHARE_PREFIX` | `"fc-"` | Prefisso dei token di condivisione permanenti `/s/fc-<book_id>`. | `free_catalog.py` | 52 |
 | `DEFAULT_DAYS` | `30` | Periodo di default di `/admin/audit-catalog`. | `catalog_stats.py` | 21 |
 | `MAX_DAYS` | `400` | Periodo massimo di una richiesta di statistiche. | `catalog_stats.py` | 22 |
 

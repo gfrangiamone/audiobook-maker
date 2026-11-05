@@ -3,10 +3,18 @@
 Spec: docs/superpowers/specs/2026-11-04-catalogo-audiolibri-gratuiti-design.md.
 Il catalogo pubblico e' un JSON per lingua scritto dal repo privato
 `abm-free-catalog` (`catalog/<lang>.json`, con `schema_version`): qui lo si
-legge da `ABM_FREE_CATALOG_SOURCE` (percorso o URL con `{lang}`), lo si
+legge dal bucket privato `ABM_FREE_CATALOG_BUCKET` (chiave
+`catalog/<lang>.json`, con le credenziali R2 di `storage_backend`) o, in
+sviluppo, da `ABM_FREE_CATALOG_SOURCE` (percorso o URL con `{lang}`); lo si
 valida, lo si tiene in cache e si costruiscono le pagine sulla shell
-pubblica e le voci della sitemap. Senza la env il catalogo e' spento e le
-route rispondono 404.
+pubblica e le voci della sitemap. Senza nessuna delle due il catalogo e'
+spento e le route rispondono 404.
+
+I file (M4B, anteprime, copertine) nel catalogo hanno URL relativi
+`/free-audiobooks/files/<chiave>`: col bucket la route risponde 302 a un URL
+firmato di R2, cosi' i byte non passano dal server (decisione utente
+05/11/2026: il dominio dei file su Cloudflare richiederebbe di spostarvi il
+DNS del sito).
 
 Il catalogo non porta mai il nome di un fornitore: la voce e' un'etichetta
 (`voice_label`), la produzione ha solo date, l'invito verso l'app porta il
@@ -28,6 +36,7 @@ from datetime import datetime, timezone
 import i18n
 import page_brand
 import seo_ld
+import storage_backend
 from env_utils import env_int, env_str
 from fileio import load_json, safe_filename
 from og_image_data import og_image_url
@@ -42,7 +51,15 @@ LANG_NAMES = {"it": "Italiano", "en": "English", "de": "Deutsch", "pt": "Portugu
 # Token di condivisione permanente di un libro del catalogo (spec §7.6).
 SHARE_PREFIX = "fc-"
 PATH = "/free-audiobooks"
+FILES_PATH = PATH + "/files"
 STATUSES = ("published", "coming")
+# Cache del redirect di un file verso R2: meno della durata dell'URL firmato
+# (`ABM_S3_PRESIGN_TTL_SEC`, 6 h di default).
+FILE_REDIRECT_MAX_AGE = 3600
+# Chiavi del bucket servibili su /free-audiobooks/files/ (quelle che scrive
+# catalog_cli): nient'altro si firma.
+_FILE_KEY_RE = re.compile(r"^(m4b/[a-z]{2}/[a-z0-9-]+\.m4b|preview/[a-z]{2}/[a-z0-9-]+\.m4a"
+                          r"|covers/[a-z]{2}/[a-z0-9-]+\.jpg)$")
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _BOOK_ID_RE = re.compile(r"^[a-z]{2}-[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -59,15 +76,33 @@ _cache = {}
 
 # --- lettura e validazione ---------------------------------------------------
 
+def files_bucket():
+    """Bucket privato del catalogo, se configurato e con R2 attivo."""
+    bucket = env_str("ABM_FREE_CATALOG_BUCKET")
+    return bucket if bucket and storage_backend.is_enabled() else ""
+
+
 def _source(lang):
     tpl = env_str("ABM_FREE_CATALOG_SOURCE")
-    return tpl.replace("{lang}", lang) if tpl else ""
+    if tpl:
+        return tpl.replace("{lang}", lang)
+    bucket = files_bucket()
+    return f"r2://{bucket}/catalog/{lang}.json" if bucket else ""
 
 
 _ILLEGGIBILE = object()
 
 
 def _fetch(src):
+    if src.startswith("r2://"):
+        bucket, _, key = src[len("r2://"):].partition("/")
+        raw = storage_backend.get_bytes(key, bucket=bucket)
+        if raw is None:
+            return None                 # lingua senza ancora il suo file
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except ValueError:
+            raise ValueError("JSON illeggibile") from None
     if src.startswith(("http://", "https://")):
         with urllib.request.urlopen(src, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -276,10 +311,33 @@ def download_path(lang, b):
 
 
 def local_files_dir():
-    """Cartella locale che fa le veci del bucket pubblico in sviluppo
+    """Cartella locale che fa le veci del bucket in sviluppo
     (`ABM_FREE_CATALOG_FILES_DIR`, servita su `/free-audiobooks/files/`).
-    Vuota in produzione: i file stanno sul bucket e il catalogo ha URL assoluti."""
+    Vuota in produzione: i file stanno sul bucket (`bucket_file_url`)."""
     return env_str("ABM_FREE_CATALOG_FILES_DIR")
+
+
+def bucket_file_url(key, download_name=None):
+    """URL firmato di un file del catalogo sul bucket, o None se il bucket
+    non c'e' o la chiave non e' una di quelle che scrive catalog_cli."""
+    bucket = files_bucket()
+    if not bucket or not _FILE_KEY_RE.match(key or ""):
+        return None
+    return storage_backend.presigned_get_url(key, download_name=download_name, bucket=bucket)
+
+
+def file_redirect_url(b):
+    """Dove mandare lo scaricamento del libro (pagina e app): l'URL firmato
+    sul bucket, col nome "<Titolo> - <Autore>.m4b", se il file e' una sua
+    chiave; altrimenti l'URL del catalogo com'e' (sviluppo, URL assoluti)."""
+    url = b["file"]["url"]
+    key = url[len(FILES_PATH) + 1:] if url.startswith(FILES_PATH + "/") else ""
+    return (key and bucket_file_url(key, download_name=file_name(b))) or url
+
+
+def absolute_url(url, base_url):
+    """URL assoluto per og:image e JSON-LD: i file del catalogo sono relativi."""
+    return base_url + url if url.startswith("/") else url
 
 
 def sitemap_entries(base_url):
@@ -687,12 +745,13 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
               base=base_url or seo_ld.SITE_URL),
           seo_ld.breadcrumb_ld([("Audiobook Maker", f"{base_url}/"),
                                 (t["crumb"], f"{base_url}{hub}"), (b["title"], canonical)])]
-    if b["cover"]["url"]:
-        ld[0]["image"] = b["cover"]["url"]
+    cover = absolute_url(b["cover"]["url"], base_url)
+    if cover:
+        ld[0]["image"] = cover
     head = page_brand.seo_head(
         desc=_esc(desc), canonical=canonical, og_type="book", og_title=_esc(b["title"]),
         og_desc=_esc(desc), og_url=canonical,
-        og_image=_esc(b["cover"]["url"]) or og_image_url(base_url),
+        og_image=_esc(cover) or og_image_url(base_url),
         lang=_lang_ok(lang), ld=[seo_ld.ld_json(x) for x in ld])
     title = _esc(t["book_title"].format(title=b["title"], author=b["author"]["name"]))
     crumb = f'<a href="{hub}">{_esc(t["crumb"])}</a> &rsaquo; {_esc(b["title"])}'

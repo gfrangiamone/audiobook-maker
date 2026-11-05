@@ -1,5 +1,6 @@
 """Unit test per storage_backend: tutte le primitive S3 con fake client."""
 import importlib
+import io
 import os
 
 import pytest
@@ -148,3 +149,23 @@ def test_download_file_removes_part_on_unexpected_error(sb, tmp_path):
         storage_backend.download_file("k", str(dest))
     assert not os.path.exists(catturato["tmp"])
     assert not dest.exists()
+
+
+def test_altro_bucket_senza_prefisso_e_lettura_di_oggetti_piccoli(sb, monkeypatch):
+    # Il catalogo gratuito sta in un bucket a parte dello stesso account:
+    # stesse credenziali, chiave senza il prefisso del tiering.
+    storage_backend, fake = sb
+    monkeypatch.setattr(storage_backend, "_KEY_PREFIX", "ns")
+    objects = {("catalogo-abm", "catalog/it.json"): b"{}"}
+
+    def get_object(Bucket, Key):
+        if (Bucket, Key) not in objects:
+            raise _FakeClientError("NoSuchKey")
+        return {"Body": io.BytesIO(objects[(Bucket, Key)])}
+    fake.get_object = get_object
+    assert storage_backend.get_bytes("catalog/it.json", bucket="catalogo-abm") == b"{}"
+    assert storage_backend.get_bytes("catalog/de.json", bucket="catalogo-abm") is None
+    storage_backend.presigned_get_url("m4b/it/x.m4b", bucket="catalogo-abm")
+    assert fake.presigned_calls[-1][1] == {"Bucket": "catalogo-abm", "Key": "m4b/it/x.m4b"}
+    storage_backend.presigned_get_url("job/a.m4b")
+    assert fake.presigned_calls[-1][1] == {"Bucket": "bkt", "Key": "ns/job/a.m4b"}

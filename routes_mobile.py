@@ -793,14 +793,14 @@ def share_download(token):
     """Consegna il file della share validando il TTL. ready → file locale via
     _send_file_throttled; upload → redirect alla presigned GET su R2;
     archive → il libro nell'archivio online dell'account (R2 o job collegato);
-    catalogo gratuito (`fc-…`) → redirect al file sul bucket pubblico."""
+    catalogo gratuito (`fc-…`) → redirect al file sul bucket (URL firmato)."""
     book = free_catalog.book_for_share_token(token)
     if book is not None:
         # Piattaforma dell'app se la richiesta la dichiara (header dell'app),
         # altrimenti "app": la scaricano i download manager di Android e iOS.
         _log_activity("", book["book_id"], "FREE_CATALOG_APP", "", client_ip(), "",
                       book["book_id"][:2], platform=_client_platform() or "app")
-        return redirect(book["file"]["url"], code=302)
+        return redirect(free_catalog.file_redirect_url(book), code=302)
     info = _tkstore.share_tokens.get(token)
     if (not isinstance(info, dict)
             or info.get("kind") not in SHARE_KINDS

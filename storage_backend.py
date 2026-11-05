@@ -54,6 +54,20 @@ def _full_key(key):
     return f"{_KEY_PREFIX}/{k}" if _KEY_PREFIX else k
 
 
+def _object(key, bucket=None):
+    """Bucket e chiave di un oggetto: il bucket del tiering con il suo
+    prefisso, oppure un altro bucket dello stesso account (il catalogo
+    gratuito, `free_catalog`) con la chiave cosi' com'e'."""
+    if bucket:
+        return {"Bucket": bucket, "Key": key.lstrip("/")}
+    return {"Bucket": _BUCKET, "Key": _full_key(key)}
+
+
+def _not_found(e):
+    code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
+    return code in ("404", "NoSuchKey", "NotFound")
+
+
 def _get_client():
     """Client boto3 S3 lazy + cached, thread-safe. signature_version s3v4 per
     compat presigned (upload concorrenti da più thread di offload)."""
@@ -91,8 +105,7 @@ def object_exists(key):
         _get_client().head_object(Bucket=_BUCKET, Key=_full_key(key))
         return True
     except ClientError as e:
-        code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
-        if code in ("404", "NoSuchKey", "NotFound"):
+        if _not_found(e):
             return False
         raise
 
@@ -106,8 +119,7 @@ def object_size(key):
         r = _get_client().head_object(Bucket=_BUCKET, Key=_full_key(key))
         return int(r["ContentLength"])
     except ClientError as e:
-        code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
-        if code in ("404", "NoSuchKey", "NotFound"):
+        if _not_found(e):
             return None
         raise
 
@@ -137,8 +149,7 @@ def download_file(key, local_path):
         try:
             _get_client().download_file(Bucket=_BUCKET, Key=_full_key(key), Filename=tmp)
         except ClientError as e:
-            code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
-            if code in ("404", "NoSuchKey", "NotFound"):
+            if _not_found(e):
                 return False
             raise
         os.replace(tmp, local_path)
@@ -150,10 +161,22 @@ def download_file(key, local_path):
             pass
 
 
-def presigned_get_url(key, download_name=None, ttl=None):
+def get_bytes(key, bucket=None):
+    """Contenuto di un oggetto piccolo (es. un JSON), o None se non esiste.
+    Solleva su altri errori."""
+    try:
+        return _get_client().get_object(**_object(key, bucket))["Body"].read()
+    except ClientError as e:
+        if _not_found(e):
+            return None
+        raise
+
+
+def presigned_get_url(key, download_name=None, ttl=None, bucket=None):
     """URL GET temporaneo per redirect 302. download_name forza il filename
-    via Content-Disposition (preservato attraverso il redirect)."""
-    params = {"Bucket": _BUCKET, "Key": _full_key(key)}
+    via Content-Disposition (preservato attraverso il redirect); `bucket`
+    come in `_object`."""
+    params = _object(key, bucket)
     if download_name:
         ascii_name = (download_name.encode("ascii", "ignore").decode("ascii").replace('"', "")) or "download"
         utf8_name = quote(download_name)

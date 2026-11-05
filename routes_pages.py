@@ -330,24 +330,31 @@ def _app_url_for_device(https_url):
 
 @bp.route("/free-audiobooks/dl/<lang>/<slug>.m4b")
 def free_catalog_download(lang, slug):
-    """Conta lo scaricamento e rimanda al file sul bucket pubblico: il server
-    non serve byte, quindi niente throttle ne' carico sul processo."""
+    """Conta lo scaricamento e rimanda al file sul bucket (URL firmato): il
+    server non serve byte, quindi niente throttle ne' carico sul processo."""
     book = free_catalog.book(lang, slug)
     if book is None:
         return "Not found", 404
     _log_activity("", book["book_id"], "FREE_CATALOG_DL", "", client_ip(), "", lang,
                   platform="web")
-    return redirect(book["file"]["url"], code=302)
+    return redirect(free_catalog.file_redirect_url(book), code=302)
 
 
 @bp.route("/free-audiobooks/files/<path:name>")
 def free_catalog_file(name):
-    """Solo sviluppo: copertine e M4B da una cartella locale, con Range per
-    il player. Senza `ABM_FREE_CATALOG_FILES_DIR` (produzione) e' un 404."""
+    """Copertine, anteprime e M4B del catalogo: 302 a un URL firmato sul
+    bucket privato (`ABM_FREE_CATALOG_BUCKET`), con il redirect in cache per
+    `FILE_REDIRECT_MAX_AGE`; in sviluppo da una cartella locale
+    (`ABM_FREE_CATALOG_FILES_DIR`), con Range per il player."""
     root = free_catalog.local_files_dir()
-    if not root:
+    if root:
+        return send_from_directory(root, name, conditional=True)
+    url = free_catalog.bucket_file_url(name)
+    if not url:
         return "Not found", 404
-    return send_from_directory(root, name, conditional=True)
+    resp = redirect(url, code=302)
+    resp.headers["Cache-Control"] = f"public, max-age={free_catalog.FILE_REDIRECT_MAX_AGE}"
+    return resp
 
 
 #  -  -  -  sitemap.xml  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
