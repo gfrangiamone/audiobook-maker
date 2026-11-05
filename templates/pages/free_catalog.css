@@ -66,6 +66,9 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-lang svg{width:14px;height:14px;flex:none}
 /* Batte `.fc-shelf-item span` (blocco, testo grigio), che vale anche per il badge. */
 .fc-shelf-item .fc-lang{display:inline-flex;font-size:.8rem;color:var(--ac);margin:6px 0 2px}
+/* Durata sulla riga dell'autore, come nelle schede dell'indice. */
+.fc-shelf-item .fc-dur{display:inline-flex;font-size:.8rem;margin:0 0 0 6px;white-space:nowrap}
+.fc-shelf-item .fc-dur::before{content:"·";margin-right:5px;color:var(--brd)}
 .fc-filters button{font:inherit;font-size:.88rem;font-weight:600;padding:7px 15px;min-height:38px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--txd);cursor:pointer}
 .fc-filters button.on{background:var(--tx);border-color:var(--tx);color:var(--bg)}
 .fc-list{display:grid;grid-template-columns:1fr;gap:10px}
