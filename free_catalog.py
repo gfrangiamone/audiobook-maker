@@ -133,6 +133,9 @@ def _valid_book(b):
            "est_duration_s": _num(b.get("est_duration_s")),
            "description": _text(b.get("description")),
            "voice_label": _text(b.get("voice_label")),
+           # Modello TTS di ABM che ha letto il libro ("Gemini 3.8"), scritto
+           # dalla produzione del catalogo: la scheda lo mostra accanto alla voce.
+           "voice_model": _text(b.get("voice_model")),
            "cover": {"url": _url(cover.get("url")), "thumb": _url(cover.get("thumb"))},
            "source": {**{k: _text(_dict(b.get("source")).get(k)) for k in ("site", "license", "edition")},
                       # pagina di lettura e file dell'ebook di origine (EPUB)
@@ -410,6 +413,15 @@ def hub_html(lang, base_url):
         footer=_footer(t), head=head, css=_css())
 
 
+def _voice_text(b, t, key):
+    """La voce del libro con la forma `key`; col modello TTS se il catalogo lo
+    dichiara (`<key>_model`: "Sulafat (voce sintetica TTS PREMIUM Gemini 3.8)")."""
+    voice = b["voice_label"] or t["voice_default"]
+    if b["voice_model"]:
+        return t[key + "_model"].format(voice=voice, model=b["voice_model"])
+    return t[key].format(voice=voice)
+
+
 def _preview_html(b, t):
     """Anteprima ascoltabile sul web ('' se il catalogo non ne ha una)."""
     f = b["file"]
@@ -417,7 +429,7 @@ def _preview_html(b, t):
         return ""
     return page_brand.render_page("free_catalog_preview.html", {
         "__LABEL__": _esc(t["preview_title"]),
-        "__VOICE__": _esc(t["voice"].format(voice=b["voice_label"] or t["voice_default"])),
+        "__VOICE__": _esc(_voice_text(b, t, "voice")),
         "__SRC__": _esc(f["preview_url"]),
         "__NOTE__": _esc(t["preview_note"].format(
             min=max(1, int(f["preview_s"] / 60 + 0.5)), duration=_duration(f["duration_s"], t))),
@@ -499,7 +511,7 @@ def _scheda_html(lang, b, t):
             (t["m_format"], _esc(fmt)),
             (t["m_quality"], _esc(quality)),
             (t["m_size"], _esc(_size(f["bytes"], t))),
-            (t["m_voice"], _esc(t["voice_synthetic"].format(voice=b["voice_label"] or t["voice_default"]))),
+            (t["m_voice"], _esc(_voice_text(b, t, "voice_synthetic"))),
             (t["m_generated"], _esc(_date(b["production"]["generated_at"], t))),
             (t["m_published"], _esc(_date(b["published_at"], t))),
             (t["m_id"], f"<code>{_esc(b['book_id'])}</code>"),

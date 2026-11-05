@@ -360,3 +360,17 @@ def test_audiobook_ld_is_free_and_has_no_reader():
     assert ld["offers"]["price"] == "0" and ld["duration"] == "PT10M"
     assert ld["author"] == {"@type": "Person", "name": "A"}
     assert "readBy" not in ld and ld["datePublished"] == "2026-12-20"
+
+
+def test_la_voce_nella_scheda_porta_il_modello_tts(catalog):
+    catalog([_book(voice_label="Sulafat", voice_model="Gemini 3.8")])
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR")
+    assert "Sulafat (voce sintetica TTS PREMIUM Gemini 3.8)" in page
+    assert "Letto da Sulafat (TTS PREMIUM Gemini 3.8)" in page
+
+
+def test_senza_modello_la_voce_resta_com_era(catalog):
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR")
+    assert "Bruno (voce sintetica)" in page and "TTS PREMIUM" not in page
