@@ -99,11 +99,20 @@ def items(tmp_path, *chiavi):
 
 
 def test_il_trasporto_si_sceglie_dall_ambiente(monkeypatch):
+    monkeypatch.setenv("ABM_BASE_URL", "http://localhost:5621")
     monkeypatch.delenv("ABM_VOXCPM_TRANSPORT", raising=False)
     assert voxcpm_tts.transport() == "run"
     monkeypatch.setenv("ABM_VOXCPM_TRANSPORT", " Batch ")
     assert voxcpm_tts.transport() == "batch"
     monkeypatch.setenv("ABM_VOXCPM_TRANSPORT", "altro")
+    assert voxcpm_tts.transport() == "run"
+
+
+@pytest.mark.parametrize("base", ["https://audiobook-maker.com",
+                                  "https://www.audiobook-maker.com/"])
+def test_in_produzione_il_batch_non_si_accende(monkeypatch, base):
+    monkeypatch.setenv("ABM_BASE_URL", base)
+    monkeypatch.setenv("ABM_VOXCPM_TRANSPORT", "batch")
     assert voxcpm_tts.transport() == "run"
 
 
@@ -310,6 +319,7 @@ class FintaSintesi:
 
 def test_la_pre_sintesi_in_batch_ripiega_su_run_per_i_lotti_persi(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_TRANSPORT", "batch")
+    monkeypatch.setenv("ABM_BASE_URL", "http://localhost:5621")
     monkeypatch.setenv("ABM_VOXCPM_BATCH_CHARS", "2")      # lotti: [cap 0], [cap 1, cap 2]
     monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
     monkeypatch.setattr(generation_engine.pending_jobs, "patch", lambda *a, **k: None)
@@ -336,6 +346,7 @@ def test_la_pre_sintesi_in_batch_ripiega_su_run_per_i_lotti_persi(tmp_path, monk
 
 def test_se_il_batch_non_parte_tutto_va_via_run(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_TRANSPORT", "batch")
+    monkeypatch.setenv("ABM_BASE_URL", "http://localhost:5621")
     monkeypatch.setenv("ABM_VOXCPM_BATCH_CHARS", "0")
     monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
 
@@ -350,6 +361,7 @@ def test_se_il_batch_non_parte_tutto_va_via_run(tmp_path, monkeypatch):
 
 def test_annullare_durante_il_batch_e_un_annullamento_del_job(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_TRANSPORT", "batch")
+    monkeypatch.setenv("ABM_BASE_URL", "http://localhost:5621")
 
     def annullato(*a, **k):
         raise voxcpm_tts.VoxcpmAnnullato("batch annullato", "b1")
