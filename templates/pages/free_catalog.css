@@ -61,7 +61,10 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-search-row .fc-search-box{flex:1;min-width:0}
 .fc-search-row select{flex:none;max-width:42%;font:inherit;font-size:16px;font-weight:600;padding:0 14px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--tx);cursor:pointer}
 .fc-search-row select:focus{outline:2px solid var(--ac);outline-offset:1px}
-.fc-lang{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid var(--brd);color:var(--txd)}
+/* Lingua di lettura del libro: in evidenza nel catalogo multilingua (05/11/2026). */
+.fc-lang{display:inline-flex;align-items:center;gap:5px;font-size:.8rem;font-weight:700;line-height:1;padding:4px 10px 4px 8px;border-radius:999px;color:var(--ac);background:color-mix(in srgb,var(--ac) 15%,transparent);border:1px solid color-mix(in srgb,var(--ac) 45%,transparent)}
+.fc-lang svg{width:14px;height:14px;flex:none}
+.fc-shelf-item .fc-lang{align-self:flex-start;margin-top:4px}
 .fc-filters button{font:inherit;font-size:.88rem;font-weight:600;padding:7px 15px;min-height:38px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--txd);cursor:pointer}
 .fc-filters button.on{background:var(--tx);border-color:var(--tx);color:var(--bg)}
 .fc-list{display:grid;grid-template-columns:1fr;gap:10px}
