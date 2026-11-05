@@ -57,9 +57,10 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-search input{width:100%;font:inherit;font-size:16px;padding:12px 14px 12px 42px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--tx)}
 .fc-search input:focus{outline:2px solid var(--ac);outline-offset:1px}
 .fc-filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.fc-langsel{margin-top:10px;display:flex;align-items:center;gap:10px}
-.fc-langsel label{font-size:.8rem;font-weight:600;color:var(--txd)}
-.fc-langsel select{font:inherit;font-size:16px;padding:8px 14px;min-height:40px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--tx)}
+.fc-search-row{display:flex;gap:10px;align-items:stretch}
+.fc-search-row .fc-search-box{flex:1;min-width:0}
+.fc-search-row select{flex:none;max-width:42%;font:inherit;font-size:16px;font-weight:600;padding:0 14px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--tx);cursor:pointer}
+.fc-search-row select:focus{outline:2px solid var(--ac);outline-offset:1px}
 .fc-lang{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid var(--brd);color:var(--txd)}
 .fc-filters button{font:inherit;font-size:.88rem;font-weight:600;padding:7px 15px;min-height:38px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--txd);cursor:pointer}
 .fc-filters button.on{background:var(--tx);border-color:var(--tx);color:var(--bg)}

@@ -15,14 +15,13 @@ __SHELF__
   <div class="fc-tools">
     <div class="fc-search">
       <label for="fc-q">__SEARCH_LABEL__</label>
-      <div class="fc-search-box">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-        <input type="search" id="fc-q" placeholder="__SEARCH_PH__" autocomplete="off" enterkeyhint="search">
+      <div class="fc-search-row">
+        <div class="fc-search-box">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input type="search" id="fc-q" placeholder="__SEARCH_PH__" autocomplete="off" enterkeyhint="search">
+        </div>
+        <select id="fc-lang" aria-label="__LANG_LABEL__" title="__LANG_LABEL__">__LANG_OPTIONS__</select>
       </div>
-    </div>
-    <div class="fc-langsel">
-      <label for="fc-lang">__LANG_LABEL__</label>
-      <select id="fc-lang">__LANG_OPTIONS__</select>
     </div>
     <div class="fc-filters" role="group">
       <button type="button" class="on" data-f="all" aria-pressed="true">__F_ALL__</button>
