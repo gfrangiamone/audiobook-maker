@@ -79,9 +79,13 @@ def test_completion_token_records_client_id(monkeypatch, tmp_path):
         assert captured["info"].get("client_id") == "mobile-cid-12345"
     finally:
         ge._jobs.pop(job_id, None)
-        for t in list(ge._download_tokens):
-            if ge._download_tokens[t].get("job_id") == job_id:
-                ge._download_tokens.pop(t, None)
+        # Lo store vero e il riferimento del motore possono essere dict diversi
+        # (altri test lo ribindano): pulirli entrambi, o /api/my_jobs del cid
+        # mobile-cid-12345 elenca questo job nei test che girano dopo.
+        for store in (ge._download_tokens, token_store.download_tokens):
+            for t in list(store):
+                if store[t].get("job_id") == job_id:
+                    store.pop(t, None)
 
 
 # ---------------------------------------------------------------- Task 2 – round-trip persistenza
@@ -463,9 +467,13 @@ def test_create_download_token_without_email(monkeypatch, tmp_path):
         assert bool(rec.get("output_m4b"))
     finally:
         ge._jobs.pop(job_id, None)
-        for t in list(ge._download_tokens):
-            if ge._download_tokens[t].get("job_id") == job_id:
-                ge._download_tokens.pop(t, None)
+        # Lo store vero e il riferimento del motore possono essere dict diversi
+        # (altri test lo ribindano): pulirli entrambi, o /api/my_jobs del cid
+        # mobile-cid-12345 elenca questo job nei test che girano dopo.
+        for store in (ge._download_tokens, token_store.download_tokens):
+            for t in list(store):
+                if store[t].get("job_id") == job_id:
+                    store.pop(t, None)
 
 
 def test_generation_engine_binds_send_push():
