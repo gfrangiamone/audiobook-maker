@@ -17,6 +17,7 @@ conosce il modello.
 
 import base64
 import binascii
+import math
 from env_utils import env_str
 
 import requests
@@ -319,6 +320,9 @@ def cloudflare_call(*, final_text, voice_name, model_key, model_id,
 # legge lo stile dal blocco inline del testo). `provider.order/only` sono
 # ignorati su questo endpoint: non si puo' scegliere fra AI Studio e Vertex.
 OR_API_URL = "https://openrouter.ai/api/v1/audio/speech"
+# Saldo del conto: crediti acquistati e spesi, in USD. Risponde anche alla
+# chiave di inferenza (verificato in prod il 05/11/2026).
+OR_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 # Il generation id viaggia nell'header: `GET /generation?id=` lo risolve dopo
 # ~20 s con i token nativi e il costo esatto. Non e' sul percorso caldo.
 OR_GENERATION_HEADER = "X-Generation-Id"
@@ -412,8 +416,10 @@ def _interpret_openrouter_response(resp):
     message = _or_error_message(body, getattr(resp, "text", ""))
 
     if status == 402:
+        # "Rifiuto per credito", non "credito esaurito": il 402 del 05/11/2026
+        # e' arrivato con il saldo in attivo e la ricarica automatica accesa.
         raise TransportError(
-            f"credito OpenRouter esaurito: {message}",
+            f"OpenRouter rifiuta per credito (HTTP 402): {message}",
             kind="backend_down", http_status=status)
     if status == 429:
         raise TransportError(
@@ -450,6 +456,12 @@ def _interpret_openrouter_response(resp):
         f"OpenRouter HTTP {status}: {detail}", kind="retryable", http_status=status)
 
 
+def _or_headers(key):
+    return {"Authorization": f"Bearer {key}",
+            "HTTP-Referer": "https://audiobook-maker.com",
+            "X-Title": "AudioBook Maker"}
+
+
 def openrouter_call(*, final_text, voice_name, model_key, model_id,
                     timeout_ms, temperature, instructions=None):
     """Adapter di trasporto OpenRouter (/audio/speech).
@@ -469,11 +481,8 @@ def openrouter_call(*, final_text, voice_name, model_key, model_id,
                "response_format": "pcm"}
     if instructions:
         payload["instructions"] = str(instructions)
-    headers = {"Authorization": f"Bearer {key}",
-               "HTTP-Referer": "https://audiobook-maker.com",
-               "X-Title": "AudioBook Maker"}
     try:
-        resp = requests.post(OR_API_URL, headers=headers, json=payload,
+        resp = requests.post(OR_API_URL, headers=_or_headers(key), json=payload,
                              timeout=timeout_ms / 1000.0)
     except requests.Timeout as e:
         raise TransportError("timeout verso OpenRouter", kind="retryable") from e
@@ -489,3 +498,38 @@ def openrouter_call(*, final_text, voice_name, model_key, model_id,
             f"risposta OpenRouter non interpretabile: {type(e).__name__}",
             kind="retryable",
             http_status=getattr(resp, "status_code", None)) from e
+
+
+def openrouter_credit_left(*, timeout_sec=15.0):
+    """Saldo OpenRouter in USD: crediti acquistati meno spesi.
+
+    Una chiamata, nessun retry. Solleva solo `TransportError` (la chiave non
+    compare mai nel messaggio); un saldo non numerico o non finito e' una
+    risposta non interpretabile, non uno zero.
+    """
+    key = env_str("ABM_OPENROUTER_API_KEY")
+    if not key:
+        raise TransportError(
+            "backend OpenRouter non configurato (ABM_OPENROUTER_API_KEY assente)",
+            kind="fatal")
+    try:
+        resp = requests.get(OR_CREDITS_URL, headers=_or_headers(key),
+                            timeout=timeout_sec)
+    except requests.RequestException as e:
+        raise TransportError(f"errore di rete verso OpenRouter: "
+                             f"{type(e).__name__}", kind="retryable") from e
+    status = getattr(resp, "status_code", None)
+    if status != 200:
+        raise TransportError(f"saldo OpenRouter: HTTP {status}",
+                             kind="retryable", http_status=status)
+    try:
+        data = resp.json()["data"]
+        left = float(data["total_credits"]) - float(data["total_usage"])
+    except Exception as e:
+        raise TransportError(
+            f"saldo OpenRouter non interpretabile: {type(e).__name__}",
+            kind="retryable", http_status=status) from e
+    if not math.isfinite(left):
+        raise TransportError("saldo OpenRouter non finito",
+                             kind="retryable", http_status=status)
+    return left

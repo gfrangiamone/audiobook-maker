@@ -1727,6 +1727,52 @@ def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
         print(f"[admin] Invio pre-allarme credito Cloudflare fallito: {e}")
 
 
+def admin_notify_or_credit_low(credit_left_usd, threshold_usd):
+    """Sentinella della ricarica automatica OpenRouter: saldo sotto soglia.
+
+    Non e' il pre-allarme Cloudflare: OpenRouter ricarica da solo sotto la
+    sua soglia, quindi un saldo sotto `ABM_OR_CREDIT_ALERT_USD` (tenuta piu'
+    bassa) vuol dire che la ricarica non e' avvenuta. Il saldo e' quello
+    letto dall'API OpenRouter, non una stima. Un guasto SMTP non propaga.
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+    try:
+        left = float(credit_left_usd)
+    except (TypeError, ValueError):
+        left = 0.0
+    try:
+        threshold = float(threshold_usd)
+    except (TypeError, ValueError):
+        threshold = 0.0
+    subject = _sanitize_header(
+        f"[ABM-ADMIN] Saldo OpenRouter {left:.2f} USD: ricarica automatica "
+        f"non avvenuta?", max_len=200)
+    html_body = _layout.admin_panel("Saldo OpenRouter sotto soglia", "#d97706", f"""        <p>Il saldo OpenRouter e' sceso sotto la soglia della sentinella,
+           che sta sotto quella della ricarica automatica: <strong>la ricarica
+           doveva gia' essere avvenuta</strong>. Il TTS gira ancora su
+           OpenRouter.</p>
+        <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
+          {_layout.kv("Saldo (API OpenRouter)", f"{left:.2f} USD")}
+          {_layout.kv("Soglia della sentinella", f"{threshold:.2f} USD")}
+        </table>
+        <p style="background:#fff4e5;padding:10px;border-left:4px solid #d97706;margin-top:14px">
+          <strong>Che cosa succede se non si interviene:</strong> a saldo
+          finito OpenRouter risponde 402, il breaker sposta i modelli su Gemini
+          API (margine piu' basso) e la sonda di rientro fallisce finche' non
+          arriva una ricarica.</p>
+        <p><strong>Che cosa fare:</strong> controllare nella dashboard di
+           OpenRouter la ricarica automatica (carta, conferma 3DS) e ricaricare
+           a mano se serve. La sentinella si riarma da sola quando il saldo
+           torna sopra soglia.</p>
+        <p style="color:#888;font-size:12px;margin-top:16px">Per spegnerla: <code>ABM_OR_CREDIT_CHECK_SEC=0</code>. Console: <code>{BASE_URL}/admin/</code></p>""")
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+        print(f"[admin] Sentinella saldo OpenRouter inviata ({left:.2f} USD)")
+    except Exception as e:
+        print(f"[admin] Invio sentinella saldo OpenRouter fallito: {e}")
+
+
 def admin_notify_gemini_model_unavailable(model_key, detail, job_id, cooldown_sec):
     """Notifica IMMEDIATA: un modello Gemini senza failover e' fuori servizio.
 

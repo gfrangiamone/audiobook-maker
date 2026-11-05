@@ -17,6 +17,7 @@ import pricing_common as _pricing
 import retry_util as _retry
 from i18n import norm_lang as _norm_lang
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
+from monthly_ledger import JsonDoc as _JsonDoc
 from env_utils import env_bool as _b, env_float as _f, env_int as _i, env_str
 import re
 import json
@@ -643,6 +644,80 @@ def _maybe_alert_credit(model_key):
     if not _backend_state.claim_credit_alert():
         return
     _credit_alert_notifier(model_key, _backend_state.credit_left_usd())
+
+
+# === Sentinella del credito OpenRouter ======================================
+# OpenRouter ha la ricarica automatica sotto una soglia (pannello del
+# fornitore, sotto i 10 al 05/11/2026): un pre-allarme "credito basso" alla
+# Cloudflare sarebbe rumore. La sentinella scatta sotto ABM_OR_CREDIT_ALERT_USD,
+# da tenere SOTTO la soglia di ricarica: se il saldo ci arriva, la ricarica
+# doveva gia' essere avvenuta e non e' avvenuta (carta rifiutata, 3DS), e i 402
+# veri sono vicini. Il saldo si legge via API dal sorvegliante della sonda,
+# mai dal percorso di sintesi. Una email per discesa: si riarma quando il saldo
+# torna sopra soglia. Stato in un documento singolo a dimensione fissa (nessuna
+# retention da applicare), persistito perche' un deploy non la rimandi.
+_or_credit_notifier = None
+_or_credit_next_at = 0.0
+_or_credit_doc = _JsonDoc(lambda: _data_dir / "openrouter_credit.json")
+
+
+def set_or_credit_alert_notifier(fn):
+    """Registra la callback della sentinella: fn(credit_left_usd, threshold_usd)."""
+    global _or_credit_notifier
+    _or_credit_notifier = fn
+
+
+def _or_credit_check_sec():
+    """Cadenza della lettura del saldo (0 = sentinella spenta)."""
+    return _i("ABM_OR_CREDIT_CHECK_SEC", 900, floor=0)
+
+
+def _or_credit_alert_usd():
+    return _f("ABM_OR_CREDIT_ALERT_USD", 5.0, floor=0.0)
+
+
+def check_openrouter_credit(now=None):
+    """Legge il saldo OpenRouter se e' ora e, sotto soglia, avvisa l'admin.
+
+    Returns:
+        il saldo in USD, o None se non letto (sentinella spenta, non ancora
+        dovuta, nessun modello su OpenRouter, lettura fallita).
+    """
+    global _or_credit_next_at
+    every = _or_credit_check_sec()
+    if every <= 0 or _data_dir is None:
+        return None
+    if not any(_model_may_use_openrouter(k) for k in GEMINI_MODELS):
+        return None
+    now = time.time() if now is None else now
+    if now < _or_credit_next_at:
+        return None
+    _or_credit_next_at = now + every
+    try:
+        left = _transport.openrouter_credit_left()
+    except TransportError as e:
+        print(f"[gemini-tts] saldo OpenRouter non letto (non-fatale): {e}")
+        return None
+    threshold = _or_credit_alert_usd()
+    with _or_credit_doc.mutate() as d:
+        alerted = bool(d.get("alerted"))
+        d["left_usd"] = round(left, 4)
+        d["checked_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        # Notifier verificato prima di marcare: senza, l'allarme si
+        # brucerebbe in silenzio (stessa regola di `_maybe_alert_credit`).
+        fire = (left < threshold and not alerted
+                and _or_credit_notifier is not None)
+        if fire:
+            d["alerted"] = True
+        elif alerted and left >= threshold:
+            d["alerted"] = False
+            print(f"[gemini-tts] saldo OpenRouter di nuovo sopra soglia: "
+                  f"{left:.2f} USD (soglia {threshold:.2f}), sentinella riarmata")
+    if fire:
+        print(f"[gemini-tts] saldo OpenRouter sotto soglia: {left:.2f} USD "
+              f"(soglia {threshold:.2f}): ricarica automatica non avvenuta?")
+        _or_credit_notifier(left, threshold)
+    return left
 
 
 def _cf_trip_failures():
@@ -3689,10 +3764,15 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                                                             "rate_limited"):
                 prefix = "cf" if backend == "cloudflare" else "or"
                 if te.kind == "backend_down":
+                    # Il messaggio (redatto) entra nel dettaglio: il 402 del
+                    # 05/11/2026 aveva il credito OpenRouter in attivo e il
+                    # solo "HTTP 402 code None" non diceva perche' era stato
+                    # rifiutato.
                     _trip_to_fallback(model_key,
                                       reason=f"{prefix}_backend_down",
                                       detail=f"HTTP {te.http_status} "
-                                             f"code {te.provider_code}",
+                                             f"code {te.provider_code}: "
+                                             f"{last_err}",
                                       job_id=job_id)
                     # La stessa chiamata prosegue sul ripiego con i tentativi
                     # rimanenti: l'audio e' identico byte per byte, il job in

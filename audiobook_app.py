@@ -602,8 +602,17 @@ if gemini_tts is not None:
         _log_activity("", "", "TTS_MODEL_UNAVAILABLE", "", "",
                       model_key, str(detail)[:80], epoch=time.time())
 
+    def _on_or_credit_alert(credit_left_usd, threshold_usd):
+        # Sentinella della ricarica automatica OpenRouter: una per discesa
+        # sotto soglia, l'unicita' la garantisce lo stato persistito a monte.
+        email_service.admin_notify_or_credit_low(credit_left_usd, threshold_usd)
+        _log_activity("", "", "TTS_OR_CREDIT_LOW", "", "",
+                      "openrouter", f"saldo {credit_left_usd:.2f} USD",
+                      epoch=time.time())
+
     gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
     gemini_tts.set_credit_alert_notifier(_on_cf_credit_alert)
+    gemini_tts.set_or_credit_alert_notifier(_on_or_credit_alert)
     gemini_tts.set_backend_return_notifier(_on_tts_backend_return)
     gemini_tts.set_model_unavailable_notifier(_on_gemini_model_unavailable)
 
@@ -8816,6 +8825,9 @@ def _cf_probe_supervisor():
             for model_key in list(gemini_tts.GEMINI_MODELS):
                 if tts_backend_state.probe_due(model_key):
                     gemini_tts.probe_cloudflare(model_key)
+            # Saldo OpenRouter: stesso thread, cadenza propria
+            # (ABM_OR_CREDIT_CHECK_SEC), mai dal percorso di sintesi.
+            gemini_tts.check_openrouter_credit()
         except Exception as e:
             print(f"[cf-probe] giro fallito (non-fatale): "
                   f"{type(e).__name__}: {e}", flush=True)
