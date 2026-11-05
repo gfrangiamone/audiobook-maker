@@ -295,11 +295,6 @@ def _life(person, t):
     return t[key].format(y=int(person["died"])) if person.get("died") else ""
 
 
-def _clock(seconds):
-    s = int(seconds)
-    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
-
-
 def _paragraphs(text):
     return "\n".join(f"<p>{_esc(p.strip())}</p>" for p in text.split("\n\n") if p.strip())
 
@@ -413,12 +408,6 @@ def hub_html(lang, base_url):
     return page_brand.public_page(
         lang=lang, title=_esc(t["hub_title"]), crumb=_esc(t["crumb"]), body=body,
         footer=_footer(t), head=head, css=_css())
-
-
-def _chapters_html(f):
-    return "\n".join(
-        f'<li><span>{_esc(c["title"]) or "&nbsp;"}</span><time>{_clock(c["start_s"])}</time></li>'
-        for c in f["chapters"])
 
 
 def _preview_html(b, t):
@@ -575,8 +564,6 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
         "__DL_HINT__": _esc(t["download_hint"]),
         "__SCHEDA_LINK__": _esc(t["scheda_link"]),
         "__PREVIEW__": _preview_html(b, t),
-        "__CHAPTERS_LABEL__": _esc(t["chapters_n"].format(n=len(f["chapters"]))),
-        "__CHAPTERS__": _chapters_html(f),
         "__APP_TITLE__": _esc(t["app_title"]), "__APP_TEXT__": _esc(t["app_text"]),
         "__APP_QR__": (f'<div class="fc-app-qr"><img src="{_esc(qr)}" alt="{_esc(t["app_qr_alt"])}" '
                        f'width="152" height="152"></div>' if qr else ""),

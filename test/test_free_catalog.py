@@ -131,7 +131,7 @@ def test_hub_lists_books_with_status_and_escapes(catalog, client):
     assert "/static/js/free_catalog.js?v=" in page
 
 
-def test_book_page_has_preview_chapters_download_and_app(catalog, client, monkeypatch):
+def test_book_page_has_preview_download_and_app(catalog, client, monkeypatch):
     qr_di = []
     monkeypatch.setattr(audiobook_app, "_qr_data_uri",
                         lambda text: qr_di.append(text) or "data:image/png;base64,QR")
@@ -142,7 +142,9 @@ def test_book_page_has_preview_chapters_download_and_app(catalog, client, monkey
     assert 'src="https://files.example/preview/it/capinera.m4a"' in page
     assert 'src="https://files.example/m4b/it/capinera.m4b"' not in page
     assert "I primi 5 minuti" in page
-    assert "<time>1:35</time>" in page and "data-t=" not in page
+    # Niente elenco dei capitoli (decisione 05/11/2026): il numero resta fra i chip.
+    assert "fc-chapters" not in page and "<time>" not in page and "data-t=" not in page
+    assert "2 capitoli" in page
     assert 'href="/free-audiobooks/dl/it/storia-di-una-capinera.m4b"' in page
     assert qr_di and qr_di[0].endswith("/s/fc-it-capinera")   # il QR punta alla share
     assert 'src="data:image/png;base64,QR"' in page
