@@ -50,6 +50,7 @@ _BOOK_ID_RE = re.compile(r"^[a-z]{2}-[a-z0-9]+(?:-[a-z0-9]+)*$")
 # parentesi o backslash (un URL del catalogo non ne ha mai bisogno).
 _URL_RE = re.compile(r"""^(https?://|/)[^\s"'()<>\\]+$""")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+_VOICE_RE = re.compile(r"^(gemini|voxcpm):[A-Za-z0-9:_/.-]+$")
 
 _lock = threading.Lock()
 # lingua -> (sorgente, istante di lettura, libri validi o None)
@@ -147,6 +148,8 @@ def _valid_book(b):
            "est_duration_s": _num(b.get("est_duration_s")),
            "description": _text(b.get("description")),
            "voice_label": _text(b.get("voice_label")),
+           # Voce del libro, per l'invito: la SPA la preseleziona da ?voice=.
+           "voice_id": _text(b.get("voice_id")) if _VOICE_RE.match(_text(b.get("voice_id"))) else "",
            # Modello TTS di ABM che ha letto il libro ("Gemini 3.8"), scritto
            # dalla produzione del catalogo: la scheda lo mostra accanto alla voce.
            "voice_model": _text(b.get("voice_model")),
@@ -634,10 +637,12 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
     share_url = f"{base_url}/s/{token}"
     app_href = app_url(share_url) if app_url else ""
     qr = "" if app_href else (qr_data_uri(share_url) or "")
-    # L'invito porta il libro, non l'id voce: l'id contiene il nome del motore,
-    # che nella pagina non deve comparire. La SPA risolve `fc` nella voce.
-    cta = "/?" + urllib.parse.urlencode(
-        {"fc": b["book_id"], "utm_source": "catalog", "utm_campaign": f"{lang}-{b['slug']}"})
+    # L'invito apre ABM con la voce del libro gia' scelta (?voice=, spec §7.5)
+    # e porta l'attribuzione al catalogo (utm_source=catalog -> abm_acq).
+    cta_q = {"utm_source": "catalog", "utm_campaign": f"{lang}-{b['slug']}"}
+    if b["voice_id"]:
+        cta_q = {"voice": b["voice_id"], **cta_q}
+    cta = "/?" + urllib.parse.urlencode(cta_q)
     more = [o for o in _published(lang) if o["slug"] != b["slug"]][:8]
     body = page_brand.render_page("free_catalog_book.html", {
         "__BACKDROP__": (f' style="--cover:url(\'{_esc(b["cover"]["url"])}\')"'

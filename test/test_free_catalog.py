@@ -152,7 +152,9 @@ def test_book_page_has_preview_download_and_app(catalog, client, monkeypatch):
     assert "Apple Books" not in page
     assert '"@type": "Audiobook"' in page
     assert "<p>Secondo paragrafo.</p>" in page
-    low = page.lower()
+    # Il motore compare solo nell'id voce dell'invito (?voice=); nel testo
+    # della pagina resta il modello dichiarato (voice_model), mai il fornitore.
+    low = page.lower().replace("voice=voxcpm%3a", "voice=")
     assert "gemini" not in low and "voxcpm" not in low and "runpod" not in low
 
 
@@ -422,3 +424,17 @@ def test_la_scheda_ha_il_ritorno_al_catalogo_in_testa_e_in_fondo(catalog):
     link = '<a href="/free-audiobooks/it/">← Torna al catalogo</a>'
     assert page.count(link) == 2
     assert page.index(link) < page.index('class="fc-bhero"')
+
+
+def test_l_invito_apre_abm_con_la_voce_del_libro(catalog):
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR")
+    assert ('href="/?voice=voxcpm%3Av2%3Ait-IT%2FBruno&amp;utm_source=catalog'
+            '&amp;utm_campaign=it-storia-di-una-capinera"') in page
+
+
+def test_voce_malformata_l_invito_resta_senza_voce(catalog):
+    catalog([_book(voice_id="javascript:alert(1)")])
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR")
+    assert "voice=" not in page and "utm_source=catalog" in page

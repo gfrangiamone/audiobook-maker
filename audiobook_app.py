@@ -1278,19 +1278,28 @@ def _acquisition_from_request():
     v = (request.cookies.get("abm_acq") or "").strip().lower()
     if not v:
         return "", ""
+    if v == "catalog":
+        return "catalog", ""
     plat = v if v in ("android", "ios") else ""
     return "app", plat
 
 
 def _apply_app_attribution(resp):
-    """Se la home è aperta con utm_source=app, conta l'arrivo e imposta il cookie
-    di attribuzione abm_acq (30gg, first-touch). resp deve essere una Response."""
-    if (request.args.get("utm_source") or "").strip().lower() != "app":
+    """Se la home è aperta con utm_source=app (dall'app) o utm_source=catalog
+    (dall'invito del catalogo gratuito, spec catalogo §7.5), conta l'arrivo e
+    imposta il cookie di attribuzione abm_acq (30gg, first-touch). resp deve
+    essere una Response."""
+    source = (request.args.get("utm_source") or "").strip().lower()
+    if source == "catalog":
+        plat, metric = "catalog", "web_visit_from_catalog"
+    elif source == "app":
+        plat = (request.args.get("app_platform") or "").strip().lower()
+        plat = plat if plat in ("android", "ios") else "app"
+        metric = "web_visit_from_app"
+    else:
         return resp
-    plat = (request.args.get("app_platform") or "").strip().lower()
-    plat = plat if plat in ("android", "ios") else "app"
     try:
-        metrics_store.incr("web_visit_from_app", plat)
+        metrics_store.incr(metric, plat)
     except Exception:
         pass
     existing = request.cookies.get("abm_acq")
