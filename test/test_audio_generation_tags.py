@@ -178,6 +178,13 @@ def test_tags_segnalano_testo_ottimizzato():
     assert tags["abm_text_optimized"] == "yes"
 
 
+def test_tags_marcano_la_voce_sintetica_su_ogni_motore():
+    # AI Act art. 50: ogni file consegnato dichiara il parlato sintetico.
+    for voice in ("it-IT-DiegoNeural", "gemini:flash38:Sulafat", "voxcpm:it:Anna"):
+        tags = generation_engine._generation_tags({}, _Info(), voice, "+0%")
+        assert tags["abm_ai"] == "synthetic", voice
+
+
 def test_tags_mai_esplosivi_su_job_degenere():
     # Il tagging e' best-effort: non deve mai far fallire una consegna.
     tags = generation_engine._generation_tags({}, _Info(), None, None)

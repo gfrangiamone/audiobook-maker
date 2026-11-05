@@ -4819,6 +4819,10 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
         # encoded_by e' standard (TENC in ID3v2): ffmpeg lo lascia intatto,
         # a differenza di `encoder` che riscrive sempre col proprio valore.
         tags["encoded_by"] = tags["abm_app"]
+        # Contenuto generato da un sistema di sintesi vocale: marcatura leggibile
+        # da una macchina (AI Act art. 50; spec catalogo §5.4). Vale per ogni
+        # motore, voci standard comprese.
+        tags["abm_ai"] = "synthetic"
 
         engine = _engine_for_voice(voice)
         voice_id = voice or ""
