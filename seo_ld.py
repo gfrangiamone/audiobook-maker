@@ -93,3 +93,29 @@ def breadcrumb_ld(items):
     return {"@context": "https://schema.org", "@type": "BreadcrumbList",
             "itemListElement": [{"@type": "ListItem", "position": i, "name": name, "item": url}
                                 for i, (name, url) in enumerate(items, 1)]}
+
+
+def iso_duration(seconds):
+    """Durata ISO 8601 (`PT2H5M`) da secondi; minuti arrotondati, minimo `PT1M`."""
+    minutes = max(1, int(float(seconds or 0) / 60.0 + 0.5))
+    hours, minutes = divmod(minutes, 60)
+    return "PT" + (f"{hours}H" if hours else "") + (f"{minutes}M" if minutes else "")
+
+
+def audiobook_ld(*, name, author, in_lang, url, content_url, duration_s, description="",
+                 date_published=None, base=SITE_URL):
+    """`Audiobook` gratuito del catalogo: autore `Person`, file M4B come
+    `contentUrl`, offerta a prezzo zero. Nessun `readBy`: la voce e' sintetica
+    e schema.org lo vuole una persona."""
+    ld = {"@context": "https://schema.org", "@type": "Audiobook", "name": name,
+          "author": {"@type": "Person", "name": author}, "inLanguage": in_lang,
+          "url": url, "contentUrl": content_url, "encodingFormat": "audio/mp4",
+          "duration": iso_duration(duration_s), "isAccessibleForFree": True,
+          "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR",
+                     "availability": "https://schema.org/InStock"},
+          "publisher": publisher(base)}
+    if description:
+        ld["description"] = description
+    if date_published:
+        ld["datePublished"] = date_published
+    return ld

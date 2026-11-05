@@ -30,3 +30,20 @@ def test_home_first_touch_not_overwritten(client):
 def test_home_no_utm_no_cookie(client):
     r = client.get("/")
     assert not any("abm_acq=" in c for c in r.headers.getlist("Set-Cookie"))
+
+
+def test_home_from_catalog_sets_catalog_cookie(client, monkeypatch):
+    import audiobook_app as app
+    seen = []
+    monkeypatch.setattr(app.metrics_store, "incr", lambda e, p, day=None: seen.append((e, p)))
+    r = client.get("/?utm_source=catalog&utm_campaign=it-storia-di-una-capinera")
+    assert any("abm_acq=catalog" in c for c in r.headers.getlist("Set-Cookie"))
+    assert ("web_visit_from_catalog", "catalog") in seen
+
+
+def test_catalog_cookie_attributes_jobs_to_the_catalog():
+    import audiobook_app as app
+    with app.app.test_request_context("/", headers={"Cookie": "abm_acq=catalog"}):
+        assert app._acquisition_from_request() == ("catalog", "")
+    with app.app.test_request_context("/", headers={"Cookie": "abm_acq=ios"}):
+        assert app._acquisition_from_request() == ("app", "ios")

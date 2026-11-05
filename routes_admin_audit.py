@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, redirect, request
 
 import accounts
+import catalog_stats
 import gemini_tts
 import i18n as _i18n
 import payment
@@ -160,6 +161,30 @@ def admin_audit_premium_page():
                 200, {"Content-Type": "text/html; charset=utf-8"})
     html = _page_template("admin_audit_premium")
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@bp.route("/admin/audit-catalog", methods=["GET"])
+def admin_audit_catalog_page():
+    """Statistiche del catalogo audiolibri gratuiti (spec catalogo §10.1):
+    scaricamenti, import nell'app, visite e pagamenti arrivati dal catalogo."""
+    if not _admin_token():
+        return ("Admin audit catalog UI disabled.", 404,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return (_render_admin_gate("Audit catalogo gratuito", "/admin/audit-catalog"),
+                200, {"Content-Type": "text/html; charset=utf-8"})
+    return _page_template("admin_audit_catalog"), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@bp.route("/admin/api/catalog_stats", methods=["GET"])
+@admin_required
+def admin_api_catalog_stats():
+    """Dati della pagina /admin/audit-catalog: `from`/`to` (YYYY-MM-DD),
+    `lang` e `model` facoltativi."""
+    return jsonify(catalog_stats.stats(
+        request.args.get("from"), request.args.get("to"),
+        lang=(request.args.get("lang") or "").strip() or None,
+        model=(request.args.get("model") or "").strip() or None))
 
 
 @bp.route("/admin/audit-tts", methods=["GET"])

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin - Audit catalogo gratuito</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;}
+  *{box-sizing:border-box}
+  body{margin:0 auto;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1400px}
+  h1{margin:0 0 20px;font-size:1.5rem}
+  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px;overflow-x:auto}
+  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
+  .filters{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;align-items:end}
+  @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}}
+  label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+  input,select{width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.9rem}
+  button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}
+  button.secondary{background:#334155}
+  .quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .agg{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+  @media(max-width:900px){.agg{grid-template-columns:1fr 1fr}}
+  .box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px;text-align:center}
+  .box b{display:block;font-size:1.4rem}
+  .box span{font-size:.75rem;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500;cursor:pointer;white-space:nowrap}
+  td{padding:6px 8px;border-bottom:1px solid #1e293b}
+  td.n,th.n{text-align:right}
+  tr.zero td{color:var(--muted)}
+  .bars{display:flex;align-items:flex-end;gap:2px;height:120px;border-bottom:1px solid #334155}
+  .bars div{flex:1;background:var(--accent);min-height:1px;position:relative}
+  .bars div:hover::after{content:attr(data-t);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:#000;padding:2px 6px;border-radius:4px;font-size:.7rem;white-space:nowrap}
+  .err{color:var(--err)}
+</style>
+</head><body>
+<h1>Audit catalogo audiolibri gratuiti</h1>
+
+<div class="panel">
+  <div class="filters">
+    <div><label for="f-from">Dal</label><input type="date" id="f-from"></div>
+    <div><label for="f-to">Al</label><input type="date" id="f-to"></div>
+    <div><label for="f-lang">Lingua del libro</label>
+      <select id="f-lang"><option value="">Tutte</option><option>it</option><option>en</option>
+        <option>de</option><option>es</option><option>pt</option><option>nl</option></select></div>
+    <div><label for="f-model">Modello</label>
+      <select id="f-model"><option value="">Tutti</option></select></div>
+    <div><button id="go">Aggiorna</button></div>
+    <div><button class="secondary" id="csv">Esporta CSV</button></div>
+  </div>
+  <div class="quick">
+    <button class="secondary" data-days="1">Oggi</button>
+    <button class="secondary" data-days="7">7 giorni</button>
+    <button class="secondary" data-days="30">30 giorni</button>
+    <button class="secondary" data-month="1">Questo mese</button>
+  </div>
+  <p class="err" id="err" hidden></p>
+</div>
+
+<div class="panel"><h2>Totali del periodo</h2>
+  <div class="agg">
+    <div class="box"><b id="t-total">-</b><span>eventi</span></div>
+    <div class="box"><b id="t-dl">-</b><span>scaricamenti M4B</span></div>
+    <div class="box"><b id="t-app">-</b><span>import nell'app (Android / iOS / altro)</span></div>
+    <div class="box"><b id="t-vis">-</b><span>visitatori distinti</span></div>
+    <div class="box"><b id="t-books">-</b><span>libri con eventi</span></div>
+    <div class="box"><b id="t-ret">-</b><span>visite al sito / pagamenti dal catalogo</span></div>
+  </div>
+</div>
+
+<div class="panel"><h2>Andamento giornaliero</h2><div class="bars" id="bars"></div></div>
+
+<div class="panel"><h2>Per lingua</h2>
+  <table><thead><tr><th>Lingua</th><th class="n">M4B</th><th class="n">Android</th><th class="n">iOS</th><th class="n">App altro</th><th class="n">Totale</th></tr></thead>
+  <tbody id="langs"></tbody></table>
+</div>
+
+<div class="panel"><h2>Per libro</h2>
+  <table><thead><tr>
+    <th data-k="title">Titolo</th><th data-k="lang">Lingua</th><th data-k="model">Modello</th>
+    <th data-k="published_at">Pubblicato</th><th class="n" data-k="download">M4B</th>
+    <th class="n" data-k="android">Android</th><th class="n" data-k="ios">iOS</th>
+    <th class="n" data-k="app_other">App altro</th><th class="n" data-k="total">Totale</th><th class="n">Quota</th>
+  </tr></thead><tbody id="books"></tbody></table>
+</div>
+
+<script>
+(function(){
+  const TOKEN = sessionStorage.getItem('abm_admin_token') || localStorage.getItem('abm_admin_token') || '';
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const iso = (d) => d.toISOString().slice(0, 10);
+  let data = null, sortKey = 'total', sortDesc = true;
+
+  function setDays(n){ const to = new Date(); const from = new Date(); from.setDate(to.getDate() - n + 1);
+    $('f-from').value = iso(from); $('f-to').value = iso(to); load(); }
+  document.querySelectorAll('[data-days]').forEach(b => b.onclick = () => setDays(+b.dataset.days));
+  document.querySelector('[data-month]').onclick = () => { const d = new Date();
+    $('f-from').value = iso(new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1))); $('f-to').value = iso(d); load(); };
+  $('go').onclick = load;
+  $('csv').onclick = () => { if (!data) return;
+    const cols = ['book_id','title','author','lang','model','published_at','download','android','ios','app_other','total'];
+    const lines = [cols.join(',')].concat(data.books.map(r => cols.map(c => '"' + String(r[c] == null ? '' : r[c]).replace(/"/g, '""') + '"').join(',')));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\n')], {type: 'text/csv'}));
+    a.download = 'catalogo_' + data.from + '_' + data.to + '.csv'; a.click(); };
+  document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
+    const k = th.dataset.k; sortDesc = sortKey === k ? !sortDesc : true; sortKey = k; renderBooks(); });
+
+  async function load(){
+    const q = new URLSearchParams();
+    for (const [k, id] of [['from','f-from'],['to','f-to'],['lang','f-lang'],['model','f-model']]) if ($(id).value) q.set(k, $(id).value);
+    $('err').hidden = true;
+    try {
+      const r = await fetch('/admin/api/catalog_stats?' + q, {headers: {'X-Admin-Token': TOKEN}});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      data = await r.json();
+    } catch (e) { $('err').textContent = 'Dati non caricati: ' + e.message; $('err').hidden = false; return; }
+    $('f-from').value = data.from; $('f-to').value = data.to;
+    const models = [...new Set(data.books.map(b => b.model).filter(Boolean))];
+    const cur = $('f-model').value;
+    $('f-model').innerHTML = '<option value="">Tutti</option>' + models.map(m => '<option>' + esc(m) + '</option>').join('');
+    $('f-model').value = cur;
+    const t = data.totals;
+    $('t-total').textContent = t.total; $('t-dl').textContent = t.download;
+    $('t-app').textContent = (t.android + t.ios + t.app_other) + ' (' + t.android + ' / ' + t.ios + ' / ' + t.app_other + ')';
+    $('t-vis').textContent = t.visitors; $('t-books').textContent = t.books_with_events;
+    $('t-ret').textContent = data.return.visits + ' / ' + data.return.payments + ' (' + data.return.payments_eur.toFixed(2) + ' €)';
+    const max = Math.max(1, ...data.days.map(d => d.total));
+    $('bars').innerHTML = data.days.map(d => '<div style="height:' + (100 * d.total / max) + '%" data-t="' + d.day + ': ' + d.total + '"></div>').join('');
+    $('langs').innerHTML = data.langs.map(l => '<tr><td>' + esc(l.lang) + '</td><td class="n">' + l.download + '</td><td class="n">' + l.android +
+      '</td><td class="n">' + l.ios + '</td><td class="n">' + l.app_other + '</td><td class="n">' + l.total + '</td></tr>').join('');
+    renderBooks();
+  }
+
+  function renderBooks(){
+    if (!data) return;
+    const tot = Math.max(1, data.totals.total);
+    const rows = data.books.slice().sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey];
+      const c = typeof x === 'number' ? x - y : String(x).localeCompare(String(y));
+      return sortDesc ? -c : c; });
+    $('books').innerHTML = rows.map(r => '<tr class="' + (r.total ? '' : 'zero') + '"><td>' + esc(r.title || r.book_id) +
+      (r.author ? ' <span style="color:var(--muted)">— ' + esc(r.author) + '</span>' : '') + '</td><td>' + esc(r.lang) +
+      '</td><td>' + esc(r.model) + '</td><td>' + esc(r.published_at) + '</td><td class="n">' + r.download +
+      '</td><td class="n">' + r.android + '</td><td class="n">' + r.ios + '</td><td class="n">' + r.app_other +
+      '</td><td class="n">' + r.total + '</td><td class="n">' + (100 * r.total / tot).toFixed(1) + '%</td></tr>').join('');
+  }
+  setDays(30);
+})();
+</script>
+</body></html>

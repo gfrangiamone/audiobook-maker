@@ -25,7 +25,7 @@ def test_routes_and_helpers_live_in_the_blueprint():
                  "_PLAY_STORE_URL = ", "_APP_PACKAGE = "):
         assert name not in src and name in inspect.getsource(rp), name
     assert "app.register_blueprint(routes_pages.bp)" in src
-    assert "routes_tokens.configure(routes_pages._render_install_page)" in src        # i deep link riusano la pagina install
+    assert "routes_tokens.configure(routes_pages._render_install_page," in src        # i deep link riusano la pagina install
     assert "routes_pages._APP_PACKAGE" in src                                      # intent URL Android
     assert not re.search(r"^\s*(import|from) (audiobook_app|generation_engine)\b", inspect.getsource(rp), flags=re.M)
     for bad in ("os.environ.get(", ".utcfromtimestamp(", ".utcnow()"):

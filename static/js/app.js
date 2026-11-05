@@ -591,6 +591,7 @@ function goToStep(n){
   if(target)target.classList.add('active');
   _wizStep=n;
   updateWizardSteps(n);
+  if(n===3)_applyCatalogVoice();
   // Auto-update summary when entering panel 4
   if(n===4&&wizMode==='audio')_updateSummary();
   var dc=document.getElementById('donateCard');
@@ -1363,6 +1364,40 @@ function _allineaMemoriaVocePremium(id){
   if(id.startsWith('voxcpm:'))_voxcpmVoiceSel=id;
   else if(id.startsWith('speechify:'))_speechifyVoiceSel=id;
   else if(id.startsWith('gemini:'))_geminiVoiceSel=id;
+}
+
+/* Invito dal catalogo gratuito (spec catalogo §7.5): la scheda di un libro
+   porta ?voice=<id>. Si legge e si ripulisce dall'URL all'avvio; si applica
+   una volta sola, quando l'utente arriva alle voci (step 3): tab PREMIUM,
+   modello e accento della voce, poi la voce. Se il libro caricato non la
+   offre (lingua diversa) resta la scelta di sempre, senza messaggi. */
+let _catalogVoice='';
+(function(){
+  const q=new URLSearchParams(location.search);
+  const v=q.get('voice');
+  if(!v)return;
+  q.delete('voice');
+  const qs=q.toString();
+  history.replaceState(null,'',location.pathname+(qs?'?'+qs:'')+location.hash);
+  if(/^(gemini|voxcpm):[A-Za-z0-9:_\/.-]+$/.test(v))_catalogVoice=v;
+})();
+function _applyCatalogVoice(){
+  if(!_catalogVoice||wizMode!=='audio')return;
+  const id=_catalogVoice;
+  _catalogVoice='';
+  const model=id.startsWith('voxcpm:')?'voxcpm':id.split(':')[1];
+  const vm=document.getElementById('vmPremium');
+  if(!vm||!Array.prototype.some.call(vm.options,o=>o.value===model))return;
+  if(wizardState.audioTab!=='premium')switchAudioTab('premium');
+  // Manutenzione o testo oltre il tetto PREMIUM: switchAudioTab non cambia tab.
+  if(wizardState.audioTab!=='premium')return;
+  _allineaMemoriaVocePremium(id);
+  if(model==='voxcpm'){
+    const loc=(id.split(':')[2]||'').split('/')[0];
+    if(loc)_voxcpmAccentSel=loc;
+  }
+  vm.value=model;
+  _onPremiumModelChanged();
 }
 
 // Mostra/nasconde i controlli in base al modello premium selezionato e

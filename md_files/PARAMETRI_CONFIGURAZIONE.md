@@ -1056,6 +1056,21 @@ Dal 05/11/2026 (v3.174.0). Con la cartella impostata, l'M4B a file unico di un l
 | `_MISURA_S` | `180` | Secondi di audio del libro su cui si misura la loudness (EBU R128 integrata, `ffmpeg_tools.loudness_lufs`). | `catalog_intro.py` | 34 |
 | `_GAIN_MAX_DB` | `12.0` | Correzione massima del volume dell'inserto, in dB. | `catalog_intro.py` | 37 |
 
+### 7.14 Catalogo audiolibri gratuiti (`free_catalog.py`, `catalog_stats.py`)
+
+Dal 05/11/2026 (v3.175.0). Senza `ABM_FREE_CATALOG_SOURCE` il catalogo e' vuoto (pagine "in arrivo"). Attribuzione: `utm_source=catalog` sulle CTA delle schede, contatori `web_visit_from_catalog` e `payment_from_catalog` di `metrics_store`, `acquisition_source` negli audit premium.
+
+| Variabile / costante | Default | Descrizione | File | Riga |
+|---|---|---|---|---|
+| `ABM_FREE_CATALOG_SOURCE` | *(vuoto, catalogo vuoto)* | Sorgente di `catalog/<lang>.json`: URL http(s) o percorso locale con il segnaposto `{lang}`. Lingua senza file = nessun libro; file illeggibile o non valido = resta l'ultimo letto. | `free_catalog.py` | 63 |
+| `ABM_FREE_CATALOG_TTL_SEC` | `600` | Durata della cache di un catalogo per lingua, in secondi. | `free_catalog.py` | 200 |
+| `ABM_FREE_CATALOG_FILES_DIR` | *(vuoto)* | Solo sviluppo: cartella servita su `/free-audiobooks/files/` al posto del bucket pubblico. | `free_catalog.py` | 282 |
+| `SCHEMA_VERSION` | `1` | Versione dello schema del catalogo accettata (contratto con il repo `abm-free-catalog`). | `free_catalog.py` | 35 |
+| `LANGS` | `it en de pt nl es` | Lingue del catalogo (pt e nl non sono lingue del sito). | `free_catalog.py` | 37 |
+| `SHARE_PREFIX` | `"fc-"` | Prefisso dei token di condivisione permanenti `/s/fc-<book_id>`. | `free_catalog.py` | 43 |
+| `DEFAULT_DAYS` | `30` | Periodo di default di `/admin/audit-catalog`. | `catalog_stats.py` | 21 |
+| `MAX_DAYS` | `400` | Periodo massimo di una richiesta di statistiche. | `catalog_stats.py` | 22 |
+
 ## 8. Speechify TTS (Simba-3.2, voci PREMIUM inglese) (`speechify_tts.py`)
 
 Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello fisso `simba-3.2` (costante interna `MODEL_ID`, `speechify_tts.py:88`), etichetta UI "Simba (English)" — nessun nome provider esposto nella UI utente. Audio nativo PCM 48000 Hz mono 16-bit. Il pagamento premium vive nella stessa "tasca" di Gemini (`job["payment"]`) e si rimborsa via `_refund_gemini_payment` / `_refund_payment_on_orphan`.

@@ -18,8 +18,9 @@ import json
 import os
 from datetime import datetime, timezone
 
-from flask import Blueprint, current_app, redirect, request, send_file
+from flask import Blueprint, current_app, redirect, request, send_file, send_from_directory
 
+import free_catalog
 import i18n as _i18n
 import indexnow
 import page_brand
@@ -43,7 +44,9 @@ _SUPPORTED_LANGS = None
 HTML_TEMPLATES = None
 HTML_ROOT_TEMPLATES = None
 
-FUNCS = ['_detect_lang_from_request', '_apply_app_attribution']
+FUNCS = ['_detect_lang_from_request', '_apply_app_attribution',
+         '_qr_data_uri', '_log_activity', 'client_ip',
+         '_ua_is_ios', '_ua_is_android', '_app_scheme_url', '_android_intent_url']
 VALUES = ('base_url',)
 
 
@@ -71,6 +74,27 @@ def _detect_lang_from_request(*a, **k):
 
 def _apply_app_attribution(*a, **k):
     return _cfg["_apply_app_attribution"](*a, **k)
+
+def _qr_data_uri(*a, **k):
+    return _cfg["_qr_data_uri"](*a, **k)
+
+def _log_activity(*a, **k):
+    return _cfg["_log_activity"](*a, **k)
+
+def client_ip(*a, **k):
+    return _cfg["client_ip"](*a, **k)
+
+def _ua_is_ios(*a, **k):
+    return _cfg["_ua_is_ios"](*a, **k)
+
+def _ua_is_android(*a, **k):
+    return _cfg["_ua_is_android"](*a, **k)
+
+def _app_scheme_url(*a, **k):
+    return _cfg["_app_scheme_url"](*a, **k)
+
+def _android_intent_url(*a, **k):
+    return _cfg["_android_intent_url"](*a, **k)
 
 
 def _inject_reviews(template_html: str, lang: str) -> str:
@@ -257,6 +281,75 @@ def guide_page_lang(guide_id, lang):
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+#  -  -  -  Catalogo audiolibri gratuiti (free_catalog)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+_HTML_TYPE = {"Content-Type": "text/html; charset=utf-8"}
+
+
+@bp.route("/free-audiobooks/")
+def free_catalog_root():
+    """Indice unico del catalogo, nella lingua dell'interfaccia (?lang, cookie
+    della SPA, Accept-Language). Il filtro parte sulla lingua dell'utente se in
+    quella lingua c'e' almeno un libro pubblicato, altrimenti su tutte."""
+    scelta = [(request.args.get("lang") or "").strip().lower(),
+              (request.cookies.get("abm_lang") or "").strip().lower()]
+    ui = _i18n.choose_lang(scelta + [_detect_lang_from_request()], _i18n.LANGS)
+    # Il filtro guarda anche le lingue del catalogo che il sito non ha (pt, nl).
+    preset = free_catalog.preset_lang(scelta + [_i18n.browser_lang(
+        request.headers.get("Accept-Language", ""), supported=free_catalog.LANGS, ranked=True)])
+    page = free_catalog.index_html(ui, _base_url() or "", preset)
+    if not page:
+        return "Not found", 404
+    return page, 200, {**_HTML_TYPE, "Vary": "Accept-Language, Cookie"}
+
+
+@bp.route("/free-audiobooks/<lang>/")
+def free_catalog_hub(lang):
+    page = free_catalog.hub_html(lang, _base_url() or "")
+    return (page, 200, _HTML_TYPE) if page else ("Not found", 404)
+
+
+@bp.route("/free-audiobooks/<lang>/<slug>/")
+def free_catalog_book(lang, slug):
+    page = free_catalog.book_html(lang, slug, _base_url() or "", _qr_data_uri,
+                                  app_url=_app_url_for_device,
+                                  stores_html=_install_buttons_html(lang))
+    # La pagina cambia col dispositivo (bottone dell'app al posto del QR).
+    return (page, 200, {**_HTML_TYPE, "Vary": "User-Agent"}) if page else ("Not found", 404)
+
+
+def _app_url_for_device(https_url):
+    """Il deep link dell'app per il telefono della request, come nella pagina
+    di download (`routes_dl`): `abm://` su iOS, `intent://` con ripiego sulla
+    pagina degli store su Android. Vuoto altrove (computer: si mostra il QR)."""
+    if _ua_is_ios():
+        return _app_scheme_url(https_url)
+    if _ua_is_android():
+        return _android_intent_url(https_url)
+    return ""
+
+
+@bp.route("/free-audiobooks/dl/<lang>/<slug>.m4b")
+def free_catalog_download(lang, slug):
+    """Conta lo scaricamento e rimanda al file sul bucket pubblico: il server
+    non serve byte, quindi niente throttle ne' carico sul processo."""
+    book = free_catalog.book(lang, slug)
+    if book is None:
+        return "Not found", 404
+    _log_activity("", book["book_id"], "FREE_CATALOG_DL", "", client_ip(), "", lang,
+                  platform="web")
+    return redirect(book["file"]["url"], code=302)
+
+
+@bp.route("/free-audiobooks/files/<path:name>")
+def free_catalog_file(name):
+    """Solo sviluppo: copertine e M4B da una cartella locale, con Range per
+    il player. Senza `ABM_FREE_CATALOG_FILES_DIR` (produzione) e' un 404."""
+    root = free_catalog.local_files_dir()
+    if not root:
+        return "Not found", 404
+    return send_from_directory(root, name, conditional=True)
+
+
 #  -  -  -  sitemap.xml  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -381,6 +474,16 @@ def sitemap_xml():
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
 {guide_alternates}
+  </url>""")
+
+    # Catalogo audiolibri gratuiti: indice per lingua e un URL per ogni libro
+    # pubblicato (gli "in arrivo" non hanno pagina). IndexNow li prende da qui.
+    for loc, lastmod, priority in free_catalog.sitemap_entries(_base_url()):
+        urls.append(f"""  <url>
+    <loc>{html_mod.escape(loc)}</loc>
+    <lastmod>{lastmod}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>{priority}</priority>
   </url>""")
 
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>

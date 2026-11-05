@@ -17,12 +17,19 @@ import i18n as _i18n
 bp = Blueprint("tokens", __name__)
 
 _render_install_page = None
+_catalog_book = None
+_catalog_langs = ()
 
 
-def configure(render_install_page):
-    """`render_install_page(lang, title, body)` -> HTML della pagina install."""
-    global _render_install_page
+def configure(render_install_page, catalog_book=None, catalog_langs=()):
+    """`render_install_page(lang, title, body)` -> HTML della pagina install.
+    `catalog_book(token)` -> libro del catalogo gratuito per un token `fc-…` o
+    None; `catalog_langs` le lingue del catalogo (free_catalog, che questa
+    foglia non importa)."""
+    global _render_install_page, _catalog_book, _catalog_langs
     _render_install_page = render_install_page
+    _catalog_book = catalog_book
+    _catalog_langs = tuple(catalog_langs)
 
 
 def render_transfer_landing(token):
@@ -50,9 +57,24 @@ def transfer_landing(token):
             {"Content-Type": "text/html; charset=utf-8"})
 
 
+def render_catalog_landing(book):
+    """`/s/fc-…` senza app: invito a installarla per ascoltare quel libro del
+    catalogo gratuito (spec catalogo §7.6), nella lingua del visitatore fra le
+    6 del catalogo, altrimenti in quella del libro."""
+    lang = _i18n.browser_lang(request.headers.get("Accept-Language", ""),
+                              supported=_catalog_langs, ranked=True,
+                              default=book["book_id"][:2])
+    t = _i18n.pick(_i18n.load("free_catalog"), lang)
+    body = t["landing_text"].format(title=book["title"], author=book["author"]["name"])
+    # pt e nl non sono lingue del sito: la cornice della pagina va in inglese.
+    shell = lang if lang in _i18n.LANGS else "en"
+    return _render_install_page(shell, _html.escape(t["landing_title"]), _html.escape(body))
+
+
 @bp.route("/s/<token>")
 def share_landing(token):
     # Fallback browser per il deep link /s/<token> quando l'app NON è installata
     # (con app installata + dominio verificato, l'App Link apre l'app prima).
-    return (render_transfer_landing(token), 200,
-            {"Content-Type": "text/html; charset=utf-8"})
+    book = _catalog_book(token) if _catalog_book else None
+    page = render_catalog_landing(book) if book else render_transfer_landing(token)
+    return (page, 200, {"Content-Type": "text/html; charset=utf-8"})
