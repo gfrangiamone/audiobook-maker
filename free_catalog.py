@@ -440,14 +440,19 @@ def _book_hm(b):
     return f"~{_hm(b['est_duration_s'])}" if b["est_duration_s"] else ""
 
 
-def _lang_pill(lang, t):
-    """Lingua di lettura del libro, ben visibile nell'indice multilingua: nome
-    della lingua nella lingua stessa (come nel filtro) con un altoparlante."""
+def _lang_pill(lang, b, t):
+    """Lingua di lettura del libro, ben visibile nell'indice multilingua (nome
+    della lingua nella lingua stessa, come nel filtro, con un altoparlante),
+    e nello stesso badge la durata ("~" per i titoli in arrivo)."""
     name = _esc(LANG_NAMES.get(lang, lang))
-    return (f'<span class="fc-lang" title="{_esc(t["reading_lang"])}: {name}">'
+    dur = _esc(_book_hm(b))
+    dur_label = _esc(t["duration_label"] if b["status"] == "published" else t["duration_est_label"])
+    title = f'{_esc(t["reading_lang"])}: {name}' + (f" · {dur_label}: {dur}" if dur else "")
+    dur_html = (f'<span class="fc-lang-dur"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{dur}</span>' if dur else "")
+    return (f'<span class="fc-lang" title="{title}">'
             '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/>'
             '<path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>'
-            f'{name}</span>')
+            f'{name}{dur_html}</span>')
 
 
 def _card(lang, b, t):
@@ -457,13 +462,11 @@ def _card(lang, b, t):
         title = f'<a href="{PATH}/{lang}/{_esc(b["slug"])}/">{title}</a>'
     return page_brand.render_page("free_catalog_card.html", {
         "__STATUS__": _esc(b["status"]),
-        "__LANG__": _esc(lang), "__LANG_PILL__": _lang_pill(lang, t),
+        "__LANG__": _esc(lang), "__LANG_PILL__": _lang_pill(lang, b, t),
         "__SEARCH__": _esc(f"{b['title']} {b['author']['name']}".lower()),
         "__COVER__": _cover_img(b, size=72, cls="fc-thumb", thumb=True),
         "__TITLE__": title,
         "__AUTHOR__": _esc(b["author"]["name"]),
-        "__DURATION__": _esc(_book_hm(b)),
-        "__DURATION_LABEL__": _esc(t["duration_label"] if published else t["duration_est_label"]),
         "__BADGE__": _esc(t["badge_published"] if published else t["badge_coming"]),
     })
 
@@ -489,10 +492,9 @@ def _shelf(items, t, title):
         return ""
     cards = "\n".join(page_brand.render_page("free_catalog_shelf_item.html", {
         "__HREF__": f"{PATH}/{lang}/{_esc(b['slug'])}/", "__LANG__": _esc(lang),
-        "__LANG_PILL__": _lang_pill(lang, t),
+        "__LANG_PILL__": _lang_pill(lang, b, t),
         "__COVER__": _cover_img(b, size=176, cls="fc-shelf-cover"),
         "__TITLE__": _esc(b["title"]), "__AUTHOR__": _esc(b["author"]["name"]),
-        "__DURATION__": _esc(_book_hm(b)), "__DURATION_LABEL__": _esc(t["duration_label"]),
     }) for lang, b in items)
     return page_brand.render_page("free_catalog_shelf.html", {"__TITLE__": _esc(title), "__ITEMS__": cards})
 

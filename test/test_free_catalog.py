@@ -255,8 +255,10 @@ def test_list_shows_covers_and_hm_durations_not_death_dates(catalog, client):
     assert ">~5:20<" in page         # in arrivo: stima
     assert "1922" not in page and "1927" not in page and "†" not in page
     assert 'class="fc-shelf"' not in page   # pubblicato il 20/12: non e' fra i nuovi
-    # La lingua di lettura in evidenza su ogni scheda: nome nella lingua stessa.
-    assert page.count('class="fc-lang" title="Lingua di lettura: Italiano"') == 2
+    # La lingua di lettura in evidenza su ogni scheda (nome nella lingua stessa),
+    # con la durata nello stesso badge.
+    assert page.count('class="fc-lang" title="Lingua di lettura: Italiano · ') == 2
+    assert page.count('class="fc-lang-dur"') == 2 and 'class="fc-dur"' not in page
 
 
 def test_scaffale_dei_nuovi_solo_per_i_libri_degli_ultimi_tre_giorni(catalog, client):

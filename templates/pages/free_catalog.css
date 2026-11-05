@@ -64,7 +64,11 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 /* Lingua di lettura del libro: in evidenza nel catalogo multilingua (05/11/2026). */
 .fc-lang{display:inline-flex;align-items:center;gap:5px;font-size:.8rem;font-weight:700;line-height:1;padding:4px 10px 4px 8px;border-radius:999px;color:var(--ac);background:color-mix(in srgb,var(--ac) 15%,transparent);border:1px solid color-mix(in srgb,var(--ac) 45%,transparent)}
 .fc-lang svg{width:14px;height:14px;flex:none}
-.fc-shelf-item .fc-lang{align-self:flex-start;margin-top:4px}
+/* Durata nel badge della lingua, dopo un separatore sottile. */
+.fc-lang-dur{display:inline-flex;align-items:center;gap:4px;margin-left:3px;padding-left:8px;border-left:1px solid color-mix(in srgb,var(--ac) 45%,transparent);font-variant-numeric:tabular-nums}
+/* Battono `.fc-shelf-item span` (blocco, testo grigio), che vale anche per il badge. */
+.fc-shelf-item .fc-lang{display:inline-flex;font-size:.8rem;color:var(--ac);margin:6px 0 2px}
+.fc-shelf-item .fc-lang-dur{display:inline-flex;font-size:inherit;color:inherit}
 .fc-filters button{font:inherit;font-size:.88rem;font-weight:600;padding:7px 15px;min-height:38px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--txd);cursor:pointer}
 .fc-filters button.on{background:var(--tx);border-color:var(--tx);color:var(--bg)}
 .fc-list{display:grid;grid-template-columns:1fr;gap:10px}
