@@ -2684,6 +2684,24 @@ from plain_parsers import parse_abm, parse_txt  # noqa: E402
 def run_optimization(job_id, selected_chapters=None):
     return generation_engine.run_optimization(job_id, selected_chapters)
 
+
+def _stash_voice_options(job, data):
+    """Stile e accento Gemini ed emozione Speechify della richiesta, nel job
+    (li legge run_generation). Comune a /api/generate e /api/optimize con
+    auto_generate. Ritorna (stile, accento, emozione) normalizzati."""
+    style_instruction = (data.get("gemini_style_instruction") or "")[:200]
+    accent_variant = (data.get("gemini_accent") or "").strip()[:8]
+    speechify_emotion = (data.get("speechify_emotion") or "").strip().lower()
+    if speechify_emotion and speechify_emotion not in speechify_tts.EMOTIONS:
+        speechify_emotion = ""  # valore ignoto -> neutro
+    if style_instruction:
+        job["gemini_style_instruction"] = style_instruction
+    if accent_variant:
+        job["gemini_accent"] = accent_variant
+    if speechify_emotion:
+        job["speechify_emotion"] = speechify_emotion
+    return style_instruction, accent_variant, speechify_emotion
+
 def run_translation(job_id):
     return generation_engine.run_translation(job_id)
 
@@ -4700,19 +4718,9 @@ def api_generate():
     # regolare (il ramo `else` non scrive lo stash e ereditava il vecchio).
     job.pop("_free_quota_charge", None)
     payment_token = (data.get("payment_token") or "").strip()
-    style_instruction = (data.get("gemini_style_instruction") or "")[:200]
-    accent_variant = (data.get("gemini_accent") or "").strip()[:8]
-    speechify_emotion = (data.get("speechify_emotion") or "").strip().lower()
-    if speechify_emotion and speechify_emotion not in speechify_tts.EMOTIONS:
-        speechify_emotion = ""  # valore ignoto -> neutro
     # Stessa ragione dello snapshot sopra: questi parametri finiscono nel
     # descrittore batch e vanno stashati prima della register post-capture.
-    if style_instruction:
-        job["gemini_style_instruction"] = style_instruction
-    if accent_variant:
-        job["gemini_accent"] = accent_variant
-    if speechify_emotion:
-        job["speechify_emotion"] = speechify_emotion
+    style_instruction, accent_variant, speechify_emotion = _stash_voice_options(job, data)
     if _is_gemini_voice(voice):
         # Recompute server-side total (mirror api_combined_estimate)
         info_pre = job.get("info")
@@ -7937,6 +7945,9 @@ def api_optimize():
         # userebbe sempre il default (rimozione), ignorando la scelta utente.
         job["read_round_parens"] = bool(data.get("read_round_parens", False))
         job["read_square_brackets"] = bool(data.get("read_square_brackets", False))
+        # Stesso motivo per stile e accento Gemini ed emozione Speechify:
+        # run_generation li legge dal job. Senza, il wizard perdeva l'accento.
+        _stash_voice_options(job, data)
         if job["opt_output_format"] == "zip_rss":
             job["notify_download_type"] = "podcast"
             job["notify_base_url"] = job["opt_podcast_base_url"]

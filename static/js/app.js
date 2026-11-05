@@ -2128,6 +2128,22 @@ function getParenFlags(){
     read_square_brackets:!!document.getElementById('readSquareBrackets')?.checked,
   };
 }
+// Opzioni della voce scelta (stile e accento Gemini, emozione Speechify):
+// valgono per /api/generate e per /api/optimize con auto_generate.
+function getVoiceOptions(){
+  const v=getCurrentVoiceId(),o={};
+  if(_isGeminiVoiceId(v)){
+    const gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
+    if(gs)o.gemini_style_instruction=gs;
+    const ga=_getAccentVariant();
+    if(ga)o.gemini_accent=ga;
+  }
+  if(_isSpeechifyVoiceId(v)){
+    const emo=(document.getElementById('speechifyEmotion')?.value||'');
+    if(emo)o.speechify_emotion=emo;
+  }
+  return o;
+}
 function getEstimateCacheKey(){
   const tab=wizardState.audioTab||'standard';
   const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash31'):'none';
@@ -4123,7 +4139,7 @@ async function startCombinedGeneration(combinedPaymentToken){
       payload.single_file=singleFile;
       payload.output_format=outputFormat;
       payload.podcast_base_url=podcastBaseUrl;
-      Object.assign(payload,getParenFlags());
+      Object.assign(payload,getParenFlags(),getVoiceOptions());
       console.log('[startCombinedGeneration] POST /api/optimize', payload);
       var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       console.log('[startCombinedGeneration] /api/optimize response', r.status);
@@ -4179,16 +4195,7 @@ async function startCombinedGeneration(combinedPaymentToken){
       if(_ttsQuotaAck)genPayload.quota_ack=true;
       if(_langMismatchAck)genPayload.confirm_language=true;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
-      if(_isGeminiVoiceId(getCurrentVoiceId())){
-        var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
-        if(_gs)genPayload.gemini_style_instruction=_gs;
-        var _ga=_getAccentVariant();
-        if(_ga)genPayload.gemini_accent=_ga;
-      }
-      if(_isSpeechifyVoiceId(getCurrentVoiceId())){
-        var _emo=(document.getElementById('speechifyEmotion')?.value||'');
-        if(_emo)genPayload.speechify_emotion=_emo;
-      }
+      Object.assign(genPayload,getVoiceOptions());
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       // Il 409 arriva prima che il pagamento sia consumato: la conferma
@@ -4703,16 +4710,7 @@ async function startGen(){
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     if(_ttsQuotaAck)payload.quota_ack=true;
     if(_langMismatchAck)payload.confirm_language=true;
-    if(_isGeminiVoiceId(getCurrentVoiceId())){
-      const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
-      if(_gs)payload.gemini_style_instruction=_gs;
-      const _ga=_getAccentVariant();
-      if(_ga)payload.gemini_accent=_ga;
-    }
-    if(_isSpeechifyVoiceId(getCurrentVoiceId())){
-      const _emo=(document.getElementById('speechifyEmotion')?.value||'');
-      if(_emo)payload.speechify_emotion=_emo;
-    }
+    Object.assign(payload,getVoiceOptions());
     let r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     let d=await r.json();
     if(d.error_code==='language_mismatch'){

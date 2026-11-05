@@ -32,7 +32,7 @@ def test_generate_payload_includes_flags():
 def test_optimize_payload_includes_flags():
     # Il flusso wizard (optimize + auto-generate) deve inoltrare i flag parentesi,
     # altrimenti l'auto-generazione post-LLM userebbe il default (rimozione).
-    assert "Object.assign(payload,getParenFlags())" in APP
+    assert "Object.assign(payload,getParenFlags(),getVoiceOptions())" in APP
 
 
 def test_estimate_cache_key_includes_paren_flags():
