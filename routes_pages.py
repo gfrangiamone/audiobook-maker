@@ -208,7 +208,7 @@ def faq_page(lang):
     for q, a in c.get("faqs", []):
         faqs_html += (
             f'  <details open><summary>{html_mod.escape(q)}</summary>\n'
-            f'    <p>{html_mod.escape(a)}</p>\n'
+            f'    <p>{page_brand.linkify(html_mod.escape(a))}</p>\n'
             f'  </details>\n\n'
         )
     faq_ld_json = seo_ld.ld_json(seo_ld.faq_ld(c.get("faqs", [])))

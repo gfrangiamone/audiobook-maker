@@ -225,15 +225,15 @@ function applyI18n(){
         let tn = Array.from(e.childNodes).find(n => n.nodeType === 3 && n.textContent.trim().length > 1);
         if (tn) tn.textContent = v;
         else e.insertBefore(document.createTextNode(v), tt);
+      } else if (e.classList.contains('faq-answer') && /<[a-z][\s\S]*>/i.test(v)) {
+        // Risposte FAQ con link (libri gratis, catalogo): HTML anche quando il
+        // server le ha gia' pre-riempite, altrimenti il ramo "ha figli" sotto
+        // scriveva i tag come testo nel primo nodo.
+        e.innerHTML = v;
       } else {
         // Caso normale: se non ha figli HTML, usa textContent (veloce)
         if (e.children.length === 0) {
-          // FAQ answers may contain HTML links (e.g. free books list)
-          if (e.classList.contains('faq-answer') && /<[a-z][\s\S]*>/i.test(v)) {
-            e.innerHTML = v;
-          } else {
-            e.textContent = v;
-          }
+          e.textContent = v;
         } else {
           // Se ha figli (es. icone), cerca il nodo di testo da aggiornare
           let tn = Array.from(e.childNodes).find(n => n.nodeType === 3 && n.textContent.trim().length > 0);

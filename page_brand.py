@@ -66,6 +66,22 @@ OG_LOCALE = {"it": "it_IT", "en": "en_US", "fr": "fr_FR", "es": "es_ES", "de": "
 assert tuple(HREFLANG) == SITE_LANGS and tuple(OG_LOCALE) == SITE_LANGS
 
 
+# URL nel testo di una pagina gia' passato da html.escape: niente spazi,
+# virgolette, parentesi o "&" (inizio di un'entita'); la punteggiatura finale
+# ("...store).", "...about/。") resta fuori dal link.
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>\"'&()]+[^\s<>\"'&().,;:!?。，）]")
+
+
+def linkify(escaped, site_host="audiobook-maker.com"):
+    """Rende cliccabili gli URL di un testo gia' escapato (risposte delle FAQ
+    in content/seo/content.json): i link esterni si aprono in una nuova scheda."""
+    def _a(m):
+        url = m.group(0)
+        ext = "" if url.split("/")[2].endswith(site_host) else ' target="_blank" rel="noopener"'
+        return f'<a href="{url}"{ext}>{url}</a>'
+    return _URL_IN_TEXT_RE.sub(_a, escaped)
+
+
 def html_lang(lang):
     """Valore di `<html lang>` / `inLanguage` per la lingua ('zh' -> 'zh-Hans')."""
     return HREFLANG.get(lang, "en")

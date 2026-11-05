@@ -45,6 +45,10 @@
     "Sì. Audiobook Maker include una funzione integrata di traduzione libri: carica il file EPUB, PDF, TXT o ABM, scegli la lingua di origine e di destinazione e l'AI traduce i capitoli selezionati, con ottimizzazione AI opzionale per una narrazione naturale applicata nello stesso passaggio. Puoi scaricare il libro tradotto (EPUB, TXT o ABM) e poi generare l'audiolibro tradotto direttamente dal risultato, usando una qualsiasi delle voci neurali. La traduzione è gratuita sotto una piccola soglia; i libri più lunghi prevedono un piccolo costo, in base al numero di caratteri, pagabile con voucher o PayPal."
    ],
    [
+    "È possibile scaricare audiolibri gratuiti creati con questo servizio?",
+    "Sì. Nel catalogo degli audiolibri gratuiti (https://audiobook-maker.com/free-audiobooks/) trovi grandi classici di pubblico dominio letti dalle voci sintetiche PREMIUM di Audiobook Maker: si ascoltano e si scaricano gratis, senza registrazione. Ogni libro ha un'anteprima di 5 minuti, il file M4B con i capitoli e l'import diretto nell'app Audiobook Maker & Player. Il catalogo è in italiano, inglese, tedesco, spagnolo, portoghese e olandese e si arricchisce di nuovi titoli nel tempo."
+   ],
+   [
     "Supportate il formato M4B?",
     "Sì, Audiobook Maker può generare audiolibri professionali in formato M4B universale. A differenza dei semplici file MP3, il formato M4B permette di incorporare i capitoli direttamente nel file audio, mantenendo la suddivisione, i titoli e i metadati. È il formato standard per gli audiolibri su Apple Books, iTunes e molte app dedicate. Puoi anche generare un file MP3 o uno ZIP con i capitoli separati, a seconda delle tue esigenze."
    ],
@@ -142,6 +146,10 @@
    [
     "Can I translate a book into another language and make an audiobook from it?",
     "Yes. Audiobook Maker includes an integrated book translation feature: upload your EPUB, PDF, TXT or ABM file, pick the source and target language, and the AI translates the selected chapters — with optional AI optimization for natural narration applied in the same step. You can download the translated book (EPUB, TXT or ABM) and then generate a translated audiobook directly from the result, using any of the neural voices. Translation is free below a small threshold; longer books carry a small fee, based on the number of characters, payable by voucher or PayPal."
+   ],
+   [
+    "Can I download free audiobooks made with this service?",
+    "Yes. The free audiobook catalog (https://audiobook-maker.com/free-audiobooks/) offers great public-domain classics read by Audiobook Maker's synthetic PREMIUM voices: listen and download them for free, no sign-up needed. Each book has a 5-minute preview, an M4B file with chapters and direct import into the Audiobook Maker & Player app. The catalog covers Italian, English, German, Spanish, Portuguese and Dutch, and new titles are added over time."
    ],
    [
     "Do you support the M4B format?",
@@ -243,6 +251,10 @@
     "Oui. Audiobook Maker intègre une fonction de traduction de livres : importez votre fichier EPUB, PDF, TXT ou ABM, choisissez la langue source et la langue cible, et l'IA traduit les chapitres sélectionnés — avec une optimisation IA facultative pour une narration naturelle appliquée lors de la même étape. Vous pouvez télécharger le livre traduit (EPUB, TXT ou ABM), puis générer un livre audio traduit directement à partir du résultat, avec n'importe quelle voix neuronale. La traduction est gratuite en dessous d'un petit seuil ; les livres plus longs entraînent un coût modique, calculé selon le nombre de caractères, payable par bon ou PayPal."
    ],
    [
+    "Peut-on télécharger des livres audio gratuits créés avec ce service ?",
+    "Oui. Le catalogue de livres audio gratuits (https://audiobook-maker.com/free-audiobooks/) propose de grands classiques du domaine public lus par les voix de synthèse PREMIUM d'Audiobook Maker : on les écoute et on les télécharge gratuitement, sans inscription. Chaque livre a un extrait de 5 minutes, un fichier M4B avec chapitres et l'import direct dans l'application Audiobook Maker & Player. Le catalogue couvre l'italien, l'anglais, l'allemand, l'espagnol, le portugais et le néerlandais, et s'enrichit de nouveaux titres au fil du temps."
+   ],
+   [
     "Prenez-vous en charge le format M4B ?",
     "Oui, Audiobook Maker peut générer des livres audio professionnels au format M4B universel. Contrairement aux fichiers MP3 classiques, le format M4B permet d'intégrer les chapitres directement dans le fichier audio, conservant les titres, la structure et les métadonnées. C'est le format standard pour les livres audio sur Apple Books, iTunes et de nombreuses applications dédiées. Vous pouvez également générer un fichier MP3 ou une archive ZIP avec les chapitres séparés selon vos besoins."
    ],
@@ -340,6 +352,10 @@
    [
     "¿Puedo traducir un libro a otro idioma y crear un audiolibro a partir de él?",
     "Sí. Audiobook Maker incluye una función integrada de traducción de libros: sube tu archivo EPUB, PDF, TXT o ABM, elige el idioma de origen y de destino, y la IA traduce los capítulos seleccionados, con optimización de IA opcional para una narración natural aplicada en el mismo paso. Puedes descargar el libro traducido (EPUB, TXT o ABM) y luego generar un audiolibro traducido directamente a partir del resultado, usando cualquiera de las voces neuronales. La traducción es gratuita por debajo de un pequeño umbral; los libros más largos tienen un coste reducido, según el número de caracteres, pagadero con vale o PayPal."
+   ],
+   [
+    "¿Se pueden descargar audiolibros gratuitos creados con este servicio?",
+    "Sí. En el catálogo de audiolibros gratuitos (https://audiobook-maker.com/free-audiobooks/) encontrarás grandes clásicos de dominio público leídos por las voces sintéticas PREMIUM de Audiobook Maker: se escuchan y se descargan gratis, sin registro. Cada libro tiene un avance de 5 minutos, un archivo M4B con capítulos y la importación directa en la app Audiobook Maker & Player. El catálogo incluye italiano, inglés, alemán, español, portugués y neerlandés, y suma nuevos títulos con el tiempo."
    ],
    [
     "¿Es compatible con el formato M4B?",
@@ -441,6 +457,10 @@
     "Ja. Audiobook Maker enthält eine integrierte Buchübersetzungsfunktion: Laden Sie Ihre EPUB-, PDF-, TXT- oder ABM-Datei hoch, wählen Sie Ausgangs- und Zielsprache, und die KI übersetzt die ausgewählten Kapitel – mit optionaler KI-Optimierung für eine natürliche Erzählung im selben Schritt. Sie können das übersetzte Buch (EPUB, TXT oder ABM) herunterladen und dann direkt aus dem Ergebnis ein übersetztes Hörbuch mit einer beliebigen neuronalen Stimme erzeugen. Die Übersetzung ist unterhalb einer kleinen Schwelle kostenlos; längere Bücher verursachen geringe Kosten, basierend auf der Zeichenzahl, zahlbar per Gutschein oder PayPal."
    ],
    [
+    "Kann ich mit diesem Dienst erstellte Hörbücher kostenlos herunterladen?",
+    "Ja. Im Katalog kostenloser Hörbücher (https://audiobook-maker.com/free-audiobooks/) finden Sie große gemeinfreie Klassiker, gelesen von den synthetischen PREMIUM-Stimmen von Audiobook Maker: kostenlos anhören und herunterladen, ohne Registrierung. Jedes Buch hat eine 5-minütige Hörprobe, eine M4B-Datei mit Kapiteln und den direkten Import in die App Audiobook Maker & Player. Der Katalog umfasst Italienisch, Englisch, Deutsch, Spanisch, Portugiesisch und Niederländisch und wächst laufend um neue Titel."
+   ],
+   [
     "Wird das M4B-Format unterstützt?",
     "Ja, Audiobook Maker kann professionelle Hörbücher im universellen M4B-Format erstellen. Im Gegensatz zu einfachen MP3-Dateien ermöglicht das M4B-Format die Einbettung von Kapiteln direkt in die Audiodatei, sodass Titel, Struktur und Metadaten erhalten bleiben. Es ist das Standardformat für Hörbücher auf Apple Books, iTunes und vielen spezialisierten Apps. Sie können auch eine MP3-Datei oder ein ZIP-Archiv mit separaten Kapiteln erstellen."
    ],
@@ -540,6 +560,10 @@
     "可以。Audiobook Maker 内置图书翻译功能：上传你的 EPUB、PDF、TXT 或 ABM 文件，选择源语言和目标语言，AI 即可翻译所选章节，并在同一步骤中可选地应用 AI 优化以获得自然的朗读效果。你可以下载翻译后的图书（EPUB、TXT 或 ABM），然后直接基于翻译结果生成译文有声书，并使用任意一种神经网络语音。翻译在小额阈值以下免费；篇幅较长的图书会按字符数收取少量费用，可通过抵用券或 PayPal 支付。"
    ],
    [
+    "可以下载用本服务制作的免费有声书吗？",
+    "可以。免费有声书目录 (https://audiobook-maker.com/free-audiobooks/)收录公有领域的经典名著，由 Audiobook Maker 的 PREMIUM 合成语音朗读：可免费收听和下载，无需注册。每本书都有 5 分钟试听、带章节的 M4B 文件，并可直接导入 Audiobook Maker & Player 应用。目录包含意大利语、英语、德语、西班牙语、葡萄牙语和荷兰语，并会陆续增加新书。"
+   ],
+   [
     "你们支持 M4B 格式吗？",
     "支持。Audiobook Maker 可以生成专业级通用 M4B 格式有声书。与普通 MP3 文件不同，M4B 格式允许直接在音频文件中嵌入章节，保留章节标题、结构和元数据。它是 Apple Books、iTunes 及许多专业应用的标准有声书格式。您还可以生成 MP3 文件或包含独立章节的 ZIP 压缩包，以满足不同需求。"
    ],
@@ -637,6 +661,10 @@
    [
     "क्या मैं किसी पुस्तक का दूसरी भाषा में अनुवाद करके उससे ऑडियोबुक बना सकता हूँ?",
     "हाँ। Audiobook Maker में एकीकृत पुस्तक अनुवाद सुविधा शामिल है: अपनी EPUB, PDF, TXT या ABM फ़ाइल अपलोड करें, स्रोत और लक्ष्य भाषा चुनें, और AI चयनित अध्यायों का अनुवाद करता है — उसी चरण में स्वाभाविक वर्णन के लिए वैकल्पिक AI अनुकूलन के साथ। आप अनुवादित पुस्तक (EPUB, TXT या ABM) डाउनलोड कर सकते हैं और फिर परिणाम से सीधे किसी भी न्यूरल आवाज़ का उपयोग करके अनुवादित ऑडियोबुक बना सकते हैं। अनुवाद एक छोटी सीमा से नीचे मुफ़्त है; लंबी पुस्तकों पर वर्णों की संख्या के आधार पर थोड़ा शुल्क लगता है, जो वाउचर या PayPal से देय है।"
+   ],
+   [
+    "क्या इस सेवा से बनी ऑडियोबुक मुफ़्त में डाउनलोड की जा सकती हैं?",
+    "हाँ। मुफ़्त ऑडियोबुक कैटलॉग (https://audiobook-maker.com/free-audiobooks/) में सार्वजनिक डोमेन की महान क्लासिक किताबें हैं, जिन्हें Audiobook Maker की PREMIUM सिंथेटिक आवाज़ें पढ़ती हैं: इन्हें बिना पंजीकरण के मुफ़्त में सुनें और डाउनलोड करें। हर किताब में 5 मिनट का प्रीव्यू, अध्यायों वाली M4B फ़ाइल और Audiobook Maker & Player ऐप में सीधा इम्पोर्ट है। कैटलॉग इतालवी, अंग्रेज़ी, जर्मन, स्पेनिश, पुर्तगाली और डच में है और समय के साथ नए शीर्षक जुड़ते रहेंगे।"
    ],
    [
     "क्या आप M4B प्रारूप का समर्थन करते हैं?",

@@ -557,3 +557,26 @@ def test_senza_r2_il_bucket_non_accende_il_catalogo(monkeypatch):
     free_catalog.invalidate_cache()
     assert free_catalog.files_bucket() == ""
     assert free_catalog.bucket_file_url("covers/it/x.jpg") is None
+
+
+def test_home_ha_la_faq_del_catalogo_con_il_link(client):
+    # FAQ della home (i18n_data.js, pre-riempita lato server), la prima della
+    # card, e pagina /faq/ con il link cliccabile.
+    for lang in ("it", "en", "fr", "es", "de", "zh", "hi"):
+        page = client.get(f"/{lang}/", follow_redirects=True).get_data(as_text=True)
+        m = re.search(r'data-t="faq_catalog_a">(.*?)</div>', page, flags=re.S)
+        assert m and "href='/free-audiobooks/'" in m.group(1), lang
+        card = page[page.index('class="resources-card faq-card"'):]
+        assert re.search(r'<summary data-t="(\w+)"', card).group(1) == "faq_catalog_q", lang
+        faq = client.get(f"/faq/{lang}/").get_data(as_text=True)
+        assert '<a href="https://audiobook-maker.com/free-audiobooks/">' in faq, lang
+        assert '<a href="https://play.google.com/store/apps/details?id=it.abm.audiobook_maker_mobile"' \
+               ' target="_blank" rel="noopener">' in faq, lang
+
+
+def test_linkify_lascia_fuori_la_punteggiatura():
+    import page_brand
+    out = page_brand.linkify("vedi (https://alternativeto.net/software/x/about/). Fine")
+    assert out == ('vedi (<a href="https://alternativeto.net/software/x/about/" target="_blank" '
+                   'rel="noopener">https://alternativeto.net/software/x/about/</a>). Fine')
+    assert page_brand.linkify("nessun link &amp; basta") == "nessun link &amp; basta"

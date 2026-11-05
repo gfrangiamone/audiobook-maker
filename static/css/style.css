@@ -154,6 +154,7 @@ details.faq-item summary::-webkit-details-marker{display:none}
 details.faq-item summary::before{content:"+";display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--acs);color:var(--ac);text-align:center;line-height:18px;font-size:.8rem;font-weight:600;flex-shrink:0;transition:transform .2s}
 details.faq-item[open] summary::before{content:"\2212"}
 details.faq-item .faq-answer{font-size:.82rem;color:var(--txd);padding:4px 0 8px 26px;line-height:1.5}
+details.faq-item .faq-answer a{color:var(--ac);text-decoration:underline;text-underline-offset:2px}
 .faq-see-all{display:inline-block;margin-top:10px;font-size:.82rem;color:var(--ac);text-decoration:none;font-weight:550}
 .faq-see-all:hover{text-decoration:underline}
 
