@@ -287,8 +287,19 @@ _HTML_TYPE = {"Content-Type": "text/html; charset=utf-8"}
 
 @bp.route("/free-audiobooks/")
 def free_catalog_root():
-    # Il pilota parte dall'italiano; la scelta della lingua arriva con le altre.
-    return redirect(f"{free_catalog.PATH}/it/", code=302)
+    """Indice unico del catalogo, nella lingua dell'interfaccia (?lang, cookie
+    della SPA, Accept-Language). Il filtro parte sulla lingua dell'utente se in
+    quella lingua c'e' almeno un libro pubblicato, altrimenti su tutte."""
+    scelta = [(request.args.get("lang") or "").strip().lower(),
+              (request.cookies.get("abm_lang") or "").strip().lower()]
+    ui = _i18n.choose_lang(scelta + [_detect_lang_from_request()], _i18n.LANGS)
+    # Il filtro guarda anche le lingue del catalogo che il sito non ha (pt, nl).
+    preset = free_catalog.preset_lang(scelta + [_i18n.browser_lang(
+        request.headers.get("Accept-Language", ""), supported=free_catalog.LANGS, ranked=True)])
+    page = free_catalog.index_html(ui, _base_url() or "", preset)
+    if not page:
+        return "Not found", 404
+    return page, 200, {**_HTML_TYPE, "Vary": "Accept-Language, Cookie"}
 
 
 @bp.route("/free-audiobooks/<lang>/")

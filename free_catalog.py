@@ -16,9 +16,11 @@ Non importa `audiobook_app`: il QR arriva come funzione dal chiamante.
 """
 import html
 import json
+import os
 import re
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -33,6 +35,10 @@ from og_image_data import og_image_url
 SCHEMA_VERSION = 1
 # Lingue del catalogo (spec §2): non coincidono con quelle del sito.
 LANGS = ("it", "en", "de", "pt", "nl", "es")
+# Nome di ogni lingua nella lingua stessa: il filtro dell'indice le elenca
+# cosi', qualunque sia la lingua dell'interfaccia.
+LANG_NAMES = {"it": "Italiano", "en": "English", "de": "Deutsch", "pt": "Português",
+              "nl": "Nederlands", "es": "Español"}
 # Token di condivisione permanente di un libro del catalogo (spec §7.6).
 SHARE_PREFIX = "fc-"
 PATH = "/free-audiobooks"
@@ -57,11 +63,19 @@ def _source(lang):
     return tpl.replace("{lang}", lang) if tpl else ""
 
 
+_ILLEGGIBILE = object()
+
+
 def _fetch(src):
     if src.startswith(("http://", "https://")):
         with urllib.request.urlopen(src, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    return load_json(src, None)
+    if not os.path.exists(src):
+        return None                     # lingua senza ancora il suo file
+    doc = load_json(src, _ILLEGGIBILE)
+    if doc is _ILLEGGIBILE:
+        raise ValueError("JSON illeggibile")
+    return doc
 
 
 def _num(value):
@@ -188,7 +202,14 @@ def books(lang):
         return hit[2]
     previous = hit[2] if hit and hit[0] == src else None
     try:
-        loaded = validate(_fetch(src), lang)
+        doc = _fetch(src)
+        # Una lingua senza ancora il suo file (pilota a lingue scaglionate) e'
+        # normale, non un errore da loggare: l'indice unico la salta.
+        loaded = None if doc is None else validate(doc, lang)
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            print(f"[free_catalog] catalogo {lang} non letto da {src}: {e}")
+        loaded = previous if e.code != 404 else None
     except Exception as e:
         print(f"[free_catalog] catalogo {lang} non letto da {src}: {e}")
         loaded = previous
@@ -199,6 +220,29 @@ def books(lang):
 
 def _published(lang):
     return [b for b in books(lang) or [] if b["status"] == "published"]
+
+
+def all_books():
+    """[(lingua, libro)] di tutti i cataloghi leggibili, o None se nessuno lo e'."""
+    out, letto = [], False
+    for lang in LANGS:
+        items = books(lang)
+        if items is None:
+            continue
+        letto = True
+        out.extend((lang, b) for b in items)
+    return out if letto else None
+
+
+def preset_lang(candidates):
+    """Lingua da preimpostare nel filtro dell'indice: la prima candidata
+    (lingua dell'interfaccia, cookie, Accept-Language) con almeno un libro
+    pubblicato; "" = tutte le lingue."""
+    for c in candidates:
+        c = i18n.norm_lang(c)
+        if c in LANGS and _published(c):
+            return c
+    return ""
 
 
 def book(lang, slug):
@@ -239,6 +283,9 @@ def sitemap_entries(base_url):
     """(loc, lastmod, priority) per l'indice di ogni lingua attiva e per ogni
     libro pubblicato. I libri in arrivo non hanno pagina e restano fuori."""
     out = []
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if all_books():
+        out.append((f"{base_url}{PATH}/", today, "0.8"))
     for lang in LANGS:
         items = books(lang)
         if not items:
@@ -336,6 +383,8 @@ def _card(lang, b, t):
         title = f'<a href="{PATH}/{lang}/{_esc(b["slug"])}/">{title}</a>'
     return page_brand.render_page("free_catalog_card.html", {
         "__STATUS__": _esc(b["status"]),
+        "__LANG__": _esc(lang), "__LANG_TAG__": _esc(lang.upper()),
+        "__LANG_NAME__": _esc(LANG_NAMES.get(lang, lang)),
         "__SEARCH__": _esc(f"{b['title']} {b['author']['name']}".lower()),
         "__COVER__": _cover_img(b, size=72, cls="fc-thumb", thumb=True),
         "__TITLE__": title,
@@ -346,16 +395,16 @@ def _card(lang, b, t):
     })
 
 
-def _shelf(lang, items, t, title):
-    """Scaffale orizzontale di libri pubblicati ('' se non ce ne sono)."""
+def _shelf(items, t, title):
+    """Scaffale orizzontale di libri pubblicati [(lingua, libro)] ('' se non ce ne sono)."""
     if not items:
         return ""
     cards = "\n".join(page_brand.render_page("free_catalog_shelf_item.html", {
-        "__HREF__": f"{PATH}/{lang}/{_esc(b['slug'])}/",
+        "__HREF__": f"{PATH}/{lang}/{_esc(b['slug'])}/", "__LANG__": _esc(lang),
         "__COVER__": _cover_img(b, size=176, cls="fc-shelf-cover"),
         "__TITLE__": _esc(b["title"]), "__AUTHOR__": _esc(b["author"]["name"]),
         "__DURATION__": _esc(_book_hm(b)), "__DURATION_LABEL__": _esc(t["duration_label"]),
-    }) for b in items)
+    }) for lang, b in items)
     return page_brand.render_page("free_catalog_shelf.html", {"__TITLE__": _esc(title), "__ITEMS__": cards})
 
 
@@ -375,42 +424,71 @@ def _lang_ok(lang):
     return lang if lang in i18n.LANGS else None
 
 
-def hub_html(lang, base_url):
-    """Indice del catalogo di `lang`, o None se spento o lingua ignota."""
-    items = books(lang)
+def _lang_options(langs, preset, t):
+    opts = [f'<option value=""{" selected" if not preset else ""}>{_esc(t["lang_all"])}</option>']
+    opts += [f'<option value="{l}"{" selected" if l == preset else ""}>{_esc(LANG_NAMES[l])}</option>'
+             for l in langs]
+    return "".join(opts)
+
+
+def _catalog_html(ui_lang, base_url, *, preset, canonical_path):
+    """L'indice del catalogo: tutti i libri di tutte le lingue, con ricerca e
+    filtri (stato, lingua). `preset` e' la lingua gia' scelta nel filtro ("" =
+    tutte); senza JS si vede la lista intera. None se il catalogo e' spento."""
+    items = all_books()
     if items is None:
         return None
-    t = _t(lang)
-    canonical = f"{base_url}{PATH}/{lang}/"
-    pubs = [b for b in items if b["status"] == "published"]
-    art = [b for b in pubs + [b for b in items if b["status"] != "published"] if b["cover"]["url"]][:3]
+    t = _t(ui_lang)
+    canonical = f"{base_url}{canonical_path}"
+    pubs = [(l, b) for l, b in items if b["status"] == "published"]
+    in_preset = [(l, b) for l, b in items if not preset or l == preset]
+    art = [b for l, b in sorted(in_preset, key=lambda x: x[1]["status"] != "published")
+           if b["cover"]["url"]][:3]
+    langs = [l for l in LANGS if any(l == x for x, _ in items)]
     body = page_brand.render_page("free_catalog_hub.html", {
         "__KICKER__": _esc(t["hub_kicker"]), "__H1__": _esc(t["hub_h1"]),
         "__INTRO__": _esc(t["hub_intro"]),
         "__CHIPS__": _chips([t["hub_count"].format(n=len(pubs), total=len(items)),
                              t["chip_m4b"], t["chip_free"]]),
         "__HERO_COVERS__": "".join(_cover_img(b, size=200, cls="fc-hero-cover", lazy=False) for b in art),
-        "__SHELF__": _shelf(lang, pubs, t, t["shelf_available"]),
+        "__SHELF__": _shelf(pubs, t, t["shelf_available"]),
         "__STEP1_T__": _esc(t["step1_title"]), "__STEP1__": _esc(t["step1"]),
         "__STEP2_T__": _esc(t["step2_title"]), "__STEP2__": _esc(t["step2"]),
         "__STEP3_T__": _esc(t["step3_title"]), "__STEP3__": _esc(t["step3"]),
         "__ALL_TITLE__": _esc(t["all_title"]),
         "__SEARCH_LABEL__": _esc(t["search_label"]), "__SEARCH_PH__": _esc(t["search_placeholder"]),
+        "__LANG_LABEL__": _esc(t["filter_lang"]), "__LANG_OPTIONS__": _lang_options(langs, preset, t),
         "__F_ALL__": _esc(t["filter_all"]), "__F_PUBLISHED__": _esc(t["filter_published"]),
         "__F_COMING__": _esc(t["filter_coming"]), "__EMPTY__": _esc(t["search_empty"]),
-        "__CARDS__": "\n".join(_card(lang, b, t) for b in items),
+        "__CARDS__": "\n".join(_card(l, b, t) for l, b in items),
         "__CTA_TITLE__": _esc(t["cta_title"]), "__CTA_TEXT__": _esc(t["cta_text"]),
         "__CTA_BTN__": _esc(t["cta_button"]),
     })
     head = page_brand.seo_head(
         desc=_esc(t["hub_desc"]), canonical=canonical, og_type="website",
         og_title=_esc(t["hub_title"]), og_desc=_esc(t["hub_desc"]), og_url=canonical,
-        og_image=og_image_url(base_url), lang=_lang_ok(lang),
+        og_image=og_image_url(base_url), lang=_lang_ok(ui_lang),
         ld=[seo_ld.ld_json(seo_ld.breadcrumb_ld([
             ("Audiobook Maker", f"{base_url}/"), (t["crumb"], canonical)]))])
     return page_brand.public_page(
-        lang=lang, title=_esc(t["hub_title"]), crumb=_esc(t["crumb"]), body=body,
+        lang=ui_lang, title=_esc(t["hub_title"]), crumb=_esc(t["crumb"]), body=body,
         footer=_footer(t), head=head, css=_css())
+
+
+def index_html(ui_lang, base_url, preset=""):
+    """L'indice unico (`/free-audiobooks/`) nella lingua dell'interfaccia, col
+    filtro sulla lingua `preset` (vedi `preset_lang`)."""
+    return _catalog_html(ui_lang, base_url, preset=preset if preset in LANGS else "",
+                         canonical_path=f"{PATH}/")
+
+
+def hub_html(lang, base_url):
+    """Lo stesso indice per una lingua (`/free-audiobooks/<lang>/`): pagina a
+    se' per i motori di ricerca, col filtro gia' su `lang`. None se la lingua
+    non ha catalogo."""
+    if lang not in LANGS or books(lang) is None:
+        return None
+    return _catalog_html(lang, base_url, preset=lang, canonical_path=f"{PATH}/{lang}/")
 
 
 def _voice_text(b, t, key):
@@ -588,7 +666,7 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
         "__CTA_TITLE__": _esc(t["cta_voice_title"]), "__CTA_TEXT__": _esc(t["cta_voice_text"]),
         "__CTA_HREF__": _esc(cta), "__CTA_BTN__": _esc(t["cta_voice_button"]),
         "__RELATED__": _related_html(lang, b, t),
-        "__MORE__": _shelf(lang, more, t, t["shelf_more"]),
+        "__MORE__": _shelf([(lang, x) for x in more], t, t["shelf_more"]),
         "__BACK_HREF__": hub, "__BACK__": _esc(t["back"]),
     })
     desc = t["book_desc"].format(title=b["title"], author=b["author"]["name"])

@@ -34,6 +34,7 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-shelf-row{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 14px;margin:0 -2px;scrollbar-width:thin}
 .fc-shelf-item{flex:none;width:156px;scroll-snap-align:start;color:var(--tx);text-decoration:none}
 .fc-shelf-item:hover{text-decoration:none}
+.fc-shelf-item[hidden],.fc-shelf[hidden]{display:none}
 .fc-shelf-cover{display:block;width:156px;height:156px;border-radius:12px;box-shadow:var(--fc-shadow);object-fit:cover;margin-bottom:10px;transition:transform .2s}
 .fc-shelf-item:hover .fc-shelf-cover{transform:translateY(-3px) scale(1.02)}
 .fc-shelf-item strong{display:block;font-size:.95rem;line-height:1.3}
@@ -56,6 +57,10 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-search input{width:100%;font:inherit;font-size:16px;padding:12px 14px 12px 42px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--tx)}
 .fc-search input:focus{outline:2px solid var(--ac);outline-offset:1px}
 .fc-filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.fc-langsel{margin-top:10px;display:flex;align-items:center;gap:10px}
+.fc-langsel label{font-size:.8rem;font-weight:600;color:var(--txd)}
+.fc-langsel select{font:inherit;font-size:16px;padding:8px 14px;min-height:40px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--tx)}
+.fc-lang{display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid var(--brd);color:var(--txd)}
 .fc-filters button{font:inherit;font-size:.88rem;font-weight:600;padding:7px 15px;min-height:38px;border:1px solid var(--brd);border-radius:999px;background:var(--srf);color:var(--txd);cursor:pointer}
 .fc-filters button.on{background:var(--tx);border-color:var(--tx);color:var(--bg)}
 .fc-list{display:grid;grid-template-columns:1fr;gap:10px}

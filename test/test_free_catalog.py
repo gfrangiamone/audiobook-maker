@@ -267,9 +267,10 @@ def test_scheda_uses_gendered_death_year_when_birth_is_missing(catalog):
 def test_sitemap_lists_hub_and_published_books_only(catalog):
     entries = free_catalog.sitemap_entries("https://x")
     locs = [e[0] for e in entries]
-    assert locs == ["https://x/free-audiobooks/it/",
+    assert locs == ["https://x/free-audiobooks/",
+                    "https://x/free-audiobooks/it/",
                     "https://x/free-audiobooks/it/storia-di-una-capinera/"]
-    assert entries[1][1] == "2026-12-20"
+    assert entries[2][1] == "2026-12-20"
     monkeypatch_base = routes_pages._cfg["base_url"]
     try:
         routes_pages._cfg["base_url"] = lambda: "https://x"
@@ -297,9 +298,48 @@ def test_local_files_route_only_in_development(client, tmp_path, monkeypatch):
     assert client.get("/free-audiobooks/files/../secret.txt").status_code == 404
 
 
-def test_root_redirects_to_italian(client):
-    r = client.get("/free-audiobooks/")
-    assert r.status_code == 302 and r.headers["Location"].endswith("/free-audiobooks/it/")
+def _secondo_catalogo(tmp_path, lang, books):
+    (tmp_path / f"{lang}.json").write_text(json.dumps(
+        {"schema_version": 1, "lang": lang, "books": books}), encoding="utf-8")
+    free_catalog.invalidate_cache()
+
+
+def _libro_en(**over):
+    return _book(book_id="en-moby", slug="moby-dick", title="Moby Dick",
+                 author={"name": "Herman Melville", "died": 1891}, **over)
+
+
+def test_l_indice_e_unico_con_tutte_le_lingue(catalog, client, tmp_path):
+    _secondo_catalogo(tmp_path, "en", [_libro_en()])
+    r = client.get("/free-audiobooks/", headers={"Accept-Language": "en-US,en;q=0.9"})
+    assert r.status_code == 200 and "Accept-Language" in r.headers.get("Vary", "")
+    page = r.get_data(as_text=True)
+    assert 'data-lang="it"' in page and 'data-lang="en"' in page
+    assert 'href="/free-audiobooks/en/moby-dick/"' in page
+    assert '<option value="en" selected>English</option>' in page   # lingua dell'utente
+    assert '<link rel="canonical" href="' in page and '/free-audiobooks/"' in page
+
+
+def test_filtro_su_tutte_se_la_lingua_dell_utente_non_ha_libri(catalog, client):
+    page = client.get("/free-audiobooks/", headers={"Accept-Language": "fr-FR"}).get_data(as_text=True)
+    assert '<option value="" selected>' in page
+    page = client.get("/free-audiobooks/?lang=it").get_data(as_text=True)
+    assert '<option value="it" selected>Italiano</option>' in page
+
+
+def test_lingua_preimpostata_solo_con_libri_pubblicati(catalog, tmp_path):
+    _secondo_catalogo(tmp_path, "en", [_libro_en(status="coming")])
+    assert free_catalog.preset_lang(["en", "it"]) == "it"
+    assert free_catalog.preset_lang(["pt-BR"]) == ""
+
+
+def test_la_pagina_per_lingua_resta_per_la_seo(catalog, client, tmp_path):
+    _secondo_catalogo(tmp_path, "en", [_libro_en()])
+    page = client.get("/free-audiobooks/en/").get_data(as_text=True)
+    assert '<option value="en" selected>English</option>' in page
+    assert 'data-lang="it"' in page                         # stesso catalogo unico
+    assert '/free-audiobooks/en/"' in page                  # canonical della lingua
+    assert client.get("/free-audiobooks/xx/").status_code == 404
 
 
 # --- download e import nell'app -----------------------------------------------
