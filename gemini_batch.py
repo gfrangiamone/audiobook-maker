@@ -139,8 +139,12 @@ def _audio(risposta, item, model_key, voice_name):
     controlli di `synthesize`."""
     from google.genai import types as genai_types
     try:
-        response = genai_types.GenerateContentResponse.model_validate_json(
-            json.dumps(risposta))
+        # `_from_response` e' il parser dell'SDK per le risposte REST: toglie
+        # i campi che questa versione non conosce (Google ha aggiunto
+        # `usageMetadata.serviceTier`, che `model_validate` rifiuta) e
+        # decodifica il base64 dell'audio.
+        response = genai_types.GenerateContentResponse._from_response(
+            response=risposta, kwargs={})
         pcm = gemini_tts._extract_audio_pcm(response, model_key)
     except (gemini_tts.GeminiEmptyResponse, gemini_tts.GeminiAudioFormatError,
             ValueError) as e:
@@ -193,7 +197,9 @@ def _consegna(client, job, attesi, model_key, voice_name, sleep):
         esito = _audio(riga["response"], item, model_key, voice_name)
         if esito is not None:
             esiti[item["key"]] = esito
-    _senza_errori(lambda: client.files.delete(name=nome))
+    # Il file delle risposte non si cancella: Google gli da' un id oltre i 40
+    # caratteri che `files.delete` rifiuta (400, prova del 05/11/2026), e
+    # scade da solo dopo 48 h.
     return esiti
 
 

@@ -29,7 +29,10 @@ def risposta_audio(wav=None):
             "mimeType": "audio/wav",
             "data": base64.b64encode(wav or _wav()).decode()}}]},
             "finishReason": "STOP"}],
-        "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 100}}}
+        # serviceTier: campo arrivato dopo la versione dell'SDK (05/11/2026),
+        # le risposte vere lo portano e non deve far scartare il chunk
+        "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 100,
+                          "serviceTier": "SERVICE_TIER_STANDARD"}}}
 
 
 RIFIUTO = {"response": {"candidates": [{"finishReason": "OTHER"}]}}
