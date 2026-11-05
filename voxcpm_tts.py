@@ -15,6 +15,7 @@ job invece del rilancio a freddo.
 """
 import base64
 import collections
+import contextlib
 import json
 import logging
 import retry_util as _retry
@@ -1819,7 +1820,7 @@ def _registra_esito(stats, out, inviati):
 
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
-                       on_progress=None, speed=None):
+                       on_progress=None, speed=None, posto=None):
     """Sintetizza un capitolo intero come un solo job. Scrive il PCM grezzo.
 
     Un job per capitolo (§7.3): il costo sta nell'accensione del worker, non
@@ -1853,6 +1854,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             Se il worker lo echeggia, torna in `stats["speed"]`; se non lo
             echeggia (immagine precedente) la chiave manca e il chiamante
             deve stirare da se'.
+        posto: il `_Posto` di `PostiRunpod.posto` che il capitolo occupa
+            mentre un suo job e' su RunPod. Si prende prima di ogni
+            sottomissione e si lascia appena il job e' chiuso, prima dello
+            scaricamento e delle pause di ritentativo. `None` = nessun tetto.
 
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
@@ -1914,15 +1919,18 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             raise VoxcpmJobError("job annullato: nessun altro worker acceso")
         ultimo = tentativo >= SILENCE_RETRIES
 
-        payload = _payload_capitolo(pronti, clone, conc, lingua, speed,
-                                    key if su_r2 else "")
-
         try:
-            out = run_job(payload, session=session, sleep=riposa,
-                          on_queue=on_queue, cancelled=cancelled,
-                          on_billing=stats["runpod"].append,
-                          on_progress=(on_progress if progress_enabled()
-                                       else None))
+            # Il payload dentro il posto: la firma dell'upload deve partire
+            # da quando il job parte, non da quando ha cominciato ad
+            # aspettare il suo turno.
+            with _in_volo(posto, cancelled):
+                payload = _payload_capitolo(pronti, clone, conc, lingua, speed,
+                                            key if su_r2 else "")
+                out = run_job(payload, session=session, sleep=riposa,
+                              on_queue=on_queue, cancelled=cancelled,
+                              on_billing=stats["runpod"].append,
+                              on_progress=(on_progress if progress_enabled()
+                                           else None))
         except VoxcpmRimbalzato as e:
             # Respinto senza essere partito: si rifa' uguale. La concorrenza
             # resta quella e il contatore dei tentativi veri non si muove,
@@ -2324,6 +2332,93 @@ def jobs_in_flight():
     e' il costo dominante (§9.2).
     """
     return max(1, _i("ABM_VOXCPM_JOBS", 2))
+
+
+class PostiRunpod:
+    """I job RunPod di un libro in volo insieme, assegnati nell'ordine dei lotti.
+
+    Il posto copre la vita del job su RunPod e non il viaggio dell'audio:
+    `synthesize_chapter` lo lascia appena il job e' chiuso, e scarica il PCM
+    da R2 mentre il lotto successivo e' gia' sottomesso. Finche' il posto
+    durava fino allo scaricamento, il worker restava fermo oltre l'idle
+    timeout dell'endpoint (5 s) e ogni lotto ripagava il build del motore
+    (~200 s fatturati, misurato il 04/11/2026).
+
+    Il primo ingresso di un lotto rispetta il suo `turno`: i thread sono piu'
+    dei posti, e senza turno un thread appena libero potrebbe passare davanti
+    a uno in attesa da prima, cioe' sottomettere i capitoli fuori ordine. I
+    rientri (capitolo da rifare, lotto spezzato nei suoi capitoli) aspettano
+    solo un posto libero: il loro turno l'hanno gia' avuto.
+    """
+
+    def __init__(self, quanti):
+        self._cond = threading.Condition()
+        self._liberi = max(1, int(quanti))
+        self._prossimo = 0
+
+    def posto(self, turno):
+        """Il posto del lotto in posizione `turno` (0, 1, 2, ...)."""
+        return _Posto(self, turno)
+
+    def _prendi(self, posto, cancelled):
+        while True:
+            with self._cond:
+                if self._liberi > 0 and (posto.entrato
+                                         or posto.turno == self._prossimo):
+                    self._liberi -= 1
+                    posto.tenuto = True
+                    if not posto.entrato:
+                        posto.entrato = True
+                        self._prossimo += 1
+                        # Il turno dopo puo' essere gia' in attesa.
+                        self._cond.notify_all()
+                    return
+                self._cond.wait(_TICK_ANNULLAMENTO_S)
+            # Fuori dal lock: `cancelled` e' del chiamante, e non deve
+            # bloccare chi sta lasciando un posto.
+            if cancelled is not None and cancelled():
+                raise VoxcpmAnnullato("job annullato in attesa di un posto "
+                                      "su RunPod")
+
+    def _lascia(self, posto):
+        with self._cond:
+            self._liberi += 1
+            posto.tenuto = False
+            self._cond.notify_all()
+
+
+class _Posto:
+    """Il posto di un lotto. Si prende e si lascia piu' volte, mai due volte
+    di fila: `prendi` su un posto tenuto e `lascia` su uno libero non fanno
+    niente. Lo usa un thread solo."""
+
+    def __init__(self, posti, turno):
+        self._posti = posti
+        self.turno = turno
+        self.entrato = False
+        self.tenuto = False
+
+    def prendi(self, cancelled=None):
+        """Aspetta il posto. Solleva `VoxcpmAnnullato` se `cancelled()`."""
+        if not self.tenuto:
+            self._posti._prendi(self, cancelled)
+
+    def lascia(self):
+        if self.tenuto:
+            self._posti._lascia(self)
+
+
+@contextlib.contextmanager
+def _in_volo(posto, cancelled):
+    """Il posto per la durata di un job. Senza posto, nessun tetto."""
+    if posto is None:
+        yield
+        return
+    posto.prendi(cancelled)
+    try:
+        yield
+    finally:
+        posto.lascia()
 
 
 def apply_rate(pcm_path, rate, sample_rate):

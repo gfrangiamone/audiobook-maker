@@ -22,6 +22,7 @@ import asyncio
 import html as _htmlesc
 import json
 import os
+import queue
 from i18n import norm_lang as _norm_lang, pick as _i18n_pick
 from jsonl_audit import MonthlyJsonl as _MonthlyJsonl
 from book_model import BookInfo, Chapter
@@ -4493,7 +4494,16 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                       flush=True)
     passo = voxcpm_tts.speed_effettiva(passo_voce, rate)
 
-    def _uno(lotto):
+    def _uno(posto, lotto):
+        """Il lotto dentro il suo posto RunPod. Se `synthesize_chapter` non
+        l'ha gia' lasciato, lo lascia la future a lotto finito."""
+        try:
+            posto.prendi(cancelled)
+        except voxcpm_tts.VoxcpmAnnullato:
+            raise _CancelledError("Job cancelled") from None
+        return _lotto(lotto, posto)
+
+    def _lotto(lotto, posto):
         """Sintetizza un lotto. Ritorna `[(ci, indici, stats), ...]`."""
         # Gia' consegnato dal batch (`_voxcpm_batch`): niente `/run`.
         fatto = dal_batch.pop(lotto[0][1][0], None)
@@ -4501,7 +4511,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             return fatto
         if len(lotto) == 1 or not lotti_ok.is_set():
             return [_sintetizza(ci, indici, indici, str(
-                chunk_reuse.chunk_path(work_dir, indici[0], "pcm")))
+                chunk_reuse.chunk_path(work_dir, indici[0], "pcm")), posto)
                 for ci, indici in lotto]
         primo = lotto[0][0]
         tutti = [i for _, indici in lotto for i in indici]
@@ -4510,7 +4520,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
         # che il riuso scambierebbe per buono.
         sorgente = str(work_dir / f"lotto_{tutti[0]:06d}.pcm")
         try:
-            _, _, stats = _sintetizza(primo, tutti, tutti, sorgente)
+            _, _, stats = _sintetizza(primo, tutti, tutti, sorgente, posto)
             try:
                 return _voxcpm_ritaglia_lotto(lotto, stats, sorgente, work_dir)
             except _LottoNonDivisibile as e:
@@ -4529,7 +4539,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             with barra:
                 parziali.pop(primo, None)
         fuori = [_sintetizza(ci, indici, indici, str(
-            chunk_reuse.chunk_path(work_dir, indici[0], "pcm"))) for ci, indici in lotto]
+            chunk_reuse.chunk_path(work_dir, indici[0], "pcm")), posto)
+            for ci, indici in lotto]
         st0 = fuori[0][2]
         for k in ("tts_seconds", "jobs", "redone", "bounced"):
             st0[k] = st0.get(k, 0) + stats.get(k, 0)
@@ -4537,12 +4548,13 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             st0.get("runpod") or [])
         return fuori
 
-    def _sintetizza(ci, indici, barra_indici, dest):
+    def _sintetizza(ci, indici, barra_indici, dest, posto):
         """Un job RunPod sui chunk `indici`, audio in `dest`.
 
         `ci` e' il gruppo (capitolo, parte) che dà la chiave su R2 e riceve l'avanzamento
         (il primo del lotto); `barra_indici` i chunk che quell'avanzamento
-        copre.
+        copre; `posto` quello del lotto, che `synthesize_chapter` lascia
+        prima di scaricare l'audio.
         """
         if cancelled is not None and cancelled():
             raise _CancelledError("Job cancelled")
@@ -4555,6 +4567,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 key=_voxcpm_chiave(job_id, ci),
                 cancelled=cancelled,
                 speed=passo,
+                posto=posto,
                 # Il payload del worker non porta l'indice di capitolo, e non
                 # deve: il capitolo e' un concetto di ABM. La callback lo sa
                 # perche' e' stata costruita per quello.
@@ -4580,11 +4593,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     # -- gia' completati o in corso su altri worker -- non vengono mai
     # consumati dal for, quindi il loro contributo a `job["voxcpm_actual"]"
     # andrebbe perso anche se il worker li ha davvero fatturati (Review finale,
-    # Important F1). Si sottomettono percio' future esplicite e si consuma con
-    # `as_completed`: ogni esito arrivato si accumula subito, indipendentemente
-    # dall'ordine, e la prima eccezione (in ordine di capitolo, per
-    # determinismo del messaggio) si rilancia solo dopo aver drenato tutte le
-    # future.
+    # Important F1). Si sottomettono percio' future esplicite e si consumano
+    # nell'ordine in cui chiudono: ogni esito arrivato si accumula subito, e la
+    # prima eccezione (in ordine di capitolo, per determinismo del messaggio)
+    # si rilancia solo dopo aver drenato tutte le future. L'ordine lo scrive il
+    # callback di chiusura in `chiusi`, non `as_completed`, che le future gia'
+    # chiuse quando lo si chiama le restituisce da un set, in ordine casuale.
     # Trasporto batch (`ABM_VOXCPM_TRANSPORT=batch`, catalogo): tutti i lotti in
     # un batch RunPod prima del giro qui sotto, che per i lotti consegnati
     # raccoglie soltanto e per gli altri ripiega su `/run`.
@@ -4592,11 +4606,33 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     if voxcpm_tts.transport() == "batch" and lotti:
         dal_batch = _voxcpm_batch(lotti, plan, voice, passo, work_dir, job_id,
                                   cancelled, job)
-    with _cf.ThreadPoolExecutor(max_workers=voxcpm_tts.jobs_in_flight()) as _ex:
-        future_a_posizione = {_ex.submit(_uno, lotto): posizione
-                              for posizione, lotto in enumerate(lotti)}
+    # I job su RunPod sono `jobs_in_flight()`, i thread il doppio: chi ha
+    # finito il suo job scarica l'audio mentre il lotto dopo e' gia' sul
+    # worker, che cosi' non resta fermo oltre l'idle timeout dell'endpoint
+    # (vedi `voxcpm_tts.PostiRunpod`).
+    in_volo = voxcpm_tts.jobs_in_flight()
+    posti = voxcpm_tts.PostiRunpod(in_volo)
+    chiusi = queue.SimpleQueue()
+
+    def _chiuso(fut, posto):
+        # Prima la coda, poi il posto, e a future chiusa invece che nel
+        # `finally` di `_uno`: un lotto che il posto non l'ha lasciato prima
+        # (errore prima del job, doppi dei test) non fa partire il successivo
+        # finche' non e' gia' in coda, quindi a job in serie la raccolta li
+        # vede nell'ordine del libro.
+        chiusi.put(fut)
+        posto.lascia()
+
+    with _cf.ThreadPoolExecutor(max_workers=2 * in_volo) as _ex:
+        future_a_posizione = {}
+        for posizione, lotto in enumerate(lotti):
+            posto = posti.posto(posizione)
+            fut = _ex.submit(_uno, posto, lotto)
+            future_a_posizione[fut] = posizione
+            fut.add_done_callback(lambda f, posto=posto: _chiuso(f, posto))
         errori = {}
-        for fut in _cf.as_completed(future_a_posizione):
+        for _ in range(len(future_a_posizione)):
+            fut = chiusi.get()
             posizione = future_a_posizione[fut]
             try:
                 risultati = fut.result()

@@ -4,6 +4,7 @@ Nessuna rete: il ponte verso RunPod si prova col doppio in
 test_voxcpm_tts_runpod.py.
 """
 import os
+import threading
 
 import pytest
 
@@ -327,3 +328,93 @@ def test_worker_health_none_su_errore(monkeypatch):
     assert voxcpm_tts.worker_health(session=_HealthSession(_HealthResp(503, {}))) is None
     assert voxcpm_tts.worker_health(session=_HealthSession(exc=OSError("rete"))) is None
     assert voxcpm_tts.worker_health(session=_HealthSession(_HealthResp(200, {"x": 1}))) is None
+
+
+# --- PostiRunpod: job in volo e ordine dei lotti -----------------------------
+
+def _prende_in_thread(posto, **kw):
+    """Avvia `posto.prendi` in un thread; l'Event dice quando l'ha preso."""
+    preso = threading.Event()
+    errori = []
+
+    def corri():
+        try:
+            posto.prendi(**kw)
+            preso.set()
+        except Exception as e:  # noqa: BLE001 - lo legge il test
+            errori.append(e)
+
+    t = threading.Thread(target=corri, daemon=True)
+    t.start()
+    return t, preso, errori
+
+
+def test_il_primo_ingresso_rispetta_il_turno():
+    # Il lotto 1 arriva per primo, con un posto libero: aspetta lo stesso
+    # che il lotto 0 sia entrato, o i capitoli partirebbero fuori ordine.
+    posti = voxcpm_tts.PostiRunpod(2)
+    primo, secondo = posti.posto(0), posti.posto(1)
+    t, preso, _ = _prende_in_thread(secondo)
+    assert not preso.wait(0.2)
+    primo.prendi()
+    assert preso.wait(2)
+    t.join(2)
+
+
+def test_i_posti_sono_un_tetto():
+    posti = voxcpm_tts.PostiRunpod(1)
+    primo, secondo = posti.posto(0), posti.posto(1)
+    primo.prendi()
+    t, preso, _ = _prende_in_thread(secondo)
+    assert not preso.wait(0.2)
+    primo.lascia()
+    assert preso.wait(2)
+    t.join(2)
+
+
+def test_il_rientro_non_aspetta_il_turno():
+    # Un capitolo da rifare ha gia' avuto il suo turno: gli basta un posto
+    # libero, anche se il lotto dopo non e' ancora entrato.
+    posti = voxcpm_tts.PostiRunpod(1)
+    primo = posti.posto(0)
+    primo.prendi()
+    primo.lascia()
+    t, preso, _ = _prende_in_thread(primo)
+    assert preso.wait(2)
+    t.join(2)
+
+
+def test_prendi_e_lascia_due_volte_non_contano_doppio():
+    posti = voxcpm_tts.PostiRunpod(2)
+    primo, secondo, terzo = posti.posto(0), posti.posto(1), posti.posto(2)
+    primo.prendi()
+    primo.prendi()          # gia' tenuto: non occupa un secondo posto
+    t, preso, _ = _prende_in_thread(secondo)
+    assert preso.wait(2)
+    t.join(2)
+    primo.lascia()
+    primo.lascia()          # gia' libero: non regala un posto in piu'
+    secondo.lascia()
+    terzo.prendi()
+    quarto = posti.posto(3)
+    t, preso, _ = _prende_in_thread(quarto)
+    assert preso.wait(2)    # un posto ancora libero, non due
+    t.join(2)
+    quinto = posti.posto(4)
+    t, preso, _ = _prende_in_thread(quinto)
+    assert not preso.wait(0.2)
+    terzo.lascia()
+    assert preso.wait(2)
+    t.join(2)
+
+
+def test_annullamento_durante_l_attesa_del_posto(monkeypatch):
+    monkeypatch.setattr(voxcpm_tts, "_TICK_ANNULLAMENTO_S", 0.01)
+    posti = voxcpm_tts.PostiRunpod(1)
+    posti.posto(0).prendi()
+    t, preso, errori = _prende_in_thread(posti.posto(1),
+                                         cancelled=lambda: True)
+    t.join(2)
+    assert not preso.is_set()
+    assert len(errori) == 1
+    assert isinstance(errori[0], voxcpm_tts.VoxcpmAnnullato)

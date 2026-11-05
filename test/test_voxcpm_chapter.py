@@ -1289,3 +1289,68 @@ def test_worker_bloccato_si_rifa_senza_pausa(tmp_path, monkeypatch):
         voxcpm_tts.VoxcpmBloccato("giro oltre il tetto", "jB"), esito_ok())
     sintetizza(finto, tmp_path, monkeypatch, sleep=pause.append)
     assert pause == []
+
+
+class PostoSpia:
+    """Al posto di un `_Posto`: annota quando lo si prende e lo si lascia."""
+
+    def __init__(self, eventi):
+        self.eventi = eventi
+
+    def prendi(self, cancelled=None):
+        self.eventi.append("prendi")
+
+    def lascia(self):
+        self.eventi.append("lascia")
+
+
+def _spia_job_e_consegna(monkeypatch, eventi, finto):
+    def run_job(payload, **kw):
+        eventi.append("job")
+        return finto(payload, **kw)
+
+    consegna = voxcpm_tts._consegna
+
+    def _consegna(*a, **kw):
+        eventi.append("consegna")
+        return consegna(*a, **kw)
+
+    monkeypatch.setattr(voxcpm_tts, "run_job", run_job)
+    monkeypatch.setattr(voxcpm_tts, "_consegna", _consegna)
+
+
+def test_il_posto_si_lascia_prima_di_scaricare(tmp_path, monkeypatch):
+    # Il worker resta fermo dal job chiuso alla sottomissione del lotto
+    # dopo: tenere il posto anche durante lo scaricamento lo portava oltre
+    # l'idle timeout dell'endpoint, e ogni lotto ripagava il build.
+    eventi = []
+    _spia_job_e_consegna(monkeypatch, eventi, FintoRunJob(esito_ok()))
+    voxcpm_tts.synthesize_chapter(CHUNKS, VOCE, str(tmp_path / "cap.pcm"),
+                                  sleep=lambda _s: None,
+                                  posto=PostoSpia(eventi))
+    assert eventi == ["prendi", "job", "lascia", "consegna"]
+
+
+def test_il_rifacimento_riprende_il_posto_dopo_la_pausa(tmp_path, monkeypatch):
+    # La pausa di ritentativo si fa a posto libero: un altro lotto puo'
+    # usarlo, e il rifacimento lo riprende per il suo job.
+    eventi = []
+    _spia_job_e_consegna(monkeypatch, eventi, FintoRunJob(
+        voxcpm_tts.VoxcpmMotoreCompromesso("engine_dead OOM", "jM"),
+        esito_ok()))
+    voxcpm_tts.synthesize_chapter(CHUNKS, VOCE, str(tmp_path / "cap.pcm"),
+                                  sleep=lambda _s: eventi.append("pausa"),
+                                  posto=PostoSpia(eventi))
+    assert eventi == ["prendi", "job", "lascia", "pausa",
+                      "prendi", "job", "lascia", "consegna"]
+
+
+def test_il_posto_si_lascia_anche_se_il_job_fallisce(tmp_path, monkeypatch):
+    eventi = []
+    _spia_job_e_consegna(monkeypatch, eventi, FintoRunJob(
+        voxcpm_tts.VoxcpmJobError("rotto", "jX")))
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        voxcpm_tts.synthesize_chapter(CHUNKS, VOCE, str(tmp_path / "cap.pcm"),
+                                      sleep=lambda _s: None,
+                                      posto=PostoSpia(eventi))
+    assert eventi == ["prendi", "job", "lascia"]

@@ -1061,3 +1061,30 @@ def test_capitolo_lungo_un_job_per_segmento(tmp_path, sintesi_finta, monkeypatch
     dimensioni = [os.path.getsize(tmp_path / f"chunk_{i:06d}.pcm") for i in range(7)]
     assert dimensioni == [4, 0, 6, 0, 0, 4, 0]
     assert sorted(pre) == list(range(7))
+
+
+def test_il_lotto_dopo_parte_mentre_il_precedente_scarica(tmp_path, monkeypatch):
+    # Anche a un job per volta: il primo capitolo lascia il posto a job
+    # chiuso e "scarica" finche' il secondo non e' partito. Con un thread per
+    # posto il secondo aspetterebbe la fine dello scaricamento, e il worker
+    # resterebbe fermo oltre l'idle timeout dell'endpoint.
+    secondo_partito = threading.Event()
+    visto = []
+
+    def sintesi(chunks, voice_id, dest_path, **kw):
+        if chunks == ["a", "b"]:
+            kw["posto"].lascia()                      # job chiuso
+            visto.append(secondo_partito.wait(5))     # scaricamento
+        else:
+            secondo_partito.set()
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22")
+        return {"sample_rate": 48000, "chars": 1, "audio_seconds": 1.0,
+                "tts_seconds": 0.5, "jobs": 1, "redone": 0, "bounced": 0,
+                "failed_chunks": 0, "bytes": 2, "runpod": []}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
+                                       "job-1", set())
+    assert visto == [True]
