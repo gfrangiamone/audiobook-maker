@@ -58,9 +58,11 @@ import translation_core
 try:
     import gemini_tts
     import gemini_batch
+    import catalog_intro
 except ImportError:
     gemini_tts = None
     gemini_batch = None
+    catalog_intro = None
 import gemini_cost_audit
 import translation_cost_audit
 import optimization_cost_audit
@@ -7646,6 +7648,30 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
             if m4b_chapters:
                 m4b_chapters[-1]["end"] = current_ms
+
+            # Inserto iniziale del catalogo gratuito (catalog_intro, spec catalogo
+            # §5.6): un capitolo a se' prima del primo, solo sul percorso PCM e
+            # solo con ABM_CATALOG_INTRO_DIR fuori produzione. I capitoli slittano
+            # della sua durata piu' il gap che pcm_concat mette dopo di lui.
+            if use_pcm and catalog_intro is not None:
+                _intro = catalog_intro.prepare(
+                    voice, _norm_lang(_audit_language(job, info) or ""), sample_rate=_pcm_sr,
+                    book_parts=[p for p in all_parts if p != silence_path],
+                    work_dir=work_dir, gemini_accent=job.get("gemini_accent"))
+                if _intro:
+                    _shift = _part_duration_ms(_intro["path"]) + (gap_ms_inter if all_parts else 0)
+                    for _c in m4b_chapters:
+                        _c["start"] += _shift
+                        _c["end"] += _shift
+                    m4b_chapters.insert(0, {"title": _intro["chapter"], "start": 0, "end": _shift})
+                    all_parts.insert(0, _intro["path"])
+                    current_ms += _shift
+                    _vox_inizi_ms = {k: (a + _shift, b + _shift)
+                                     for k, (a, b) in _vox_inizi_ms.items()}
+                    job["catalog_intro"] = {k: _intro[k]
+                                            for k in ("key", "voice", "sha256", "gain_db")}
+                    print(f"[{job_id}] Inserto iniziale {_intro['key']} ({_intro['voice']}, "
+                          f"{_intro['gain_db']:+.1f} dB): {_shift} ms", flush=True)
 
             if _vox_inizi_ms:
                 _voxcpm_posiziona_code(job, _vox_inizi_ms)

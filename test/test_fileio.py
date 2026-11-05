@@ -94,4 +94,12 @@ def test_fileio_is_a_leaf():
     src = pathlib.Path(fileio.__file__).read_text(encoding="utf-8")
     mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
-    assert mods <= {"json", "os", "re", "threading", "time", "pathlib", "env_utils"}   # re: safe_filename (F2b)
+    # re: safe_filename (F2b); hashlib: file_sha256 (inserti del catalogo, riuso capitoli)
+    assert mods <= {"hashlib", "json", "os", "re", "threading", "time", "pathlib", "env_utils"}
+
+
+def test_file_sha256_legge_a_blocchi(tmp_path):
+    import hashlib
+    p = tmp_path / "x.bin"
+    p.write_bytes(b"a" * (3 << 20) + b"fine")
+    assert fileio.file_sha256(p) == hashlib.sha256(p.read_bytes()).hexdigest()

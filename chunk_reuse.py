@@ -23,7 +23,7 @@ import re
 import threading
 from pathlib import Path
 from env_utils import env_int
-from fileio import load_json, write_json_safe
+from fileio import file_sha256, load_json, write_json_safe
 
 MANIFEST_NAME = ".chunks_manifest.json"
 
@@ -150,21 +150,13 @@ def chapters_path(work_dir) -> str:
     return os.path.join(str(work_dir), CHAPTERS_NAME)
 
 
-def _file_sha256(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for blocco in iter(lambda: f.read(1 << 20), b""):
-            h.update(blocco)
-    return h.hexdigest()
-
-
 def mark_chapter_done(work_dir, ch_idx, mp3_path) -> bool:
     """Segna il capitolo `ch_idx` come codificato in `mp3_path` (dentro la
     `output_N/` del run). Solo dopo un encode riuscito e senza chunk falliti:
     il file e' audio vero e completo. Non solleva: il riuso e' best-effort."""
     try:
         rec = {"dir": Path(mp3_path).parent.name, "file": Path(mp3_path).name,
-               "sha256": _file_sha256(mp3_path)}
+               "sha256": file_sha256(mp3_path)}
     except OSError:
         return False
     done = load_json(chapters_path(work_dir), dict)
@@ -194,7 +186,7 @@ def reusable_chapters(work_dir, fp: dict, output_dir) -> dict:
         if not valido:
             continue
         try:
-            if _file_sha256(out_dir / name) == sha:
+            if file_sha256(out_dir / name) == sha:
                 out[ci] = str(out_dir / name)
         except OSError:
             continue

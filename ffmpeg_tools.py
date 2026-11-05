@@ -33,6 +33,7 @@ piano (F2), per non lasciare un thread di job appeso a un ffmpeg bloccato.
 """
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -128,6 +129,27 @@ def pcm_transcode(src, dst, *, out_rate, in_rate=None, channels=PCM_CHANNELS, fi
     except OSError:
         pass
     return False
+
+
+def loudness_lufs(src, *, in_rate=None, channels=PCM_CHANNELS, timeout=DEFAULT_TIMEOUT):
+    """Loudness integrata EBU R128 (LUFS) di `src`, o None se non misurabile.
+    `in_rate` dice che `src` e' PCM grezzo s16le a quel rate. Il filtro ebur128
+    stampa il riepilogo a livello info: per questo `run` e non `run_ffmpeg`."""
+    args = ["ffmpeg", "-hide_banner", "-nostats"]
+    if in_rate:
+        args += ["-f", "s16le", "-ar", str(int(in_rate)), "-ac", str(channels)]
+    args += ["-i", str(src), "-af", "ebur128", "-f", "null", "-"]
+    try:
+        r = run(args, timeout=timeout)
+    except (subprocess.SubprocessError, OSError) as e:
+        print(f"[ffmpeg] loudness di {os.path.basename(str(src))}: {e}")
+        return None
+    valori = re.findall(r"I:\s+(-?[\d.]+) LUFS", r.stderr or "")
+    if r.returncode != 0 or not valori:
+        return None
+    lufs = float(valori[-1])
+    # -70 LUFS e' il pavimento del filtro: silenzio, non una misura.
+    return lufs if lufs > -70.0 else None
 
 
 def write_pcm_silence(path, seconds, rate=PCM_SAMPLE_RATE, channels=PCM_CHANNELS,

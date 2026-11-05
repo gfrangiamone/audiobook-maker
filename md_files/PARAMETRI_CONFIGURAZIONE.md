@@ -1044,6 +1044,16 @@ Dal 05/11/2026. I chunk del libro vanno alla Batch API Gemini prima del giro sin
 | `BATCH_BACKEND` | `"apikey-batch"` | Backend dei chunk consegnati dal batch (`gemini_actual.backends`, audit). | `gemini_tts.py` | 1448 |
 | `_BATCH_PRICE_FACTOR` | `0.5` | Tariffa batch = meta' del listino API key (`_net_rates`), IVA come l'API key. | `gemini_tts.py` | 1449 |
 
+### 7.13 Inserto iniziale del catalogo gratuito (`catalog_intro.py`)
+
+Dal 05/11/2026 (v3.174.0). Con la cartella impostata, l'M4B a file unico di un libro PCM (Gemini, VoxCPM) comincia con l'inserto letto da Gemini 3.8 ("prodotto con i servizi premium di audiobook maker punto com..."), capitolo a se' ("Introduzione" nella lingua del libro). Variante scelta per lingua, accento (Gemini: `gemini_accent` del job; VoxCPM: regione della voce, es-AR/MX/... -> `419`) e sesso della voce del libro; loudness portata a quella misurata sui primi 180 s del libro, sample rate a quello del libro. Il ramo multi-file (ZIP) non lo mette. **Mai in produzione**: con `ABM_BASE_URL` https pubblico la cartella si ignora.
+
+| Variabile / costante | Default | Descrizione | File | Riga |
+|---|---|---|---|---|
+| `ABM_CATALOG_INTRO_DIR` | *(vuoto, spento)* | Cartella con `manifest.json` e i PCM s16le 24 kHz mono degli inserti (`abm-free-catalog/intro/`, prodotti da `tools/make_intros.py`; il manifest porta file, sha256, voce, durata e LUFS). Un PCM con sha256 diverso dal manifest non si usa. Impostata solo in `scripts/run_catalog_local.ps1`. | `catalog_intro.py` | 42 |
+| `_MISURA_S` | `180` | Secondi di audio del libro su cui si misura la loudness (EBU R128 integrata, `ffmpeg_tools.loudness_lufs`). | `catalog_intro.py` | 34 |
+| `_GAIN_MAX_DB` | `12.0` | Correzione massima del volume dell'inserto, in dB. | `catalog_intro.py` | 37 |
+
 ## 8. Speechify TTS (Simba-3.2, voci PREMIUM inglese) (`speechify_tts.py`)
 
 Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello fisso `simba-3.2` (costante interna `MODEL_ID`, `speechify_tts.py:88`), etichetta UI "Simba (English)" — nessun nome provider esposto nella UI utente. Audio nativo PCM 48000 Hz mono 16-bit. Il pagamento premium vive nella stessa "tasca" di Gemini (`job["payment"]`) e si rimborsa via `_refund_gemini_payment` / `_refund_payment_on_orphan`.

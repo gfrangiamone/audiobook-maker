@@ -21,6 +21,7 @@ ripetuto in nove file):
 Nessuna di queste funzioni prende lock: la disciplina resta nel chiamante.
 `community_store.atomic_write_json` e' un alias di quello qui dentro.
 """
+import hashlib
 import json
 import os
 import threading
@@ -62,6 +63,15 @@ def data_dir_problem():
     if empty:
         return f"ABM_DATA_DIR={raw} e' vuota (prima installazione: ABM_DATA_DIR_ALLOW_EMPTY=1)"
     return None
+
+
+def file_sha256(path) -> str:
+    """SHA-256 esadecimale del contenuto di `path`, letto a blocchi da 1 MiB."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for blocco in iter(lambda: f.read(1 << 20), b""):
+            h.update(blocco)
+    return h.hexdigest()
 
 
 def data_path(name):
