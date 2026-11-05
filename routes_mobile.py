@@ -796,8 +796,10 @@ def share_download(token):
     catalogo gratuito (`fc-…`) → redirect al file sul bucket pubblico."""
     book = free_catalog.book_for_share_token(token)
     if book is not None:
+        # Piattaforma dell'app se la richiesta la dichiara (header dell'app),
+        # altrimenti "app": la scaricano i download manager di Android e iOS.
         _log_activity("", book["book_id"], "FREE_CATALOG_APP", "", client_ip(), "",
-                      book["book_id"][:2], platform="app")
+                      book["book_id"][:2], platform=_client_platform() or "app")
         return redirect(book["file"]["url"], code=302)
     info = _tkstore.share_tokens.get(token)
     if (not isinstance(info, dict)

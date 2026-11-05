@@ -5017,7 +5017,9 @@ def _payment_audit_fields(job):
     combined = (round(charged + float(llm_quota or 0), 4)
                 if llm_quota is not None else round(charged, 4))
     return {"charged": charged, "payment_method": method, "payment_source": source,
-            "payment_token_short": token_short, "combined_total_eur": combined}
+            "payment_token_short": token_short, "combined_total_eur": combined,
+            # Da dove e' arrivato chi paga: "app", "catalog" (catalogo gratuito) o "".
+            "acquisition_source": payment.get("acquisition_source", "") or ""}
 
 
 def _rate_audit_fields(job):
@@ -5192,6 +5194,7 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "payment_method": pay["payment_method"],
             "payment_token_short": pay["payment_token_short"],
             "payment_source": pay["payment_source"],
+            "acquisition_source": pay["acquisition_source"],
         }
         _common_audit_tail(rec, job)
         # Stessa soglia del listino (gemini_tts), non una copia dell'env.
@@ -5384,6 +5387,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             "payment_method": pay["payment_method"],
             "payment_token_short": pay["payment_token_short"],
             "payment_source": pay["payment_source"],
+            "acquisition_source": pay["acquisition_source"],
         }
         _common_audit_tail(rec, job)
         # Stessa soglia del listino (speechify_tts): la copia locale aveva
@@ -5613,6 +5617,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "payment_method": pay["payment_method"],
             "payment_token_short": pay["payment_token_short"],
             "payment_source": pay["payment_source"],
+            "acquisition_source": pay["acquisition_source"],
             # Specifici di VoxCPM: la base per ricalcolare, e la salute del
             # worker (rimbalzi e capitoli rifatti) accanto al costo.
             "gpu_seconds": gpu_seconds,

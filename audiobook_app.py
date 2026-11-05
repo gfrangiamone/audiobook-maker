@@ -1285,6 +1285,21 @@ def _acquisition_from_request():
     return "app", plat
 
 
+def _note_acquisition(job):
+    """Provenienza del pagamento (cookie abm_acq: app o catalogo gratuito) nel
+    job e nei contatori. Prima erano cinque copie dello stesso blocco, una per
+    ramo di pagamento, e contavano solo l'app."""
+    src, plat = _acquisition_from_request()
+    job["payment"]["acquisition_source"] = src
+    job["payment"]["acquisition_platform"] = plat
+    event = {"app": "payment_from_app", "catalog": "payment_from_catalog"}.get(src)
+    if event:
+        try:
+            metrics_store.incr(event, plat)
+        except Exception:
+            pass
+
+
 def _apply_app_attribution(resp):
     """Se la home è aperta con utm_source=app (dall'app) o utm_source=catalog
     (dall'invito del catalogo gratuito, spec catalogo §7.5), conta l'arrivo e
@@ -4987,14 +5002,7 @@ def api_generate():
                 "gemini_est": est_pre,
                 "llm_eur": llm_eur_pre,
             }
-            _acq_src, _acq_plat = _acquisition_from_request()
-            job["payment"]["acquisition_source"] = _acq_src
-            job["payment"]["acquisition_platform"] = _acq_plat
-            if _acq_src == "app":
-                try:
-                    metrics_store.incr("payment_from_app", _acq_plat)
-                except Exception:
-                    pass
+            _note_acquisition(job)
             # Batch implicito per job PAGATO (vedi _register_paid_job_batch).
             _register_paid_job_batch(
                 job_id, job, payment_token, engine="Gemini",
@@ -5147,14 +5155,7 @@ def api_generate():
                 job["payment"]["voxcpm_est"] = est_pre
             else:
                 job["payment"]["speechify_est"] = est_pre
-            _acq_src, _acq_plat = _acquisition_from_request()
-            job["payment"]["acquisition_source"] = _acq_src
-            job["payment"]["acquisition_platform"] = _acq_plat
-            if _acq_src == "app":
-                try:
-                    metrics_store.incr("payment_from_app", _acq_plat)
-                except Exception:
-                    pass
+            _note_acquisition(job)
             # Batch implicito per job PAGATO (stessa logica del ramo Gemini):
             # un job pagato non deve morire per heartbeat alla chiusura del
             # browser.
@@ -7589,14 +7590,7 @@ def api_optimize():
                 "llm_eur": float(estimated_cost),
                 "source": "combined_optimize_autogen",
             }
-            _acq_src, _acq_plat = _acquisition_from_request()
-            job["payment"]["acquisition_source"] = _acq_src
-            job["payment"]["acquisition_platform"] = _acq_plat
-            if _acq_src == "app":
-                try:
-                    metrics_store.incr("payment_from_app", _acq_plat)
-                except Exception:
-                    pass
+            _note_acquisition(job)
             job["payment_token"] = _combined_token
             job["payment_type"] = _consumed_method
             job["payment_email"] = _consumed_email
@@ -7746,14 +7740,7 @@ def api_optimize():
                 "llm_eur": float(estimated_cost),
                 "source": "combined_optimize_autogen",
             }
-            _acq_src_spx, _acq_plat_spx = _acquisition_from_request()
-            job["payment"]["acquisition_source"] = _acq_src_spx
-            job["payment"]["acquisition_platform"] = _acq_plat_spx
-            if _acq_src_spx == "app":
-                try:
-                    metrics_store.incr("payment_from_app", _acq_plat_spx)
-                except Exception:
-                    pass
+            _note_acquisition(job)
             job["payment_token"] = _combined_token_spx
             job["payment_type"] = _consumed_method_spx
             job["payment_email"] = _consumed_email_spx
@@ -7900,14 +7887,7 @@ def api_optimize():
                 "llm_eur": float(estimated_cost),
                 "source": "combined_optimize_autogen",
             }
-            _acq_src_vox, _acq_plat_vox = _acquisition_from_request()
-            job["payment"]["acquisition_source"] = _acq_src_vox
-            job["payment"]["acquisition_platform"] = _acq_plat_vox
-            if _acq_src_vox == "app":
-                try:
-                    metrics_store.incr("payment_from_app", _acq_plat_vox)
-                except Exception:
-                    pass
+            _note_acquisition(job)
             job["payment_token"] = _combined_token_vox
             job["payment_type"] = _consumed_method_vox
             job["payment_email"] = _consumed_email_vox

@@ -8,11 +8,16 @@ def test_payment_audit_fields_normal_and_legacy_fallback():
     pay = ge._payment_audit_fields({"payment": {"total_eur": "3.5", "method": "paypal", "source": "generate",
                                                 "token": "PAYPAL-ORDER-1234567890", "llm_eur": 1.25}})
     assert pay == {"charged": 3.5, "payment_method": "paypal", "payment_source": "generate",
-                   "payment_token_short": "PAYPAL-O...", "combined_total_eur": 4.75}
+                   "payment_token_short": "PAYPAL-O...", "combined_total_eur": 4.75,
+                   "acquisition_source": ""}
     pay = ge._payment_audit_fields({"payment": {"total_eur": 2, "token": "short"}})
     assert pay["payment_token_short"] == "short" and pay["combined_total_eur"] == 2.0
     assert ge._payment_audit_fields({}) == {"charged": 0.0, "payment_method": "", "payment_source": "",
-                                            "payment_token_short": "", "combined_total_eur": 0.0}
+                                            "payment_token_short": "", "combined_total_eur": 0.0,
+                                            "acquisition_source": ""}
+    # Visitatore arrivato dal catalogo gratuito: la provenienza entra nell'audit.
+    assert ge._payment_audit_fields({"payment": {"total_eur": 2, "acquisition_source": "catalog"}}
+                                    )["acquisition_source"] == "catalog"
     legacy = ge._payment_audit_fields({"payment": {"llm_eur": 1.0}, "payment_amount_eur": 4.0,
                                        "payment_type": "voucher", "payment_token": "LEGACY-TOKEN-0000000"})
     assert legacy["charged"] == 3.0 and legacy["payment_method"] == "voucher"

@@ -9,7 +9,8 @@ from monthly_ledger import JsonDoc, prune_keys_before
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _METRICS_FILE = _SCRIPT_DIR / "_metrics.json"
-_VALID_EVENTS = ("app_open", "web_visit_from_app", "payment_from_app")
+_VALID_EVENTS = ("app_open", "web_visit_from_app", "payment_from_app",
+                 "web_visit_from_catalog", "payment_from_catalog")
 # Retention: i giorni piu' vecchi di cosi' vengono potati a ogni incremento
 # (prima il file cresceva per sempre). Il funnel admin legge al massimo
 # l'ultimo anno.
