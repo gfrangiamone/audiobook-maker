@@ -131,6 +131,8 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-sgroup dd{margin:0;color:var(--tx);font-size:.92rem;overflow-wrap:anywhere}
 .fc-related ul{padding-left:20px}
 .fc-back{margin-top:6px}
+.fc-back a{font-weight:600}
+.fc-back-top{margin:0 0 14px}
 
 @media (min-width:640px){
   .fc-hero{grid-template-columns:1.25fr .75fr;align-items:center;padding:38px 36px}

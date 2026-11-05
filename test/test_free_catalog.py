@@ -374,3 +374,11 @@ def test_senza_modello_la_voce_resta_com_era(catalog):
     page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
                                   lambda text: "data:image/png;base64,QR")
     assert "Bruno (voce sintetica)" in page and "TTS PREMIUM" not in page
+
+
+def test_la_scheda_ha_il_ritorno_al_catalogo_in_testa_e_in_fondo(catalog):
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR")
+    link = '<a href="/free-audiobooks/it/">← Torna al catalogo</a>'
+    assert page.count(link) == 2
+    assert page.index(link) < page.index('class="fc-bhero"')
