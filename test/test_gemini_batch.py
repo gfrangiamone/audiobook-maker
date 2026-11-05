@@ -311,9 +311,12 @@ def test_run_generation_contabilizza_il_batch_e_rifa_il_resto(monkeypatch, tmp_p
         sincroni.append(output_path)
         with open(output_path, "wb") as f:
             f.write(b"\x00" * 1000)
-        return {"success": True, "bytes_written": 1000, "input_tokens": 100,
-                "output_tokens": 500, "model_key": "flash38", "voice_name": "Kore",
-                "attempts_used": 1, "backend": "openrouter"}
+        out = {"success": True, "bytes_written": 1000, "input_tokens": 100,
+               "output_tokens": 500, "model_key": "flash38", "voice_name": "Kore",
+               "attempts_used": 1, "backend": "openrouter"}
+        if len(sincroni) == 1:
+            out["resplit_pieces"] = 2       # rifiuto recuperato rispezzando
+        return out
 
     def fake_batch(its, voice, **kw):
         out = {}
@@ -365,6 +368,7 @@ def test_run_generation_contabilizza_il_batch_e_rifa_il_resto(monkeypatch, tmp_p
         pass
 
     assert len(sincroni) == 3
+    assert job["gemini_resplit_chunks"] == 1
     ga = job["gemini_actual"]
     assert ga["backends"] == {gemini_tts.BATCH_BACKEND: 3, "openrouter": 3}
     assert ga["input_tokens"] == 3 * 10 + 3 * 100

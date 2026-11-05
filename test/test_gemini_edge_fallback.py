@@ -319,3 +319,92 @@ def test_flash31_byte_split_retry_esauriti_resta_chunk_fallito(tmp_path, monkeyp
     assert premium_chunk._synthesize_pcm_pieces_and_concat(
         ["Prima parte.", "Seconda parte."], "gemini:flash31:Zephyr",
         str(tmp_path / "c.pcm"), None, 1) is False
+
+
+# --- rifiuto recuperato rispezzando il chunk, stessa voce (05/11/2026) ---
+
+_LUNGO = ("Ve ne sono di quelle che pigliano due mezzi servizi, a sei lire al mese "
+          "ciascuno, e corrono tutto il giorno da una casa all'altra. "
+          "La sera tornano nel vicolo stanche, con il pane sotto il braccio, "
+          "e trovano i figli seduti sulla soglia ad aspettarle. "
+          "Nessuno le aiuta, e nessuno se ne lamenta.")
+
+
+def _rifiuta_i_chunk_lunghi(monkeypatch, soglia=200):
+    """flash38 rifiuta i testi oltre `soglia` caratteri, legge i pezzi corti;
+    flash31 legge tutto."""
+    calls = []
+
+    def _synth(text, voice_id, output_path="x.pcm", **kw):
+        calls.append((voice_id, len(text), kw.get("debug_prompt_path")))
+        if len(text) > soglia and voice_id.startswith("gemini:flash38:"):
+            raise RuntimeError("Gemini TTS failed after 3 attempts: no audio parts "
+                               "(finish_reason=OTHER)")
+        with open(output_path, "wb") as f:
+            f.write(b"\x01\x00" * 50)
+        return {"success": True, "bytes_written": 100, "input_tokens": 7,
+                "output_tokens": 30, "model_key": voice_id.split(":")[1],
+                "backend": "openrouter", "tokens_measured": True}
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _synth)
+    monkeypatch.setattr(gemini_tts, "_resolve_backend", lambda mk=None: "vertex")
+    monkeypatch.setattr(gemini_tts, "model_unavailable", lambda mk: False)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _no_edge)
+    return calls
+
+
+def test_rifiuto_recuperato_rispezzando_sulla_stessa_voce(tmp_path, monkeypatch):
+    monkeypatch.delenv("ABM_GEMINI_RESPLIT_CHARS", raising=False)
+    calls = _rifiuta_i_chunk_lunghi(monkeypatch)
+    fi = {}
+    out = tmp_path / "c.pcm"
+    result = premium_chunk.generate_chunk_pcm_gemini(
+        _LUNGO, "gemini:flash38:Zephyr", str(out), failure_info=fi,
+        fallback_lang="it", debug_prompt_path=str(tmp_path / "prompt5.txt"))
+    pezzi = calls[1:]
+    assert calls[0][1] == len(_LUNGO)
+    assert len(pezzi) == result["resplit_pieces"] >= 2
+    assert all(v == "gemini:flash38:Zephyr" and n <= 180 for v, n, _ in pezzi)
+    assert pezzi[0][2].endswith("prompt5.resplit.part000.txt")
+    assert "fallback_model" not in result and result["model_key"] == "flash38"
+    assert out.stat().st_size == 100 * len(pezzi)
+    assert fi == {}                      # non e' un chunk di ripiego
+
+
+def test_rispezzato_fallito_passa_al_modello_di_ripiego(tmp_path, monkeypatch):
+    calls = _rifiuta_i_chunk_lunghi(monkeypatch, soglia=0)
+
+    def _synth31(text, voice_id, output_path="x.pcm", **kw):
+        if voice_id.startswith("gemini:flash31:"):
+            with open(output_path, "wb") as f:
+                f.write(b"\x01\x00" * 50)
+            return {"success": True, "bytes_written": 100, "model_key": "flash31"}
+        calls.append((voice_id, len(text), None))
+        raise RuntimeError("Gemini TTS failed after 3 attempts: OTHER")
+
+    monkeypatch.setattr(gemini_tts, "synthesize", _synth31)
+    result = premium_chunk.generate_chunk_pcm_gemini(
+        _LUNGO, "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info={}, fallback_lang="it")
+    assert result["fallback_model"] == "flash31"
+    # chunk intero, poi il primo pezzo (che fallisce e chiude il ripiego)
+    assert [n for _, n, _ in calls] == [len(_LUNGO), calls[1][1]] and calls[1][1] <= 180
+
+
+def test_ripiego_rispezzato_spento_con_zero(tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_GEMINI_RESPLIT_CHARS", "0")
+    calls = _rifiuta_i_chunk_lunghi(monkeypatch)
+    result = premium_chunk.generate_chunk_pcm_gemini(
+        _LUNGO, "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info={}, fallback_lang="it")
+    assert [v for v, _, _ in calls] == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]
+    assert result["fallback_model"] == "flash31"
+
+
+def test_chunk_di_una_frase_corta_non_si_rispezza(tmp_path, monkeypatch):
+    calls = _fallback_ready(monkeypatch)
+    monkeypatch.setattr(premium_chunk, "_edge_fallback_to_pcm", _no_edge)
+    premium_chunk.generate_chunk_pcm_gemini(
+        "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
+        failure_info={}, fallback_lang="it")
+    assert [c[0] for c in calls] == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]

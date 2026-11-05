@@ -18,6 +18,7 @@ import edge_engine
 import ffmpeg_tools
 import retry_util as _retry
 import tts_split
+from env_utils import env_int
 from i18n import norm_lang as _norm_lang
 from text_reflow import _sanitize_tts_text
 
@@ -369,6 +370,46 @@ def _synthesize_with_fallback_model(_gemini, text, voice_id, output_path, **kwar
     return result
 
 
+def _resplit_chars():
+    """Lunghezza dei pezzi del ripiego per chunk rifiutato (0 = spento)."""
+    return env_int("ABM_GEMINI_RESPLIT_CHARS", 180, floor=0)
+
+
+def _resplit_same_voice(clean, voice_id, output_path, cap, style_instruction, max_retries,
+                        debug_prompt_path, rate, accent_directive, job_id):
+    """Chunk con i tentativi esauriti, rispezzato a frasi e rifatto sulla STESSA
+    voce e sullo stesso modello. Ritorna l'aggregato o None.
+
+    Il rifiuto del modello (audio vuoto, `finish_reason=OTHER`) riguarda di
+    solito il chunk intero, non le sue frasi: prova del 04/11/2026 su Gemini
+    3.8, 10 pezzi da ~180 caratteri recuperati su 10 dove il chunk da 380
+    falliva. Stesso splitter dei chunk (`tts_split`), stesso percorso dello
+    split d'emergenza: viene prima del modello di ripiego, che cambia timbro,
+    e di edge-tts, che cambia voce. Quota, budget e indisponibilita' passano.
+    """
+    n = _resplit_chars()
+    if n <= 0:
+        return None
+    pieces = tts_split.split_text_into_chunks(clean, max_chars=n, max_bytes=cap)
+    if len(pieces) < 2:
+        return None
+    print(f"[gemini-tts] Chunk rispezzato in {len(pieces)} pezzi da ~{n} caratteri, "
+          f"stessa voce ({len(clean)} chars)")
+    dbg = None
+    if debug_prompt_path:
+        base, ext = os.path.splitext(debug_prompt_path)
+        dbg = f"{base}.resplit{ext or '.txt'}"
+    agg = _synthesize_pcm_pieces_and_concat(
+        pieces, voice_id, output_path, style_instruction, max_retries,
+        debug_prompt_path=dbg, rate=rate, accent_directive=accent_directive,
+        job_id=job_id)
+    if agg is False:
+        return None
+    agg["resplit_pieces"] = len(pieces)
+    print(f"[gemini-tts] Chunk recuperato rispezzato in {len(pieces)} pezzi, stessa voce")
+    return agg
+
+
 def _gemini_clean_text(text, voice_id):
     """(testo pulito o None se vuoto, cap in byte del chunk o None)."""
     return _sanitize_tts_text(text), tts_split._pick_chunk_max_bytes(voice_id)
@@ -500,6 +541,13 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
     print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
           f"generating silence ({len(clean)} chars). Last error: {last_error}")
+    # Prima del cambio di modello: lo stesso testo a pezzi piu' corti, stessa
+    # voce e stesso modello (vedi _resplit_same_voice).
+    agg = _resplit_same_voice(clean, voice_id, output_path, effective_cap,
+                              style_instruction, max_retries, debug_prompt_path,
+                              rate, accent_directive, job_id)
+    if agg is not None:
+        return agg
     # Modello con ripiego nel catalogo (flash38 -> flash31): stessa voce sul
     # modello di ripiego, prima di edge-tts. Solo questo chunk; il successivo
     # torna sul modello scelto.
