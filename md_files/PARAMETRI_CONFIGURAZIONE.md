@@ -618,6 +618,8 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 | `NON_CONTENT_FILENAMES_SUBSTR` | Set di 8 sottostringhe filename da escludere | `epub_to_tts.py` | 120 |
 | `NON_CONTENT_TITLE_PHRASES` | Lista canonica di titoli di apparato critico da escludere (indice, colophon, frontespizio, **quarta di copertina**, dedica, bibliografia, note, glossario, appendice, informazioni autore, ringraziamenti, errata). Match per **parola intera**; condivisa con `_is_title_content` e riusata da `pdf_to_tts.NON_CONTENT_TITLES` | `epub_to_tts.py` | 131 |
 | `NON_CONTENT_TITLE_EXACT` | Set di 6 titoli ambigui (`trama`, `sinossi`, `synopsis`, `sinopsis`, `resumen`, `blurb`) validi solo come **titolo intero**: intitolano la quarta di copertina ma sono parole comuni, e «La trama del destino» è un capitolo vero | `epub_to_tts.py` | 216 |
+| `WSEXPORT_PAGE_MARKER` | `b"<title>MediaWiki:Wsexport_"` (dal 05/11/2026, v3.174.1) | Pagine di servizio aggiunte da ws-export, l'export EPUB di Wikisource (`about.xhtml`: "Informazioni su questa edizione elettronica", crediti e licenza): si saltano cercando il marcatore nel file grezzo dell'item, perche' `get_content()` di ebooklib ricostruisce l'`<head>`. | `epub_to_tts.py` | 127 |
+| `_largest_epub_image` | immagine piu' grande > 5 KB, **esclusi i file con `logo` nel nome** (dal 05/11/2026) | Ultimo ripiego per la copertina di un EPUB che non la dichiara (OPF e nomi `cover.*` vengono prima), condiviso da copertina M4B e miniatura: negli export di Wikisource l'unica immagine e' il logo di Wikisource, che finiva copertina; senza immagine si usa la copertina generata. | `cover_utils.py` | 34 |
 
 ### 4.4 Pulizia testo
 

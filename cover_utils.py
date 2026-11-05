@@ -31,6 +31,24 @@ def _zip_safe_read(zf, path):
     raise KeyError(f"No item matching '{path}' in archive")
 
 
+def _largest_epub_image(zf):
+    """Ultimo ripiego per la copertina di un EPUB che non la dichiara:
+    l'immagine piu' grande, se supera i 5 KB. I loghi non contano: negli
+    EPUB esportati da Wikisource l'unica immagine e' il logo di Wikisource
+    (`images/Wikisource-logo.svg.png`, 11 KB), che finiva copertina del
+    libro; meglio la copertina generata."""
+    best, best_size = None, 0
+    for n in zf.namelist():
+        low = n.lower()
+        if "logo" in os.path.basename(low):
+            continue
+        if any(low.endswith(ext) for ext in (".jpg", ".jpeg", ".png")):
+            sz = zf.getinfo(n).file_size
+            if sz > best_size:
+                best, best_size = n, sz
+    return best if best_size > 5000 else None
+
+
 def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
     """Extract cover image from EPUB and resize to square for iTunes compliance.
 
@@ -110,16 +128,6 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
                 return n
         return None
 
-    def _find_largest_image(zf):
-        best, best_size = None, 0
-        for n in zf.namelist():
-            low = n.lower()
-            if any(low.endswith(ext) for ext in (".jpg", ".jpeg", ".png")):
-                sz = zf.getinfo(n).file_size
-                if sz > best_size:
-                    best, best_size = n, sz
-        return best if best_size > 5000 else None
-
     try:
         with zipfile.ZipFile(epub_path, "r") as zf:
             try:
@@ -129,7 +137,7 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
                 return None
             img_path = (_find_cover_in_opf(zf)
                         or _find_cover_by_name(zf)
-                        or _find_largest_image(zf))
+                        or _largest_epub_image(zf))
             if not img_path:
                 return None
             img_data = _zip_safe_read(zf, img_path)
@@ -282,14 +290,7 @@ def _extract_cover_for_preview(epub_path, output_dir):
                         "cover-image.jpg", "cover-image.png"):
                 return n
 
-        best, best_size = None, 0
-        for n in zf.namelist():
-            low = n.lower()
-            if any(low.endswith(ext) for ext in (".jpg", ".jpeg", ".png")):
-                sz = zf.getinfo(n).file_size
-                if sz > best_size:
-                    best, best_size = n, sz
-        return best if best_size > 5000 else None
+        return _largest_epub_image(zf)
 
     try:
         with zipfile.ZipFile(epub_path, "r") as zf:

@@ -122,6 +122,10 @@ EPUB_TYPES_TO_SKIP = {
     "contributors", "other-credits", "acknowledgments",
 }
 
+# ── Pagine di servizio di ws-export (export EPUB di Wikisource): hanno per
+# <title> "MediaWiki:Wsexport_<nome>" (about = crediti e licenza dell'ebook).
+WSEXPORT_PAGE_MARKER = b"<title>MediaWiki:Wsexport_"
+
 # ── Nomi file tipici di sezioni non-audio ──
 # Match ESATTO sullo stem (dopo strip di - e _) — per nomi brevi/ambigui
 # F1a: liste di apparato, Chapter/BookInfo e print_book_info in book_model.
@@ -1215,6 +1219,16 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         is_toc_anchored = file_name in toc_map
         if is_toc_anchored:
             seen_toc_anchor = True
+
+        # ── Pagine aggiunte da ws-export (Wikisource): "Informazioni su questa
+        # edizione elettronica", crediti e licenza, in ogni ebook esportato.
+        # Sul file grezzo: get_content() di ebooklib ricostruisce l'<head> e
+        # il <title> originale si perde.
+        _raw = getattr(item, "content", b"") or b""
+        if isinstance(_raw, str):
+            _raw = _raw.encode("utf-8", "replace")
+        if WSEXPORT_PAGE_MARKER in _raw[:4000]:
+            continue
 
         # ── Filtro spine-level: salta file non-contenuto per nome ──
         fn_lower = Path(file_name).stem.lower().replace("-", "").replace("_", "")
