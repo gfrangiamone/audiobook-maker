@@ -23,7 +23,7 @@ import os
 import ffmpeg_tools
 from i18n import norm_lang as _norm_lang
 from voice_utils import clone_token as _clone_token, parse_rate_pct as _parse_rate_pct
-from env_utils import env_float as _f, env_int as _i, env_str, is_public_https_url
+from env_utils import batch_transport, env_float as _f, env_int as _i, env_str
 import re
 import threading
 import time
@@ -2100,12 +2100,7 @@ def transport():
     il catalogo gratuito. In produzione (`ABM_BASE_URL` https pubblico) resta
     `run` anche con l'env impostata: il risparmio non vale il ritardo sul
     libro del cliente (decisione 05/11/2026)."""
-    if env_str("ABM_VOXCPM_TRANSPORT").strip().lower() != "batch":
-        return "run"
-    if is_public_https_url(env_str("ABM_BASE_URL")):
-        _LOG.warning("ABM_VOXCPM_TRANSPORT=batch ignorata in produzione: si usa /run")
-        return "run"
-    return "batch"
+    return "batch" if batch_transport("ABM_VOXCPM_TRANSPORT") else "run"
 
 
 def batch_poll_seconds():

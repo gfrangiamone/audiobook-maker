@@ -513,11 +513,13 @@ def _vertex_project():
     return env_str("ABM_GCP_PROJECT_ID")
 
 
-def _resolve_model_id(model_key):
-    """Restituisce il model ID giusto per il backend corrente.
+def _resolve_model_id(model_key, backend=None):
+    """Restituisce il model ID giusto per il backend corrente (o per `backend`).
 
     Vertex usa nomi GA (`gemini-2.5-flash-tts`) mentre API key usa i nomi
     legacy `-preview-tts`. Per `flash31` il nome combacia (preview su entrambi).
+    Il batch (gemini_batch) passa `backend="apikey"`: gira solo sull'API key,
+    qualunque sia il canale sincrono del modello.
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown Gemini model: {model_key!r}")
@@ -526,7 +528,7 @@ def _resolve_model_id(model_key):
     # cloudflare sono per-modello (id_cloudflare, model_on_cf). Risolvere qui
     # senza model_key congelerebbe la decisione sotto _BACKEND_DEFAULT_KEY,
     # che non puo' mai vedere Cloudflare (rilievo task-7).
-    backend = _resolve_backend(model_key)
+    backend = backend or _resolve_backend(model_key)
     if backend == "vertex":
         return m["id_vertex"]
     return m["id"]
@@ -1440,7 +1442,13 @@ def _model_may_use_openrouter(model_key):
 # IVA 22% come costo non detraibile: la fatturano Vertex e l'API key (Google
 # Ireland), non Cloudflare. Le env di costo sono il listino netto e l'IVA si
 # somma qui. Solo contabilita': il prezzo all'utente non ne dipende.
-_VAT_BACKENDS = ("vertex", "apikey")
+# Sintesi in batch sull'API key (gemini_batch, solo catalogo): stessa fattura
+# Google, a meta' listino ("Batch API usage is priced at 50% of the standard
+# interactive API cost", listino Gemini API, 05/11/2026).
+BATCH_BACKEND = "apikey-batch"
+_BATCH_PRICE_FACTOR = 0.5
+
+_VAT_BACKENDS = ("vertex", "apikey", BATCH_BACKEND)
 
 
 def vat_percent():
@@ -1485,6 +1493,9 @@ def _net_rates(model_key, backend):
     if backend == "openrouter" and m.get("or_output_usd_per_mtok") is not None:
         return (_or_effective(m["or_input_usd_per_mtok"]),
                 _or_effective(m["or_output_usd_per_mtok"]))
+    if backend == BATCH_BACKEND:
+        return (m["input_usd_per_mtok"] * _BATCH_PRICE_FACTOR,
+                m["output_usd_per_mtok"] * _BATCH_PRICE_FACTOR)
     return m["input_usd_per_mtok"], m["output_usd_per_mtok"]
 
 
@@ -2897,19 +2908,20 @@ def _make_genai_client(**kwargs):
     return genai.Client(**kwargs)
 
 
-def _get_client(model_key=None):
+def _get_client(model_key=None, backend=None):
     """Lazy init del client google-genai, cached per location.
 
     Vertex: il client e' tied a (project, location); modelli diversi
     possono finire su region diverse, quindi servono client distinti.
     API key: location e' ignorato, una sola entry "_apikey" nella cache.
+    `backend="apikey"` forza il client API key (batch, gemini_batch).
     """
     from google.genai import types as _gt
     # model_key propagato (rilievo task-7): _get_client e' sempre chiamato con
     # un modello noto (da _vertex_transport_call o dai test), quindi risolvere
     # sotto _BACKEND_DEFAULT_KEY qui sarebbe un difetto silenzioso, non una
     # scelta - il client Vertex creato dipende dalla location per-modello.
-    backend = _resolve_backend(model_key)
+    backend = backend or _resolve_backend(model_key)
     if backend is None:
         raise RuntimeError("Gemini TTS not available (no backend configured)")
 
@@ -3355,6 +3367,47 @@ def _is_permanent_apikey_error(err, model_key):
     return any(m in msg for m in _PERMANENT_MARKERS)
 
 
+def _speech_config_kwargs(voice_name, temperature):
+    """Configurazione audio della richiesta, una sola per la chiamata sincrona
+    (`_vertex_transport_call`) e per le righe del batch (`speech_request_json`)."""
+    from google.genai import types as genai_types
+    kwargs = {
+        "response_modalities": ["AUDIO"],
+        "speech_config": genai_types.SpeechConfig(
+            voice_config=genai_types.VoiceConfig(
+                prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
+                    voice_name=voice_name,
+                )
+            )
+        ),
+    }
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
+def speech_request_json(final_text, voice_name, model_key, temperature):
+    """La richiesta di `_vertex_transport_call` in forma REST, per il batch.
+
+    Contenuti e configurazione sono gli stessi oggetti SDK della chiamata
+    sincrona, serializzati con gli alias camelCase dell'API: stile in
+    `speechMetadata` per flash38, inline nel testo per gli altri modelli.
+    """
+    from google.genai import types as genai_types
+
+    def _json(obj):
+        return obj.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    contents = _transport_contents(final_text, model_key)
+    if isinstance(contents, str):
+        contents = [genai_types.Content(role="user", parts=[genai_types.Part(text=contents)])]
+    return {
+        "contents": [_json(c) for c in contents],
+        "generationConfig": _json(genai_types.GenerationConfig(
+            **_speech_config_kwargs(voice_name, temperature))),
+    }
+
+
 def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
                            timeout_ms, temperature):
     """Adapter di trasporto Vertex / API key.
@@ -3384,24 +3437,11 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
         # Dentro il try come prima del refactor (rilievo m8): se la
         # costruzione della config sollevasse, l'errore deve uscire
         # classificato come TransportError e non grezzo al primo giro.
-        config_kwargs = {
-            "response_modalities": ["AUDIO"],
-            "speech_config": genai_types.SpeechConfig(
-                voice_config=genai_types.VoiceConfig(
-                    prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
-                        voice_name=voice_name,
-                    )
-                )
-            ),
-        }
-        if temperature is not None:
-            config_kwargs["temperature"] = temperature
-
         response = client.models.generate_content(
             model=model_id,
             contents=_transport_contents(final_text, model_key),
             config=genai_types.GenerateContentConfig(
-                **config_kwargs,
+                **_speech_config_kwargs(voice_name, temperature),
                 http_options=genai_types.HttpOptions(timeout=timeout_ms),
             ),
         )
@@ -3436,6 +3476,19 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
         "input_tokens": (getattr(um, "prompt_token_count", 0) or 0) if um else 0,
         "output_tokens": (getattr(um, "candidates_token_count", 0) or 0) if um else 0,
     }
+
+
+def write_debug_prompt(path, final_text):
+    """Dump del prompt finale (testo + prefissi style/rate) per ispezione e per
+    la ricostruzione del manifest di riuso. Best-effort: None non scrive."""
+    if not path:
+        return
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fp:
+            fp.write(final_text)
+    except Exception as e:
+        print(f"[gemini-tts] could not write debug prompt to {path}: {e}")
 
 
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None,
@@ -3522,14 +3575,7 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             f"testo {text_size}b + prefissi {payload_size - text_size}b)"
         )
 
-    # Debug: dump del prompt finale (testo + prefissi style/rate) per ispezione.
-    if debug_prompt_path:
-        try:
-            Path(debug_prompt_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(debug_prompt_path, "w", encoding="utf-8") as fp:
-                fp.write(final_text)
-        except Exception as e:
-            print(f"[gemini-tts] could not write debug prompt to {debug_prompt_path}: {e}")
+    write_debug_prompt(debug_prompt_path, final_text)
 
     # Guard pre-call: cap RPD locale + throttle RPM. Il cap RPD può sollevare
     # GeminiQuotaExhausted; il throttle invece blocca (sleep) finché c'è budget.

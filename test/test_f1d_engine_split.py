@@ -51,5 +51,7 @@ def test_patch_on_tts_split_is_seen_by_premium_chunk(monkeypatch):
     seen = []
     monkeypatch.setattr(tts_split, "_pick_chunk_max_bytes", lambda v: seen.append(v) or 999)
     # la funzione premium la legge attraverso il modulo, non per nome importato
-    assert "tts_split._pick_chunk_max_bytes(" in inspect.getsource(premium_chunk.generate_chunk_pcm_gemini)
+    # (attraverso `_gemini_clean_text`, condiviso col batch di gemini_batch)
+    assert "_gemini_clean_text(" in inspect.getsource(premium_chunk.generate_chunk_pcm_gemini)
+    assert "tts_split._pick_chunk_max_bytes(" in inspect.getsource(premium_chunk._gemini_clean_text)
     assert tts_split._pick_chunk_max_bytes("gemini:flash31:Zephyr") == 999 and seen

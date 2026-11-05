@@ -313,6 +313,7 @@ def _reenqueue_orphan(job_id, rec):
         "voxcpm_voice_pace": rec.get("voxcpm_voice_pace"),
         # Il batch gia' creato si riprende, non si ripaga.
         "voxcpm_batch_id": rec.get("voxcpm_batch_id"),
+        "gemini_batches": rec.get("gemini_batches"),
         "email_registered": True,
         "client_id": rec.get("client_id", ""),
         # Slot imputato al client originale: il recovery NON e' soggetto al

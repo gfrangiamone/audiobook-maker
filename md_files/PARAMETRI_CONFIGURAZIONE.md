@@ -503,7 +503,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
 | `ABM_VOXCPM_BATCH_CHARS` | `12000` Tetto di caratteri per un job RunPod che porta piu' capitoli consecutivi (lotto); il PCM si ritaglia coi `chunk_samples` del worker. Un capitolo piu' lungo va da solo. `0` = un job per capitolo. Se il worker non manda `chunk_samples` il job torna da solo a un capitolo per job. | `generation_engine.py` | 3848 |
 | `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
-| `ABM_VOXCPM_TRANSPORT` | `run` Come si sottomettono i lotti VoxCPM: `run` (un job `/run` per lotto, la produzione) o `batch` (tutti i lotti del libro in un batch RunPod `/batch`: worker dedicati, coda fino a 24 h, niente riaccensioni fra un lotto e l'altro; i lotti non consegnati si rifanno via `/run`). Il batch consegna solo via R2; l'id del batch si persiste nel job (`voxcpm_batch_id`) e il recovery lo riprende. Solo per l'istanza del catalogo gratuito (spec catalogo §5.3): con `ABM_BASE_URL` https pubblico (la produzione, `env_utils.is_public_https_url`) l'env si ignora con un warning e resta `run`, perche' la coda del batch ritarderebbe di ore il libro del cliente (decisione 05/11/2026). | `voxcpm_tts.py` | 2096 |
+| `ABM_VOXCPM_TRANSPORT` | `run` Come si sottomettono i lotti VoxCPM: `run` (un job `/run` per lotto, la produzione) o `batch` (tutti i lotti del libro in un batch RunPod `/batch`: worker dedicati, coda fino a 24 h, niente riaccensioni fra un lotto e l'altro; i lotti non consegnati si rifanno via `/run`). Il batch consegna solo via R2; l'id del batch si persiste nel job (`voxcpm_batch_id`) e il recovery lo riprende. Solo per l'istanza del catalogo gratuito (spec catalogo §5.3): con `ABM_BASE_URL` https pubblico (la produzione) l'env si ignora con un warning e resta `run` (`env_utils.batch_transport`, condiviso col batch Gemini, §7.12), perche' la coda del batch ritarderebbe di ore il libro del cliente (decisione 05/11/2026). | `voxcpm_tts.py` | 2096 |
 | `ABM_VOXCPM_BATCH_POLL_S` | `60` Secondi fra due letture dello stato del batch (floor 5). | `voxcpm_tts.py` | 2101 |
 | `ABM_VOXCPM_BATCH_TIMEOUT_S` | `93600` (26 h) Tetto all'attesa del batch: oltre, il batch si cancella (le richieste in coda non si pagano) e i lotti non finiti vanno via `/run`. | `voxcpm_tts.py` | 2106 |
 | `ABM_VOXCPM_PROGRESS` | `1` Il client ascolta gli avanzamenti parziali del worker (`chunks_done` dal polling di `/status`) e la barra si muove coi chunk. A `0` la barra torna a muoversi solo a capitolo consegnato: interruttore da girare se il polling dovesse mai pesare, senza ricostruire l'immagine sulla GPU. | `voxcpm_tts.py` | 506 |
@@ -707,7 +707,7 @@ Sovrascrivibili in caso di adeguamento listino Google. **`flash25` ritirato il 2
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_VAT_PERCENT` | `22.0` | Percentuale IVA applicata al costo Google **solo** sui backend `vertex` e `apikey` (Google Ireland Ltd fattura con IVA italiana su questi canali). **Mai** applicata al backend `cloudflare` (fatturazione extra-UE senza IVA italiana). Il backend `openrouter` ha un'aliquota propria, `ABM_OR_CREDIT_VAT_PERCENT` (sotto). Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata). Non mostrata mai all'utente: entra nel prezzo come un costo qualsiasi. File: `gemini_tts.py:vat_percent` (1182), `_vat_factor` (1186), `_VAT_BACKENDS = ("vertex", "apikey")` (1179). |
+| `ABM_GEMINI_VAT_PERCENT` | `22.0` | Percentuale IVA applicata al costo Google **solo** sui backend `vertex` e `apikey` (Google Ireland Ltd fattura con IVA italiana su questi canali). **Mai** applicata al backend `cloudflare` (fatturazione extra-UE senza IVA italiana). Il backend `openrouter` ha un'aliquota propria, `ABM_OR_CREDIT_VAT_PERCENT` (sotto). Se il backend non è ancora risolto (`None`), si assume il caso peggiore (Google, IVA applicata). Non mostrata mai all'utente: entra nel prezzo come un costo qualsiasi. File: `gemini_tts.py:vat_percent` (1182), `_vat_factor` (1186), `_VAT_BACKENDS = ("vertex", "apikey", BATCH_BACKEND)` (1451): anche il batch sull'API key (§7.12) e' fatturato da Google con IVA. |
 
 ### 7.3 Listino all'utente: EUR per ora di audio stimata (dal 12/10/2026)
 
@@ -1028,6 +1028,20 @@ Il nome della variabile si ricava dal `model_key` togliendo i caratteri non alfa
 ---
 
 ---
+
+### 7.12 Trasporto batch sull'API Gemini (`gemini_batch.py`, solo catalogo gratuito)
+
+Dal 05/11/2026. I chunk del libro vanno alla Batch API Gemini prima del giro sincrono: un JSONL caricato per lotto, risposte in un JSONL scaricato, stessa richiesta (`gemini_tts.speech_request_json`), stesso client API key, stessa estrazione e stessi controlli dell'audio del sincrono. I chunk non consegnati (rifiuto `OTHER`, audio muto, lotto fallito o scaduto) li rifa' il giro sincrono con la catena di ripiego di sempre. I batch in volo si persistono nel job e nel descrittore (`gemini_batches`): il recovery li riprende. **Mai in produzione**: `env_utils.batch_transport` ignora l'env con `ABM_BASE_URL` https pubblico (la coda puo' durare ore).
+
+| Variabile / costante | Default | Descrizione | File | Riga |
+|---|---|---|---|---|
+| `ABM_GEMINI_TRANSPORT` | `run` | `batch` accende il trasporto batch (serve anche `ABM_GEMINI_API_KEY`). Acceso solo in `scripts/run_catalog_local.ps1`. | `gemini_batch.py` | 37 |
+| `ABM_GEMINI_BATCH_CHUNKS` | `50` | Chunk per batch (floor 1). ~1,6 MB di risposta per chunk da 380 caratteri: il file del lotto si scarica in memoria. | `gemini_batch.py` | 49 |
+| `ABM_GEMINI_BATCH_IN_FLIGHT` | `4` | Batch in volo insieme (floor 1). Un 429 alla creazione (token in coda) con altri batch in volo rimanda il lotto al giro dopo; senza batch in volo il resto del libro va in sincrono. | `gemini_batch.py` | 55 |
+| `ABM_GEMINI_BATCH_POLL_S` | `30` | Secondi fra due letture dello stato (floor 5); l'annullamento si controlla ogni 5 s. | `gemini_batch.py` | 60 |
+| `ABM_GEMINI_BATCH_TIMEOUT_S` | `165600` (46 h) | Tetto all'attesa: oltre, i batch in volo si cancellano e il resto va in sincrono. Google fa scadere un batch dopo 48 h. | `gemini_batch.py` | 65 |
+| `BATCH_BACKEND` | `"apikey-batch"` | Backend dei chunk consegnati dal batch (`gemini_actual.backends`, audit). | `gemini_tts.py` | 1448 |
+| `_BATCH_PRICE_FACTOR` | `0.5` | Tariffa batch = meta' del listino API key (`_net_rates`), IVA come l'API key. | `gemini_tts.py` | 1449 |
 
 ## 8. Speechify TTS (Simba-3.2, voci PREMIUM inglese) (`speechify_tts.py`)
 

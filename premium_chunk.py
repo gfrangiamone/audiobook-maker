@@ -369,6 +369,22 @@ def _synthesize_with_fallback_model(_gemini, text, voice_id, output_path, **kwar
     return result
 
 
+def _gemini_clean_text(text, voice_id):
+    """(testo pulito o None se vuoto, cap in byte del chunk o None)."""
+    return _sanitize_tts_text(text), tts_split._pick_chunk_max_bytes(voice_id)
+
+
+def gemini_single_call_text(text, voice_id):
+    """Il testo che `generate_chunk_pcm_gemini` manderebbe in UNA chiamata, o
+    None se il chunk non ci va (vuoto dopo la pulizia: silenzio; oltre il cap:
+    split d'emergenza). Il batch (gemini_batch) manda solo questi; gli altri
+    restano al percorso sincrono."""
+    clean, cap = _gemini_clean_text(text, voice_id)
+    if clean is None or (cap is not None and len(clean.encode("utf-8")) > cap):
+        return None
+    return clean
+
+
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
                               debug_prompt_path=None, rate="+0%", accent_directive=None,
                               failure_info=None, fallback_lang=None, accent_code=None,
@@ -408,7 +424,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
             failure_info["detail"] = str(detail)[:300]
         return False
 
-    clean = _sanitize_tts_text(text)
+    clean, effective_cap = _gemini_clean_text(text, voice_id)
     if clean is None:
         _generate_silence_pcm(output_path, duration_sec=1)
         return _fail("empty_after_sanitize")
@@ -417,7 +433,6 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     # meno margine per i prefissi style/rate), invece di farlo silenziare
     # spezziamo su confine frase e facciamo N chiamate API. Costa +RPD ma
     # garantisce zero buchi audio (principio: qualita' > numero chiamate).
-    effective_cap = tts_split._pick_chunk_max_bytes(voice_id)
     clean_bytes = len(clean.encode("utf-8"))
     if effective_cap is not None and clean_bytes > effective_cap:
         max_chars_for_split = max(1000, effective_cap // 2)

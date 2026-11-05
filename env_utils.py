@@ -101,3 +101,24 @@ def is_public_https_url(url):
     if u.scheme != "https" or not host:
         return False
     return host not in _LOCAL_HOSTS and not host.endswith((".localhost", ".test"))
+
+
+def batch_transport(name):
+    """True se la variabile `name` chiede il trasporto batch e non siamo in
+    produzione (`ABM_BASE_URL` https pubblico).
+
+    I batch (VoxCPM su RunPod, Gemini sull'API key) costano meno ma restano in
+    coda minuti od ore: sono per l'istanza locale che genera il catalogo
+    gratuito, mai per il libro di un cliente (decisione 05/11/2026). In
+    produzione la richiesta si ignora con un avviso, una volta per nome.
+    """
+    if env_str(name).lower() != "batch":
+        return False
+    if is_public_https_url(env_str("ABM_BASE_URL")):
+        key = (name, "batch")
+        if key not in _warned:
+            _warned.add(key)
+            print(f"[env_utils] WARNING: {name}=batch ignorata in produzione",
+                  file=sys.stderr, flush=True)
+        return False
+    return True

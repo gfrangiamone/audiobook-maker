@@ -1613,6 +1613,7 @@ def _build_job_descriptor(job, phase):
         "voxcpm_voice_pace": job.get("voxcpm_voice_pace"),
         # Batch RunPod in corso (trasporto batch): il recovery lo riprende.
         "voxcpm_batch_id": job.get("voxcpm_batch_id"),
+        "gemini_batches": job.get("gemini_batches"),
         "original_filename": fname,
         "client_id": job.get("client_id", ""),
         "client_ip": job.get("client_ip", ""),

@@ -57,8 +57,10 @@ import text_reflow
 import translation_core
 try:
     import gemini_tts
+    import gemini_batch
 except ImportError:
     gemini_tts = None
+    gemini_batch = None
 import gemini_cost_audit
 import translation_cost_audit
 import optimization_cost_audit
@@ -91,7 +93,8 @@ from tts_split import (
 )
 import edge_engine
 from edge_engine import generate_chunk_mp3
-from premium_chunk import generate_chunk_pcm_gemini, _generate_silence_pcm, generate_chunk_pcm_speechify
+from premium_chunk import (generate_chunk_pcm_gemini, gemini_single_call_text,
+                           _generate_silence_pcm, generate_chunk_pcm_speechify)
 
 # ---------------------------------------------------------------------------
 # LLM (text-optimization) config — engine-agnostic, env-driven
@@ -6339,6 +6342,62 @@ def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info
         print(f"[{job_id}] persist gemini_failures.jsonl failed (non-fatal): {_e}")
 
 
+def _gemini_batch_pre_pass(plan, voice, rate, style, accent, work_dir, job_id,
+                           reusable, cancelled=None, job=None):
+    """Pre-sintesi Gemini in batch (solo catalogo: `gemini_batch.enabled`).
+
+    Ritorna {indice_chunk: esito} dei chunk consegnati, col PCM gia' nel file
+    del chunk: il giro sincrono li contabilizza come i suoi e rifa' gli altri.
+    Restano fuori i chunk riusati e quelli che non stanno in una chiamata
+    (vuoti o da spezzare, `gemini_single_call_text`). I batch in volo si
+    persistono nel job e nel descrittore: dopo un riavvio si riprendono
+    invece di ripagarli.
+    """
+    items = []
+    for i, block in enumerate(plan):
+        if i in reusable:
+            continue
+        testo = gemini_single_call_text(block["text"], voice)
+        if testo is None:
+            continue
+        items.append({"key": i, "text": testo,
+                      "dest": str(chunk_reuse.chunk_path(work_dir, i, "pcm")),
+                      "prompt_path": str(work_dir / f"prompt{i+1}.txt")})
+    if not items:
+        return {}
+
+    def _salva(in_corso):
+        if job is None:
+            return
+        job["gemini_batches"] = in_corso
+        try:
+            pending_jobs.patch(job_id, {"gemini_batches": in_corso})
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.patch (gemini_batches) failed (non-fatal): {_e}",
+                  flush=True)
+
+    def _conta(finiti, totali):
+        if job is not None:
+            job["progress_message"] = (f"Sintesi vocale in coda di lavorazione: "
+                                       f"{finiti} di {totali} parti")
+
+    print(f"[{job_id}] Gemini: {len(items)} chunk in batch", flush=True)
+    try:
+        esiti = gemini_batch.synthesize_batch(
+            items, voice, work_dir=str(work_dir), style_instruction=style, rate=rate,
+            accent_directive=accent, in_corso=(job or {}).get("gemini_batches"),
+            on_in_corso=_salva, cancelled=cancelled, on_counts=_conta)
+    except gemini_batch.GeminiBatchAnnullato:
+        raise _CancelledError("Job cancelled") from None
+    except Exception as e:      # noqa: BLE001 - il giro sincrono fa tutto
+        print(f"[{job_id}] Gemini: batch non utilizzabile ({e}): tutti i chunk in sincrono",
+              flush=True)
+        return {}
+    print(f"[{job_id}] Gemini: batch consegnati {len(esiti)}/{len(items)} chunk, "
+          f"il resto in sincrono", flush=True)
+    return esiti
+
+
 def is_premium_job(job):
     """True se il job e' PREMIUM: voce a pagamento o pagamento incassato.
 
@@ -7177,16 +7236,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # chunk) e job finale. Costo token aggiuntivo trascurabile.
                 style_for_chunk = gemini_style_instruction
                 _chunk_fi = {}
+                # Chunk gia' consegnato dal batch (catalogo): PCM su disco,
+                # nessuna chiamata; contabilita', campione e trim come sotto.
+                result = _gemini_pre.pop(i, None)
                 try:
-                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
-                                                       style_instruction=style_for_chunk,
-                                                       rate=rate,
-                                                       debug_prompt_path=debug_prompt_path,
-                                                       accent_directive=gemini_accent_directive or None,
-                                                       failure_info=_chunk_fi,
-                                                       fallback_lang=gemini_fallback_lang or None,
-                                                       accent_code=gemini_fallback_accent or None,
-                                                       job_id=job_id)
+                    if result is None:
+                        result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                           style_instruction=style_for_chunk,
+                                                           rate=rate,
+                                                           debug_prompt_path=debug_prompt_path,
+                                                           accent_directive=gemini_accent_directive or None,
+                                                           failure_info=_chunk_fi,
+                                                           fallback_lang=gemini_fallback_lang or None,
+                                                           accent_code=gemini_fallback_accent or None,
+                                                           job_id=job_id)
                 except Exception as _quota_or_budget_err:
                     # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio marcare
                     # il job paused/error che silenziare il resto del libro.
@@ -7344,6 +7407,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 plan, voice, rate, work_dir, job_id, _reusable_chunks,
                 cancelled=_check_cancelled, job=job,
                 peso_barra=_peso_sintesi)
+            job["progress_message"] = "Assembling audio..."
+
+        # Pre-sintesi Gemini in batch, solo per il catalogo gratuito
+        # (`gemini_batch.enabled`: env accesa, mai in produzione). Il giro
+        # sotto consuma `_gemini_pre` e rifa' in sincrono i chunk mancanti.
+        _gemini_pre = {}
+        if use_gemini and gemini_batch is not None and gemini_batch.enabled(voice):
+            job["progress_message"] = "Sintesi vocale in coda di lavorazione..."
+            _gemini_pre = _gemini_batch_pre_pass(
+                plan, voice, rate, gemini_style_instruction,
+                gemini_accent_directive or None, work_dir, job_id, _reusable_chunks,
+                cancelled=_check_cancelled, job=job)
             job["progress_message"] = "Assembling audio..."
 
         # Pre-sintesi parallela Speechify (vedi _speechify_presynth): produce
