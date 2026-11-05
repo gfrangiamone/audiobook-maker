@@ -544,7 +544,10 @@ def _shelf(items, t, title):
         "__TITLE__": _esc(b["title"]), "__AUTHOR__": _esc(b["author"]["name"]),
         "__DURATION__": _esc(_book_hm(b)), "__DURATION_LABEL__": _esc(t["duration_label"]),
     }) for lang, b in items)
-    return page_brand.render_page("free_catalog_shelf.html", {"__TITLE__": _esc(title), "__ITEMS__": cards})
+    return page_brand.render_page("free_catalog_shelf.html", {
+        "__TITLE__": _esc(title), "__ITEMS__": cards,
+        "__PREV__": _esc(t["shelf_prev"]), "__NEXT__": _esc(t["shelf_next"]),
+    })
 
 
 def _chips(values):

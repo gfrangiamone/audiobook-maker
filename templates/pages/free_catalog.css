@@ -32,6 +32,18 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 /* scaffale orizzontale */
 .fc-shelf h2{font-size:1.35rem}
 .fc-shelf-row{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 14px;margin:0 -2px;scrollbar-width:thin}
+/* Con il JS la barra di scorrimento lascia il posto alle frecce (free_catalog.js);
+   sui dispositivi touch basta il gesto. */
+.fc-shelf-wrap{position:relative}
+.fc-shelf.fc-js .fc-shelf-row{scrollbar-width:none}
+.fc-shelf.fc-js .fc-shelf-row::-webkit-scrollbar{display:none}
+.fc-shelf-nav{position:absolute;top:60px;z-index:2;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;border:1px solid var(--brd);border-radius:50%;background:var(--srf);color:var(--tx);box-shadow:var(--fc-shadow);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.fc-shelf-nav:hover{background:var(--ac);border-color:var(--ac);color:#fff}
+.fc-shelf-nav[hidden]{display:none}
+.fc-shelf-nav svg{width:22px;height:22px}
+.fc-shelf-prev{left:-8px}
+.fc-shelf-next{right:-8px}
+@media (hover:none){.fc-shelf-nav{display:none}}
 .fc-shelf-item{flex:none;width:156px;scroll-snap-align:start;color:var(--tx);text-decoration:none}
 .fc-shelf-item:hover{text-decoration:none}
 .fc-shelf-item[hidden],.fc-shelf[hidden]{display:none}
@@ -170,6 +182,7 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
   .fc-list{grid-template-columns:1fr 1fr}
   .fc-shelf-item{width:176px}
   .fc-shelf-cover{width:176px;height:176px}
+  .fc-shelf-nav{top:70px}
   .fc-bhero-in{flex-direction:row;align-items:center;text-align:left;gap:32px;padding:34px 34px}
   .fc-bcover{width:260px}
   .fc-bhero h1{font-size:2.3rem}

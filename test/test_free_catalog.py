@@ -273,6 +273,9 @@ def test_scaffale_dei_nuovi_solo_per_i_libri_degli_ultimi_tre_giorni(catalog, cl
     shelf = page[start:page.index("</section>", start)]
     assert "Nuovi audiolibri aggiunti al catalogo!" in page and "Disponibili ora" not in page
     assert "storia-di-una-capinera" in shelf and "/vecchio/" not in shelf
+    # Frecce al posto della barra: nascoste finche' il JS non sa se servono.
+    assert re.search(r'<button[^>]*fc-shelf-prev[^>]*aria-label="Libri precedenti" hidden>', shelf)
+    assert re.search(r'<button[^>]*fc-shelf-next[^>]*aria-label="Libri successivi" hidden>', shelf)
     # Badge: "Novita'" sul libro nuovo, niente sul vecchio, "In arrivo" sull'annunciato.
     cards = {m.group(1): m.group(0) for m in re.finditer(r'<article class="fc-card"[^>]*data-search="([^"]*)".*?</article>', page, flags=re.S)}
     badge = lambda key: next((re.findall(r'class="fc-badge">([^<]*)<', c) for k, c in cards.items() if key in k), None)

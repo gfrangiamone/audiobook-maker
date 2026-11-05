@@ -1,11 +1,39 @@
-/* Catalogo audiolibri gratuiti: ricerca e filtri nell'indice (stato, lingua).
-   Senza JS l'indice resta una lista completa. */
+/* Catalogo audiolibri gratuiti: ricerca e filtri nell'indice (stato, lingua) e
+   frecce degli scaffali. Senza JS l'indice resta una lista completa e gli
+   scaffali scorrono con la loro barra. */
 (function () {
   'use strict';
 
   function norm(s) {
     return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   }
+
+  // --- Scaffali: frecce al posto della barra, nascoste agli estremi ----------
+  var shelfUpdates = [];
+  function refreshShelves() {
+    shelfUpdates.forEach(function (f) { f(); });
+  }
+  Array.prototype.slice.call(document.querySelectorAll('.fc-shelf')).forEach(function (box) {
+    var row = box.querySelector('.fc-shelf-row');
+    var prev = box.querySelector('.fc-shelf-prev');
+    var next = box.querySelector('.fc-shelf-next');
+    if (!row || !prev || !next) return;
+    box.classList.add('fc-js');
+    var update = function () {
+      prev.hidden = row.scrollLeft <= 2;
+      next.hidden = row.scrollLeft >= row.scrollWidth - row.clientWidth - 2;
+    };
+    [prev, next].forEach(function (b) {
+      b.addEventListener('click', function () {
+        var step = Math.max(row.clientWidth * 0.8, 160) * Number(b.getAttribute('data-dir'));
+        row.scrollBy({ left: step, behavior: 'smooth' });
+      });
+    });
+    row.addEventListener('scroll', update, { passive: true });
+    shelfUpdates.push(update);
+    update();
+  });
+  window.addEventListener('resize', refreshShelves);
 
   // --- Indice: ricerca per titolo/autore + filtri per stato e lingua --------
   var list = document.getElementById('fc-list');
@@ -38,6 +66,7 @@
         if (ok) onShelf++;
       });
       if (shelfBox) shelfBox.hidden = onShelf === 0;
+      refreshShelves();
     };
     buttons.forEach(function (b) {
       b.addEventListener('click', function () {
