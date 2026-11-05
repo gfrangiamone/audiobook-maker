@@ -7,7 +7,9 @@ body{max-width:960px}
 h1{margin:0 0 10px;line-height:1.15}
 h2{margin:0 0 12px}
 section,aside{margin:0 0 28px}
-svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* Icone a tratto. I badge degli store (routes_pages._install_buttons_html) sono
+   l'artwork ufficiale con i propri fill: il tratto delle icone li impasta. */
+svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .fc-kicker{font-size:.75rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ac);margin:0 0 6px}
 .fc-chips{list-style:none;padding:0;margin:14px 0 0;display:flex;flex-wrap:wrap;gap:8px}
 .fc-chips li{margin:0;font-size:.82rem;font-weight:600;color:var(--tx);background:var(--srf);border:1px solid var(--brd);border-radius:999px;padding:5px 12px}
