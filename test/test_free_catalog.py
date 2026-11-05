@@ -453,3 +453,11 @@ def test_il_link_del_libro_senza_app_invita_a_installarla(catalog, client):
 def test_libro_ritirato_resta_la_pagina_generica(catalog, client):
     page = client.get("/s/fc-it-ritirato", headers={"Accept-Language": "it"}).get_data(as_text=True)
     assert "importare il processo" in page
+
+
+def test_le_pagine_per_lingua_si_dichiarano_alternative(catalog, client, tmp_path):
+    _secondo_catalogo(tmp_path, "en", [_libro_en()])
+    page = client.get("/free-audiobooks/it/").get_data(as_text=True)
+    assert '<link rel="alternate" hreflang="it" href="' in page and '/free-audiobooks/it/">' in page
+    assert '<link rel="alternate" hreflang="en" href="' in page
+    assert 'hreflang="x-default"' in page and 'hreflang="de"' not in page   # de senza catalogo

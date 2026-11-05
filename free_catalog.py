@@ -467,8 +467,11 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path):
         "__CTA_TITLE__": _esc(t["cta_title"]), "__CTA_TEXT__": _esc(t["cta_text"]),
         "__CTA_BTN__": _esc(t["cta_button"]),
     })
+    # Le pagine per lingua sono alternative fra loro; x-default e' l'indice unico.
+    alternates = page_brand.hreflang_links(
+        lambda l: f"{base_url}{PATH}/{l}/", f"{base_url}{PATH}/", langs={l: l for l in langs})
     head = page_brand.seo_head(
-        desc=_esc(t["hub_desc"]), canonical=canonical, og_type="website",
+        desc=_esc(t["hub_desc"]), canonical=canonical, hreflang=alternates, og_type="website",
         og_title=_esc(t["hub_title"]), og_desc=_esc(t["hub_desc"]), og_url=canonical,
         og_image=og_image_url(base_url), lang=_lang_ok(ui_lang),
         ld=[seo_ld.ld_json(seo_ld.breadcrumb_ld([

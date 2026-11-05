@@ -71,16 +71,18 @@ def html_lang(lang):
     return HREFLANG.get(lang, "en")
 
 
-def hreflang_links(path_fn, x_default, *, sep="\n", xhtml=False):
+def hreflang_links(path_fn, x_default, *, sep="\n", xhtml=False, langs=None):
     """Tag `<link rel="alternate" hreflang=...>` per tutte le lingue piu'
     x-default. `path_fn(lang)` da' l'URL (assoluto o relativo) della lingua,
     `x_default` quello di x-default. `xhtml=True` emette le righe
-    `<xhtml:link .../>` indentate della sitemap."""
+    `<xhtml:link .../>` indentate della sitemap. `langs` (lingua -> codice
+    hreflang) sostituisce le lingue del sito: il catalogo gratuito ha anche
+    pt e nl."""
     if xhtml:
         fmt = '      <xhtml:link rel="alternate" hreflang="{hl}" href="{href}"/>'
     else:
         fmt = '<link rel="alternate" hreflang="{hl}" href="{href}">'
-    lines = [fmt.format(hl=hl, href=path_fn(lc)) for lc, hl in HREFLANG.items()]
+    lines = [fmt.format(hl=hl, href=path_fn(lc)) for lc, hl in (langs or HREFLANG).items()]
     lines.append(fmt.format(hl="x-default", href=x_default))
     return sep.join(lines)
 
