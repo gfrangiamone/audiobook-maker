@@ -9,6 +9,7 @@ import pytest
 
 import audiobook_app
 import free_catalog
+import page_brand
 import routes_pages
 import seo_ld
 import storage_backend
@@ -512,7 +513,8 @@ def test_le_pagine_per_lingua_si_dichiarano_alternative(catalog, client, tmp_pat
     page = client.get("/free-audiobooks/it/").get_data(as_text=True)
     assert '<link rel="alternate" hreflang="it" href="' in page and '/free-audiobooks/it/">' in page
     assert '<link rel="alternate" hreflang="en" href="' in page
-    assert 'hreflang="x-default"' in page and 'hreflang="de"' not in page   # de senza catalogo
+    assert 'hreflang="x-default"' in page
+    assert '<link rel="alternate" hreflang="de"' not in page   # de senza catalogo (i link del selettore non contano)
 
 
 # --- bucket privato (decisione utente 05/11/2026) ------------------------------
@@ -638,3 +640,18 @@ def test_selettore_della_lingua_della_pagina(catalog, client):
         "/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
     assert '<html lang="en">' in client.get("/free-audiobooks/it/").get_data(as_text=True)
     assert "Cookie" in r.headers["Vary"]
+
+
+def test_pagine_del_catalogo_in_tutte_le_lingue_dell_interfaccia(catalog):
+    # Ogni lingua del selettore ha tutti i testi: nessun segnaposto rimasto,
+    # nessun errore, l'attributo lang della pagina e' quello scelto.
+    langs = free_catalog.ui_langs()
+    assert set(langs) == {"it", "en", "fr", "es", "de", "zh", "hi", "pt", "nl"}
+    for ui in langs:
+        c = audiobook_app.app.test_client()
+        for url in ("/free-audiobooks/", "/free-audiobooks/it/", "/free-audiobooks/it/storia-di-una-capinera/"):
+            r = c.get(f"{url}?lang={ui}")
+            html = r.get_data(as_text=True)
+            assert r.status_code == 200, (ui, url)
+            assert re.search(r'<html lang="' + re.escape(page_brand.html_lang(ui)) + '"', html), (ui, url)
+            assert not re.search(r"\{(n|total|title|author|min|duration|voice|model|site|license|h|m|y|d|mb)\}", html), (ui, url)
