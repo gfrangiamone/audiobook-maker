@@ -8,7 +8,7 @@ import os
 from env_utils import env_str, env_int
 import threading
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 try:
     import boto3
@@ -52,6 +52,16 @@ def _full_key(key):
     """Antepone l'eventuale prefisso di namespacing del bucket."""
     k = key.lstrip("/")
     return f"{_KEY_PREFIX}/{k}" if _KEY_PREFIX else k
+
+
+def origin():
+    """Origine (schema://host) degli URL firmati, o "" se lo storage e' spento.
+    Serve alla Content-Security-Policy: copertine e anteprime del catalogo
+    gratuito arrivano da li' dopo il 302 di /free-audiobooks/files/."""
+    if not is_enabled():
+        return ""
+    u = urlsplit(env_str("ABM_S3_ENDPOINT"))
+    return f"{u.scheme}://{u.netloc}" if u.scheme and u.netloc else ""
 
 
 def _object(key, bucket=None):

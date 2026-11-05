@@ -580,3 +580,16 @@ def test_linkify_lascia_fuori_la_punteggiatura():
     assert out == ('vedi (<a href="https://alternativeto.net/software/x/about/" target="_blank" '
                    'rel="noopener">https://alternativeto.net/software/x/about/</a>). Fine')
     assert page_brand.linkify("nessun link &amp; basta") == "nessun link &amp; basta"
+
+
+def test_csp_ammette_lo_storage_per_copertine_e_anteprime(client, monkeypatch):
+    # Dopo il 302 di /free-audiobooks/files/ l'immagine e l'audio arrivano dallo
+    # storage R2: senza la sua origine nella CSP il browser li blocca (05/11/2026).
+    monkeypatch.setenv("ABM_S3_ENDPOINT", "https://acct.r2.cloudflarestorage.com")
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    csp = client.get("/it/").headers["Content-Security-Policy"]
+    img = next(d for d in csp.split(";") if d.strip().startswith("img-src"))
+    media = next(d for d in csp.split(";") if d.strip().startswith("media-src"))
+    assert "https://acct.r2.cloudflarestorage.com" in img and "https://acct.r2.cloudflarestorage.com" in media
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
+    assert "cloudflarestorage" not in client.get("/it/").headers["Content-Security-Policy"]

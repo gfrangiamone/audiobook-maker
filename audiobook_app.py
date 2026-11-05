@@ -377,13 +377,17 @@ def add_security_headers(response):
     # Content Security Policy (base)
     # Permettiamo script inline per la nostra app (SPA-like) ma blocchiamo fonti esterne non autorizzate.
     # Nota: per una configurazione più rigida, bisognerebbe usare i nonce.
+    # Copertine e anteprime del catalogo gratuito arrivano dallo storage R2
+    # dopo il 302 a un URL firmato: la sua origine va ammessa per img e media.
+    _r2 = storage_backend.origin()
+    _r2 = f" {_r2}" if _r2 else ""
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' https://www.paypal.com https://www.googletagmanager.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: https://api.producthunt.com; "
-        "media-src 'self' blob:; "
+        f"img-src 'self' data: https://api.producthunt.com{_r2}; "
+        f"media-src 'self' blob:{_r2}; "
         "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://*.google-analytics.com; "
         "frame-src https://www.paypal.com;"
     )
