@@ -467,23 +467,35 @@ def _card(lang, b, t):
         "__COVER__": _cover_img(b, size=72, cls="fc-thumb", thumb=True),
         "__TITLE__": title,
         "__AUTHOR__": _esc(b["author"]["name"]),
-        "__BADGE__": _esc(t["badge_published"] if published else t["badge_coming"]),
+        # "Novita'" per i libri usciti da meno di NEW_DAYS giorni, "In arrivo"
+        # per quelli annunciati; un libro disponibile da tempo non ha badge
+        # (decisione utente 05/11/2026: "Disponibile" diceva poco).
+        "__BADGE__": _badge(t["badge_new"] if is_new(b) else "" if published else t["badge_coming"]),
     })
 
 
-def new_books(items, today=None):
-    """Libri pubblicati negli ultimi NEW_DAYS giorni [(lingua, libro)], dal piu'
-    recente; una data di pubblicazione illeggibile o futura non conta."""
+def _published_day(b):
+    try:
+        return datetime.strptime((b.get("published_at") or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def is_new(b, today=None):
+    """Pubblicato negli ultimi NEW_DAYS giorni; una data illeggibile o futura no."""
+    day = _published_day(b)
     today = today or datetime.now(timezone.utc).date()
-    out = []
-    for lang, b in items:
-        try:
-            day = datetime.strptime((b.get("published_at") or "")[:10], "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if b["status"] == "published" and today - timedelta(days=NEW_DAYS) <= day <= today:
-            out.append((day, lang, b))
-    return [(lang, b) for _, lang, b in sorted(out, key=lambda x: x[0], reverse=True)]
+    return b["status"] == "published" and day is not None and today - timedelta(days=NEW_DAYS) <= day <= today
+
+
+def new_books(items, today=None):
+    """Libri pubblicati negli ultimi NEW_DAYS giorni [(lingua, libro)], dal piu' recente."""
+    fresh = [(lang, b) for lang, b in items if is_new(b, today)]
+    return sorted(fresh, key=lambda x: _published_day(x[1]), reverse=True)
+
+
+def _badge(text):
+    return f'<span class="fc-badge">{_esc(text)}</span>' if text else ""
 
 
 def _shelf(items, t, title):

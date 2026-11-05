@@ -272,6 +272,11 @@ def test_scaffale_dei_nuovi_solo_per_i_libri_degli_ultimi_tre_giorni(catalog, cl
     shelf = page[start:page.index("</section>", start)]
     assert "Nuovi audiolibri aggiunti al catalogo!" in page and "Disponibili ora" not in page
     assert "storia-di-una-capinera" in shelf and "/vecchio/" not in shelf
+    # Badge: "Novita'" sul libro nuovo, niente sul vecchio, "In arrivo" sull'annunciato.
+    cards = {m.group(1): m.group(0) for m in re.finditer(r'<article class="fc-card"[^>]*data-search="([^"]*)".*?</article>', page, flags=re.S)}
+    badge = lambda key: next((re.findall(r'class="fc-badge">([^<]*)<', c) for k, c in cards.items() if key in k), None)
+    assert badge("capinera") == ["Novità"] and badge("vecchio") == [] and badge("in arrivo") == ["In arrivo"]
+    assert "Disponibile<" not in page
     items = [("it", {"status": "published", "published_at": d}) for d in
              ("2026-11-05", "2026-11-02", "2026-11-01", "2026-11-09", "", "x")]
     got = free_catalog.new_books(items, today=date(2026, 11, 5))
