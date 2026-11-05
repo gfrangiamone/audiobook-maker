@@ -2,6 +2,7 @@
 catalogo pubblico, pagine indice e libro, download contato, import nell'app
 con i token di condivisione `fc-<book_id>`."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -85,6 +86,29 @@ def test_validate_drops_malformed_books_and_duplicates():
     assert [b["slug"] for b in books] == ["storia-di-una-capinera", "in-arrivo"]
     chapters = books[0]["file"]["chapters"]
     assert [c["start_s"] for c in chapters] == [0.0, 95.0]   # ordinati
+
+
+def test_contract_sample_is_accepted_whole():
+    # Contratto col repo abm-free-catalog (spec §6.3): stessa fixture e stesso
+    # schema nei due repo; catalog_cli scrive cio' che lo schema descrive e qui
+    # nessun campo dello schema va perso nella normalizzazione.
+    fx = Path(__file__).parent / "fixtures" / "free_catalog"
+    doc = json.loads((fx / "sample_it.json").read_text(encoding="utf-8"))
+    schema = json.loads((fx / "catalog.schema.json").read_text(encoding="utf-8"))
+    assert schema["properties"]["schema_version"]["const"] == free_catalog.SCHEMA_VERSION
+    assert schema["properties"]["lang"]["enum"] == list(free_catalog.LANGS)
+    books = free_catalog.validate(doc, "it")
+    assert [b["book_id"] for b in books] == [b["book_id"] for b in doc["books"]]
+    pub, raw = books[0], doc["books"][0]
+    for key in ("voice_model", "voice_id", "voice_label", "description", "published_at"):
+        assert pub[key] == raw[key], key
+    assert pub["file"]["sha256"] == raw["file"]["sha256"]
+    assert pub["file"]["preview_url"] == raw["file"]["preview_url"]
+    assert [c["title"] for c in pub["file"]["chapters"]] == [c["title"] for c in raw["file"]["chapters"]]
+    assert pub["source"]["ebook_url"] == raw["source"]["ebook_url"]
+    assert books[1]["status"] == "coming" and books[1]["est_duration_s"] == doc["books"][1]["est_duration_s"]
+    book_props = set(schema["$defs"]["book"]["properties"])
+    assert book_props <= set(pub) | {"rights"}, book_props - set(pub)
 
 
 def test_chapters_outside_the_file_are_dropped():

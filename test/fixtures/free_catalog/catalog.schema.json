@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audiobook-maker.com/schema/free-catalog/catalog-v1.json",
+  "title": "Catalogo audiolibri gratuiti di audiobook-maker.com: catalog/<lang>.json",
+  "description": "Contratto fra abm-free-catalog (catalog_cli.py lo scrive) e ABM (free_catalog.validate lo legge). Copia di riferimento in AudioBook-Maker test/fixtures/free_catalog/catalog.schema.json: cambiarle insieme, schema_version compreso.",
+  "type": "object",
+  "required": ["schema_version", "lang", "books"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "lang": {"enum": ["it", "en", "de", "pt", "nl", "es"]},
+    "updated_at": {"type": "string"},
+    "books": {"type": "array", "items": {"$ref": "#/$defs/book"}}
+  },
+  "$defs": {
+    "url": {"type": "string", "pattern": "^(https?://|/)[^\\s\"'()<>\\\\]+$"},
+    "year": {"type": ["integer", "null"]},
+    "sex": {"enum": ["f", "m", ""]},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "author": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "sex": {"$ref": "#/$defs/sex"},
+        "born": {"$ref": "#/$defs/year"},
+        "died": {"$ref": "#/$defs/year"}
+      }
+    },
+    "translator": {
+      "type": ["object", "null"],
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "sex": {"$ref": "#/$defs/sex"},
+        "died": {"$ref": "#/$defs/year"}
+      }
+    },
+    "chapter": {
+      "type": "object",
+      "required": ["title", "start_s"],
+      "properties": {
+        "title": {"type": "string"},
+        "start_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["url", "duration_s"],
+      "properties": {
+        "url": {"$ref": "#/$defs/url"},
+        "duration_s": {"type": "number", "exclusiveMinimum": 0},
+        "bytes": {"type": "integer", "minimum": 0},
+        "format": {"type": "string"},
+        "codec": {"type": "string"},
+        "bitrate_kbps": {"type": ["number", "null"]},
+        "sample_rate": {"type": ["integer", "null"]},
+        "channels": {"type": ["integer", "null"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "preview_url": {"$ref": "#/$defs/url"},
+        "preview_s": {"type": "number", "exclusiveMinimum": 0},
+        "chapters": {"type": "array", "items": {"$ref": "#/$defs/chapter"}}
+      }
+    },
+    "book": {
+      "type": "object",
+      "required": ["book_id", "slug", "title", "author", "status"],
+      "properties": {
+        "book_id": {"type": "string", "pattern": "^[a-z]{2}-[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "title": {"type": "string", "minLength": 1},
+        "status": {"enum": ["published", "coming"]},
+        "author": {"$ref": "#/$defs/author"},
+        "translator": {"$ref": "#/$defs/translator"},
+        "first_published": {"$ref": "#/$defs/year"},
+        "chars": {"type": ["integer", "null"]},
+        "est_duration_s": {"type": ["number", "null"]},
+        "description": {"type": "string"},
+        "voice_label": {"type": "string"},
+        "voice_id": {"type": "string", "pattern": "^((gemini|voxcpm):[A-Za-z0-9:_/.-]+)?$"},
+        "voice_model": {"type": "string"},
+        "cover": {
+          "type": "object",
+          "properties": {"url": {"$ref": "#/$defs/url"}, "thumb": {"$ref": "#/$defs/url"}}
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "site": {"type": "string"},
+            "license": {"type": "string"},
+            "edition": {"type": "string"},
+            "url": {"$ref": "#/$defs/url"},
+            "ebook_url": {"$ref": "#/$defs/url"}
+          }
+        },
+        "rights": {
+          "type": "object",
+          "properties": {"eu_pd": {"type": "boolean"}, "us_pd": {"type": "boolean"}}
+        },
+        "production": {
+          "type": "object",
+          "properties": {"generated_at": {"type": "string"}}
+        },
+        "published_at": {"type": "string"},
+        "file": {"$ref": "#/$defs/file"}
+      },
+      "if": {"properties": {"status": {"const": "published"}}},
+      "then": {"required": ["file"]}
+    }
+  }
+}

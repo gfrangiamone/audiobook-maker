@@ -1,0 +1,54 @@
+{
+ "schema_version": 1,
+ "lang": "it",
+ "updated_at": "2026-11-05",
+ "books": [
+  {
+   "book_id": "it-il-ventre-di-napoli",
+   "slug": "il-ventre-di-napoli",
+   "title": "Il ventre di Napoli",
+   "status": "published",
+   "author": {"name": "Matilde Serao", "sex": "f", "born": 1856, "died": 1927},
+   "first_published": 1884,
+   "chars": 82784,
+   "description": "Reportage di Matilde Serao sui quartieri poveri di Napoli dopo il colera del 1884.",
+   "voice_label": "Sulafat",
+   "voice_id": "gemini:flash38:Sulafat",
+   "voice_model": "Gemini 3.8",
+   "cover": {"url": "/free-audiobooks/files/covers/it/il-ventre-di-napoli.jpg",
+             "thumb": "/free-audiobooks/files/covers/it/il-ventre-di-napoli-thumb.jpg"},
+   "source": {"site": "Wikisource", "license": "pubblico dominio",
+              "url": "https://it.wikisource.org/wiki/Il_ventre_di_Napoli",
+              "ebook_url": "https://ws-export.wmcloud.org/?format=epub&lang=it&page=Il_ventre_di_Napoli"},
+   "rights": {"eu_pd": true, "us_pd": true},
+   "production": {"generated_at": "2026-11-05"},
+   "published_at": "2026-11-05",
+   "file": {
+    "url": "/free-audiobooks/files/m4b/it/il-ventre-di-napoli.m4b",
+    "duration_s": 6097.9,
+    "bytes": 79478101,
+    "format": "M4B",
+    "codec": "aac",
+    "bitrate_kbps": 96,
+    "sample_rate": 24000,
+    "channels": 1,
+    "sha256": "5df82e75656a0aa0e57d29a11686a99c628cfb4b50a556204ebc590515643e8f",
+    "preview_url": "/free-audiobooks/files/preview/it/il-ventre-di-napoli.m4a",
+    "preview_s": 300,
+    "chapters": [{"title": "Introduzione", "start_s": 0.0}, {"title": "I. Bisogna sventrare Napoli", "start_s": 14.9}]
+   }
+  },
+  {
+   "book_id": "it-i-promessi-sposi",
+   "slug": "i-promessi-sposi",
+   "title": "I promessi sposi",
+   "status": "coming",
+   "author": {"name": "Alessandro Manzoni", "sex": "m", "died": 1873},
+   "first_published": 1840,
+   "chars": 1450000,
+   "est_duration_s": 103571,
+   "source": {"site": "Wikisource"},
+   "rights": {"eu_pd": true, "us_pd": true}
+  }
+ ]
+}
