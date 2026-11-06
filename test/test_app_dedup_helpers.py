@@ -37,7 +37,7 @@ def test_build_podcast_zip_generated_cover(tmp_path, monkeypatch):
     mp3.write_bytes(b"\xff\xfb" + b"\x00" * 100)
     monkeypatch.setattr(app, "_generate_podcast_rss", lambda info, files, path, **k: Path(path).write_text("<rss/>", encoding="utf-8"))
     monkeypatch.setattr(routes_dl, "_generate_podcast_index_html", lambda d, *a, **k: (Path(d) / "index.html").write_text("<p>i</p>", encoding="utf-8"))
-    monkeypatch.setattr(app, "_generate_fallback_cover", lambda path, title="", author="": Path(path).write_bytes(b"\xff\xd8cover"))
+    monkeypatch.setattr(app, "_generate_fallback_cover", lambda path, title="", author="", lang="": Path(path).write_bytes(b"\xff\xd8cover"))
     info = types.SimpleNamespace(title="Libro", author="A", language="it", chapters=[])
     zip_path = routes_dl._build_podcast_zip("J", tmp_path / "pod_tmp", [str(mp3)], "", info, "libro",
                                       "https://x", "it", tmp_path / "libro_podcast")

@@ -237,7 +237,7 @@ def _m4b_chapters_ok(path, chapters, tag):
     return ok
 
 
-def _prepare_m4b_cover_path(job, book_title, book_author, work_dir):
+def _prepare_m4b_cover_path(job, book_title, book_author, work_dir, lang=""):
     """Prepara una cover ad alta risoluzione (1400x1400) per l'embedding nel M4B.
 
     Strategia di ricerca cover, in ordine di preferenza:
@@ -246,7 +246,8 @@ def _prepare_m4b_cover_path(job, book_title, book_author, work_dir):
       3. Cover esistente (`job["cover_thumb"]`, tipica di ABM o EPUB già processati): usa as-is
       4. Ultima risorsa: genera una cover branded "Audiobook Maker" 1400x1400 via
          _generate_fallback_cover (richiede Pillow). Garantisce che ogni M4B abbia
-         sempre una copertina anche per PDF/TXT o EPUB senza cover.
+         sempre una copertina anche per PDF/TXT o EPUB senza cover; `lang`, la lingua
+         del libro, sceglie il colore della sua fascia.
 
     Aggiorna `job["cover_hires"]` con il path risolto per evitare rigenerazioni.
     Restituisce il path alla cover, o None se Pillow non è installato e non esiste
@@ -280,7 +281,7 @@ def _prepare_m4b_cover_path(job, book_title, book_author, work_dir):
     # 4. Branded fallback (PDF / TXT / EPUB senza cover)
     try:
         if _generate_fallback_cover(dest, title=book_title or "",
-                                    author=book_author or "", target_size=1400):
+                                    author=book_author or "", target_size=1400, lang=lang):
             print(f"[_prepare_m4b_cover_path] branded fallback cover → {dest}")
             job["cover_hires"] = dest
             return dest

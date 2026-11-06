@@ -7736,7 +7736,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 final_mp3 = str(output_dir / f"{safe_name}.mp3")
                 final_m4b = str(output_dir / f"{safe_name}.m4b")
                 valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
-                cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
+                cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir,
+                                                     lang=_audit_language(job, info) or "")
 
                 if output_format in ('mp3', 'zip', 'zip_rss'):
                     # Solo MP3 finale richiesto. L'esito NON e' opzionale: un merge
@@ -7815,7 +7816,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     pass
                 print(f"[{job_id}] Starting M4B conversion: {final_m4b}")
                 # Cover hi-res: EPUB 1400x1400 → thumb esistente → branded fallback (PDF/TXT)
-                cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
+                cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir,
+                                                     lang=_audit_language(job, info) or "")
                 valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
                 _run_m4b_conversion(
                     job, job_id, final_m4b,
@@ -8097,7 +8099,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     temp_full_mp3 = str(work_dir / f"_full_temp_{my_epoch}.mp3")
                     _concatenate_mp3(mp3_files, temp_full_mp3)
                     final_m4b = str(output_dir / f"{safe_name}.m4b")
-                    cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
+                    cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir,
+                                                     lang=_audit_language(job, info) or "")
 
                     _mp3_dur_sec = 0.0
                     try:

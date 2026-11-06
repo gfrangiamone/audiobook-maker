@@ -846,7 +846,8 @@ def _build_podcast_zip(job_id, podcast_dir, mp3_files, epub_path, info, safe_nam
             else:
                 # Strategia 3: copertina generata
                 print(f"[{job_id}] Podcast cover: raw extraction failed, generating fallback")
-                _generate_fallback_cover(cover_path, title=info.title or "", author=info.author or "")
+                _generate_fallback_cover(cover_path, title=info.title or "", author=info.author or "",
+                                         lang=info.language or "")
                 if os.path.exists(cover_path) and os.path.getsize(cover_path) > 0:
                     cover_file = "cover.jpg"
                     print(f"[{job_id}] Podcast cover: fallback generated ({os.path.getsize(cover_path)} bytes)")

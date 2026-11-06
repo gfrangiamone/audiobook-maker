@@ -156,8 +156,30 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
         return None
 
 
-def _generate_fallback_cover(output_path, title="", author="", target_size=1400):
-    """Generate a simple branded cover when no EPUB cover is available."""
+# Fascia in alto delle copertine generate, una per lingua del libro: i libri di
+# lingue diverse si riconoscono a colpo d'occhio (catalogo gratuito, 06/11/2026).
+# Toni smorzati, con la luminosita' dell'ocra storica (che resta all'italiano e
+# alle lingue senza un colore suo), in armonia con la tavolozza calda del sito.
+COVER_BAND_DEFAULT = (194, 154, 108)
+COVER_BAND_COLORS = {
+    "it": (194, 154, 108),  # ocra
+    "en": (127, 155, 176),  # blu polvere
+    "de": (184, 120, 95),   # terracotta
+    "es": (181, 133, 147),  # rosa antico
+    "pt": (111, 158, 146),  # verde salvia
+    "nl": (152, 135, 176),  # lavanda
+    "fr": (154, 162, 107),  # oliva
+}
+
+
+def cover_band_color(lang):
+    """Colore RGB della fascia per la lingua del libro ("en", "pt-BR", ...)."""
+    return COVER_BAND_COLORS.get((lang or "")[:2].lower(), COVER_BAND_DEFAULT)
+
+
+def _generate_fallback_cover(output_path, title="", author="", target_size=1400, lang=""):
+    """Generate a simple branded cover when no EPUB cover is available.
+    `lang`, la lingua del libro, sceglie il colore della fascia in alto."""
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
@@ -167,7 +189,7 @@ def _generate_fallback_cover(output_path, title="", author="", target_size=1400)
         sz = target_size
         img = Image.new("RGB", (sz, sz), (245, 240, 232))
         draw = ImageDraw.Draw(img)
-        draw.rectangle([0, 0, sz, int(sz * 0.38)], fill=(194, 154, 108))
+        draw.rectangle([0, 0, sz, int(sz * 0.38)], fill=cover_band_color(lang))
 
         font_title = font_author = font_small = None
         for fpath in ["/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
