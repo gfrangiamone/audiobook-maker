@@ -215,7 +215,8 @@ def faq_page(lang):
 
     iso_modified = datetime.now().strftime("%Y-%m-%d")
 
-    page = _render_page("faq", {"__P0__": (html_lang), "__P1__": (title), "__P2__": (desc), "__P3__": (canonical), "__P4__": (hreflang_block), "__P5__": (iso_modified), "__P6__": (faq_ld_json), "__P7__": (faqs_html)})
+    page = _render_page("faq", {"__P0__": (html_lang), "__P1__": (title), "__P2__": (desc), "__P3__": (canonical), "__P4__": (hreflang_block), "__P5__": (iso_modified), "__P6__": (faq_ld_json), "__P7__": (faqs_html),
+                                "__P8__": page_brand.catalog_link(lang)})
     return page, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
@@ -244,6 +245,9 @@ def seo_content_page(lang):
     head_extra += "\n    " + page_brand.hreflang_links(
         lambda lc: f"{base}/content/{lc}/", f"{base}/content/en/", sep="\n    ")
 
+    # Link al catalogo gratuito in coda: link interno che ne fa scansionare le pagine.
+    seo_block += ('\n<p style="text-align:center;margin:0 0 32px;font-size:.9rem">'
+                  f'{page_brand.catalog_link(lang)}</p>')
     page = _render_page("seo_content", {"__P0__": (html_lang), "__P1__": (title), "__P2__": (desc), "__P3__": (head_extra), "__P4__": (seo_block)})
     return page, 200, {"Content-Type": "text/html; charset=utf-8"}
 

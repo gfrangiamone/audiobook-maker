@@ -627,7 +627,7 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path, path=None):
     return page_brand.public_page(
         lang=ui_lang, title=_esc(t["hub_title"]), crumb=_esc(t["crumb"]), body=body,
         footer=_footer(t), head=head, css=_css(),
-        tools=_ui_switch(ui_lang, path or canonical_path, t))
+        tools=_ui_switch(ui_lang, path or canonical_path, t), catalog=False)
 
 
 def index_html(ui_lang, base_url, preset=""):
@@ -851,4 +851,4 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
     crumb = f'<a href="{hub}">{_esc(t["crumb"])}</a> &rsaquo; {_esc(b["title"])}'
     return page_brand.public_page(
         lang=ui, title=title, crumb=crumb, body=body, footer=_footer(t), head=head, css=_css(),
-        tools=_ui_switch(ui, f"{PATH}/{lang}/{b['slug']}/", t))
+        tools=_ui_switch(ui, f"{PATH}/{lang}/{b['slug']}/", t), catalog=False)

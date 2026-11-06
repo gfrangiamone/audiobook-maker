@@ -60,7 +60,7 @@ def test_faq_howto_breadcrumb_key_order():
 
 
 def test_leaves_import_only_stdlib_and_leaves():
-    for mod, allowed in ((pb, {"i18n", "pathlib", "hashlib", "re"}), (seo_ld, {"json", "page_brand"})):
+    for mod, allowed in ((pb, {"i18n", "pathlib", "hashlib", "html", "re"}), (seo_ld, {"json", "page_brand"})):
         src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
         mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
                 for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
@@ -111,7 +111,9 @@ def test_public_page_shell():
     assert html.startswith("<!DOCTYPE html>") and '<html lang="zh-Hans">' in html
     assert "<title>T&amp;</title>" in html and "<!--H-->" in html
     assert '<nav class="breadcrumb"><a href="/zh/">Audiobook Maker</a> &rsaquo; C</nav>' in html
-    assert "<article>B</article>" in html and "<footer><p>F</p></footer>" in html
+    assert "<article>B</article>" in html
+    # Footer del chiamante, poi il link al catalogo gratuito nella lingua della pagina.
+    assert '<footer><p>F</p><p class="site-links"><a href="/free-audiobooks/">' in html
     assert ".x{color:red}</style>" in html and "__" not in html.replace("__pycache__", "")
 
 

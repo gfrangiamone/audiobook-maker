@@ -232,3 +232,10 @@ Object.assign(L.es,{pay_sub_hint:"Con la suscripción, este libro estaría cubie
 Object.assign(L.de,{pay_sub_hint:"Mit einem Abo wäre dieses Buch durch den Gutschein des Monats abgedeckt",acct_archive_nudge_near_full:"Deine Bibliothek ist fast voll: Entdecke die Tarife mit mehr Speicherplatz",acct_archive_nudge_full:"Deine Bibliothek ist voll: Neue Bücher werden nicht gespeichert. Entdecke die Tarife mit mehr Speicherplatz"});
 Object.assign(L.zh,{pay_sub_hint:"订阅后，这本书可以用当月的代金券支付",acct_archive_nudge_near_full:"你的书库快满了：看看空间更大的方案",acct_archive_nudge_full:"你的书库已满：新书不会被保存。看看空间更大的方案"});
 Object.assign(L.hi,{pay_sub_hint:"सब्सक्रिप्शन के साथ यह किताब महीने के वाउचर से कवर हो जाती",acct_archive_nudge_near_full:"आपकी लाइब्रेरी लगभग भर गई है: ज़्यादा जगह वाले प्लान देखें",acct_archive_nudge_full:"आपकी लाइब्रेरी भर गई है: नई किताबें सेव नहीं हो रहीं। ज़्यादा जगह वाले प्लान देखें"});
+Object.assign(L.it,{nav_catalog:"Audiolibri gratis"});
+Object.assign(L.en,{nav_catalog:"Free audiobooks"});
+Object.assign(L.fr,{nav_catalog:"Livres audio gratuits"});
+Object.assign(L.es,{nav_catalog:"Audiolibros gratis"});
+Object.assign(L.de,{nav_catalog:"Kostenlose Hörbücher"});
+Object.assign(L.zh,{nav_catalog:"免费有声书"});
+Object.assign(L.hi,{nav_catalog:"मुफ़्त ऑडियोबुक"});

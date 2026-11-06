@@ -7,9 +7,11 @@ lo importano `audiobook_app`, `account_page`, `guide_content`,
 `templates/index_page`, che non possono importare l'entry point.
 """
 import hashlib
+import html as _html
 import re
 from pathlib import Path
 
+import i18n
 from i18n import LANGS as SITE_LANGS
 
 # Pagine servite da file: templates/pages/<name>.html (o <name> se ha gia'
@@ -231,14 +233,36 @@ def seo_head(*, desc="", keywords="", canonical="", hreflang="", og_type="", og_
     return "\n".join(lines)
 
 
-def public_page(*, lang, title, crumb, body, footer, home="/", head="", css="", tools=""):
+CATALOG_PATH = "/free-audiobooks/"
+
+
+def catalog_label(lang):
+    """Nome del catalogo degli audiolibri gratuiti nella lingua della pagina,
+    gia' escapato: e' il breadcrumb del catalogo (i18n/free_catalog.json)."""
+    label = i18n.pick(i18n.load("free_catalog"), lang).get("crumb") or "Free audiobooks"
+    return _html.escape(label)
+
+
+def catalog_link(lang):
+    """Link al catalogo degli audiolibri gratuiti, con l'etichetta del suo
+    breadcrumb nella lingua della pagina (i18n/free_catalog.json). Sta nei
+    footer delle pagine pubbliche: il catalogo cresce di libri nuovi e i link
+    interni sono quello che ne fa scansionare le pagine (06/11/2026)."""
+    return f'<a href="{CATALOG_PATH}">{catalog_label(lang)}</a>'
+
+
+def public_page(*, lang, title, crumb, body, footer, home="/", head="", css="", tools="",
+                catalog=True):
     """Pagina pubblica (guide, privacy, supporto) sulla shell unica
     templates/pages/public_shell.html: head SEO da `seo_head`, breadcrumb
     «Audiobook Maker › crumb», corpo, footer, CSS aggiuntivo della pagina.
     `title`, `crumb`, `body`, `footer` sono HTML gia' pronto; `tools` va a
-    destra del breadcrumb (es. il selettore della lingua del catalogo)."""
+    destra del breadcrumb (es. il selettore della lingua del catalogo).
+    `catalog` aggiunge al footer il link al catalogo gratuito (spento sulle
+    pagine del catalogo stesso)."""
     return render_page("public_shell", {
         "__LANG__": html_lang(lang), "__TITLE__": title, "__HEAD__": head, "__CSS__": css,
         "__HOME__": home, "__CRUMB__": crumb, "__TOOLS__": tools, "__BODY__": body,
         "__FOOTER__": footer,
+        "__SITE_LINKS__": f'<p class="site-links">{catalog_link(lang)}</p>' if catalog else "",
     })
