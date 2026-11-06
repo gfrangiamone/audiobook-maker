@@ -49,6 +49,21 @@ def test_user_cancel_does_not_log_admin_cancel(client):
     del audiobook_app.jobs["K2"]
 
 
+def test_cancel_in_ottimizzazione_ferma_anche_l_llm(client):
+    """/api/cancel su un job in ottimizzazione (ottimizza+genera): il ciclo LLM
+    guarda `opt_cancelled`; col solo `cancelled`, che run_generation azzera,
+    il job annullato andava fino in fondo (catalogo, 06/11/2026)."""
+    _seed_job("K4", "optimizing")
+    with patch("audiobook_app._check_job_owner",
+               return_value=(audiobook_app.jobs["K4"], None, None)), \
+         patch("audiobook_app._admin_auth_ok", return_value=True), \
+         patch("audiobook_app._log_activity"):
+        r = client.post("/api/cancel/K4?force=1")
+    assert r.status_code == 200
+    assert audiobook_app.jobs["K4"]["opt_cancelled"] is True
+    del audiobook_app.jobs["K4"]
+
+
 def test_admin_cancel_optimize_logs_admin_cancel(client):
     _seed_job("K3", "optimizing")
     with patch("audiobook_app._check_job_owner",

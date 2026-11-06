@@ -1277,6 +1277,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
     # Mappa file con più voci TOC (potenziali single-file EPUB)
     toc_fragments = _build_toc_fragments(book)
+    toc_anchors = _build_toc_anchors(book)
 
     # Estrazione capitoli
     chapter_index = 0
@@ -1300,6 +1301,9 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
         # File con una propria voce nel TOC (autorità sull'ordinamento capitoli)
         is_toc_anchored = file_name in toc_map
+        # Il testo prima della sua prima ancora continua il capitolo precedente
+        # solo oltre la prima voce del TOC (stesso principio dei file orfani).
+        continues_toc = seen_toc_anchor
         if is_toc_anchored:
             seen_toc_anchor = True
 
@@ -1334,7 +1338,14 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         # ── Controlla se questo file contiene più capitoli ──
         if file_name in toc_fragments:
             toc_titles = toc_fragments[file_name]
-            sections = _split_html_by_headings(html_content, toc_titles)
+            anchored = _split_html_by_anchors(html_content, toc_anchors.get(file_name) or [])
+            if anchored is not None:
+                lead, sections = anchored
+                lead = _take_toc_lead(lead, info.chapters, continues_toc)
+                if lead:
+                    sections[0] = (sections[0][0], lead + sections[0][1])
+            else:
+                sections = _split_html_by_headings(html_content, toc_titles)
 
             if sections:
                 # ── Pre-processing: unisci "Capitolo N" + titolo reale ──
@@ -1412,6 +1423,15 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                 pending_toc_title = None
                 continue  # Non processare il file come capitolo singolo
 
+        # ── File con una sola voce TOC e l'ancora non in testa: il testo prima
+        # dell'ancora continua il capitolo precedente, non e' del titolo
+        # dell'ancora (il finale di La Regenta sotto "FIN DE LA NOVELA") ──
+        if is_toc_anchored and file_name not in toc_fragments and continues_toc:
+            anchored = _split_html_by_anchors(html_content, toc_anchors.get(file_name) or [])
+            if anchored is not None and anchored[0].strip() and not _take_toc_lead(
+                    anchored[0], info.chapters, continues_toc):
+                html_content = anchored[1][0][1]
+
         # ── Riconciliazione spine↔TOC: file ORFANO (nessuna voce TOC) ──
         # Light novel & EPUB auto-generati listano nel TOC solo il primo file
         # di un capitolo; i file successivi dello stesso capitolo restano nello
@@ -1439,10 +1459,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                     pending_toc_title = None
                 elif info.chapters:
                     # Continuazione del capitolo precedente: append in coda.
-                    prev = info.chapters[-1]
-                    prev.text = (prev.text.rstrip() + "\n\n" + clean).strip()
-                    prev.word_count = len(prev.text.split())
-                    prev.char_count = len(prev.text)
+                    _append_chapter_text(info.chapters[-1], clean)
                 else:
                     # Orfano dopo la prima voce TOC ma senza capitolo a cui
                     # agganciarsi: tienilo come entry separata (no perdita).
@@ -1692,32 +1709,37 @@ def _skip_toc_title(title) -> bool:
     return _is_backnote_toc_title(title) or "project gutenberg" in (title or "").casefold()
 
 
-def _build_toc_map(book: epub.EpubBook) -> dict[str, str]:
-    """Costruisce una mappa file_path → titolo dal Table of Contents."""
-    toc_map = {}
+def _toc_entries(book: epub.EpubBook) -> list[tuple[str, str, str]]:
+    """Voci del Table of Contents in ordine: (file, ancora, titolo). L'ancora e'
+    il frammento dopo '#', vuota se la voce punta all'inizio del file."""
+    entries = []
 
     def walk_toc(items):
         for item in items:
             if isinstance(item, tuple):
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
-                    title = str(section.title or "").strip()
-                    if not _skip_toc_title(title):
-                        href = section.href.split("#")[0]
-                        toc_map[href] = title
+                    add(section)
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
-                title = str(item.title or "").strip()
-                if not _skip_toc_title(title):
-                    href = item.href.split("#")[0]
-                    toc_map[href] = title
+                add(item)
+
+    def add(item):
+        title = str(item.title or "").strip()
+        if not _skip_toc_title(title):
+            href_file, _, frag = str(item.href or "").partition("#")
+            entries.append((href_file, frag, title))
 
     try:
         walk_toc(book.toc)
     except Exception:
         pass
+    return entries
 
-    return toc_map
+
+def _build_toc_map(book: epub.EpubBook) -> dict[str, str]:
+    """Costruisce una mappa file_path → titolo dal Table of Contents."""
+    return {href_file: title for href_file, _, title in _toc_entries(book)}
 
 
 def _build_toc_fragments(book: epub.EpubBook) -> dict[str, list[str]]:
@@ -1726,30 +1748,119 @@ def _build_toc_fragments(book: epub.EpubBook) -> dict[str, list[str]]:
     Serve per rilevare EPUB "single-file" dove tutti i capitoli sono in un unico HTML.
     """
     file_titles = {}
-
-    def walk_toc(items):
-        for item in items:
-            if isinstance(item, tuple):
-                section, children = item
-                if hasattr(section, "href") and hasattr(section, "title"):
-                    title = str(section.title or "").strip()
-                    if not _skip_toc_title(title):
-                        href_file = section.href.split("#")[0]
-                        file_titles.setdefault(href_file, []).append(title)
-                walk_toc(children)
-            elif hasattr(item, "href") and hasattr(item, "title"):
-                title = str(item.title or "").strip()
-                if not _skip_toc_title(title):
-                    href_file = item.href.split("#")[0]
-                    file_titles.setdefault(href_file, []).append(title)
-
-    try:
-        walk_toc(book.toc)
-    except Exception:
-        pass
-
+    for href_file, _, title in _toc_entries(book):
+        file_titles.setdefault(href_file, []).append(title)
     # Ritorna solo i file con 2+ voci TOC (quelli da spezzare)
     return {f: titles for f, titles in file_titles.items() if len(titles) >= 2}
+
+
+def _build_toc_anchors(book: epub.EpubBook) -> dict[str, list[tuple[str, str]]]:
+    """Mappa file_path → [(titolo, ancora)] delle voci TOC, in ordine."""
+    anchors = {}
+    for href_file, frag, title in _toc_entries(book):
+        anchors.setdefault(href_file, []).append((title, frag))
+    return anchors
+
+
+# Testo prima della prima ancora TOC di un file, dopo la prima voce del TOC:
+# da tanto in su continua il capitolo precedente (Gutenberg spezza i file a
+# misura, non a capitolo); sotto resta col capitolo dell'ancora (un numero di
+# capitolo messo prima del titolo, un fregio).
+TOC_LEAD_MIN_CHARS = 100
+
+
+def _split_html_by_anchors(html_content: str, entries: list[tuple[str, str]]):
+    """Spezza un documento HTML sulle ancore delle sue voci TOC (`file#id`).
+
+    E' il riscontro esatto che l'EPUB dichiara: il confronto dei titoli di
+    `_split_html_by_headings` perde le voci corte ("—I—", "VI": meno di 3
+    caratteri normalizzati) e le fonde nel capitolo prima. Negli EPUB di
+    Project Gutenberg in piu' volumi La Regenta perdeva cosi' i capitoli I e
+    VI, e il finale del XXX finiva in un capitolo "FIN DE LA NOVELA" (catalogo,
+    06/11/2026).
+
+    Ritorna (html prima della prima ancora, [(titolo, html_della_sezione)]),
+    oppure None se una voce non ha ancora (salvo la prima, che allora parte
+    dall'inizio), se un'ancora non c'e' nel documento o se le ancore non sono
+    in ordine: decide allora il confronto dei titoli. Il titolo che porta
+    l'ancora non entra nel corpo della sezione.
+    """
+    if not entries or any(not frag for _, frag in entries[1:]):
+        return None
+    soup = BeautifulSoup(html_content, "lxml")
+    body = soup.find("body") or soup
+    order = {id(el): i for i, el in enumerate(body.find_all(True))}
+    marks = []
+    for _, frag in entries:
+        if not frag:
+            marks.append(None)  # solo la prima voce: inizio del documento
+            continue
+        el = body.find(id=frag) or body.find(attrs={"name": frag})
+        if el is None:
+            return None
+        if el.name not in HEADING_TAGS:
+            el = el.find_parent(list(HEADING_TAGS)) or el
+        marks.append(el)
+    positions = [-1 if el is None else order.get(id(el), -1) for el in marks]
+    if any(b <= a for a, b in zip(positions, positions[1:])):
+        return None
+
+    mark_index = {id(el): k for k, el in enumerate(marks) if el is not None}
+    mark_ancestors = {id(p) for el in marks if el is not None for p in el.parents}
+    parts = [[] for _ in range(len(entries) + 1)]  # [0] = prima della prima ancora
+    current = 1 if marks[0] is None else 0
+
+    def walk(node):
+        nonlocal current
+        if isinstance(node, Comment):
+            return
+        if isinstance(node, NavigableString):
+            if str(node).strip():
+                parts[current].append(str(node))
+            return
+        if not isinstance(node, Tag):
+            return
+        if id(node) in mark_index:
+            current = mark_index[id(node)] + 1
+            if node.name in HEADING_TAGS:
+                return
+        if id(node) in mark_ancestors:
+            for child in node.children:
+                walk(child)
+        else:
+            parts[current].append(str(node))
+
+    import sys as _sys
+    _old_limit = _sys.getrecursionlimit()
+    _sys.setrecursionlimit(max(_old_limit, 8000))
+    try:
+        for child in body.children:
+            walk(child)
+    finally:
+        _sys.setrecursionlimit(_old_limit)
+
+    sections = [(title, "".join(parts[k + 1])) for k, (title, _) in enumerate(entries)]
+    return "".join(parts[0]), sections
+
+
+def _append_chapter_text(chapter, text: str) -> None:
+    """Accoda `text` al capitolo, come continuazione dello stesso capitolo."""
+    chapter.text = (chapter.text.rstrip() + "\n\n" + text).strip()
+    chapter.word_count = len(chapter.text.split())
+    chapter.char_count = len(chapter.text)
+
+
+def _take_toc_lead(lead_html: str, chapters: list, continues_toc: bool) -> str:
+    """Testo di un file prima della sua prima ancora TOC. Se continua il
+    capitolo precedente (siamo oltre la prima voce del TOC e ne ha almeno
+    TOC_LEAD_MIN_CHARS) lo accoda li' e ritorna ""; altrimenti ritorna l'html
+    da tenere in testa al capitolo dell'ancora."""
+    if continues_toc and chapters and lead_html.strip():
+        lead = clean_text_for_tts(html_to_text(lead_html)).strip()
+        if len(lead) >= TOC_LEAD_MIN_CHARS:
+            _append_chapter_text(chapters[-1], lead)
+            return ""
+    return lead_html
 
 
 def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tuple[str, str]]:

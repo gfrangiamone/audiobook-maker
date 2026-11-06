@@ -3396,6 +3396,10 @@ def run_optimization(job_id, selected_chapters=None):
 
         # Re-check auto_generate — may have been set via the unified optimization+generation flow
         auto_generate = job.get("opt_auto_generate", False)
+        # Annullato a ottimizzazione finita (/api/cancel durante la
+        # finalizzazione): la generazione automatica non parte.
+        if auto_generate and job.get("opt_cancelled"):
+            raise _CancelledError("Optimization cancelled before generation")
         if auto_generate:
             _emit_finalization_progress(OPT_MSG_ARCHIVE_MAKING, 0.15)
             # Generate .abm snapshot first, then proceed to TTS generation

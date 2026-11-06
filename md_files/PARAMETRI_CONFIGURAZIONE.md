@@ -645,6 +645,8 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 | `PART_TITLE_SEP` | `" – "` (fra il nome della parte e un titolo di capitolo generico ripetuto, con indice annidato: "Parte seconda – Capitolo 1"; e' il titolo dei marcatori M4B e quello letto dal TTS. Con titoli gia' distinti il nome della parte, se la sua pagina e' scartata, si legge in testa al primo capitolo. `_name_parts`, `_build_toc_parents`) | `epub_to_tts.py` | — |
 | spine deduplicato | un documento ripetuto nello spine si legge una volta sola (ws-export di Wikisource ripete i capitoli di ogni parte: I Vicere' usciva di 49 h invece di 25) | `epub_to_tts.py` `parse_epub` | — |
 | indici di sezione | elenchi `ul`/`ol` di soli link ad altri documenti del libro (al piu' 40 caratteri di aggiunta per voce) tolti con l'intestazione "Indice" (`_is_link_list`, `_INLINE_INDEX_HEADERS`) | `epub_to_tts.py` `html_to_text` | — |
+| divisione sulle ancore TOC | un file con piu' voci d'indice `file#id` si divide sugli elementi di quegli id (`_split_html_by_anchors`); il confronto dei titoli (`_split_html_by_headings`) resta per le voci senza ancora, con ancore assenti o fuori ordine. Negli EPUB di Gutenberg il confronto perdeva le voci corte ("—I—") e il testo prima del primo titolo del file (un quinto del Grande Gatsby) | `epub_to_tts.py` `parse_epub` | — |
+| `TOC_LEAD_MIN_CHARS` | `100` (testo di un file prima della sua prima ancora TOC, oltre la prima voce del TOC: da tanto in su si accoda al capitolo precedente, anche per un file con una sola voce; sotto resta in testa al capitolo dell'ancora. `_take_toc_lead`) | `epub_to_tts.py` | — |
 
 ---
 

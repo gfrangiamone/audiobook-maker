@@ -5872,6 +5872,12 @@ def api_cancel(job_id):
             print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
             return jsonify({"status": "ignored_email_registered"})
         job["cancelled"] = True
+        # In ottimizzazione il ciclo LLM guarda solo `opt_cancelled`, e la
+        # generazione automatica che lo segue azzera `cancelled` (run_generation):
+        # il job annullato, anche col kill admin, veniva ottimizzato e poi
+        # generato per intero (catalogo, 06/11/2026).
+        if job.get("status") == "optimizing":
+            job["opt_cancelled"] = True
         # NB: non incrementiamo gen_epoch qui. Il bump epoch e' riservato
         # al riavvio della generazione (/api/generate linea ~5548) per
         # invalidare worker thread orfane. Bumparlo sul cancel volontario
