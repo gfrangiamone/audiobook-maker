@@ -37,7 +37,9 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-shelf h2{font-size:1.35rem}
 .fc-shelf-row{display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 14px;margin:0 -2px;scrollbar-width:thin}
 /* Con il JS la barra di scorrimento lascia il posto alle frecce (free_catalog.js);
-   sui dispositivi touch basta il gesto. */
+   spariscono solo dove nessun ingresso sa passare sopra (telefoni, tablet) e basta
+   il gesto. Con `hover:none` Firefox su Windows le toglieva ai PC con schermo touch
+   anche usati col mouse: `any-hover` guarda tutti gli ingressi, non il primario. */
 .fc-shelf-wrap{position:relative}
 .fc-shelf.fc-js .fc-shelf-row{scrollbar-width:none}
 .fc-shelf.fc-js .fc-shelf-row::-webkit-scrollbar{display:none}
@@ -47,7 +49,7 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-shelf-nav svg{width:22px;height:22px}
 .fc-shelf-prev{left:-8px}
 .fc-shelf-next{right:-8px}
-@media (hover:none){.fc-shelf-nav{display:none}}
+@media (any-hover:none){.fc-shelf-nav{display:none}}
 .fc-shelf-item{flex:none;width:156px;scroll-snap-align:start;color:var(--tx);text-decoration:none}
 .fc-shelf-item:hover{text-decoration:none}
 .fc-shelf-item[hidden],.fc-shelf[hidden]{display:none}
