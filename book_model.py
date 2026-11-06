@@ -137,9 +137,10 @@ NON_CONTENT_TITLE_PHRASES = [
     "indice", "indice generale", "indice dei contenuti", "indice analitico",
     "sommario", "table of contents", "contents", "toc",
     "table des matières", "sommaire", "índice", "índice general",
-    "inhaltsverzeichnis", "inhalt", "目录",
+    "inhaltsverzeichnis", "inhalt", "目录", "inhoudsopgave",
     # ── Copyright / Colophon ──
-    "copyright", "colophon", "note legali", "informazioni legali",
+    "copyright", "colophon", "colofon", "kolophon", "colofón",
+    "note legali", "informazioni legali",
     "avviso legale", "legal notice", "all rights reserved",
     "copyright notice", "mentions légales", "aviso legal",
     "impressum",
@@ -195,7 +196,15 @@ NON_CONTENT_TITLE_PHRASES = [
 # sezione di apparato.
 NON_CONTENT_TITLE_EXACT = {
     "trama", "sinossi", "synopsis", "sinopsis", "resumen", "blurb",
+    "inhoud",               # indice olandese; "De inhoud van den brief" e' un capitolo
 }
+
+# Colophon nelle lingue del catalogo. Nei libri di Project Gutenberg fatti da
+# TEI e' una voce di indice con figlie (Beschikbaarheid, Codering,
+# Documentgeschiedenis, Externe Referenties, Verbeteringen; in tedesco
+# Verfuegbarkeit, Metadaten, Korrekturen): Don Quichot (catalogo, 06/11/2026)
+# le leggeva tutte, dopo l'ultimo capitolo.
+COLOPHON_TITLE_PHRASES = ["colophon", "colofon", "kolophon", "colofón"]
 
 
 def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):

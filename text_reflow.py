@@ -270,12 +270,88 @@ def _abbr_rules(table):
 _ABBR_RULES_BY_LANG = {code: _abbr_rules(table) for code, table in ABBREVIATIONS_BY_LANG.items()}
 
 
+# Segno "°" (U+00B0). Diventava " gradi " in clean_text_for_tts, in ogni lingua
+# e quasi sempre dove non e' un grado (catalogo, 06/11/2026): "N° 37" di Max
+# Havelaar "N gradi 37", gli elenchi "1° Dat hy", "1.° Una bella" (Gian
+# Burrasca), "1.° porque" (Bras Cubas) "1 gradi Dat hy", le date "1 gradi
+# novembre", "em-4°" (in quarto) "em-4 gradi". I gradi veri erano pochi ("a
+# 40°", Quiroga). Ora, nella lingua del libro: segno di numero ("N°", "n.°") ->
+# "numero"; dopo una cifra fino a 10 -> ordinale ("primo novembre", "ten
+# eerste"); oltre il 10 ordinale in testa a una voce d'elenco ("12° Over het",
+# "35°: non") e gradi altrimenti; con "C"/"F" dopo sempre gradi. Lingua senza
+# voce o sconosciuta: "°" resta al TTS.
+NUMBER_SIGN_WORDS = {"it": "numero", "en": "number", "de": "Nummer", "es": "número",
+                     "pt": "número", "nl": "nummer", "fr": "numéro"}
+DEGREE_WORDS = {"it": "gradi", "en": "degrees", "de": "Grad", "es": "grados",
+                "pt": "graus", "nl": "graden", "fr": "degrés"}
+ORDINAL_WORDS = {
+    "it": ("primo", "secondo", "terzo", "quarto", "quinto",
+           "sesto", "settimo", "ottavo", "nono", "decimo"),
+    "pt": ("primeiro", "segundo", "terceiro", "quarto", "quinto",
+           "sexto", "sétimo", "oitavo", "nono", "décimo"),
+    "es": ("primero", "segundo", "tercero", "cuarto", "quinto",
+           "sexto", "séptimo", "octavo", "noveno", "décimo"),
+    # "1°" negli elenchi viene da "primo": il francese lo legge cosi'
+    "fr": ("primo", "secundo", "tertio", "quarto", "quinto",
+           "sexto", "septimo", "octavo", "nono", "decimo"),
+    "nl": ("ten eerste", "ten tweede", "ten derde", "ten vierde", "ten vijfde",
+           "ten zesde", "ten zevende", "ten achtste", "ten negende", "ten tiende"),
+    "de": ("erstens", "zweitens", "drittens", "viertens", "fünftens",
+           "sechstens", "siebtens", "achtens", "neuntens", "zehntens"),
+    "en": ("first", "second", "third", "fourth", "fifth",
+           "sixth", "seventh", "eighth", "ninth", "tenth"),
+}
+# Ordinale oltre il 10 come si scrive in cifre nella lingua ("12º", "12e", "12.")
+_ORDINAL_SUFFIX = {"it": "º", "pt": "º", "es": "º", "fr": "e", "nl": "e", "de": "."}
+# Ordinale oltre il 10 anche fuori dagli elenchi: col punto ("12.°") sempre, in
+# portoghese anche senza (nei testi del catalogo nessun "°" era un grado).
+_ORDINAL_WITHOUT_DOT = {"pt"}
+_ISO639_2 = {"ita": "it", "eng": "en", "deu": "de", "ger": "de", "spa": "es", "por": "pt",
+             "nld": "nl", "dut": "nl", "fra": "fr", "fre": "fr"}
+_NUMBER_SIGN_RE = re.compile(r"(?<!\w)[Nn] ?\.? ?°\.? *")
+_DEGREE_SIGN_RE = re.compile(r"(\d+)(\.?) ?°(?=(\w)?)")
+_TEMPERATURE_UNIT_RE = re.compile(r" ?[CF](?!\w)")
+# Inizio di riga prima del numero: voce d'elenco ('\xa0\xa0"12° Over het')
+_LIST_ITEM_HEAD_RE = re.compile(r"[\s\"'«“„(—–-]*")
+
+
+def _ordinal_digits(n, code):
+    if code == "en":
+        k = int(n)
+        return n + ("th" if 10 <= k % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(k % 10, "th"))
+    return n + _ORDINAL_SUFFIX[code]
+
+
+def _expand_degree_sign(text, code):
+    """"°" letto nella lingua `code` (vedi NUMBER_SIGN_WORDS)."""
+    code = _ISO639_2.get(code, code)
+    if "°" not in text or code not in NUMBER_SIGN_WORDS:
+        return text
+    text = _NUMBER_SIGN_RE.sub(NUMBER_SIGN_WORDS[code] + " ", text)
+
+    def _word(m):
+        n, dot, sep = m.group(1), m.group(2), " " if m.group(3) else ""
+        after = m.string[m.end():m.end() + 3]
+        if not _TEMPERATURE_UNIT_RE.match(after):
+            k = int(n)
+            if 1 <= k <= 10:
+                return ORDINAL_WORDS[code][k - 1] + sep
+            line = m.string[m.string.rfind("\n", 0, m.start()) + 1:m.start()]
+            if (dot or code in _ORDINAL_WITHOUT_DOT or _LIST_ITEM_HEAD_RE.fullmatch(line)
+                    or after.lstrip().startswith(":")):
+                return _ordinal_digits(n, code) + sep
+        return f"{n} {DEGREE_WORDS[code]}{sep}"
+    return _DEGREE_SIGN_RE.sub(_word, text)
+
+
 def expand_abbreviations(text, lang=None):
     """Espande le abbreviazioni della lingua del libro perche' il TTS le legga
-    per esteso ("ecc." -> "eccetera"). `lang` e' il codice dei metadati ("es",
-    "pt-BR", "ita"); vuoto o senza tabella: testo invariato. Usata da EPUB/PDF
-    (clean_text_for_tts) e, da F1b, anche da TXT e ABM (plain_parsers)."""
+    per esteso ("ecc." -> "eccetera"), e il segno "°" (_expand_degree_sign).
+    `lang` e' il codice dei metadati ("es", "pt-BR", "ita"); vuoto o senza
+    tabella: testo invariato. Usata da EPUB/PDF (clean_text_for_tts) e, da
+    F1b, anche da TXT e ABM (plain_parsers)."""
     code = i18n.norm_lang(str(lang or "").replace("_", "-"))
+    text = _expand_degree_sign(text, code)
     for rule, expansion in _ABBR_RULES_BY_LANG.get(code, ()):
         text = rule.sub(expansion, text)
     return text

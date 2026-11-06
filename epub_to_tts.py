@@ -28,7 +28,7 @@ import text_reflow
 from text_reflow import _title_already_in_text, dehyphenate_breaks, reflow_book, strip_soft_hyphens
 from book_model import (BookInfo, Chapter, WORDS_PER_MINUTE, NON_CONTENT_FILENAMES_EXACT,
                         NON_CONTENT_FILENAMES_SUBSTR, NON_CONTENT_TITLE_PHRASES, NON_CONTENT_TITLE_EXACT,
-                        title_is_non_content as _title_is_non_content,
+                        COLOPHON_TITLE_PHRASES, title_is_non_content as _title_is_non_content,
                         is_backnote_toc_title as _is_backnote_toc_title,
                         synthetic_section_title as _synthetic_section_title, print_book_info,
                         LEAD_SECTION_TITLE_IT, lead_section_title)
@@ -457,7 +457,7 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True, lang: str = "") -> s
         "\u2021": "",       # Double dagger ‡
         "\u00a7": "",       # Section sign §
         "\u00b6": "",       # Pilcrow ¶
-        "\u00b0": " gradi ",  # Degree sign → parola
+        # Degree sign ° non qui: si legge nella lingua del libro (text_reflow, passo 4)
         "\u00b9": "",       # Superscript 1
         "\u00b2": "",       # Superscript 2
         "\u00b3": "",       # Superscript 3
@@ -1763,6 +1763,11 @@ def _toc_entries(book: epub.EpubBook) -> list[tuple[str, str, str]]:
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
                     add(section)
+                    # Le figlie di un colophon ne sono le sottosezioni: senza
+                    # una voce propria il loro testo resta nella sezione del
+                    # colophon, che il titolo scarta (COLOPHON_TITLE_PHRASES).
+                    if _title_is_non_content(str(section.title or ""), COLOPHON_TITLE_PHRASES):
+                        continue
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
                 add(item)

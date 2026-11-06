@@ -48,6 +48,48 @@ def test_altre_lingue_non_espandono():
     assert T.expand_abbreviations("o Sr. Afonso, cap. 3", "pt-BR") == "o Sr. Afonso, cap. 3"
 
 
+def test_segno_di_grado_nella_lingua_del_libro():
+    X = T.expand_abbreviations
+    # segno di numero (Max Havelaar: "N° 37" era "N gradi 37")
+    assert X("Lauriergracht, N° 37. Het is", "nl") == "Lauriergracht, nummer 37. Het is"
+    assert X("Lauriergracht N°. 37 en", "nl") == "Lauriergracht nummer 37 en"
+    assert X("Encadernação N.° 2465", "pt") == "Encadernação número 2465"
+    assert X("no Mercantil n.° 26 de", "pt-BR") == "no Mercantil número 26 de"
+    # fino a 10 ordinale: elenchi, date, "in quarto"
+    assert X("vast:\n\n1° Dat hy\n\n2° Dat ik", "nl") == "vast:\n\nten eerste Dat hy\n\nten tweede Dat ik"
+    assert X("finora:\n\n1.° Una bella", "it") == "finora:\n\nprimo Una bella"
+    assert X("Oggi è il 1° novembre, piano 1°, dove", "ita") == "Oggi è il primo novembre, piano primo, dove"
+    assert (X("por dous motivos: 1.° porque sendo; 2.° porque", "pt")
+            == "por dous motivos: primeiro porque sendo; segundo porque")
+    assert X("pensava: 1. ° que essa", "pt") == "pensava: primeiro que essa"
+    assert X("brochados em-4° enfileiravam", "pt") == "brochados em-quarto enfileiravam"
+    assert X("Collecção in 8° a 2$000", "por") == "Collecção in oitavo a 2$000"
+    assert X("cosas.\n\n1°: que", "es") == "cosas.\n\nprimero: que"
+    # oltre il 10: ordinale in testa a una voce d'elenco, col punto o in portoghese
+    assert X('Ziehier:\n\n"12° Over het', "nl") == 'Ziehier:\n\n"12e Over het'
+    assert X('verder:\n\xa0\xa0"15°Over', "nl") == 'verder:\n\xa0\xa0"15e Over'
+    assert X("vino; 35°: non", "it") == "vino; 35º: non"
+    assert X("o 12° capitulo", "pt") == "o 12º capitulo"
+    assert X("the 21°: rule", "en") == "the 21st: rule"
+    # gradi: oltre il 10 nel testo, o con l'unita'
+    assert X("a 40°. Pero los", "es") == "a 40 grados. Pero los"
+    assert X("aveva 38° di febbre, N° 3", "it") == "aveva 38 gradi di febbre, numero 3"
+    assert X("it was 5°C", "en") == "it was 5 degrees C"
+    assert X("es waren 3 °C", "de") == "es waren 3 Grad C"
+    # lingua senza voce o sconosciuta: "°" resta al TTS (si espande al rilevamento)
+    assert T.expand_abbreviations("a 40° N° 3", "ru") == "a 40° N° 3"
+    assert T.expand_abbreviations("a 40° N° 3") == "a 40° N° 3"
+    assert "gradi" not in E.clean_text_for_tts("Lauriergracht, N° 37.", lang="nl")
+    assert "gradi" not in E.clean_text_for_tts("a 40°.")
+
+
+def test_indice_e_colophon_in_olandese_e_tedesco():
+    from book_model import title_is_non_content
+    for t in ("Inhoud", "Inhoudsopgave", "Colofon", "Kolophon", "Colofón"):
+        assert title_is_non_content(t), t
+    assert not title_is_non_content("De inhoud van den brief")
+
+
 def test_epub_tedesco_non_legge_esempio(tmp_path):
     book = epub.EpubBook()
     book.set_identifier("abbr-de")

@@ -86,3 +86,42 @@ def test_ancore_mancanti_o_fuori_ordine_lasciano_il_confronto_dei_titoli():
     assert E._split_html_by_anchors(html, [("Uno", "a"), ("Tre", "c")]) is None
     assert E._split_html_by_anchors(html, [("Due", "b"), ("Uno", "a")]) is None
     assert E._split_html_by_anchors(html, [("Uno", "a"), ("Due", "")]) is None
+
+
+def test_colophon_di_gutenberg_con_le_sottosezioni_non_si_legge(tmp_path):
+    # Don Quichot: dopo l'ultimo capitolo, "Colofon" con figlie Beschikbaarheid,
+    # Codering, Verbeteringen nell'indice, e un "Inhoudsopgave".
+    p = tmp_path / "colofon.epub"
+    book = epub.EpubBook()
+    book.set_identifier("colofon-test")
+    book.set_title("Don Quichot")
+    book.set_language("nl")
+    h0 = epub.EpubHtml(title="h0", file_name="h0.xhtml", lang="nl")
+    h0.content = '<html><body><h2 id="c1">Hoofdstuk I.</h2>' + _p("EEN") + "</body></html>"
+    h1 = epub.EpubHtml(title="h1", file_name="h1.xhtml", lang="nl")
+    h1.content = ('<html><body><h2 id="c2">Hoofdstuk II.</h2>' + _p("TWEE")
+                  + '<h2 id="toc">Inhoudsopgave</h2><p>Hoofdstuk I. Hoofdstuk II.</p>'
+                  + '<h2 id="col">Colofon</h2><h3 id="b">Beschikbaarheid</h3>'
+                  + "<p>Dit eBoek is voor kosteloos gebruik door iedereen overal (BESCHIKBAAR).</p>"
+                  + '<h3 id="cod">Codering</h3><p>Dit bestand is in een verouderde spelling (CODERING).</p>'
+                  + '<h3 id="v">Verbeteringen</h3><p>De volgende verbeteringen (VERBETERD).</p>'
+                  + "</body></html>")
+    for it in (h0, h1):
+        book.add_item(it)
+    book.toc = [epub.Link("h0.xhtml#c1", "Hoofdstuk I.", "c1"),
+                epub.Link("h1.xhtml#c2", "Hoofdstuk II.", "c2"),
+                epub.Link("h1.xhtml#toc", "Inhoudsopgave", "toc"),
+                (epub.Link("h1.xhtml#col", "Colofon", "col"),
+                 [epub.Link("h1.xhtml#b", "Beschikbaarheid", "b"),
+                  epub.Link("h1.xhtml#cod", "Codering", "cod"),
+                  epub.Link("h1.xhtml#v", "Verbeteringen", "v")])]
+    book.spine = [h0, h1]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(p), book)
+    info = E.parse_epub(str(p))
+    assert [c.title for c in info.chapters] == ["Hoofdstuk I.", "Hoofdstuk II."]
+    full = "\n".join(c.text for c in info.chapters)
+    assert full.count("TWEE") == 4
+    for tag in ("BESCHIKBAAR", "CODERING", "VERBETERD"):
+        assert tag not in full, tag
