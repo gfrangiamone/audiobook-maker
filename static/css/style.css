@@ -49,12 +49,6 @@ body{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','N
 .hdr-icon{width:48px;height:48px;flex-shrink:0}
 .hdr .tagline{color:#A0896E;font-size:.78rem;flex-basis:100%;text-align:left;max-width:460px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 [data-theme="dark"] .hdr .tagline{color:#9a8a78}
-/* Link al catalogo gratuito sotto il sottotitolo: la riga dei pulsanti a destra
-   su telefono e' gia' piena. */
-.hdr .hdr-cat{display:inline-flex;align-items:center;gap:5px;margin-top:2px;font-size:.78rem;font-weight:650;color:#9a5f22;text-decoration:none;white-space:nowrap}
-.hdr .hdr-cat:hover{text-decoration:underline}
-.hdr .hdr-cat svg{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-[data-theme="dark"] .hdr .hdr-cat{color:#e0b07a}
 .hdr .hdr-inner{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;justify-content:flex-start;min-width:0;padding-right:130px}
 
 /* ═══ TOOLBAR: language + theme (in header) ═══ */

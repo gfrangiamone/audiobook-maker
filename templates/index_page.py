@@ -147,7 +147,7 @@ def build_html_template(
         for placeholder, value in replacements.items():
             html = html.replace(placeholder, value)
 
-    # Link al catalogo gratuito in testata e nel footer (il JS lo traduce al cambio lingua).
+    # Link al catalogo gratuito nel footer (il JS lo traduce al cambio lingua).
     html = html.replace("__NAV_CATALOG__", _brand.catalog_label(lang))
 
     # ── 3. Inject FAQPage + HowTo + SoftwareApplication JSON-LD into <head> placeholders ──

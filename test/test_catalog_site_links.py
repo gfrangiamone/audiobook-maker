@@ -1,6 +1,6 @@
-"""Link interni al catalogo degli audiolibri gratuiti (06/11/2026): in testata e
-nel footer della home, nel footer di guide, FAQ, contenuti, privacy e
-supporto, con l'etichetta nella lingua della pagina. Il catalogo cresce di
+"""Link interni al catalogo degli audiolibri gratuiti (06/11/2026): nel footer
+della home (in testata stonava, tolto su richiesta) e in quello di guide, FAQ,
+contenuti, privacy e supporto, con l'etichetta nella lingua della pagina. Il catalogo cresce di
 libri nuovi e sono i link interni a farne scansionare le pagine; le pagine
 del catalogo non linkano se stesse nel footer."""
 import page_brand
@@ -19,11 +19,10 @@ def test_etichetta_nella_lingua_della_pagina():
     assert page_brand.catalog_label("xx") == "Free audiobooks"         # lingua ignota: inglese
 
 
-def test_home_ha_il_link_in_testata_e_nel_footer():
+def test_home_ha_il_link_nel_footer():
     body = _client().get("/it/").get_data(as_text=True)
-    assert body.count(LINK) >= 2
-    assert '<a class="hdr-cat" href="/free-audiobooks/">' in body
-    assert '<span data-t="nav_catalog">Audiolibri gratis</span>' in body
+    assert '<a href="/free-audiobooks/" data-t="nav_catalog">Audiolibri gratis</a>' in body
+    assert 'class="hdr-cat"' not in body
     assert "__NAV_CATALOG__" not in body
 
 
