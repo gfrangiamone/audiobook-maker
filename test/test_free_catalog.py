@@ -272,6 +272,9 @@ def test_scaffale_dei_nuovi_solo_per_i_libri_degli_ultimi_tre_giorni(catalog, cl
     start = page.index('class="fc-shelf"')
     shelf = page[start:page.index("</section>", start)]
     assert "Nuovi audiolibri aggiunti al catalogo!" in page and "Disponibili ora" not in page
+    # Su telefono il titolo lungo lascia il posto a quello breve (CSS).
+    assert ('<h2><span class="fc-wide">Nuovi audiolibri aggiunti al catalogo!</span>'
+            '<span class="fc-narrow">Novità!</span></h2>') in shelf
     assert "storia-di-una-capinera" in shelf and "/vecchio/" not in shelf
     # Frecce al posto della barra: nascoste finche' il JS non sa se servono.
     assert re.search(r'<button[^>]*fc-shelf-prev[^>]*aria-label="Libri precedenti" hidden>', shelf)

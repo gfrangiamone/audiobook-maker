@@ -533,10 +533,15 @@ def _badge(text):
     return f'<span class="fc-badge">{_esc(text)}</span>' if text else ""
 
 
-def _shelf(items, t, title):
-    """Scaffale orizzontale di libri pubblicati [(lingua, libro)] ('' se non ce ne sono)."""
+def _shelf(items, t, title, short=None):
+    """Scaffale orizzontale di libri pubblicati [(lingua, libro)] ('' se non ce ne sono).
+    `short`, se c'e', e' il titolo che si legge su telefono al posto di `title`."""
     if not items:
         return ""
+    heading = _esc(title)
+    if short:
+        heading = (f'<span class="fc-wide">{heading}</span>'
+                   f'<span class="fc-narrow">{_esc(short)}</span>')
     cards = "\n".join(page_brand.render_page("free_catalog_shelf_item.html", {
         "__HREF__": f"{PATH}/{lang}/{_esc(b['slug'])}/", "__LANG__": _esc(lang),
         "__LANG_PILL__": _lang_pill(lang, t),
@@ -545,7 +550,7 @@ def _shelf(items, t, title):
         "__DURATION__": _esc(_book_hm(b)), "__DURATION_LABEL__": _esc(t["duration_label"]),
     }) for lang, b in items)
     return page_brand.render_page("free_catalog_shelf.html", {
-        "__TITLE__": _esc(title), "__ITEMS__": cards,
+        "__TITLE__": heading, "__ITEMS__": cards,
         "__PREV__": _esc(t["shelf_prev"]), "__NEXT__": _esc(t["shelf_next"]),
     })
 
@@ -594,7 +599,7 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path, path=None):
         "__CHIPS__": _chips([t["hub_count"].format(n=len(pubs), total=len(items)),
                              t["chip_m4b"], t["chip_free"]]),
         "__HERO_COVERS__": "".join(_cover_img(b, size=200, cls="fc-hero-cover", lazy=False) for b in art),
-        "__SHELF__": _shelf(fresh, t, t["shelf_new"]),
+        "__SHELF__": _shelf(fresh, t, t["shelf_new"], t["shelf_new_short"]),
         "__STEP1_T__": _esc(t["step1_title"]), "__STEP1__": _esc(t["step1"]),
         "__STEP2_T__": _esc(t["step2_title"]), "__STEP2__": _esc(t["step2"]),
         "__STEP3_T__": _esc(t["step3_title"]), "__STEP3__": _esc(t["step3"]),
