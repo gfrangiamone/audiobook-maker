@@ -28,6 +28,8 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-intro{font-size:1.03rem;color:var(--txd);margin:0}
 .fc-hero-art{display:none}
 .fc-hero-cover{width:150px;height:150px;border-radius:10px;box-shadow:var(--fc-shadow);object-fit:cover}
+/* Su telefono la testata resta col solo titolo: i libri arrivano subito sotto. */
+@media (max-width:639px){.fc-hero .fc-intro,.fc-hero .fc-chips{display:none}}
 
 /* scaffale orizzontale */
 .fc-shelf h2{font-size:1.35rem}
