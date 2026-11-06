@@ -366,6 +366,7 @@ Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`
 | `ABM_EDGE_ALERT_RETRY_PCT` | `20.0` (% di tentativi falliti, anche se poi recuperati dal retry; sopra soglia allerta "retries", arancione: precede i chunk in silenzio) | `edge_health.py` `_thresholds` | — |
 | `ABM_EDGE_ALERT_COOLDOWN_SEC` | `21600` (6 h; intervallo minimo fra due allerte. L'email riporta firme d'errore più frequenti, versione edge-tts installata e ultima su PyPI, letta nel thread dell'allerta con timeout 5 s) | `edge_health.py` `_thresholds` | — |
 | `CHAPTER_SILENCE_SEC` | `3` (secondi di silenzio tra capitoli) | `generation_engine.py` | 78 |
+| `M4B_MOVIE_TIMESCALE` | `-movie_timescale 1000` (in ogni montaggio M4B: la traccia dei capitoli prende una scala comune agli stream; con una copertina copiata da un M4B, 1/90000, e audio a 48 kHz diventava 1/720000 e un capitolo oltre ~49,7 min sforava i 32 bit, marcatori ammucchiati a durata zero. Dopo la scrittura `_m4b_chapters_ok` rilegge i capitoli e scrive nel log se non sono quelli attesi. 06/11/2026) | `audio_utils.py` | — |
 | `ABM_SSE_MAX_SEC` | `1800` (secondi; durata massima di uno stream SSE di avanzamento, `/api/progress`, `/api/optimize_progress`, `/api/translate_progress`; poi lo stream si chiude e il client lo riapre. Ogni stream occupa un thread del server: senza tetto un job fermo lo teneva per sempre. Minimo 30. S7, 2026-10-13) | `audiobook_app.py` `SSE_MAX_SEC` | — |
 | `ABM_TRANSFER_TOKEN_TTL_SEC` | `86400` (secondi di validita' di un transfer token dalla creazione: oltre, `/api/transfer/claim` risponde 410 `token_expired`. Il primo claim riuscito lega il token al cid (`claimed_by`): un cid diverso riceve 409 `already_claimed`; le copie admin non sono vincolate. Minimo 600. S11, 2026-10-13) | `routes_mobile.py` `TRANSFER_TOKEN_TTL_SEC` | — |
 | `_TTS_MIN_SENT_CHARS` | `80` (soglia minima di caratteri per frase inviata a edge-tts su voci Multilingual; e' anche la lunghezza sotto la quale `_hard_split_oversized` non chiude un pezzo di frase spezzata ne' lascia un moncone in fondo) | `tts_split.py` | 41 |
@@ -635,6 +636,14 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 |-----------|--------|------|------|
 | `CHAPTER_PAUSE` | `"\n\n...\n\n"` (pausa lunga tra capitoli) | `epub_to_tts.py` | 236 |
 | `SECTION_PAUSE` | `"\n\n"` (pausa media tra sezioni) | `epub_to_tts.py` | 237 |
+
+### 4.6 Struttura dell'indice (06/11/2026)
+
+| Parametro | Valore | File | Riga |
+|-----------|--------|------|------|
+| `PART_TITLE_SEP` | `" – "` (fra il nome della parte e un titolo di capitolo generico ripetuto, con indice annidato: "Parte seconda – Capitolo 1"; e' il titolo dei marcatori M4B e quello letto dal TTS. Con titoli gia' distinti il nome della parte, se la sua pagina e' scartata, si legge in testa al primo capitolo. `_name_parts`, `_build_toc_parents`) | `epub_to_tts.py` | — |
+| spine deduplicato | un documento ripetuto nello spine si legge una volta sola (ws-export di Wikisource ripete i capitoli di ogni parte: I Vicere' usciva di 49 h invece di 25) | `epub_to_tts.py` `parse_epub` | — |
+| indici di sezione | elenchi `ul`/`ol` di soli link ad altri documenti del libro (al piu' 40 caratteri di aggiunta per voce) tolti con l'intestazione "Indice" (`_is_link_list`, `_INLINE_INDEX_HEADERS`) | `epub_to_tts.py` `html_to_text` | — |
 
 ---
 
