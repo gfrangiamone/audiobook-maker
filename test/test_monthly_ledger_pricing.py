@@ -162,7 +162,7 @@ def test_new_leaves_import_only_leaves():
     # foglia finche' anche text_reflow lo e'.
     for mod, allowed in ((ml, {"contextlib", "threading", "datetime", "fileio"}),
                          (pc, {"env_utils", "text_reflow"}),
-                         (text_reflow, {"re", "unicodedata", "env_utils"})):
+                         (text_reflow, {"re", "unicodedata", "env_utils", "i18n"})):
         src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
         mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
                 for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}

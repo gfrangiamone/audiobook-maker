@@ -1,6 +1,6 @@
 """text_reflow.py — Ricomposizione di righe e paragrafi spezzati, comune a PDF, EPUB e TXT.
 
-Modulo foglia: dal progetto importa solo la foglia `env_utils`.
+Modulo foglia: dal progetto importa solo le foglie `env_utils` e `i18n`.
 
 Da F1c (2026-10-10) ospita anche le regole di testo pre-TTS che stavano in
 `tts_split` (parentesi, maiuscole urlate, pausa dopo heading, `prepare_tts_text`,
@@ -25,6 +25,7 @@ così versi, dialoghi e titoli dei libri ben composti non vengono toccati.
 import re
 import unicodedata
 
+import i18n
 from env_utils import env_int
 
 # Fine frase (o chiusura di citazione/parentesi) in coda alla riga.
@@ -228,20 +229,45 @@ ABBREVIATIONS = {
     "Sr.": "Senior",
 }
 
-# Regole compilate una volta, dalla piu' lunga alla piu' corta (cosi' "op. cit."
-# viene prima di "cit."), con confini di parola e senza distinzione di
-# maiuscole: stesso risultato del ciclo storico di clean_text_for_tts.
-_ABBR_RULES = [
-    (re.compile(r"(?<!\w)" + re.escape(abbr) + r"(?!\w)", re.IGNORECASE), expansion)
-    for abbr, expansion in sorted(ABBREVIATIONS.items(), key=lambda x: -len(x[0]))
-]
+# Abbreviazioni per lingua del libro. Quelle italiane valevano per ogni lingua,
+# senza distinzione di maiuscole: "heißt es." diventava "heißt esempio", lo
+# spagnolo "lo que es." "lo que esempio", il "Sr." portoghese "Senior" (181
+# volte in Os Maias), "Art." (Arthur) "articolo" in Dracula (catalogo,
+# 06/11/2026). Le altre lingue non espandono: i motori TTS leggono da se'
+# "Sr.", "Dr.", "z. B.". Senza lingua resta la regola storica, tutte insieme.
+_ENGLISH_ABBR = ("e.g.", "i.e.", "vs.", "Dr.", "Mr.", "Mrs.", "St.", "Jr.", "Sr.")
+ABBREVIATIONS_BY_LANG = {
+    "it": ABBREVIATIONS,
+    "en": {**{k: ABBREVIATIONS[k] for k in _ENGLISH_ABBR}, "etc.": "et cetera"},
+}
+# Codici a tre lettere dei metadati EPUB (ISO 639-2) per le stesse lingue.
+ABBREVIATIONS_BY_LANG["ita"] = ABBREVIATIONS_BY_LANG["it"]
+ABBREVIATIONS_BY_LANG["eng"] = ABBREVIATIONS_BY_LANG["en"]
 
 
-def expand_abbreviations(text):
-    """Espande le abbreviazioni di ABBREVIATIONS perche' il TTS le legga per
-    esteso ("ecc." -> "eccetera"). Usata da EPUB/PDF (clean_text_for_tts) e,
-    da F1b, anche da TXT e ABM (plain_parsers)."""
-    for rule, expansion in _ABBR_RULES:
+def _abbr_rules(table):
+    """Regole compilate dalla piu' lunga alla piu' corta (cosi' "op. cit."
+    viene prima di "cit."), con confini di parola e senza distinzione di
+    maiuscole: stesso risultato del ciclo storico di clean_text_for_tts."""
+    return [
+        (re.compile(r"(?<!\w)" + re.escape(abbr) + r"(?!\w)", re.IGNORECASE), expansion)
+        for abbr, expansion in sorted(table.items(), key=lambda x: -len(x[0]))
+    ]
+
+
+_ABBR_RULES = _abbr_rules(ABBREVIATIONS)
+_ABBR_RULES_BY_LANG = {code: _abbr_rules(table) for code, table in ABBREVIATIONS_BY_LANG.items()}
+
+
+def expand_abbreviations(text, lang=None):
+    """Espande le abbreviazioni della lingua del libro perche' il TTS le legga
+    per esteso ("ecc." -> "eccetera"). `lang` e' il codice dei metadati ("es",
+    "pt-BR", "ita"); vuoto = tutte le abbreviazioni, come prima. Usata da
+    EPUB/PDF (clean_text_for_tts) e, da F1b, anche da TXT e ABM
+    (plain_parsers)."""
+    code = i18n.norm_lang(str(lang or "").replace("_", "-"))
+    rules = _ABBR_RULES_BY_LANG.get(code, ()) if code else _ABBR_RULES
+    for rule, expansion in rules:
         text = rule.sub(expansion, text)
     return text
 

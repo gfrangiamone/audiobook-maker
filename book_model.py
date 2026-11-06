@@ -10,7 +10,8 @@ PDF) divergenti.
 - `Chapter`, `BookInfo` (+ `recompute_totals()`, `BookInfo.from_text()` per
   un testo unico); `WORDS_PER_MINUTE` = 150 e' l'unica stima di durata.
 - `synthetic_section_title(n, language)`: placeholder localizzato per una
-  sezione senza titolo (il `Chapter` va marcato `synthetic_title=True`).
+  sezione senza titolo (il `Chapter` va marcato `synthetic_title=True`);
+  `lead_section_title(language)` per il testo prima del primo capitolo.
 - Liste di apparato: `NON_CONTENT_FILENAMES_EXACT`/`_SUBSTR` (stem del file
   nello spine EPUB), `NON_CONTENT_TITLE_PHRASES` (match per parola intera,
   ora l'unione delle liste EPUB e PDF) e `NON_CONTENT_TITLE_EXACT` (solo
@@ -82,11 +83,31 @@ _SECTION_LABELS = {
 }
 
 
+def _book_lang_code(language):
+    return (language or "").strip().lower().replace("_", "-").split("-")[0]
+
+
 def synthetic_section_title(n, language=""):
     """Placeholder localizzato per una sezione senza titolo ("Section N")."""
-    code = (language or "").strip().lower().replace("_", "-").split("-")[0]
-    label = _SECTION_LABELS.get(code, "Section")
+    label = _SECTION_LABELS.get(_book_lang_code(language), "Section")
     return f"{label} {n}"
+
+
+# Titolo del testo che precede il primo titolo di capitolo. Era "Premessa" in
+# ogni lingua: un capitolo "Premessa" in Os Maias e in Der Tod in Venedig
+# (catalogo, 06/11/2026). Senza lingua resta "Premessa", come prima; lingue non
+# mappate "Preface".
+LEAD_SECTION_TITLE_IT = "Premessa"
+_LEAD_LABELS = {
+    "it": LEAD_SECTION_TITLE_IT, "en": "Preface", "fr": "Avant-propos", "es": "Preámbulo",
+    "de": "Vorbemerkung", "pt": "Preâmbulo", "nl": "Voorwoord", "ru": "Предисловие",
+}
+
+
+def lead_section_title(language=""):
+    """Titolo localizzato del testo prima del primo capitolo ("Premessa")."""
+    code = _book_lang_code(language)
+    return _LEAD_LABELS.get(code, "Preface") if code else LEAD_SECTION_TITLE_IT
 
 
 # ---------------------------------------------------------------------------

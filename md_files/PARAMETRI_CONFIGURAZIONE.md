@@ -629,7 +629,10 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 |-----------|--------|------|------|
 | `LINE_SKIP_PATTERNS` | Lista di 5 regex per righe da saltare (numeri pagina, separatori...) | `epub_to_tts.py` | 127 |
 | `NOISE_PATTERNS` | Lista di 18 coppie (regex, sostituzione) per pulizia inline | `epub_to_tts.py` | 138 |
-| `ABBREVIATIONS` | Dict di 50+ abbreviazioni -> espansione per TTS naturale | `epub_to_tts.py` | 180 |
+| `ABBREVIATIONS` | Dict di 50+ abbreviazioni -> espansione per TTS naturale (italiane e qualche inglese) | `text_reflow.py` | — |
+| `ABBREVIATIONS_BY_LANG` | abbreviazioni per lingua del libro (metadati EPUB/PDF/ABM): `it`/`ita` = tutte (`ABBREVIATIONS`), `en`/`eng` = solo le inglesi + "etc." -> "et cetera", altre lingue nessuna espansione, lingua assente = tutte (regola storica). Prima valevano per ogni lingua: "es." -> "esempio" in tedesco e spagnolo, "Sr." -> "Senior" in portoghese | `text_reflow.py` `expand_abbreviations(text, lang)` | — |
+| `_LEAD_LABELS` | titolo del testo prima del primo capitolo nella lingua del libro (`it` "Premessa", `en` "Preface", `de` "Vorbemerkung", `es` "Preámbulo", `pt` "Preâmbulo", `nl` "Voorwoord", …; senza lingua "Premessa", lingue non mappate "Preface"). `book_model.lead_section_title`, applicato da `_localize_lead_titles` a fine `parse_epub` | `book_model.py` | — |
+| `AUTHOR_TITLE_MIN_CHARS` | `1000` (capitolo intitolato col nome dell'autore, frontespizio di Gutenberg: da tanto testo in su prende il titolo del libro, `_retitle_author_chapters`) | `epub_to_tts.py` | — |
 
 ### 4.5 Marker di pausa TTS
 

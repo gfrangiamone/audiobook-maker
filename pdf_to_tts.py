@@ -1086,7 +1086,7 @@ def _join_sections(*parts: str) -> str:
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
-def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
+def _build_chapters_from_raw(raw_chapters: list, pdf_path: str, lang: str = "") -> list:
     """Pulisce e filtra i capitoli grezzi, restituendo una lista di Chapter.
 
     Applica pulizia PDF, pulizia TTS e filtra le sezioni non-contenuto, con
@@ -1118,7 +1118,7 @@ def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
         cleaned = _clean_pdf_text(raw_text)
 
         # Pulizia generica TTS (condivisa con epub_to_tts)
-        cleaned = clean_text_for_tts(cleaned)
+        cleaned = clean_text_for_tts(cleaned, lang=lang)
 
         toc_like = _looks_like_toc_text(raw_text)
         dropped_toc = toc_like and (after_toc or not chapters)
@@ -1269,7 +1269,7 @@ def parse_pdf(pdf_path: str) -> BookInfo:
                       f"(soglia max 5%): ignorata")
                 continue
 
-        chapters = _build_chapters_from_raw(raw_chapters, pdf_path)
+        chapters = _build_chapters_from_raw(raw_chapters, pdf_path, info.language)
         if chapters:
             print(f"[pdf] Capitoli da {strategy_name}: {len(chapters)}")
             info.chapters = chapters
@@ -1281,7 +1281,7 @@ def parse_pdf(pdf_path: str) -> BookInfo:
     if not info.chapters and full_text.strip():
         print("[pdf] Recovery: tutti i capitoli filtrati, forza inclusione testo completo")
         cleaned = _clean_pdf_text(full_text)
-        cleaned = clean_text_for_tts(cleaned)
+        cleaned = clean_text_for_tts(cleaned, lang=info.language)
         if cleaned.strip() and len(cleaned.split()) >= 30:
             info.chapters.append(Chapter(
                 index=1,

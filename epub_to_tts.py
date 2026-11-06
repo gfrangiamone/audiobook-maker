@@ -30,7 +30,8 @@ from book_model import (BookInfo, Chapter, WORDS_PER_MINUTE, NON_CONTENT_FILENAM
                         NON_CONTENT_FILENAMES_SUBSTR, NON_CONTENT_TITLE_PHRASES, NON_CONTENT_TITLE_EXACT,
                         title_is_non_content as _title_is_non_content,
                         is_backnote_toc_title as _is_backnote_toc_title,
-                        synthetic_section_title as _synthetic_section_title, print_book_info)
+                        synthetic_section_title as _synthetic_section_title, print_book_info,
+                        LEAD_SECTION_TITLE_IT, lead_section_title)
 
 try:
     import ebooklib
@@ -415,8 +416,9 @@ def html_to_text(html_content: str) -> str:
 # PULIZIA E OTTIMIZZAZIONE TESTO PER TTS
 # ═══════════════════════════════════════════════════════════════════
 
-def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
-    """Pulisce e ottimizza il testo per la sintesi vocale."""
+def clean_text_for_tts(text: str, expand_abbr: bool = True, lang: str = "") -> str:
+    """Pulisce e ottimizza il testo per la sintesi vocale. `lang`: lingua del
+    libro dai metadati, per le abbreviazioni (text_reflow.expand_abbreviations)."""
 
     # 1. Normalizza Unicode (NFC)
     text = unicodedata.normalize("NFC", text)
@@ -518,9 +520,10 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
         cleaned_lines.append(line)
     text = "\n".join(cleaned_lines)
 
-    # 4. Espandi abbreviazioni (regola unica in text_reflow, condivisa con TXT/ABM)
+    # 4. Espandi abbreviazioni della lingua del libro (regola unica in
+    # text_reflow, condivisa con TXT/ABM)
     if expand_abbr:
-        text = text_reflow.expand_abbreviations(text)
+        text = text_reflow.expand_abbreviations(text, lang)
 
     # 5. Gestione numeri romani per capitoli: normalizza la spaziatura fra
     # il marcatore e il numerale, lasciandoli nell'ordine di lettura.
@@ -1056,7 +1059,7 @@ def _resegment_chapters_by_inline_index(chapters: list) -> list:
             continue
         result.append(Chapter(
             index=len(result) + 1,
-            title=(title or "").strip() or "Premessa",
+            title=(title or "").strip() or LEAD_SECTION_TITLE_IT,
             text=body,
             source_file=chapters[0].source_file if chapters else "",
         ))
@@ -1129,7 +1132,7 @@ def _resegment_chapters_by_markers(chapters: list) -> list:
         # coerente con la fallback di _split_html_by_headings.
         result.append(Chapter(
             index=idx,
-            title=(title or "").strip() or "Premessa",
+            title=(title or "").strip() or LEAD_SECTION_TITLE_IT,
             text=text,
             source_file=chapters[0].source_file if chapters else "",
         ))
@@ -1341,7 +1344,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             anchored = _split_html_by_anchors(html_content, toc_anchors.get(file_name) or [])
             if anchored is not None:
                 lead, sections = anchored
-                lead = _take_toc_lead(lead, info.chapters, continues_toc)
+                lead = _take_toc_lead(lead, info.chapters, continues_toc, info.language)
                 if lead:
                     sections[0] = (sections[0][0], lead + sections[0][1])
             else:
@@ -1388,7 +1391,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                 # File multi-capitolo: processa ogni sezione
                 for section_title, section_html in merged_sections:
                     raw_text = html_to_text(section_html)
-                    clean = clean_text_for_tts(raw_text)
+                    clean = clean_text_for_tts(raw_text, lang=info.language)
 
                     # Per sezioni da TOC: usa solo il filtro per titolo di
                     # is_content_chapter, non il filtro per lunghezza.
@@ -1429,7 +1432,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         if is_toc_anchored and file_name not in toc_fragments and continues_toc:
             anchored = _split_html_by_anchors(html_content, toc_anchors.get(file_name) or [])
             if anchored is not None and anchored[0].strip() and not _take_toc_lead(
-                    anchored[0], info.chapters, continues_toc):
+                    anchored[0], info.chapters, continues_toc, info.language):
                 html_content = anchored[1][0][1]
 
         # ── Riconciliazione spine↔TOC: file ORFANO (nessuna voce TOC) ──
@@ -1442,7 +1445,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         # front-matter e restano entry separate (ramo single-chapter sotto).
         if not is_toc_anchored and seen_toc_anchor:
             raw_text = html_to_text(html_content)
-            clean = clean_text_for_tts(raw_text).strip()
+            clean = clean_text_for_tts(raw_text, lang=info.language).strip()
             if clean:
                 if pending_toc_title is not None:
                     # Il file TOC precedente aveva titolo ma corpo vuoto
@@ -1486,7 +1489,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
         # Estrai e pulisci testo
         raw_text = html_to_text(html_content)
-        clean = clean_text_for_tts(raw_text)
+        clean = clean_text_for_tts(raw_text, lang=info.language)
 
         # Filtra capitoli vuoti o non-contenuto (un capitolo breve col suo
         # numero, dopo altri capitoli, resta: is_short_numbered_chapter)
@@ -1501,7 +1504,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             if salvaged_sections:
                 for section_title, section_html in salvaged_sections:
                     sec_raw = html_to_text(section_html)
-                    sec_clean = clean_text_for_tts(sec_raw)
+                    sec_clean = clean_text_for_tts(sec_raw, lang=info.language)
 
                     if not is_content_chapter(sec_clean, section_title, lenient=True):
                         continue
@@ -1583,10 +1586,43 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
     # ── Parti del libro (indice annidato: "Parte seconda" > "Capitolo 1") ──
     _name_parts(info.chapters, _build_toc_parents(book))
+    _retitle_author_chapters(info)
+    _localize_lead_titles(info)
 
     info.recompute_totals()
 
     return info
+
+
+# Testo minimo di un capitolo intitolato col nome dell'autore perche' sia il
+# corpo del libro e non il frontespizio ("by Mary Shelley").
+AUTHOR_TITLE_MIN_CHARS = 1000
+
+
+def _retitle_author_chapters(info) -> None:
+    """Un capitolo intitolato col nome dell'autore e' l'intestazione del
+    frontespizio (Gutenberg: <h1> col titolo, <h2> con l'autore, poi il
+    testo): se porta il testo del libro prende il titolo del libro. Der
+    Schimmelreiter usciva con un solo capitolo "Theodor Storm", letto e
+    segnato cosi' nell'M4B (catalogo, 06/11/2026)."""
+    words = lambda s: set(re.findall(r"\w+", (s or "").casefold()))
+    author = words(info.author)
+    if len(author) < 2 or not (info.title or "").strip():
+        return
+    for ch in info.chapters:
+        if len(ch.text) >= AUTHOR_TITLE_MIN_CHARS and words(ch.title) == author:
+            ch.title = info.title.strip()
+
+
+def _localize_lead_titles(info) -> None:
+    """Le divisioni qui sopra, che non conoscono la lingua, intitolano
+    LEAD_SECTION_TITLE_IT il testo prima del primo capitolo: lo si porta nella
+    lingua del libro (book_model.lead_section_title)."""
+    label = lead_section_title(info.language)
+    if label != LEAD_SECTION_TITLE_IT:
+        for ch in info.chapters:
+            if ch.title == LEAD_SECTION_TITLE_IT:
+                ch.title = label
 
 
 # Fra il nome della parte e il titolo del capitolo, nel titolo che il TTS legge.
@@ -1850,13 +1886,13 @@ def _append_chapter_text(chapter, text: str) -> None:
     chapter.char_count = len(chapter.text)
 
 
-def _take_toc_lead(lead_html: str, chapters: list, continues_toc: bool) -> str:
+def _take_toc_lead(lead_html: str, chapters: list, continues_toc: bool, lang: str = "") -> str:
     """Testo di un file prima della sua prima ancora TOC. Se continua il
     capitolo precedente (siamo oltre la prima voce del TOC e ne ha almeno
     TOC_LEAD_MIN_CHARS) lo accoda li' e ritorna ""; altrimenti ritorna l'html
     da tenere in testa al capitolo dell'ancora."""
     if continues_toc and chapters and lead_html.strip():
-        lead = clean_text_for_tts(html_to_text(lead_html)).strip()
+        lead = clean_text_for_tts(html_to_text(lead_html), lang=lang).strip()
         if len(lead) >= TOC_LEAD_MIN_CHARS:
             _append_chapter_text(chapters[-1], lead)
             return ""
@@ -2208,7 +2244,7 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
             soup_test = BeautifulSoup(html_text, "lxml")
             if len(soup_test.get_text(strip=True)) < 100:
                 continue
-            sections.append(("Premessa", f"<body>{html_text}</body>"))
+            sections.append((LEAD_SECTION_TITLE_IT, f"<body>{html_text}</body>"))
         else:
             sections.append((s["title"], f"<body>{html_text}</body>"))
 
@@ -2376,7 +2412,7 @@ def _split_html_by_headings_auto(html_content: str) -> list[tuple[str, str]]:
     if pre_parts:
         pre_html = "".join(pre_parts)
         if pre_html.strip():
-            sections.insert(0, ("Premessa", f"<body>{pre_html}</body>"))
+            sections.insert(0, (LEAD_SECTION_TITLE_IT, f"<body>{pre_html}</body>"))
 
     return sections
 

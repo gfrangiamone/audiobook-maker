@@ -158,7 +158,7 @@ def parse_abm(file_path):
                 continue
 
             chapters.append(Chapter(index=ch_index, title=ch_title,
-                                    text=text_reflow.expand_abbreviations(ch_text)))
+                                    text=text_reflow.expand_abbreviations(ch_text, language)))
 
         if not chapters:
             raise ValueError("Invalid .abm file: no readable chapter content found")
