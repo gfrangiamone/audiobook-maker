@@ -11,6 +11,7 @@ Production-ready prompts for optimizing text for Text-to-Speech (TTS) synthesis.
 | Spanish (ES/LATAM) | `prompt_tts_es.md` | |
 | French (FR/CA) | `prompt_tts_fr.md` | |
 | German (DE/AT/CH) | `prompt_tts_de.md` | |
+| Dutch (NL/BE) | `prompt_tts_nl.md` | Modelled on the German prompt (separable vs. inseparable verbs, V2 word order); Dutch stress marks (`één`, `vóór`), `Mr.` = *meester*, pre-1947 spelling left untouched |
 | Chinese (Mandarin, Simplified or Traditional) | `prompt_tts_zh.md` | Polyphone-based, not accent-based |
 | Hindi (हिन्दी, Devanagari) | `prompt_tts_hi.md` | Devanagari-aware; Hinglish handling included |
 | Russian (Русский, Cyrillic) | `prompt_tts_ru.md` | Stress marks for homographs; ё-restoration |
@@ -59,6 +60,8 @@ When changing a rule:
 5. Re-run the regression test suite (a fixed input text per language with a known-good output) before deploying.
 
 ## Version
+
+v1.5 — **Dutch.** `prompt_tts_nl.md`, derived from `prompt_tts_de.md`: same structure and enforcement, with Dutch-specific rules — Roman numerals (`Willem de Derde`), abbreviations (`bijv.`, `d.w.z.`, `Mr.` → `meester`), stress marks for homographs (`één`/`een`, `vóór`/`voor`, `vóórkomen`/`voorkómen`), comma between two finite verbs, trema restoration (`ideeen` → `ideeën`), and pre-1947 spelling (`mensch`, `zoo`) explicitly left as is. Before this, Dutch books went through `prompt_tts_generic.md`.
 
 v1.4 — **Diacritic restoration.** New rule covering accents the source file has *lost*, as opposed to accents added to disambiguate a heteronym (the existing Section B). Motivated by listening tests where a TTS engine read `perche` as *perche* and `restò` written `resto` as *resto*: the engine reads what is written, so a stripped accent is a mispronunciation with certainty, not a risk. Three damage patterns are covered — apostrophe surrogate (`perche'`), bare vowel (`manana`, `deja`), and digraph surrogate (German `ueber`) — each with the counter-examples that must not be touched (`un po'`, Swiss German `Strasse`, English `hotel`, `Baedeker`). Added as `A16` in the master, rule `16` in `it`/`es`/`fr`/`pt`/`de`/`en`, and `B5` (HIGH confidence only) in `generic`. `ru` needed nothing: its `ё`-restoration rule is the Cyrillic form of the same problem and already frames itself as an exception to the conservatism principle. `zh` and `hi` are not applicable.
 
