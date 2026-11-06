@@ -7036,7 +7036,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # per le voci PREMIUM, gia' PAGATI: rigenerarli e' tempo e denaro buttati.
         # Il riuso avviene solo se l'impronta del run (voce, rate, stile, accento,
         # flag parentesi, hash del testo di TUTTI i blocchi) coincide con quella
-        # registrata nel manifest, quindi mai fra voci o piani diversi.
+        # registrata nel manifest, quindi mai fra voci o piani diversi. Se cambia
+        # solo il testo (deploy che tocca la preparazione), `align_to_plan`
+        # sposta prima sui nuovi indici i chunk il cui testo e' rimasto uguale.
         _chunk_ext = "pcm" if use_pcm else "mp3"
         _reuse_fp = chunk_reuse.fingerprint(
             voice=voice, rate=rate, engine=engine, plan=plan,
@@ -7046,6 +7048,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             accent=gemini_accent_directive,
             **_paren)
         try:
+            _moved, _dropped = chunk_reuse.align_to_plan(work_dir, _reuse_fp, _chunk_ext)
+            if _moved or _dropped:
+                print(f"[{job_id}] Chunk reuse: piano diverso dal tentativo precedente, "
+                      f"{_moved} chunk ricollocati per testo, {_dropped} file scartati")
             _reusable_chunks = chunk_reuse.reusable_indices(
                 work_dir, _reuse_fp, total_chunks, _chunk_ext, plan=plan)
             # Ramo multi-file: i capitoli gia' codificati in output_N/ non hanno
@@ -7056,7 +7062,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _reusable_chunks |= {i for i, b in enumerate(plan)
                                  if b["chapter_index"] in _reusable_chapters}
         except Exception as _reuse_err:
-            print(f"[{job_id}] Chunk reuse scan error (non-fatal): {_reuse_err}")
+            # Nessun file su disco e' affidabile: col manifest nuovo un secondo
+            # restart li riuserebbe come audio di questo piano.
+            print(f"[{job_id}] Chunk reuse scan error (non-fatal): {_reuse_err}; "
+                  f"{chunk_reuse.wipe_chunks(work_dir)} chunk cancellati")
             _reusable_chunks = set()
             _reusable_chapters = {}
         chunk_reuse.write_manifest(work_dir, _reuse_fp)

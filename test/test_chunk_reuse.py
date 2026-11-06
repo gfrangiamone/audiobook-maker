@@ -1,7 +1,11 @@
 """Riuso dei chunk gia' sintetizzati al recovery. Vincoli da difendere:
 - si riusa solo con impronta identica (mai fra voci/piani diversi);
 - l'ultimo chunk scritto non si riusa mai (poteva essere troncato dal crash);
-- Speechify e' escluso (il sample rate reale arriva dalla pre-sintesi)."""
+- Speechify e' escluso (il sample rate reale arriva dalla pre-sintesi);
+- a testo cambiato e voce uguale si riusa per contenuto (`align_to_plan`), e
+  nessun file del piano vecchio resta a un indice del piano nuovo."""
+import os
+
 import chunk_reuse
 
 
@@ -274,3 +278,184 @@ def test_reusable_chapters_ignores_garbage(tmp_path):
         '{"x": 1, "2": {"dir": "output_1", "file": "../002_Cap 2.mp3", "sha256": ""}}',
         encoding="utf-8")
     assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {}
+
+
+# --- Riuso per contenuto al cambio del testo (align_to_plan) -----------------
+# 06/11/2026: il deploy delle 15:12 ha cambiato il testo preparato di pochi
+# caratteri e 18 job sono ripartiti da zero (uno a 551 chunk su 1262).
+
+def _plan(*texts):
+    return [{"text": t, "chars": len(t)} for t in texts]
+
+
+def _fp_edge(plan, **kw):
+    return _fp(plan=plan, engine="edge", voice="en-US-AndrewNeural", **kw)
+
+
+def _write_texts(d, plan, ext="mp3"):
+    """File di chunk il cui contenuto e' il testo: si vede dove e' finito."""
+    for i, b in enumerate(plan):
+        (d / f"chunk_{i:06d}.{ext}").write_bytes(b["text"].encode())
+
+
+def _contents(d, ext="mp3"):
+    return {int(p.name[6:12]): p.read_bytes().decode()
+            for p in d.glob(f"chunk_*.{ext}")}
+
+
+def test_manifest_without_chunk_sha_still_matches(tmp_path):
+    # I manifest scritti prima del riuso per contenuto non hanno chunk_sha:
+    # stesso piano = stesso run, riuso e falliti intatti.
+    _write_chunks(tmp_path, 5)
+    fp = _fp()
+    old = {k: v for k, v in fp.items() if k != "chunk_sha"}
+    chunk_reuse.write_manifest(tmp_path, old)
+    chunk_reuse.mark_failed(tmp_path, 1)
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 6, "pcm") == {0, 2, 3}
+    chunk_reuse.write_manifest(tmp_path, fp)
+    assert chunk_reuse.read_failed(tmp_path) == {1}
+    assert chunk_reuse.read_manifest(tmp_path) == fp
+
+
+def test_realign_moves_chunks_by_text(tmp_path):
+    old = _plan("a0", "a1", "a2", "b0", "b1")
+    _write_texts(tmp_path, old)
+    chunk_reuse.write_manifest(tmp_path, _fp_edge(old))
+    chunk_reuse.mark_failed(tmp_path, 2)  # silenzio di ripiego: non e' audio
+    # a1 riscritto, un chunk nuovo inserito prima di b0 (indici spostati).
+    new = _plan("a0", "A1", "a2", "nuovo", "b0", "b1")
+    fp = _fp_edge(new)
+    moved, dropped = chunk_reuse.align_to_plan(tmp_path, fp, "mp3")
+    # Sorgenti: a0 e b0. a2 e' fallito, b1 e' l'ultimo scritto, a1 e' sparito.
+    assert (moved, dropped) == (2, 3)
+    assert _contents(tmp_path) == {0: "a0", 4: "b0"}
+    assert chunk_reuse.read_manifest(tmp_path) == fp
+    assert chunk_reuse.read_failed(tmp_path) == {1, 2, 3, 5}
+    # L'indice massimo presente resta escluso come sempre.
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 6, "mp3") == {0}
+    chunk_reuse.write_manifest(tmp_path, fp)  # il motore lo riscrive: falliti intatti
+    assert chunk_reuse.read_failed(tmp_path) == {1, 2, 3, 5}
+
+
+def test_realign_copies_repeated_text(tmp_path):
+    old = _plan("* * *", "a", "b", "c")
+    _write_texts(tmp_path, old)
+    chunk_reuse.write_manifest(tmp_path, _fp_edge(old))
+    (tmp_path / "chunk_000000.mp3.realign").write_bytes(b"residuo")
+    new = _plan("* * *", "a", "* * *", "b", "* * *", "c")
+    # "c" era l'ultimo scritto: non e' una sorgente e si cancella, come il
+    # temporaneo rimasto da chissa' dove.
+    assert chunk_reuse.align_to_plan(tmp_path, _fp_edge(new), "mp3") == (5, 2)
+    assert _contents(tmp_path) == {0: "* * *", 1: "a", 2: "* * *", 3: "b", 4: "* * *"}
+    assert not list(tmp_path.glob("*.realign"))
+
+
+def test_same_plan_leaves_files_alone(tmp_path):
+    plan = _plan("a", "b", "c")
+    _write_texts(tmp_path, plan)
+    fp = _fp_edge(plan)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    assert chunk_reuse.align_to_plan(tmp_path, fp, "mp3") == (0, 0)
+    assert _contents(tmp_path) == {0: "a", 1: "b", 2: "c"}
+
+
+def test_voice_change_wipes_old_chunks(tmp_path):
+    # Senza cancellazione, col manifest nuovo un secondo restart prenderebbe
+    # i file della voce vecchia per audio della nuova.
+    plan = _plan("a", "b", "c")
+    _write_texts(tmp_path, plan)
+    chunk_reuse.write_manifest(tmp_path, _fp_edge(plan))
+    other = _fp(plan=plan, engine="edge", voice="en-US-AvaNeural")
+    assert chunk_reuse.align_to_plan(tmp_path, other, "mp3") == (0, 3)
+    assert _contents(tmp_path) == {}
+
+
+def test_missing_manifest_wipes_chunks(tmp_path):
+    plan = _plan("a", "b")
+    _write_texts(tmp_path, plan)
+    assert chunk_reuse.align_to_plan(tmp_path, _fp_edge(plan), "mp3") == (0, 2)
+    assert _contents(tmp_path) == {}
+
+
+def test_voxcpm_text_change_wipes_instead_of_realigning(tmp_path):
+    (tmp_path / "chunk_000000.pcm").write_bytes(b"\x00" * 200)
+    (tmp_path / "chunk_000001.pcm").write_bytes(b"")
+    chunk_reuse.write_manifest(tmp_path, _fp_voxcpm())
+    changed = [dict(b) for b in VOXCPM_PLAN]
+    changed[5]["text"] = "z"
+    assert chunk_reuse.align_to_plan(tmp_path, _fp_voxcpm(plan=changed), "pcm") == (0, 2)
+
+
+def test_interrupted_realign_wipes_everything(tmp_path):
+    plan = _plan("a", "b", "c")
+    _write_texts(tmp_path, plan)
+    (tmp_path / "chunk_000007.mp3.realign").write_bytes(b"x")
+    chunk_reuse.write_json_safe(chunk_reuse.manifest_path(tmp_path),
+                                {chunk_reuse._REALIGN_MARK: True})
+    fp = _fp_edge(plan)
+    assert chunk_reuse.align_to_plan(tmp_path, fp, "mp3") == (0, 4)
+    assert not list(tmp_path.glob("chunk_*"))
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 3, "mp3") == set()
+
+
+def test_realign_error_midway_wipes_everything(tmp_path, monkeypatch):
+    old = _plan("a", "b", "c", "d")
+    _write_texts(tmp_path, old)
+    chunk_reuse.write_manifest(tmp_path, _fp_edge(old))
+    real_rename = os.rename
+    n = []
+
+    def rename_then_fail(src, dst):
+        n.append(src)
+        if len(n) == 3:
+            raise OSError("disco pieno")
+        return real_rename(src, dst)
+    monkeypatch.setattr(chunk_reuse.os, "rename", rename_then_fail)
+    fp = _fp_edge(_plan("x", "a", "b", "c"))
+    assert chunk_reuse.align_to_plan(tmp_path, fp, "mp3")[0] == 0
+    assert not list(tmp_path.glob("chunk_*"))
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 4, "mp3") == set()
+
+
+def _age(path, seconds):
+    t = os.path.getmtime(path) - seconds
+    os.utime(path, (t, t))
+
+
+def test_legacy_manifest_drops_stale_chunks_of_previous_plan(tmp_path):
+    # Stato dei job colpiti il 06/11 alle 15:12: piano cambiato col codice di
+    # allora, manifest nuovo senza chunk_sha, run ripartito da 0 e chunk del
+    # piano vecchio ancora agli indici successivi.
+    plan = _plan("a", "b", "c", "d", "e", "f")
+    fp = _fp_edge(plan)
+    _write_texts(tmp_path, _plan("A", "B", "vecchio", "vecchio", "vecchio", "vecchio"))
+    for p in tmp_path.glob("chunk_*"):
+        _age(p, 600)
+    chunk_reuse.write_manifest(tmp_path, {k: v for k, v in fp.items() if k != "chunk_sha"})
+    _age(chunk_reuse.manifest_path(tmp_path), 300)
+    _write_texts(tmp_path, plan[:2])  # il run corrente ha riscritto 0 e 1
+    assert chunk_reuse.align_to_plan(tmp_path, fp, "mp3") == (0, 4)
+    assert _contents(tmp_path) == {0: "a", 1: "b"}
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 6, "mp3") == {0}
+
+
+def test_legacy_manifest_keeps_chunks_reused_before_the_current_run(tmp_path):
+    # Restart a piano invariato: i chunk riusati sono piu' vecchi del manifest
+    # ma stanno tutti prima del primo scritto dal run corrente.
+    plan = _plan("a", "b", "c", "d", "e")
+    fp = _fp_edge(plan)
+    _write_texts(tmp_path, plan[:3])
+    for p in tmp_path.glob("chunk_*"):
+        _age(p, 600)
+    chunk_reuse.write_manifest(tmp_path, {k: v for k, v in fp.items() if k != "chunk_sha"})
+    _age(chunk_reuse.manifest_path(tmp_path), 300)
+    (tmp_path / "chunk_000003.mp3").write_bytes(b"d")
+    (tmp_path / "chunk_000004.mp3").write_bytes(b"e")
+    assert chunk_reuse.align_to_plan(tmp_path, fp, "mp3") == (0, 0)
+    assert chunk_reuse.reusable_indices(tmp_path, fp, 5, "mp3") == {0, 1, 2, 3}
+
+
+def test_chunk_sha_matches_plan_text():
+    fp = _fp_edge(_plan("uno", "due"))
+    assert fp["chunk_sha"] == [chunk_reuse.chunk_sha("uno"), chunk_reuse.chunk_sha("due")]
+    assert len(fp["chunk_sha"][0]) == 16 and fp["chunk_sha"][0] != fp["chunk_sha"][1]
