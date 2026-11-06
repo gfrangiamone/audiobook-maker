@@ -1594,20 +1594,17 @@ def _build_toc_parents(book: epub.EpubBook) -> dict[str, str]:
     parents = {}
 
     def walk(items, parent):
-        for item in items:
-            if isinstance(item, tuple):
+        for item in items or []:
+            if isinstance(item, tuple) and len(item) == 2:
                 section, children = item
                 href = (getattr(section, "href", "") or "").split("#")[0]
                 if parent and href:
                     parents.setdefault(href, parent)
                 walk(children, str(getattr(section, "title", "") or "").strip() or parent)
-            elif parent and getattr(item, "href", None):
+            elif parent and isinstance(getattr(item, "href", None), str):
                 parents.setdefault(item.href.split("#")[0], parent)
 
-    try:
-        walk(book.toc, "")
-    except Exception:
-        pass
+    walk(book.toc, "")
     return parents
 
 
