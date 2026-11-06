@@ -1206,10 +1206,14 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     info.date = _get_metadata(book, "date") or ""
 
     # Strategia: usa la spine (ordine di lettura) per ottenere i documenti nell'ordine giusto
-    spine_items = []
+    # Lo stesso documento si legge una volta sola: ws-export (Wikisource) ripete
+    # nello spine i capitoli di ogni parte, e il libro usciva letto due volte
+    # (I Vicere', 06/11/2026).
+    spine_items, spine_seen = [], set()
     for item_id, linear in book.spine:
         item = book.get_item_with_id(item_id)
-        if item and item.get_type() == ebooklib.ITEM_DOCUMENT:
+        if item and item.get_type() == ebooklib.ITEM_DOCUMENT and item_id not in spine_seen:
+            spine_seen.add(item_id)
             spine_items.append(item)
 
     # Fallback: se la spine è vuota, prendi tutti i documenti
