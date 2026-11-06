@@ -18,6 +18,12 @@ from gemini_transport import TransportError
 
 pytestmark = pytest.mark.usefixtures("sleeps")
 
+# Il _cf_probe_supervisor vero gira nella suite (l'import dell'app avvia i
+# thread) e ogni 60 s chiama gemini_tts.check_openrouter_credit con l'orologio
+# vero: dentro un test sposta `_or_credit_next_at` e consuma un saldo scriptato
+# (CI 42173924327, 06/11/2026). I test chiamano l'originale, il thread un no-op.
+_check = gemini_tts.check_openrouter_credit
+
 
 class _Resp:
     def __init__(self, status_code, payload=None):
@@ -48,6 +54,7 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(gemini_tts, "_data_dir", tmp_path)
     monkeypatch.setattr(gemini_tts, "_or_credit_next_at", 0.0)
     monkeypatch.setattr(gemini_tts, "_or_credit_notifier", None)
+    monkeypatch.setattr(gemini_tts, "check_openrouter_credit", lambda now=None: None)
     gemini_tts.set_backend_switch_notifier(None)
     yield
     gemini_tts._BACKEND = {}
@@ -132,33 +139,33 @@ def test_fires_once_per_descent_and_rearms_above_threshold(monkeypatch, tmp_path
     _balance(monkeypatch, 16.7, 4.0, 3.0, 50.0, 2.0)
     sent = _notified()
     t = 1000.0
-    assert gemini_tts.check_openrouter_credit(now=t) == pytest.approx(16.7)
+    assert _check(now=t) == pytest.approx(16.7)
     assert sent == []
-    gemini_tts.check_openrouter_credit(now=t + 900)
+    _check(now=t + 900)
     assert sent == [(4.0, 5.0)]
     assert _state(tmp_path)["alerted"] is True
-    gemini_tts.check_openrouter_credit(now=t + 1800)
+    _check(now=t + 1800)
     assert len(sent) == 1
-    gemini_tts.check_openrouter_credit(now=t + 2700)
+    _check(now=t + 2700)
     assert _state(tmp_path)["alerted"] is False
     assert _state(tmp_path)["left_usd"] == 50.0
-    gemini_tts.check_openrouter_credit(now=t + 3600)
+    _check(now=t + 3600)
     assert sent[-1] == (2.0, 5.0) and len(sent) == 2
 
 
 def test_the_alert_survives_a_restart(monkeypatch, tmp_path):
     _balance(monkeypatch, 4.0, 4.0)
     sent = _notified()
-    gemini_tts.check_openrouter_credit(now=1000.0)
+    _check(now=1000.0)
     monkeypatch.setattr(gemini_tts, "_or_credit_next_at", 0.0)
-    gemini_tts.check_openrouter_credit(now=1001.0)
+    _check(now=1001.0)
     assert len(sent) == 1
 
 
 def test_not_read_before_its_cadence(monkeypatch):
     calls = _balance(monkeypatch, 20.0, 20.0)
-    gemini_tts.check_openrouter_credit(now=1000.0)
-    assert gemini_tts.check_openrouter_credit(now=1899.0) is None
+    _check(now=1000.0)
+    assert _check(now=1899.0) is None
     assert len(calls) == 1
 
 
@@ -167,15 +174,15 @@ def test_threshold_and_cadence_come_from_env(monkeypatch):
     monkeypatch.setenv("ABM_OR_CREDIT_CHECK_SEC", "60")
     calls = _balance(monkeypatch, 7.0, 7.0)
     sent = _notified()
-    gemini_tts.check_openrouter_credit(now=1000.0)
-    gemini_tts.check_openrouter_credit(now=1060.0)
+    _check(now=1000.0)
+    _check(now=1060.0)
     assert sent == [(7.0, 8.0)] and len(calls) == 2
 
 
 def test_zero_cadence_turns_it_off(monkeypatch):
     monkeypatch.setenv("ABM_OR_CREDIT_CHECK_SEC", "0")
     calls = _balance(monkeypatch, 1.0)
-    assert gemini_tts.check_openrouter_credit(now=1000.0) is None
+    assert _check(now=1000.0) is None
     assert calls == []
 
 
@@ -183,23 +190,23 @@ def test_no_openrouter_model_no_read(monkeypatch):
     monkeypatch.delenv("ABM_OPENROUTER_API_KEY")
     monkeypatch.setenv("ABM_GEMINI_BACKEND_FLASH38", "apikey")
     calls = _balance(monkeypatch, 1.0)
-    assert gemini_tts.check_openrouter_credit(now=1000.0) is None
+    assert _check(now=1000.0) is None
     assert calls == []
 
 
 def test_the_alert_is_not_burned_without_a_notifier(monkeypatch, tmp_path):
     _balance(monkeypatch, 1.0, 1.0)
-    gemini_tts.check_openrouter_credit(now=1000.0)
+    _check(now=1000.0)
     assert not _state(tmp_path).get("alerted")
     sent = _notified()
-    gemini_tts.check_openrouter_credit(now=2000.0)
+    _check(now=2000.0)
     assert sent == [(1.0, 5.0)]
 
 
 def test_a_failed_read_changes_nothing(monkeypatch, tmp_path):
     _balance(monkeypatch, TransportError("saldo OpenRouter: HTTP 500", kind="retryable"))
     sent = _notified()
-    assert gemini_tts.check_openrouter_credit(now=1000.0) is None
+    assert _check(now=1000.0) is None
     assert sent == []
     assert not (tmp_path / "openrouter_credit.json").exists()
 
