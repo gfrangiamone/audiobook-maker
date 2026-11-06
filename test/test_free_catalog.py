@@ -290,6 +290,14 @@ def test_scaffale_dei_nuovi_solo_per_i_libri_degli_ultimi_tre_giorni(catalog, cl
     assert [b["published_at"] for _, b in got] == ["2026-11-05", "2026-11-02"]
 
 
+def test_anno_di_pubblicazione_accanto_all_autore_non_fra_i_chip(catalog, client):
+    catalog([_book()])
+    page = client.get("/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
+    assert '<p class="fc-author">Giovanni Verga <span>(1871)</span></p>' in page
+    chips = page[page.index('<ul class="fc-chips">'):]
+    assert "<li>1871</li>" not in chips[:chips.index("</ul>")]
+
+
 def test_book_without_cover_falls_back_to_initials(catalog, client):
     catalog([_book(cover=None)])
     page = client.get("/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)

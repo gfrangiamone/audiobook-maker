@@ -137,6 +137,7 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-bcover.fc-noimg{font-size:3rem}
 .fc-bhero h1{font-size:1.9rem}
 .fc-bhero .fc-author{font-size:1.05rem;margin:0}
+.fc-bhero .fc-author span{color:inherit}
 .fc-bhero .fc-chips{justify-content:center}
 .fc-bactions{display:flex;flex-direction:column;gap:10px;margin-top:18px;width:100%}
 .fc-bactions .fc-btn{width:100%}

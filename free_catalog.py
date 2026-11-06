@@ -804,9 +804,11 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
                          if b["cover"]["url"] else ""),
         "__COVER__": _cover_img(b, size=280, cls="fc-bcover", lazy=False),
         "__KICKER__": _esc(t["book_kicker"]), "__TITLE__": _esc(b["title"]),
-        "__AUTHOR__": _esc(b["author"]["name"]), "__YEARS__": _esc(_years(b["author"])),
+        # Accanto all'autore l'anno di prima pubblicazione del libro, fra parentesi.
+        "__AUTHOR__": _esc(b["author"]["name"]),
+        "__YEARS__": f'({int(b["first_published"])})' if b["first_published"] else "",
         "__CHIPS__": _chips([_duration(f["duration_s"], t), t["chapters_n"].format(n=len(f["chapters"])),
-                             _size(f["bytes"], t), b["first_published"] and str(int(b["first_published"]))]),
+                             _size(f["bytes"], t)]),
         "__DL_HREF__": _esc(download_path(lang, b)), "__DL_LABEL__": _esc(t["download"]),
         # Dal telefono il primo bottone e' quello dell'app, il file viene dopo.
         "__DL_CLASS__": "" if app_href else "fc-btn-primary",
