@@ -314,6 +314,22 @@ def extract_text_from_element(element, depth: int = 0) -> list[str]:
     return parts
 
 
+def _strip_site_boilerplate(html_content: str) -> str:
+    """Toglie da un documento, prima di ogni analisi, i blocchi editoriali dei
+    siti di ebook liberi: intestazione e licenza di Project Gutenberg
+    (div.pg-boilerplate, #pg-header e #pg-footer in ogni EPUB di ebookmaker).
+    Finivano lette, la licenza come ultimo capitolo da 17 mila caratteri; non
+    bastava saltarle in `html_to_text`, perche' i file con piu' capitoli si
+    tagliano fra un'intestazione e l'altra e il div che le racchiude si perde
+    (catalogo gratuito, 06/11/2026)."""
+    if "pg-boilerplate" not in html_content:
+        return html_content
+    soup = BeautifulSoup(html_content, "lxml")
+    for tag in soup.find_all(class_="pg-boilerplate"):
+        tag.decompose()
+    return str(soup)
+
+
 def _is_link_list(lst: Tag) -> bool:
     """Elenco in cui ogni voce e' un link a un altro documento del libro (non
     un'ancora nella pagina, non un indirizzo esterno), al piu' con una breve
@@ -1279,7 +1295,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     # sezione recuperata deve tornare.
     dropped_sections = []
     for item in spine_items:
-        html_content = item.get_content().decode("utf-8", errors="replace")
+        html_content = _strip_site_boilerplate(item.get_content().decode("utf-8", errors="replace"))
         file_name = item.get_name()
 
         # File con una propria voce nel TOC (autorità sull'ordinamento capitoli)
