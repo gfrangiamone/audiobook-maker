@@ -20,6 +20,7 @@ Nessuna dipendenza da altri moduli del progetto.
 """
 
 import html as _html
+import json
 import os
 import re as _re
 import shutil
@@ -198,6 +199,42 @@ def _validate_m4b_file(file_path):
         print(f"[_validate_m4b_file] eccezione durante validazione: {e}")
         # In caso di errore imprevisto preferiamo segnalare il file come invalido
         return False
+
+
+# Scala dei tempi del filmato negli M4B. La traccia dei capitoli prende una
+# scala comune a quelle degli stream: con una copertina copiata da un M4B
+# (1/90000) accanto all'audio a 48 kHz diventa 1/720000, e un capitolo oltre
+# ~49,7 minuti sfora i 32 bit; ffmpeg lo scarta ("Application provided
+# duration ... is invalid") e i marcatori si ammucchiano a durata zero
+# (catalogo, 06/11/2026). Qui la copertina arriva da un JPEG e il caso non
+# scatta, ma con 1/1000 non scatta piu' in nessun montaggio.
+M4B_MOVIE_TIMESCALE = ["-movie_timescale", "1000"]
+
+
+def _m4b_chapters_ok(path, chapters, tag):
+    """True se l'M4B scritto ha i capitoli attesi, in ordine e non vuoti.
+
+    `chapters` e' la lista passata a ffmpeg ({'start','end'} in ms). Non
+    blocca la consegna (l'audio e' comunque giusto): un False va nel log,
+    perche' un difetto dei marcatori non si vede da nessun'altra parte.
+    """
+    if not chapters:
+        return True
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_chapters", path],
+                           capture_output=True, **_TEXT_UTF8_LENIENT, timeout=60, **_SUBPROCESS_FLAGS)
+        got = [float(c["start_time"]) for c in (json.loads(r.stdout or "{}").get("chapters") or [])]
+    except FileNotFoundError:
+        return True
+    except (subprocess.TimeoutExpired, ValueError, KeyError) as e:
+        print(f"[{tag}] capitoli dell'M4B non verificabili: {e}")
+        return False
+    want = [ch["start"] / 1000.0 for ch in chapters]
+    ok = len(got) == len(want) and all(abs(a - b) < 1.0 for a, b in zip(got, want))
+    if not ok:
+        print(f"[{tag}] capitoli dell'M4B non conformi: attesi {len(want)}, letti {len(got)}; "
+              f"primi inizi letti {[round(x, 1) for x in got[:6]]}")
+    return ok
 
 
 def _prepare_m4b_cover_path(job, book_title, book_author, work_dir):
@@ -591,7 +628,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
             # una chiave standard sola perche' il ramo che accetta le chiavi
             # custom non scrive la copertina (vedi _extra_tag_args_mp4).
             c += _extra_tag_args_mp4(extra_tags, desc_trunc)
-            c += ["-f", "ipod", m4b_path]
+            c += M4B_MOVIE_TIMESCALE + ["-f", "ipod", m4b_path]
             return c
 
         # Nessun tetto a tempo fisso sull'encode: si sorveglia lo STALLO dell'output.
@@ -652,6 +689,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
                 except OSError:
                     pass
                 return False
+            _m4b_chapters_ok(m4b_path, valid_chapters, "_convert_mp3_to_m4b")
             print(f"[_convert_mp3_to_m4b] OK → {os.path.basename(m4b_path)} "
                   f"({os.path.getsize(m4b_path)//1024} KB, "
                   f"title={title!r}, author={author!r}, year={year!r}, "
@@ -901,13 +939,13 @@ def build_m4b_rebuild_kit(mp3_path, output_zip, chapters=None, title=None,
                 '-y -i audiolibro.mp3 -i chapters.ffmetadata -i cover.jpg '
                 '-map 0:a -map 2:v -c:v mjpeg -q:v 2 -disposition:v:0 attached_pic '
                 f'-map_metadata 1 -map_chapters 1 -metadata media_type=2{lang_opt} '
-                f'-c:a aac -b:a {aac_bitrate} -f ipod'
+                f'-c:a aac -b:a {aac_bitrate} {" ".join(M4B_MOVIE_TIMESCALE)} -f ipod'
             )
         else:
             ffmpeg_args = (
                 '-y -i audiolibro.mp3 -i chapters.ffmetadata '
                 f'-map 0:a -map_metadata 1 -map_chapters 1 -metadata media_type=2{lang_opt} '
-                f'-vn -c:a aac -b:a {aac_bitrate} -f ipod'
+                f'-vn -c:a aac -b:a {aac_bitrate} {" ".join(M4B_MOVIE_TIMESCALE)} -f ipod'
             )
 
         sh_script = (
@@ -1456,7 +1494,7 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         # in una chiave standard sola, perche' il ramo che accetta le chiavi
         # custom lascerebbe il file senza copertina (vedi _extra_tag_args_mp4).
         cmd.extend(_extra_tag_args_mp4(extra_tags, desc_trunc))
-        cmd.extend(["-f", "ipod", output_path])
+        cmd.extend(M4B_MOVIE_TIMESCALE + ["-f", "ipod", output_path])
 
         # ffmpeg stampa per primi banner di versione + 'configuration: ...' che
         # occupano facilmente 1-2 KB. La riga utile (es. "Conversion failed!",
@@ -1472,6 +1510,7 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         if not _encoded_duration_ok(output_path, expected_sec, "pcm_to_aac_m4b"):
             _discard_failed_output(output_path, "pcm_to_aac_m4b")
             return False
+        _m4b_chapters_ok(output_path, valid_chapters, "pcm_to_aac_m4b")
         return True
     except Exception as e:
         print(f"[pcm_to_aac_m4b] error: {e}")
