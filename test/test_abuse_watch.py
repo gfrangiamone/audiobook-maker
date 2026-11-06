@@ -642,6 +642,26 @@ def test_expired_or_low_confidence_verdict_elsewhere_does_not_block(env, monkeyp
     assert aw.is_blocked(altrove, "a") is False, "verdetto scaduto"
 
 
+def test_blocked_until_is_the_latest_expiry_of_the_blocking_verdicts(env, monkeypatch):
+    """La data di sblocco mostrata all'utente (ticket del 06/11/2026): scadenza
+    del verdetto che lo blocca, la piu' lontana se lo bloccano due reti."""
+    casa, altrove = aw.group_key("9.9.9.9", "a"), aw.group_key("8.8.8.8", "a")
+    assert aw.blocked_until(casa, "a") == 0
+    _gen(casa, "a")
+    _evasione(casa, "a")
+    v1 = aw.set_verdict(casa, {"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": ["a"]})
+    assert aw.blocked_until(altrove, "a") == pytest.approx(v1["ts"] + aw.verdict_ttl_sec())
+    real_time = time.time
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 3600)
+    _gen(altrove, "a")
+    _evasione(altrove, "a")
+    v2 = aw.set_verdict(altrove, {"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": ["a"]})
+    assert aw.blocked_until(casa, "a") == pytest.approx(v2["ts"] + aw.verdict_ttl_sec())
+    assert aw.blocked_until(casa, "b") == 0
+    monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")
+    assert aw.blocked_until(casa, "a") == 0
+
+
 # ------------------------------------------------- dispositivi di un account
 
 def test_signed_in_device_after_the_gate_is_not_reactive_rotation(env, monkeypatch):

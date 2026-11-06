@@ -175,6 +175,16 @@ def test_403_only_for_cid_in_scope(env, client):
     assert audiobook_app.jobs["abz-2"]["abuse_group"] == g
 
 
+def test_403_tells_when_the_block_ends(env, client):
+    """Il 403 porta la scadenza del verdetto: la SPA la mostra come giorno di
+    sblocco (ticket del 06/11/2026)."""
+    g = _abuse_verdict([CID])
+    _mk_job("abz-until")
+    r = _post(client, "abz-until")
+    expected = aw.verdict_expiry(aw.verdict_for(g))
+    assert r.status_code == 403 and abs(r.get_json()["blocked_until"] - expected) <= 1
+
+
 def test_paid_or_premium_job_never_blocked(env, client):
     _abuse_verdict([CID])
     job = _mk_job("abz-3")
@@ -209,9 +219,11 @@ def test_generate_records_dossier_and_resets_markers(env, client):
     job = _mk_job("abz-5")
     job["abuse_terminated"] = True
     job["abuse_kept_until"] = time.time() + 100
+    job["abuse_blocked_until"] = time.time() + 100
     r = _post(client, "abz-5")
     assert r.status_code == 200
     assert "abuse_terminated" not in job and "abuse_kept_until" not in job
+    assert "abuse_blocked_until" not in job
     d = aw.dossier(aw.group_key(IP, CID))
     assert d["cids"][CID]["generate"] == 1 and d["cids"][CID]["chars"] == 100
     assert d["all"]["voices"] == {VOICE: 1} and d["all"]["langs"] == {"en": 1}
@@ -244,10 +256,12 @@ def test_abuse_reset_recovery_markers_clears_stale_flags(env):
     ricostruito, cosi' un job rilanciato non eredita marker di un kill
     precedente e resta riconoscibile dal kill loop (abuse_group)."""
     job = {"client_ip": IP, "client_id": CID,
-           "abuse_terminated": True, "abuse_kept_until": time.time() + 100}
+           "abuse_terminated": True, "abuse_kept_until": time.time() + 100,
+           "abuse_blocked_until": time.time() + 100}
     out = audiobook_app._abuse_reset_recovery_markers(job)
     assert out is job
     assert "abuse_terminated" not in job and "abuse_kept_until" not in job
+    assert "abuse_blocked_until" not in job
     assert job["abuse_group"] == aw.group_key(IP, CID)
 
 
@@ -321,6 +335,21 @@ def test_apply_verdict_kills_only_unpaid_in_scope_running(env):
     assert _ops(env).count("QUOTA_ABUSE_KILL") == 1
     assert aw.digest_data()[0]["kills"] == 1
     assert audiobook_app._abuse_apply_verdict(g, verdict) == 0      # idempotente
+
+
+def test_kill_carries_the_block_end_to_progress(env, client):
+    """Il job ucciso ricorda la scadenza del verdetto e il progress la espone,
+    come il 403 (ticket del 06/11/2026)."""
+    g = aw.group_key(IP, CID)
+    verdict = {"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": [CID],
+               "ts": time.time() - 60}
+    job = _running("abz-k-until")
+    assert audiobook_app._abuse_apply_verdict(g, verdict) == 1
+    assert job["abuse_blocked_until"] == aw.verdict_expiry(verdict)
+    job["status"] = "analyzed"                     # come la chiusura del cancel
+    body = client.get("/api/progress/abz-k-until").get_data(as_text=True)
+    assert '"error_code": "job_terminated"' in body
+    assert '"blocked_until": %d' % int(job["abuse_blocked_until"]) in body
 
 
 def test_apply_verdict_respects_confidence_switch_and_kind(env, monkeypatch):

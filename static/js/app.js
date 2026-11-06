@@ -2205,6 +2205,23 @@ async function _doCombinedEstimate(){
     if(getEstimateCacheKey()===key)renderEstimate(null);
   }
 }
+// ---- Blocco della moderazione anti-abuso (403 / kill `job_terminated`) ----
+// Con `blocked_until` (epoch, secondi) il messaggio dice il motivo e il giorno
+// da cui la generazione gratuita torna disponibile; senza resta quello neutro.
+// Il giorno si arrotonda in su: lo sblocco cade a meta' giornata e "dal 18"
+// farebbe riprovare il 18 mattina, ancora bloccati (ticket del 06/11/2026).
+function _jobTerminatedMsg(d){
+  const until=Number(d&&d.blocked_until)||0;
+  if(until>0){
+    const day=new Date(until*1000);
+    if(day.getHours()||day.getMinutes()||day.getSeconds())day.setHours(24,0,0,0);
+    let date;
+    try{date=day.toLocaleDateString((typeof cl!=='undefined'&&cl)||'en',{day:'numeric',month:'long',year:'numeric'});}
+    catch(_){date=day.toISOString().slice(0,10);}
+    return t('job_blocked_msg',{date:date});
+  }
+  return t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.';
+}
 // ---- Quota gratuita mensile PREMIUM: riga di stato (residuo + ricarica) ----
 // Il gate diceva solo "costo minimo": chi lo leggeva non sapeva ne' quanto
 // credito gli restasse ne' quando tornasse, e un addebito ripetuto sembrava un
@@ -4216,7 +4233,7 @@ async function startCombinedGeneration(combinedPaymentToken){
         if(gd.error_code==='job_terminated'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
-          showErr('s3err',t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.');
+          showErr('s3err',_jobTerminatedMsg(gd));
           unlockUI();generating=false;return;
         }
         if(gd.error_code==='free_tts_cap_reached'){_handleTtsCapReached(gd);return;}
@@ -4728,7 +4745,7 @@ async function startGen(){
       if(d.error_code==='job_terminated'){
         const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
         const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
-        showErr('s3err',t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.');
+        showErr('s3err',_jobTerminatedMsg(d));
         unlockUI();generating=false;return;
       }
       if(d.error_code==='free_tts_cap_reached'){_handleTtsCapReached(d);return;}
@@ -5141,10 +5158,8 @@ function listenProgress(){
       }
       if(d.status==='cancelled'){
         es.close();_hideJobRunningModal(true,myJobId);
-        // Kill della moderazione anti-abuso: messaggio neutro, mai il perche'.
-        const _cmsg=d.error_code==='job_terminated'
-          ?(t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.')
-          :t('cancelled_msg');
+        // Kill della moderazione anti-abuso: motivo e data, mai il meccanismo.
+        const _cmsg=d.error_code==='job_terminated'?_jobTerminatedMsg(d):t('cancelled_msg');
         _legacyTxt('pMsg',_cmsg,'var(--err)');
         document.getElementById('cnA').style.display='none';unlockUI();generating=false;
         if(d.error_code!=='job_terminated')_renderGeminiCancelSummary(d);

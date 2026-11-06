@@ -3082,6 +3082,7 @@ def _abuse_reset_recovery_markers(job):
     try:
         job.pop("abuse_terminated", None)
         job.pop("abuse_kept_until", None)
+        job.pop("abuse_blocked_until", None)
         job["abuse_group"] = _abuse_group_of(job)
     except Exception as e:
         print(f"[recover] abuse marker reset failed (non-fatal): {e}", flush=True)
@@ -3121,6 +3122,7 @@ def _abuse_apply_verdict(group, verdict):
               f"(enable={abuse_watch.kill_enabled()}, conf={conf:.2f})", flush=True)
         return 0
     scope_cids = set(verdict.get("cids") or [])
+    until = abuse_watch.verdict_expiry(verdict)
     killed = []
     with _jobs_lock:
         for jid, job in list(jobs.items()):
@@ -3131,6 +3133,7 @@ def _abuse_apply_verdict(group, verdict):
             if generation_engine.is_premium_job(job):
                 continue
             job["abuse_terminated"] = True
+            job["abuse_blocked_until"] = until
             job["cancelled"] = True
             killed.append((jid, job))
     for jid, job in killed:
@@ -5207,15 +5210,17 @@ def api_generate():
     # Moderazione anti-abuso: cid nello scope di un verdetto `abuse` valido
     # (abuse_watch). Mai su job premium/pagati ne' per chi e' connesso con un
     # abbonamento pagato (ticket del 28/10/2026: abbonata fermata dal verdetto
-    # sui cookie di prima). Il messaggio non spiega il perche': spiegare le
-    # feature insegnerebbe al bot come aggirarle.
+    # sui cookie di prima). `blocked_until` fa dire al messaggio il motivo
+    # (limiti mensili superati) e il giorno dello sblocco, mai il meccanismo
+    # del rilevamento: senza, i clienti bloccati scrivevano all'assistenza
+    # (ticket del 06/11/2026).
     _abuse_group = _abuse_group_of(job)
     if not _premium_req and not routes_account.current_account_is_subscriber():
         try:
-            _abuse_blocked = abuse_watch.is_blocked(_abuse_group, client_id)
+            _abuse_until = abuse_watch.blocked_until(_abuse_group, client_id)
         except Exception:
-            _abuse_blocked = False
-        if _abuse_blocked:
+            _abuse_until = 0
+        if _abuse_until:
             try:
                 abuse_watch.record_block(_abuse_group, client_id)
             except Exception:
@@ -5225,7 +5230,8 @@ def api_generate():
                           browser_lang=job.get("browser_lang", ""))
             print(f"[{job_id}] abuse_watch: job rifiutato (gruppo {_abuse_group})", flush=True)
             return jsonify({"error": "Processing interrupted.",
-                            "error_code": "job_terminated"}), 403
+                            "error_code": "job_terminated",
+                            "blocked_until": int(_abuse_until)}), 403
     with _jobs_lock:
         if job["status"] not in ("analyzed", "optimized"):
             _refund_payment_on_orphan(job_id, job, "status_conflict")
@@ -5281,6 +5287,7 @@ def api_generate():
         job["abuse_group"] = _abuse_group
         job.pop("abuse_terminated", None)
         job.pop("abuse_kept_until", None)
+        job.pop("abuse_blocked_until", None)
 
     # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
     # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
@@ -5760,8 +5767,10 @@ def api_progress(job_id):
             payload["status"] = "cancelled"
             if job.get("abuse_terminated"):
                 # Kill della moderazione anti-abuso: il frontend mostra il
-                # messaggio neutro invece di "Generazione annullata".
+                # messaggio di blocco invece di "Generazione annullata".
                 payload["error_code"] = "job_terminated"
+                if job.get("abuse_blocked_until"):
+                    payload["blocked_until"] = int(job["abuse_blocked_until"])
             # Espone metadati cancel volontario voci PREMIUM: refund summary
             # (paid/retained/refund/progress) + link al MP3 parziale se
             # generato. Vedi T7 generation_engine.py:_CancelledError branch.

@@ -689,12 +689,31 @@ def _blocks_cid(g, cid, now, threshold, group_scope=True):
                      or (group_scope and _covered_by_group_scope(v, g, cid))))
 
 
+def verdict_expiry(verdict):
+    """Fine validita' (epoch) di un verdetto: `ts` + TTL, come in
+    `_valid_verdict`; senza `ts` conta da adesso."""
+    try:
+        ts = float((verdict or {}).get("ts") or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    return (ts or time.time()) + verdict_ttl_sec()
+
+
 def is_blocked(group, cid):
-    """Vero solo con kill accesa, verdetto `abuse` valido sopra soglia e cid
+    """Vero se `blocked_until` ha una scadenza: vedi li' il criterio."""
+    return blocked_until(group, cid) > 0
+
+
+def blocked_until(group, cid):
+    """Scadenza (epoch) del blocco di `cid`, 0 se non e' bloccato. Con piu'
+    verdetti che lo coprono vale il piu' lontano: e' la data che l'utente
+    legge nel messaggio di blocco (ticket del 06/11/2026).
+
+    Bloccato solo con kill accesa, verdetto `abuse` valido sopra soglia e cid
     nello scope — dove `scope=group` copre anche i cid nati dopo il verdetto.
 
-    Il verdetto segue il cid su qualunque rete: si guarda prima `group`, poi
-    gli altri gruppi con un verdetto. Il 25/10/2026 un cid fermato due volte
+    Il verdetto segue il cid su qualunque rete: contano `group` e anche gli
+    altri gruppi con un verdetto. Il 25/10/2026 un cid fermato due volte
     sul /24 di casa e' stato servito cinque ore dopo da un altro /24, giudicato
     `clean` perche' li' nessuno l'aveva mai visto. L'email non si segue: quella
     del gate non e' verificata, e chi la scrive potrebbe far bloccare altri.
@@ -704,15 +723,14 @@ def is_blocked(group, cid):
     puo' essere un vicino capitato su quel /24, e verrebbe fermato ovunque per
     tutta la durata del verdetto."""
     if not cid or not kill_enabled():
-        return False
+        return 0.0
     now = time.time()
     threshold = confidence_threshold()
     with _lock:
         groups = _load()["groups"]
-    if _blocks_cid(groups.get(group), cid, now, threshold):
-        return True
-    return any(_blocks_cid(g, cid, now, threshold, group_scope=False)
-               for key, g in groups.items() if key != group)
+    return max((verdict_expiry(g["verdict"]) for key, g in groups.items()
+                if _blocks_cid(g, cid, now, threshold, group_scope=(key == group))),
+               default=0.0)
 
 
 def clear_verdict(group):
