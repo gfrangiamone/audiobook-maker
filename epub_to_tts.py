@@ -20,11 +20,12 @@ import os
 import re
 import sys
 import unicodedata
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
 import text_reflow
-from text_reflow import dehyphenate_breaks, reflow_book, strip_soft_hyphens
+from text_reflow import _title_already_in_text, dehyphenate_breaks, reflow_book, strip_soft_hyphens
 from book_model import (BookInfo, Chapter, WORDS_PER_MINUTE, NON_CONTENT_FILENAMES_EXACT,
                         NON_CONTENT_FILENAMES_SUBSTR, NON_CONTENT_TITLE_PHRASES, NON_CONTENT_TITLE_EXACT,
                         title_is_non_content as _title_is_non_content,
@@ -1547,9 +1548,67 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     # (text_reflow.book_needs_reflow), mai sui libri ben composti.
     reflow_broken_paragraphs(info)
 
+    # ── Parti del libro (indice annidato: "Parte seconda" > "Capitolo 1") ──
+    _name_parts(info.chapters, _build_toc_parents(book))
+
     info.recompute_totals()
 
     return info
+
+
+# Fra il nome della parte e il titolo del capitolo, nel titolo che il TTS legge.
+PART_TITLE_SEP = " – "
+
+
+def _name_parts(chapters, parents):
+    """Porta la parte del libro dove l'indice annidato la lascerebbe cadere.
+
+    `parents`: file -> titolo della voce d'indice che lo contiene. Un titolo
+    generico che si ripete ("Capitolo 1" in ogni parte di I Vicere') prende
+    davanti il nome della parte: e' il titolo dei marcatori M4B e quello che
+    il TTS legge. Se i titoli sono gia' distinti e la pagina della parte non e'
+    rimasta come capitolo (solo titolo e indice: scartata), il nome della
+    parte si legge in testa al suo primo capitolo. Senza indice annidato
+    non cambia niente.
+    """
+    if not parents:
+        return
+    counts = Counter(c.title for c in chapters)
+    kept = {_norm_title_key(c.title) for c in chapters}
+    prev = None
+    for ch in chapters:
+        parent = parents.get(ch.source_file or "")
+        if parent and not ch.synthetic_title:
+            generic = bool(_BARE_CHAPTER_NUMBER_RE.match(ch.title) or is_chapter_marker_line(ch.title))
+            if generic and counts[ch.title] > 1:
+                ch.title = f"{parent}{PART_TITLE_SEP}{ch.title}"
+            elif (parent != prev and _norm_title_key(parent) not in kept
+                    and not _title_already_in_text(parent, ch.text)):
+                ch.text = f"{parent}.\n\n{ch.text}"
+                ch.word_count, ch.char_count = len(ch.text.split()), len(ch.text)
+        prev = parent
+
+
+def _build_toc_parents(book: epub.EpubBook) -> dict[str, str]:
+    """file -> titolo della voce d'indice che lo contiene, per i file annidati."""
+    parents = {}
+
+    def walk(items, parent):
+        for item in items:
+            if isinstance(item, tuple):
+                section, children = item
+                href = (getattr(section, "href", "") or "").split("#")[0]
+                if parent and href:
+                    parents.setdefault(href, parent)
+                walk(children, str(getattr(section, "title", "") or "").strip() or parent)
+            elif parent and getattr(item, "href", None):
+                parents.setdefault(item.href.split("#")[0], parent)
+
+    try:
+        walk(book.toc, "")
+    except Exception:
+        pass
+    return parents
 
 
 def _get_metadata(book: epub.EpubBook, field: str) -> Optional[str]:
