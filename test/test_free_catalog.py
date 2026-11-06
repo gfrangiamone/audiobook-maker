@@ -377,15 +377,15 @@ def test_l_indice_e_unico_con_tutte_le_lingue(catalog, client, tmp_path):
     page = r.get_data(as_text=True)
     assert 'data-lang="it"' in page and 'data-lang="en"' in page
     assert 'href="/free-audiobooks/en/moby-dick/"' in page
-    assert '<option value="en" selected>English</option>' in page   # lingua dell'utente
+    assert '<option value="en" data-short="EN" selected>English</option>' in page   # lingua dell'utente
     assert '<link rel="canonical" href="' in page and '/free-audiobooks/"' in page
 
 
 def test_filtro_su_tutte_se_la_lingua_dell_utente_non_ha_libri(catalog, client):
     page = client.get("/free-audiobooks/", headers={"Accept-Language": "fr-FR"}).get_data(as_text=True)
-    assert '<option value="" selected>' in page
+    assert '<option value="" data-short="Toutes" selected>' in page
     page = client.get("/free-audiobooks/?lang=it").get_data(as_text=True)
-    assert '<option value="it" selected>Italiano</option>' in page
+    assert '<option value="it" data-short="IT" selected>Italiano</option>' in page
 
 
 def test_lingua_preimpostata_solo_con_libri_pubblicati(catalog, tmp_path):
@@ -397,7 +397,7 @@ def test_lingua_preimpostata_solo_con_libri_pubblicati(catalog, tmp_path):
 def test_la_pagina_per_lingua_resta_per_la_seo(catalog, client, tmp_path):
     _secondo_catalogo(tmp_path, "en", [_libro_en()])
     page = client.get("/free-audiobooks/en/").get_data(as_text=True)
-    assert '<option value="en" selected>English</option>' in page
+    assert '<option value="en" data-short="EN" selected>English</option>' in page
     assert 'data-lang="it"' in page                         # stesso catalogo unico
     assert '/free-audiobooks/en/"' in page                  # canonical della lingua
     assert client.get("/free-audiobooks/xx/").status_code == 404

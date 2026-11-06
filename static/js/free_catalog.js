@@ -81,5 +81,26 @@
     if (q) q.addEventListener('input', apply);
     if (langSel) langSel.addEventListener('change', apply);
     apply();
+
+    // --- Lingua: su schermi stretti la sigla (IT) al posto del nome, per
+    // lasciare spazio alla ricerca; aprendo la lista tornano i nomi interi.
+    if (langSel && window.matchMedia) {
+      var narrow = window.matchMedia('(max-width: 639px)');
+      var opts = Array.prototype.slice.call(langSel.options);
+      opts.forEach(function (o) { o.setAttribute('data-long', o.textContent); });
+      var label = function (full) {
+        opts.forEach(function (o) {
+          var s = o.getAttribute('data-short');
+          o.textContent = !full && narrow.matches && s ? s : o.getAttribute('data-long');
+        });
+      };
+      var short = function () { label(false); };
+      langSel.addEventListener('focus', function () { label(true); });
+      langSel.addEventListener('blur', short);
+      langSel.addEventListener('change', function () { langSel.blur(); short(); });
+      if (narrow.addEventListener) narrow.addEventListener('change', short);
+      else if (narrow.addListener) narrow.addListener(short);
+      short();
+    }
   }
 })();

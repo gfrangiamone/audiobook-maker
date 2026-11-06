@@ -572,9 +572,12 @@ def _lang_ok(lang):
 
 
 def _lang_options(langs, preset, t):
-    opts = [f'<option value=""{" selected" if not preset else ""}>{_esc(t["lang_all"])}</option>']
-    opts += [f'<option value="{l}"{" selected" if l == preset else ""}>{_esc(LANG_NAMES[l])}</option>'
-             for l in langs]
+    """Opzioni del filtro per lingua; `data-short` e' l'etichetta che il JS
+    mette nella casella su schermi stretti (free_catalog.js)."""
+    opts = [f'<option value="" data-short="{_esc(t["lang_all_short"])}"'
+            f'{" selected" if not preset else ""}>{_esc(t["lang_all"])}</option>']
+    opts += [f'<option value="{l}" data-short="{l.upper()}"{" selected" if l == preset else ""}>'
+             f'{_esc(LANG_NAMES[l])}</option>' for l in langs]
     return "".join(opts)
 
 
