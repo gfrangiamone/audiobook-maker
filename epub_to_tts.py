@@ -810,14 +810,21 @@ def is_short_numbered_chapter(text: str, title: str, after_content: bool) -> boo
     una capinera perdeva in silenzio le lettere XLIII e XLIV (catalogo
     gratuito, 05/11/2026). Frontespizio e colophon stanno prima del primo
     capitolo o hanno un titolo da apparato, quindi restano fuori.
+
+    Il numero puo' stare anche nella prima riga del testo, col titolo d'indice
+    che e' il sottotitolo: "CAPITULO CXXXVI" sotto la voce "Inutilidade", il
+    capitolo di una frase di Memorias Posthumas de Braz Cubas (06/11/2026).
     """
     if not after_content or not title or _title_is_non_content(title):
         return False
     t = title.strip()
+    body = _remove_duplicate_heading((text or "").strip() + "\n", title).strip()
     if not (_BARE_CHAPTER_NUMBER_RE.match(t) or is_chapter_marker_line(t)):
-        return False
+        first, _, rest = body.partition("\n")
+        if not (is_chapter_marker_line(first.strip()) and rest.strip()):
+            return False
     # "\n" in coda: la pagina col solo titolo ("XLIII") resta vuota.
-    return bool(_remove_duplicate_heading((text or "").strip() + "\n", title).strip())
+    return bool(body)
 
 
 def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> bool:

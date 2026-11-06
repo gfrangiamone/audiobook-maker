@@ -60,3 +60,15 @@ def test_sezioni_brevi_senza_titolo_da_capitolo_o_prima_del_libro_restano_fuori(
     assert not f("Milano, Treves 1894", "Colophon", True)        # titolo da apparato
     assert not f("Indice\nI II III", "Indice", True)
     assert not f("Ringrazio mia moglie.", "Dedica a mia moglie", True)
+
+
+def test_numero_di_capitolo_nella_prima_riga_del_testo():
+    """ws-export di Memorias Posthumas de Braz Cubas: la voce d'indice e' il
+    sottotitolo ("Inutilidade") e il numero apre il testo (06/11/2026)."""
+    f = epub_to_tts.is_short_numbered_chapter
+    assert f("CAPITULO CXXXVI\nInutilidade\nMas, ou muito me engano, ou acabo de escrever um capitulo inutil.",
+             "Inutilidade", True)
+    assert f("CAPITULO LV\nO velho dialogo de Adão e Eva\nBRAZ CUBAS . . . . ?", "O velho dialogo de Adão e Eva", True)
+    assert not f("CAPITULO CXXXVI", "Inutilidade", True)                 # solo il numero
+    assert not f("CAPITULO CXXXVI\nInutilidade\nMas...", "Inutilidade", False)  # prima del libro
+    assert not f("AO VERME QUE PRIMEIRO ROEU AS FRIAS CARNES", "Dedicatoria", True)
