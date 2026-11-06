@@ -44,6 +44,30 @@ def test_licenza_e_intestazione_di_gutenberg_non_si_leggono(tmp_path):
     assert "universally acknowledged" in text
 
 
+def test_voce_d_indice_della_licenza_non_ruba_il_titolo_all_ultimo_capitolo(tmp_path):
+    p = tmp_path / "pg2.epub"
+    book = epub.EpubBook()
+    book.set_identifier("pg-test-2")
+    book.set_title("Libro")
+    book.set_language("en")
+    first = epub.EpubHtml(title="Chapter I", file_name="c1.xhtml", lang="en")
+    first.content = "<html><body><h2>Chapter I</h2>" + f"<p>{_PARA}</p>" * 8 + "</body></html>"
+    last = epub.EpubHtml(title="Chapter II", file_name="c2.xhtml", lang="en")
+    last.content = ("<html><body><h2 id='c2'>Chapter II</h2>" + f"<p>{_PARA}</p>" * 8 + FOOTER
+                    + "</body></html>")
+    for it in (first, last):
+        book.add_item(it)
+    # Come in ws-export di Gutenberg: la licenza ha una voce d'indice nello stesso file.
+    book.toc = [first, epub.Link("c2.xhtml#c2", "Chapter II", "c2"),
+                epub.Link("c2.xhtml#pg-footer-heading", "THE FULL PROJECT GUTENBERG™ LICENSE", "lic")]
+    book.spine = [first, last]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(p), book)
+    titles = [c.title for c in E.parse_epub(str(p)).chapters]
+    assert titles == ["Chapter I", "Chapter II"]
+
+
 def test_documento_senza_licenza_invariato():
     html = "<html><body><p>Testo.</p></body></html>"
     assert E._strip_site_boilerplate(html) is html

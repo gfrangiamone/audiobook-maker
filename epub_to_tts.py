@@ -1684,6 +1684,14 @@ def _body_has_skip_type(html_content: str) -> bool:
     return False
 
 
+def _skip_toc_title(title) -> bool:
+    """Voci d'indice che non sono capitoli: i rimandi alle note e i blocchi
+    editoriali che `_strip_site_boilerplate` toglie dal testo. La voce della
+    licenza di Project Gutenberg sta nello stesso file dell'ultimo capitolo e
+    gli dava il suo titolo, letto ad alta voce (catalogo, 06/11/2026)."""
+    return _is_backnote_toc_title(title) or "project gutenberg" in (title or "").casefold()
+
+
 def _build_toc_map(book: epub.EpubBook) -> dict[str, str]:
     """Costruisce una mappa file_path → titolo dal Table of Contents."""
     toc_map = {}
@@ -1694,13 +1702,13 @@ def _build_toc_map(book: epub.EpubBook) -> dict[str, str]:
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
                     title = str(section.title or "").strip()
-                    if not _is_backnote_toc_title(title):
+                    if not _skip_toc_title(title):
                         href = section.href.split("#")[0]
                         toc_map[href] = title
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
                 title = str(item.title or "").strip()
-                if not _is_backnote_toc_title(title):
+                if not _skip_toc_title(title):
                     href = item.href.split("#")[0]
                     toc_map[href] = title
 
@@ -1725,13 +1733,13 @@ def _build_toc_fragments(book: epub.EpubBook) -> dict[str, list[str]]:
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
                     title = str(section.title or "").strip()
-                    if not _is_backnote_toc_title(title):
+                    if not _skip_toc_title(title):
                         href_file = section.href.split("#")[0]
                         file_titles.setdefault(href_file, []).append(title)
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
                 title = str(item.title or "").strip()
-                if not _is_backnote_toc_title(title):
+                if not _skip_toc_title(title):
                     href_file = item.href.split("#")[0]
                     file_titles.setdefault(href_file, []).append(title)
 
