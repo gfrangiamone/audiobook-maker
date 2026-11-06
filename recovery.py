@@ -30,7 +30,7 @@ import tts_engines
 import voice_clone
 import voxcpm_tts
 from env_utils import env_bool, env_int
-from text_reflow import paren_strip_flags
+from text_reflow import expand_book_abbreviations, paren_strip_flags
 from voice_utils import (is_gemini_voice as _is_gemini_voice, is_speechify_voice as _is_speechify_voice,
                          is_voxcpm_voice as _is_voxcpm_voice)
 
@@ -261,6 +261,14 @@ def _reenqueue_orphan(job_id, rec):
     if not src or not os.path.exists(src):
         raise FileNotFoundError(f"input mancante per {job_id}: {src!r}")
     info = _parse_book(src)
+    # Senza lingua nei metadati (TXT, PDF) i parser non espandono le
+    # abbreviazioni: si usa la lingua del job, come /api/analyze dopo il
+    # rilevamento.
+    if hasattr(info, "chapters") and not (getattr(info, "language", "") or "").strip():
+        _job_lang = rec.get("opt_lang") or rec.get("gen_lang") or rec.get("lang") or ""
+        if _job_lang:
+            info.language = _job_lang
+            expand_book_abbreviations(info)
     # Tutto cio' che va a run_generation passa dal gate (selezione capitoli,
     # cap, stima, quota): il ramo optimize senza .abm ha i suoi controlli in
     # run_optimization e nell'auto-generazione post-LLM.

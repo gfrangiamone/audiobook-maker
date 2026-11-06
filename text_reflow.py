@@ -217,7 +217,20 @@ ABBREVIATIONS = {
     "sec.": "secolo",
     "a.C.": "avanti Cristo",
     "d.C.": "dopo Cristo",
-    # Inglesi comuni
+    # Forme latine e inglesi che compaiono nei testi italiani, lette in italiano
+    "e.g.": "per esempio",
+    "i.e.": "cioè",
+    "vs.": "versus",
+    "Dr.": "Dottor",
+    "Mr.": "Mister",
+    "Mrs.": "Missis",
+    "St.": "Saint",
+    "Jr.": "Junior",
+    "Sr.": "Senior",
+}
+
+ENGLISH_ABBREVIATIONS = {
+    "etc.": "et cetera",
     "e.g.": "for example",
     "i.e.": "that is",
     "vs.": "versus",
@@ -229,20 +242,19 @@ ABBREVIATIONS = {
     "Sr.": "Senior",
 }
 
-# Abbreviazioni per lingua del libro. Quelle italiane valevano per ogni lingua,
-# senza distinzione di maiuscole: "heißt es." diventava "heißt esempio", lo
-# spagnolo "lo que es." "lo que esempio", il "Sr." portoghese "Senior" (181
-# volte in Os Maias), "Art." (Arthur) "articolo" in Dracula (catalogo,
-# 06/11/2026). Le altre lingue non espandono: i motori TTS leggono da se'
-# "Sr.", "Dr.", "z. B.". Senza lingua resta la regola storica, tutte insieme.
-_ENGLISH_ABBR = ("e.g.", "i.e.", "vs.", "Dr.", "Mr.", "Mrs.", "St.", "Jr.", "Sr.")
+# Abbreviazioni per lingua del libro. Un'unica tabella, italiana con qualche
+# voce inglese, valeva per ogni lingua e senza distinzione di maiuscole:
+# "heißt es." diventava "heißt esempio", lo spagnolo "lo que es." "lo que
+# esempio", il "Sr." portoghese "Senior" (181 volte in Os Maias), "Art."
+# (Arthur) "articolo" in Dracula, "etc." "eccetera" in inglese, e in italiano
+# "Dr." "Doctor" (catalogo, 06/11/2026). Le altre lingue non espandono: i
+# motori TTS leggono da se' "Sr.", "Dr.", "z. B.", e l'ottimizzazione AI le
+# scioglie col prompt della lingua. Senza lingua nota nemmeno: il testo si
+# espande quando la lingua e' rilevata (expand_book_abbreviations).
 ABBREVIATIONS_BY_LANG = {
-    "it": ABBREVIATIONS,
-    "en": {**{k: ABBREVIATIONS[k] for k in _ENGLISH_ABBR}, "etc.": "et cetera"},
+    "it": ABBREVIATIONS, "ita": ABBREVIATIONS,              # ISO 639-2 dei metadati EPUB
+    "en": ENGLISH_ABBREVIATIONS, "eng": ENGLISH_ABBREVIATIONS,
 }
-# Codici a tre lettere dei metadati EPUB (ISO 639-2) per le stesse lingue.
-ABBREVIATIONS_BY_LANG["ita"] = ABBREVIATIONS_BY_LANG["it"]
-ABBREVIATIONS_BY_LANG["eng"] = ABBREVIATIONS_BY_LANG["en"]
 
 
 def _abbr_rules(table):
@@ -255,21 +267,31 @@ def _abbr_rules(table):
     ]
 
 
-_ABBR_RULES = _abbr_rules(ABBREVIATIONS)
 _ABBR_RULES_BY_LANG = {code: _abbr_rules(table) for code, table in ABBREVIATIONS_BY_LANG.items()}
 
 
 def expand_abbreviations(text, lang=None):
     """Espande le abbreviazioni della lingua del libro perche' il TTS le legga
     per esteso ("ecc." -> "eccetera"). `lang` e' il codice dei metadati ("es",
-    "pt-BR", "ita"); vuoto = tutte le abbreviazioni, come prima. Usata da
-    EPUB/PDF (clean_text_for_tts) e, da F1b, anche da TXT e ABM
-    (plain_parsers)."""
+    "pt-BR", "ita"); vuoto o senza tabella: testo invariato. Usata da EPUB/PDF
+    (clean_text_for_tts) e, da F1b, anche da TXT e ABM (plain_parsers)."""
     code = i18n.norm_lang(str(lang or "").replace("_", "-"))
-    rules = _ABBR_RULES_BY_LANG.get(code, ()) if code else _ABBR_RULES
-    for rule, expansion in rules:
+    for rule, expansion in _ABBR_RULES_BY_LANG.get(code, ()):
         text = rule.sub(expansion, text)
     return text
+
+
+def expand_book_abbreviations(info):
+    """Espande le abbreviazioni nei capitoli di un libro la cui lingua si e'
+    saputa solo dopo l'analisi (rilevata sul testo: TXT, PDF senza metadati),
+    quando i parser non potevano farlo. Aggiorna conteggi e totali."""
+    for ch in info.chapters:
+        expanded = expand_abbreviations(ch.text, info.language)
+        if expanded != ch.text:
+            ch.text = expanded
+            ch.word_count = len(expanded.split())
+            ch.char_count = len(expanded)
+    info.recompute_totals()
 
 
 # ---------------------------------------------------------------------------

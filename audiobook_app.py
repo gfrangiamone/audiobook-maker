@@ -142,7 +142,7 @@ from tts_split import (
     _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
     prepare_tts_text,
 )
-from text_reflow import paren_strip_flags, trim_preview as _trim_preview
+from text_reflow import paren_strip_flags, trim_preview as _trim_preview, expand_book_abbreviations
 
 import assembly_queue
 import load_metrics
@@ -3828,6 +3828,8 @@ def api_analyze():
         if _detected:
             info.language = _detected
             language_detected = True
+            # Senza lingua i parser non espandono le abbreviazioni: ora si puo'.
+            expand_book_abbreviations(info)
 
     # NOTE: the ABM_MAX_TEXT_CHARS cap is no longer enforced here. We show the
     # book regardless of its total size so the user can browse chapters and

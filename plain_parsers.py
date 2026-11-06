@@ -8,7 +8,9 @@ che li riesporta con gli stessi nomi; `audiobook_app` li importa da qui.
 Cambio voluto di F1b: anche TXT e ABM passano da
 `text_reflow.expand_abbreviations` (le stesse abbreviazioni che EPUB e PDF
 espandono in `clean_text_for_tts`), cosi' "ecc." o "Dr." si leggono allo
-stesso modo da qualunque formato. Il resto della pulizia EPUB/PDF (rumore
+stesso modo da qualunque formato. Dal 06/11/2026 l'espansione segue la
+lingua del libro: l'ABM la dichiara nel manifest, il TXT no e si espande
+dopo il rilevamento della lingua in /api/analyze. Il resto della pulizia EPUB/PDF (rumore
 di impaginazione, numeri di pagina) non si applica: un TXT scritto a mano o
 un ABM gia' ottimizzato non ne hanno bisogno.
 """
@@ -89,7 +91,8 @@ def parse_txt(file_path):
     reflowed = text_reflow.reflow_book([text])
     if reflowed is not None:
         text = reflowed[0]
-    text = text_reflow.expand_abbreviations(text)
+    # Abbreviazioni: un TXT non dichiara la lingua, si espandono quando
+    # /api/analyze la rileva (text_reflow.expand_book_abbreviations).
 
     # Title = filename without extension
     title = path.stem.replace("_", " ").replace("-", " ").strip() or "Text"

@@ -17,16 +17,24 @@ _PARA = ("Da ging er hinaus, und der Wind fuhr ihm entgegen, und so hieß es. "
          "Der Sr. Hauke sah auf das Meer hinaus, wo die Wellen gegen den Deich schlugen. ")
 
 
-def test_italiano_come_prima():
-    assert T.expand_abbreviations("Mele, pere ecc. Il Dr. Rossi", "it") == "Mele, pere eccetera Il Doctor Rossi"
+def test_italiano_letto_in_italiano():
+    assert T.expand_abbreviations("Mele, pere ecc. Il Dr. Rossi", "it") == "Mele, pere eccetera Il Dottor Rossi"
+    assert T.expand_abbreviations("vedi e.g. il caso", "it") == "vedi per esempio il caso"
     assert T.expand_abbreviations("vedi cap. 3", "it-IT") == "vedi capitolo 3"
     assert T.expand_abbreviations("vedi cap. 3", "it_IT") == "vedi capitolo 3"
     assert T.expand_abbreviations("vedi cap. 3", "ita") == "vedi capitolo 3"
 
 
-def test_senza_lingua_resta_la_regola_storica():
-    assert T.expand_abbreviations("Mele ecc. e il Dr. Rossi") == "Mele eccetera e il Doctor Rossi"
-    assert T.expand_abbreviations("Mele ecc.", "") == "Mele eccetera"
+def test_senza_lingua_nessuna_espansione_fino_al_rilevamento():
+    assert T.expand_abbreviations("Mele ecc. e il Dr. Rossi") == "Mele ecc. e il Dr. Rossi"
+    assert T.expand_abbreviations("so hieß es.", "") == "so hieß es."
+    info = E.BookInfo(title="Libro", language="",
+                      chapters=[E.Chapter(index=1, title="Uno", text="Mele, pere ecc.")])
+    info.recompute_totals()
+    info.language = "it"                       # rilevata da /api/analyze
+    T.expand_book_abbreviations(info)
+    assert info.chapters[0].text == "Mele, pere eccetera"
+    assert info.chapters[0].char_count == info.total_chars == len("Mele, pere eccetera")
 
 
 def test_inglese_solo_le_inglesi():

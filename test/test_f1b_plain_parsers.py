@@ -28,11 +28,13 @@ def test_abbreviations_live_in_text_reflow():
     assert epub_to_tts.ABBREVIATIONS is text_reflow.ABBREVIATIONS
     assert "ABBREVIATIONS = {" not in inspect.getsource(epub_to_tts)
     # ordine: la forma lunga prima della corta, confini di parola, case-insensitive
-    assert text_reflow.expand_abbreviations("vedi op. cit. e cit. ECC. decit.") == \
+    assert text_reflow.expand_abbreviations("vedi op. cit. e cit. ECC. decit.", "it") == \
         "vedi opera citata e citato eccetera decit."
-    assert text_reflow.expand_abbreviations("Il Dr. Rossi") == "Il Doctor Rossi"
-    assert epub_to_tts.clean_text_for_tts("Mele, pere ecc.").startswith("Mele, pere eccetera")
-    assert "ecc." in epub_to_tts.clean_text_for_tts("Mele, pere ecc.", expand_abbr=False)
+    assert text_reflow.expand_abbreviations("Il Dr. Rossi", "it") == "Il Dottor Rossi"
+    assert epub_to_tts.clean_text_for_tts("Mele, pere ecc.", lang="it").startswith("Mele, pere eccetera")
+    assert "ecc." in epub_to_tts.clean_text_for_tts("Mele, pere ecc.", expand_abbr=False, lang="it")
+    # Senza lingua nota il testo resta com'e' (si espande dopo il rilevamento).
+    assert "ecc." in epub_to_tts.clean_text_for_tts("Mele, pere ecc.")
 
 
 def test_txt_and_abm_expand_abbreviations(tmp_path):
@@ -40,7 +42,12 @@ def test_txt_and_abm_expand_abbreviations(tmp_path):
     p.write_text("Frutta: mele, pere ecc.\n\nFine.", encoding="utf-8")
     info = plain_parsers.parse_txt(str(p))
     assert isinstance(info, BookInfo) and info.title == "Il mio libro"
+    # Il TXT non dichiara la lingua: si espande quando /api/analyze la rileva.
+    assert info.chapters[0].text == "Frutta: mele, pere ecc.\n\nFine."
+    info.language = "it"
+    text_reflow.expand_book_abbreviations(info)
     assert info.chapters[0].text == "Frutta: mele, pere eccetera\n\nFine."
+    assert info.total_chars == len(info.chapters[0].text)
     abm = tmp_path / "libro.abm"
     with zipfile.ZipFile(abm, "w") as zf:
         zf.writestr("manifest.json", json.dumps({
