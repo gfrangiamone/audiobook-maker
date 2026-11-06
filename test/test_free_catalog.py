@@ -396,10 +396,25 @@ def test_filtro_su_tutte_se_la_lingua_dell_utente_non_ha_libri(catalog, client):
     assert '<option value="it" data-short="IT" selected>Italiano</option>' in page
 
 
-def test_lingua_preimpostata_solo_con_libri_pubblicati(catalog, tmp_path):
+def test_lingua_preimpostata_con_libri_pubblicati_o_in_arrivo(catalog, tmp_path):
     _secondo_catalogo(tmp_path, "en", [_libro_en(status="coming")])
-    assert free_catalog.preset_lang(["en", "it"]) == "it"
-    assert free_catalog.preset_lang(["pt-BR"]) == ""
+    assert free_catalog.preset_lang(["en", "it"]) == "en"          # solo in arrivo: basta
+    assert free_catalog.preset_lang(["pt-BR"]) == ""                # nessun libro: tutte
+    assert free_catalog.preset_lang(["fr", "it"]) == "it"
+
+
+def test_pagina_di_lingua_filtra_sulla_lingua_dell_interfaccia(catalog, client, tmp_path):
+    _secondo_catalogo(tmp_path, "nl", [_book(book_id="nl-max", slug="max-havelaar", title="Max Havelaar",
+                                             author={"name": "Multatuli", "died": 1887}, status="coming")])
+    page = client.get("/free-audiobooks/it/").get_data(as_text=True)          # di default la lingua della pagina
+    assert '<option value="it" data-short="IT" selected>' in page
+    page = client.get("/free-audiobooks/it/?lang=nl").get_data(as_text=True)
+    assert '<option value="nl" data-short="NL" selected>' in page
+    page = client.get("/free-audiobooks/it/?lang=fr").get_data(as_text=True)   # niente libri in francese
+    assert '<option value="" data-short="Toutes" selected>' in page
+    # La scelta resta nel cookie: la stessa pagina senza ?lang resta in francese.
+    page = client.get("/free-audiobooks/it/").get_data(as_text=True)
+    assert '<option value="" data-short="Toutes" selected>' in page
 
 
 def test_la_pagina_per_lingua_resta_per_la_seo(catalog, client, tmp_path):

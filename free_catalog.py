@@ -276,12 +276,12 @@ def all_books():
 
 
 def preset_lang(candidates):
-    """Lingua da preimpostare nel filtro dell'indice: la prima candidata
-    (lingua dell'interfaccia, cookie, Accept-Language) con almeno un libro
-    pubblicato; "" = tutte le lingue."""
+    """Lingua da preimpostare nel filtro del catalogo: la prima candidata (la
+    lingua dell'interfaccia) con almeno un libro, pubblicato o in arrivo;
+    "" = tutte le lingue (richiesta utente 06/11/2026)."""
     for c in candidates:
         c = i18n.norm_lang(c)
-        if c in LANGS and _published(c):
+        if c in LANGS and books(c):
             return c
     return ""
 
@@ -639,11 +639,13 @@ def index_html(ui_lang, base_url, preset=""):
 
 def hub_html(lang, base_url, ui=None):
     """Lo stesso indice per una lingua (`/free-audiobooks/<lang>/`): pagina a
-    se' per i motori di ricerca, col filtro gia' su `lang`. None se la lingua
-    non ha catalogo."""
+    se' per i motori di ricerca. Il filtro parte sulla lingua dell'interfaccia
+    (di default `lang`) se ha libri, altrimenti su tutte: con ?lang=nl i libri
+    olandesi anche da /free-audiobooks/it/. None se la lingua non ha catalogo."""
     if lang not in LANGS or books(lang) is None:
         return None
-    return _catalog_html(ui or lang, base_url, preset=lang, canonical_path=f"{PATH}/{lang}/")
+    ui = ui or lang
+    return _catalog_html(ui, base_url, preset=preset_lang([ui]), canonical_path=f"{PATH}/{lang}/")
 
 
 def _voice_text(b, t, key):

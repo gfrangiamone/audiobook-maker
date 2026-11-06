@@ -313,14 +313,11 @@ def _catalog_page(page, vary):
 def free_catalog_root():
     """Indice unico del catalogo, nella lingua dell'interfaccia (?lang, cookie
     della SPA, Accept-Language) fra quelle con i testi del catalogo. Il filtro
-    parte sulla lingua dell'utente se in quella lingua c'e' almeno un libro
-    pubblicato, altrimenti su tutte."""
+    parte su quella lingua se ha almeno un libro, pubblicato o in arrivo,
+    altrimenti su tutte."""
     scelta = _catalog_choice()
     ui = free_catalog.ui_lang(scelta + [_detect_lang_from_request()], "en")
-    # Il filtro guarda anche le lingue del catalogo che il sito non ha (pt, nl).
-    preset = free_catalog.preset_lang(scelta + [_i18n.browser_lang(
-        request.headers.get("Accept-Language", ""), supported=free_catalog.LANGS, ranked=True)])
-    return _catalog_page(free_catalog.index_html(ui, _base_url() or "", preset),
+    return _catalog_page(free_catalog.index_html(ui, _base_url() or "", free_catalog.preset_lang([ui])),
                          "Accept-Language, Cookie")
 
 
