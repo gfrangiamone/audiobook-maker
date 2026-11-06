@@ -313,6 +313,27 @@ def extract_text_from_element(element, depth: int = 0) -> list[str]:
     return parts
 
 
+def _is_link_list(lst: Tag) -> bool:
+    """Elenco in cui ogni voce e' un link a un altro documento del libro (non
+    un'ancora nella pagina, non un indirizzo esterno), al piu' con una breve
+    aggiunta: "Il piccolo patriotta padovano (racconto mensile)" in Cuore."""
+    items = lst.find_all("li", recursive=False)
+    if not items:
+        return False
+    for li in items:
+        links = li.find_all("a")
+        if len(links) != 1:
+            return False
+        href = (links[0].get("href") or "").strip().lower()
+        if not href or href.startswith(("#", "http:", "https:", "mailto:")):
+            return False
+        link_text = links[0].get_text(" ", strip=True)
+        rest = li.get_text(" ", strip=True).replace(link_text, "", 1).strip()
+        if not link_text or len(rest) > 40:
+            return False
+    return True
+
+
 def html_to_text(html_content: str) -> str:
     """Converte HTML in testo pulito per TTS."""
     soup = BeautifulSoup(html_content, "lxml")
@@ -350,6 +371,20 @@ def html_to_text(html_content: str) -> str:
         if a_text.isdigit() and len(a_text) <= 3:
             a_tag.decompose()
             continue
+
+    # Indici di sezione: elenchi di soli link ad altri documenti del libro
+    # (ws-export: "<h2>Indice</h2><ul>" con i capitoli di ogni parte, letto
+    # "Indice. Capitolo 1. Capitolo 2..." in I Vicere', 06/11/2026). Con
+    # l'elenco va via la sua intestazione "Indice".
+    for lst in soup.find_all(["ul", "ol"]):
+        if getattr(lst, "decomposed", False) or not _is_link_list(lst):
+            continue
+        head = lst.find_previous_sibling(True)
+        if head is not None and head.name in HEADING_TAGS:
+            head_text = head.get_text(" ", strip=True)
+            if len(head_text) <= 40 and _title_is_non_content(head_text, _INLINE_INDEX_HEADERS):
+                head.decompose()
+        lst.decompose()
 
     # Estrai testo
     body = soup.find("body") or soup
