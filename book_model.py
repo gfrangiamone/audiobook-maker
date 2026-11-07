@@ -206,6 +206,17 @@ NON_CONTENT_TITLE_EXACT = {
 # le leggeva tutte, dopo l'ultimo capitolo.
 COLOPHON_TITLE_PHRASES = ["colophon", "colofon", "kolophon", "colofón"]
 
+# Etichetta numerata di capitolo in testa al titolo: "Capitolo XXXI —",
+# "Chapter 12:", "XXXI.", "12.". I numeri romani solo in maiuscolo, perche'
+# "Mix." o "Di:" non sono numeri.
+_NUMBERED_CHAPTER_LABEL_RE = re.compile(
+    r"^\s*(?:(?:capitolo|chapter|chapitre|cap[íi]tulo|kapitel|hoofdstuk)\s+"
+    r"(?:(?-i:[IVXLCDM]{1,8})|\d{1,3})\b"
+    r"|(?:(?-i:[IVXLCDM]{1,8})|\d{1,3})(?=\s*[.:)\-–—]))"
+    r"\s*[.:)\-–—]?\s*",
+    re.IGNORECASE,
+)
+
 
 def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     """True se il titolo corrisponde a una frase di apparato critico.
@@ -214,11 +225,20 @@ def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     sono word-char in Python 3): "note" matcha "Note" / "Note al testo" ma NON
     "Notevole"; "toc" non matcha "Autocrazia"; "cover" non matcha "Discovering".
     Per frasi multi-parola i confini si applicano agli estremi della frase.
+
+    Dopo l'etichetta numerata di un capitolo la frase vale solo per intero:
+    "12. Bibliografia" e' apparato, "Capitolo XXXI — La caccia al tesoro:
+    l'indice di Flint" e' un capitolo (L'isola del tesoro lo perdeva in
+    silenzio, catalogo gratuito, 07/11/2026).
     """
     tl = (title or "").lower()
     # I titoli ambigui valgono solo per intero, non come parola.
     if tl.strip().strip(".:;–—- ") in NON_CONTENT_TITLE_EXACT:
         return True
+    label = _NUMBERED_CHAPTER_LABEL_RE.match(title or "")
+    if label:
+        rest = title[label.end():].lower().strip(".:;–—- ")
+        return bool(rest) and (rest in phrases or rest in NON_CONTENT_TITLE_EXACT)
     for skip in phrases:
         if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
             return True

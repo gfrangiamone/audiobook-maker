@@ -64,6 +64,17 @@ def test_non_content_titles_union_and_synthetic_labels():
     assert book_model.synthetic_section_title(3, "xx") == "Section 3"
 
 
+def test_capitolo_numerato_con_parola_di_apparato_resta():
+    # L'isola del tesoro (catalogo, 07/11/2026): il capitolo XXXI spariva.
+    for t in ("Capitolo XXXI — La caccia al tesoro: l'indice di Flint",
+              "XXXI. L'indice di Flint", "Chapter 12: Notes from the Underground",
+              "Capitolo 3", "IV"):
+        assert not book_model.title_is_non_content(t), t
+    for t in ("12. Bibliografia", "Capitolo 3 — Note", "IV. Indice", "Indice",
+              "Mix: note", "Di: indice"):
+        assert book_model.title_is_non_content(t), t
+
+
 def test_print_book_info_accepts_every_parser_output(capsys):
     info = BookInfo.from_text("T", "A", "ciao mondo")
     book_model.print_book_info(info)
