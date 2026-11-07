@@ -408,3 +408,22 @@ def test_chunk_di_una_frase_corta_non_si_rispezza(tmp_path, monkeypatch):
         "Testo di prova.", "gemini:flash38:Zephyr", str(tmp_path / "c.pcm"),
         failure_info={}, fallback_lang="it")
     assert [c[0] for c in calls] == ["gemini:flash38:Zephyr", "gemini:flash31:Zephyr"]
+
+
+def test_edge_fallito_non_e_un_recupero(tmp_path, monkeypatch):
+    """La Regenta (07/11/2026): rete giu', edge fallisce tutti i tentativi e
+    lascia il suo secondo di silenzio; il ripiego lo dava per "recuperato"
+    (48000 byte PCM) e 335 caratteri sparivano con failed_chunks=0."""
+    import edge_engine
+    out = str(tmp_path / "chunk.pcm")
+
+    async def _edge_down(text, voice, rate, output_path, max_retries=3):
+        with open(output_path, "wb") as f:
+            f.write(b"\xff\xfb" * 500)          # il secondo di silenzio MP3
+        return False
+
+    monkeypatch.setattr(edge_engine, "generate_chunk_mp3", _edge_down)
+    monkeypatch.setattr(premium_chunk, "_mp3_to_pcm_24k",
+                        lambda *a: pytest.fail("il silenzio di edge non va convertito"))
+    assert premium_chunk._edge_fallback_to_pcm("Texto perdido.", "es", "+0%", out) is False
+    assert not os.path.exists(out + ".edgefallback.mp3")

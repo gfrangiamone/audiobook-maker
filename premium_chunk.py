@@ -181,7 +181,7 @@ def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path,
     _loop = None
     try:
         _loop = asyncio.new_event_loop()
-        _loop.run_until_complete(
+        synth = _loop.run_until_complete(
             edge_engine.generate_chunk_mp3(text, voice, rate or "+0%", tmp_mp3, max_retries=3)
         )
     except Exception as e:
@@ -193,6 +193,16 @@ def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path,
                 _loop.close()
             except Exception:
                 pass
+    # Edge fallito anche lui: il suo MP3 e' il secondo di silenzio di ripiego,
+    # non un recupero (La Regenta, 07/11/2026: rete giu', 335 caratteri persi in
+    # un chunk dato per "recuperato", failed_chunks=0).
+    if synth is False:
+        print(f"[gemini-tts] edge-fallback senza audio (voice={voice}): chunk non recuperato")
+        try:
+            os.remove(tmp_mp3)
+        except OSError:
+            pass
+        return False
     if not (os.path.exists(tmp_mp3) and os.path.getsize(tmp_mp3) > 0):
         return False
     ok = _mp3_to_pcm_24k(tmp_mp3, output_path)
