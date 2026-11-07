@@ -239,15 +239,47 @@ def test_chapter_done_not_reused_if_file_changed_or_missing(tmp_path):
     assert chunk_reuse.reusable_chapters(tmp_path, fp, out) == {}
 
 
-def test_chapter_done_only_in_the_same_output_dir(tmp_path):
-    # Lo ZIP si fa dalla output_N corrente: un MP3 identico in un'altra
-    # cartella (altra gen_epoch) non vale.
+def test_chapter_done_in_another_output_dir_is_copied(tmp_path):
+    # Lo ZIP si fa dalla output_N corrente: un capitolo codificato in quella
+    # di un'altra gen_epoch (rilancio, poi recovery a epoch 1: C-IucY4 il
+    # 07/11/2026) si copia li', e l'originale resta per i token della sua epoch.
     fp = _fp(**EDGE)
     chunk_reuse.write_manifest(tmp_path, fp)
-    _out1, p = _chapter_mp3(tmp_path, epoch=1)
+    _out2, p = _chapter_mp3(tmp_path, epoch=2, data=b"ID3" + b"\x01" * 200)
     chunk_reuse.mark_chapter_done(tmp_path, 2, p)
-    out2, _p2 = _chapter_mp3(tmp_path, epoch=2)
-    assert chunk_reuse.reusable_chapters(tmp_path, fp, out2) == {}
+    out1 = tmp_path / "output_1"
+    out1.mkdir()
+    copia = out1 / p.name
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out1) == {2: str(copia)}
+    assert copia.read_bytes() == p.read_bytes() and p.exists()
+    # Il segno passa alla cartella corrente: il restart dopo la trova li'.
+    p.unlink()
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out1) == {2: str(copia)}
+
+
+def test_chapter_in_another_output_dir_changed_is_not_copied(tmp_path):
+    fp = _fp(**EDGE)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    _out2, p = _chapter_mp3(tmp_path, epoch=2, data=b"ID3" + b"\x01" * 200)
+    chunk_reuse.mark_chapter_done(tmp_path, 2, p)
+    p.write_bytes(b"ID3")  # riscritto dopo il segno
+    out1 = tmp_path / "output_1"
+    out1.mkdir()
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out1) == {}
+    assert not list(out1.iterdir())
+
+
+def test_chapter_record_outside_output_dirs_is_ignored(tmp_path):
+    fp = _fp(**EDGE)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    (tmp_path / "voices").mkdir()
+    p = tmp_path / "voices" / "002_Cap 2.mp3"
+    p.write_bytes(b"ID3" + b"\x01" * 200)
+    chunk_reuse.mark_chapter_done(tmp_path, 2, p)
+    out1 = tmp_path / "output_1"
+    out1.mkdir()
+    assert chunk_reuse.reusable_chapters(tmp_path, fp, out1) == {}
+    assert not list(out1.iterdir())
 
 
 def test_chapters_done_reset_on_fingerprint_change(tmp_path):

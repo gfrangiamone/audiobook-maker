@@ -80,6 +80,7 @@ _TEXT_KEYS = ("n_chunks", "plan_sha", "chunk_sha")
 _REALIGN_MARK = "realign_in_progress"
 _REALIGN_SUFFIX = ".realign"
 _CHUNK_FILE = re.compile(r"chunk_(\d{6})\.(pcm|mp3)(\.realign)?")
+_OUTPUT_DIR = re.compile(r"output_\d+")
 
 
 def chunk_path(work_dir, i, ext):
@@ -220,29 +221,48 @@ def mark_chapter_done(work_dir, ch_idx, mp3_path) -> bool:
 def reusable_chapters(work_dir, fp: dict, output_dir) -> dict:
     """`{chapter_index: percorso MP3}` dei capitoli che il ramo multi-file
     puo' saltare: manifest identico all'impronta corrente, motore riusabile,
-    MP3 nella stessa `output_N/` (lo ZIP si fa da li') e con lo stesso
-    contenuto di quando e' stato segnato."""
+    MP3 con lo stesso contenuto di quando e' stato segnato.
+
+    Lo ZIP si fa dalla `output_N/` corrente. Un capitolo codificato in quella
+    di un'altra epoch (rilancio dell'utente, poi recovery che riparte da
+    epoch 1: il 07/11/2026 C-IucY4 ha rifatto 5 capitoli gia' pronti in
+    `output_2/`) si copia nella corrente e il segno passa a lei. Copia e non
+    link: l'originale serve ai token di download della sua epoch e un encode
+    che riscrive il file della corrente non deve toccarlo."""
     if (fp or {}).get("engine") not in REUSABLE_ENGINES:
         return {}
     if not matches(work_dir, fp):
         return {}
     out_dir = Path(output_dir)
+    done = load_json(chapters_path(work_dir), dict)
     out = {}
-    for key, rec in load_json(chapters_path(work_dir), dict).items():
+    spostati = False
+    for key, rec in list(done.items()):
         try:
             ci = int(key)
-            name, sha = rec["file"], rec["sha256"]
-            valido = (rec["dir"] == out_dir.name and sha
-                      and name == os.path.basename(name))
+            name, sha, src_dir = rec["file"], rec["sha256"], rec["dir"]
+            valido = (sha and name == os.path.basename(name)
+                      and _OUTPUT_DIR.fullmatch(src_dir))
         except (TypeError, ValueError, KeyError):
             continue
         if not valido:
             continue
+        dest = out_dir / name
         try:
-            if file_sha256(out_dir / name) == sha:
-                out[ci] = str(out_dir / name)
+            if src_dir != out_dir.name:
+                src = Path(work_dir) / src_dir / name
+                if file_sha256(src) != sha:
+                    continue
+                shutil.copyfile(src, dest)
+            if file_sha256(dest) == sha:
+                out[ci] = str(dest)
+                if src_dir != out_dir.name:
+                    done[key] = {**rec, "dir": out_dir.name}
+                    spostati = True
         except OSError:
             continue
+    if spostati:
+        write_json_safe(chapters_path(work_dir), done)
     return out
 
 
