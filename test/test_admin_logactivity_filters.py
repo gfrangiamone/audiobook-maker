@@ -299,6 +299,44 @@ def test_translation_stat_shows_paid_and_unique_users(monkeypatch):
     assert _tr_stat(html) == ("3", "<span>💳 2 paid</span> <span>👤 2 users</span>")
 
 
+def _completed_stat_sub(html):
+    stat = html[html.index('data-filter="completed"'):]
+    start = stat.index('<div class="stat-sub">') + len('<div class="stat-sub">')
+    return stat[start:stat.index('</div>', start)]
+
+
+def test_completed_stat_shows_ai_optimized_and_paid(monkeypatch):
+    """Sotto i completati: quanti passati dall'ottimizzazione AI / quanti di
+    questi con pagamento. Un'ottimizzazione interrotta non conta, un libro
+    completato senza AI nemmeno (anche se pagato)."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        # Ottimizzazione standalone pagata con PayPal (claim sul job).
+        f'O_PAYPAL # {ts} # "a.epub" # OPTIMIZE # cidA # 1.1.1.1 #  # it # ',
+        f'O_PAYPAL # {ts} # "a.epub" # OPT_COMPLETE # cidA # 1.1.1.1 #  # it # ',
+        f'O_PAYPAL # {ts} # "a.epub" # COMPLETE # cidA # 1.1.1.1 # it-IT-DiegoNeural # it # ',
+        # Wizard combinato pagato con buono.
+        f'O_VOUCH # {ts} # "b.epub" # OPTIMIZE # cidA # 1.1.1.1 # gemini:flash31:Kore # it # ',
+        f'O_VOUCH # {ts} # "b.epub" # OPT_COMPLETE # cidA # 1.1.1.1 #  # it # ',
+        # Ottimizzazione gratuita (sotto soglia).
+        f'O_FREE # {ts} # "c.epub" # OPTIMIZE # cidB # 2.2.2.2 #  # it # ',
+        f'O_FREE # {ts} # "c.epub" # OPT_COMPLETE # cidB # 2.2.2.2 #  # it # ',
+        f'O_FREE # {ts} # "c.epub" # DOWNLOAD # cidB # 2.2.2.2 #  # it # ',
+        # Ottimizzazione annullata: fuori dai completati.
+        f'O_CANC # {ts} # "d.epub" # OPTIMIZE # cidC # 3.3.3.3 #  # it # ',
+        f'O_CANC # {ts} # "d.epub" # OPT_CANCEL # cidC # 3.3.3.3 #  # it # ',
+        # Completato e pagato, ma senza ottimizzazione AI.
+        f'G_PAID # {ts} # "e.epub" # GENERATE # cidD # 4.4.4.4 # gemini:flash31:Kore # it # ',
+        f'G_PAID # {ts} # "e.epub" # COMPLETE # cidD # 4.4.4.4 # gemini:flash31:Kore # it # ',
+    ]
+    _paid_stores(monkeypatch, done=["G_PAID"],
+                 payments={"O1": {"used_job_id": "O_PAYPAL"}},
+                 vouchers={"V1": {"uses": [{"job_id": "O_VOUCH", "amount_eur": 2.0}]}})
+    html = _page_with_log(monkeypatch, lines)
+    assert _completed_stat_sub(html) == "<span>✨ 3/2 AI optimization</span>"
+
+
 def test_api_optimize_logs_auto_generate_voice():
     """/api/optimize con auto_generate scrive la voce di destinazione
     sull'evento OPTIMIZE, cosi' il pannello admin la vede subito."""

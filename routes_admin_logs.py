@@ -584,6 +584,7 @@ def admin_logs():
             "no_activity": "Nessuna attività registrata per",
             "gemini_started": "PREMIUM", "translations": "Traduzioni",
             "sub_paid": "pagati", "sub_users": "utenti",
+            "sub_ai_opt": "Ottimizzazione AI",
             "eta_label": "Stima completamento gen.",
         },
         "en": {
@@ -595,6 +596,7 @@ def admin_logs():
             "no_activity": "No activity recorded for",
             "gemini_started": "PREMIUM", "translations": "Translations",
             "sub_paid": "paid", "sub_users": "users",
+            "sub_ai_opt": "AI optimization",
             "eta_label": "ETA",
         },
         "fr": {
@@ -606,6 +608,7 @@ def admin_logs():
             "no_activity": "Aucune activité enregistrée pour",
             "gemini_started": "PREMIUM", "translations": "Traductions",
             "sub_paid": "payés", "sub_users": "utilisateurs",
+            "sub_ai_opt": "Optimisation IA",
             "eta_label": "ETA",
         },
         "de": {
@@ -617,6 +620,7 @@ def admin_logs():
             "no_activity": "Keine Aktivitäten aufgezeichnet für",
             "gemini_started": "PREMIUM", "translations": "Übersetzungen",
             "sub_paid": "bezahlt", "sub_users": "Nutzer",
+            "sub_ai_opt": "KI-Optimierung",
             "eta_label": "ETA",
         },
         "es": {
@@ -628,6 +632,7 @@ def admin_logs():
             "no_activity": "No hay actividad registrada para",
             "gemini_started": "PREMIUM", "translations": "Traducciones",
             "sub_paid": "pagados", "sub_users": "usuarios",
+            "sub_ai_opt": "Optimización IA",
             "eta_label": "ETA",
         },
         "zh": {
@@ -639,6 +644,7 @@ def admin_logs():
             "no_activity": "没有活动记录",
             "gemini_started": "PREMIUM", "translations": "翻译",
             "sub_paid": "付费", "sub_users": "用户",
+            "sub_ai_opt": "AI 优化",
             "eta_label": "预计剩余",
         },
         "hi": {
@@ -650,6 +656,7 @@ def admin_logs():
             "no_activity": "कोई गतिविधि दर्ज नहीं",
             "gemini_started": "PREMIUM", "translations": "अनुवाद",
             "sub_paid": "भुगतान", "sub_users": "उपयोगकर्ता",
+            "sub_ai_opt": "AI अनुकूलन",
             "eta_label": "शेष",
         },
     }
@@ -693,6 +700,13 @@ def admin_logs():
     except Exception:
         _paid_ids = set()
     premium_sub = _paid_users_html(premium_sessions, _paid_ids, t)
+    # Sotto i completati: quanti sono passati dall'ottimizzazione AI
+    # (OPT_COMPLETE) e, fra questi, quanti con pagamento previsto (stesso
+    # criterio dei riquadri PREMIUM e Traduzioni).
+    ai_opt = [(sid, s) for sid, s in sessions.items()
+              if _session_completed(s) and "OPT_COMPLETE" in s["events"]]
+    ai_opt_paid = sum(1 for sid, s in ai_opt if _session_paid(s, sid, _paid_ids))
+    ai_opt_sub = f'<span>✨ {len(ai_opt)}/{ai_opt_paid} {t["sub_ai_opt"]}</span>'
     tr_sub = _paid_users_html(tr_sessions, _paid_ids, t)
     # Sessioni originatesi da piattaforma mobile (android/ios).
     mobile_count = sum(
@@ -792,7 +806,7 @@ def admin_logs():
     _f_pay_i = _funnel["payment_from_app"]["ios"]
     _f_conv = f"{_funnel['conversion_rate'] * 100:.1f}%"
 
-    html = _render_page("admin_log_activity", {"__P0__": (FAVICON_B64), "__P1__": (ym), "__P2__": ("<span class='label'>" + t["months"] + ":</span>" + months_nav if months_nav else ""), "__P3__": (t["collapse"]), "__P4__": (total_sessions), "__P5__": (t["sessions"]), "__P6__": (gen_completed), "__P7__": (t["gen_completed"]), "__P8__": (gen_in_progress), "__P9__": (t["in_progress"]), "__P10__": (gen_cancelled), "__P11__": (t["cancelled"]), "__P12__": (unique_clients), "__P13__": (t["unique_clients"]), "__P14__": (returning_clients), "__P15__": (t["recurring"]), "__P16__": (tr_count), "__P17__": (t["translations"]), "__P18__": (gemini_started), "__P19__": (t["gemini_started"]), "__P20__": (mobile_count), "__P21__": (transferred_count), "__P22__": (_f_open), "__P23__": (_f_open_a), "__P24__": (_f_open_i), "__P25__": (_f_web), "__P26__": (_f_web_a), "__P27__": (_f_web_i), "__P28__": (_f_pay), "__P29__": (_f_pay_a), "__P30__": (_f_pay_i), "__P31__": (_f_conv), "__P32__": (cards_html if cards_html else "<div class='empty'><div class='icon'>📮</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"), "__P33__": (us_months_nav), "__P34__": (t["expand"]), "__P35__": (t["eta_label"]), "__P36__": (premium_sub), "__P37__": (tr_sub)})
+    html = _render_page("admin_log_activity", {"__P0__": (FAVICON_B64), "__P1__": (ym), "__P2__": ("<span class='label'>" + t["months"] + ":</span>" + months_nav if months_nav else ""), "__P3__": (t["collapse"]), "__P4__": (total_sessions), "__P5__": (t["sessions"]), "__P6__": (gen_completed), "__P7__": (t["gen_completed"]), "__P8__": (gen_in_progress), "__P9__": (t["in_progress"]), "__P10__": (gen_cancelled), "__P11__": (t["cancelled"]), "__P12__": (unique_clients), "__P13__": (t["unique_clients"]), "__P14__": (returning_clients), "__P15__": (t["recurring"]), "__P16__": (tr_count), "__P17__": (t["translations"]), "__P18__": (gemini_started), "__P19__": (t["gemini_started"]), "__P20__": (mobile_count), "__P21__": (transferred_count), "__P22__": (_f_open), "__P23__": (_f_open_a), "__P24__": (_f_open_i), "__P25__": (_f_web), "__P26__": (_f_web_a), "__P27__": (_f_web_i), "__P28__": (_f_pay), "__P29__": (_f_pay_a), "__P30__": (_f_pay_i), "__P31__": (_f_conv), "__P32__": (cards_html if cards_html else "<div class='empty'><div class='icon'>📮</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"), "__P33__": (us_months_nav), "__P34__": (t["expand"]), "__P35__": (t["eta_label"]), "__P36__": (premium_sub), "__P37__": (tr_sub), "__P38__": (ai_opt_sub)})
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 

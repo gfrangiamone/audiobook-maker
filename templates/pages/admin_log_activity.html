@@ -41,7 +41,7 @@ body{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:var
 .stat-eta{font-size:.62rem;color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.4px;min-height:.9rem}
 .stat-sub{font-size:.62rem;color:#a78bfa;font-weight:600;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.2px;line-height:1.35}
 .stat-sub span{white-space:nowrap;display:inline-block}
-.stat.stat-tr .stat-sub{color:#facc15}
+.stat.stat-tr .stat-sub{color:#facc15} .stat.stat-green .stat-sub{color:var(--green)}
 .stat-eta .eta-lbl{color:var(--text-dim);font-weight:600;margin-right:4px;letter-spacing:.2px}
 .day-group{margin:0 12px 6px}
 .day-header{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}
@@ -127,7 +127,7 @@ body{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:var
 
 <div class="stats">
     <div class="stat active" data-filter="all" onclick="filterCards('all',this)"><div class="num">__P4__</div><div class="lbl">__P5__</div></div>
-    <div class="stat stat-green" data-filter="completed" onclick="filterCards('completed',this)"><div class="num">__P6__</div><div class="lbl">__P7__</div></div>
+    <div class="stat stat-green" data-filter="completed" onclick="filterCards('completed',this)" title="Sotto: sessioni completate passate dall'ottimizzazione AI / quante di queste con pagamento (PayPal, buono o abbonamento)"><div class="num">__P6__</div><div class="lbl">__P7__</div><div class="stat-sub">__P38__</div></div>
     <div class="stat stat-orange" data-filter="in_progress" onclick="filterCards('in_progress',this)"><div class="num">__P8__</div><div class="lbl">__P9__</div><div class="stat-eta" id="statEta"></div></div>
     <div class="stat stat-red" data-filter="cancelled" onclick="filterCards('cancelled',this)"><div class="num">__P10__</div><div class="lbl">__P11__</div></div>
     <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">__P12__</div><div class="lbl">__P13__</div></div>
