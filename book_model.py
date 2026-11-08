@@ -187,6 +187,9 @@ NON_CONTENT_TITLE_PHRASES = [
     # "Lista de erros corrigidos" di Project Gutenberg, letta in coda a O Crime
     # do Padre Amaro (catalogo, 08/11/2026).
     "erros corrigidos", "fe de erratas", "druckfehler", "druckfehlerverzeichnis",
+    # Nota del trascrittore dei Gutenberg tedeschi, letta in coda a Der
+    # Untertan (catalogo, 08/11/2026).
+    "bemerkungen zur textgestalt",
     "photo credits", "image credits", "illustration credits",
     # ── Indice riferimenti (testi religiosi/critici) ──
     "indice dei riferimenti",

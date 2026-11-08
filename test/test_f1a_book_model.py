@@ -82,6 +82,12 @@ def test_lista_degli_errori_corretti_e_apparato():
     assert not book_model.title_is_non_content("Os erros do meu coração")
 
 
+def test_nota_del_trascrittore_tedesco_e_apparato():
+    # Der Untertan (catalogo, 08/11/2026): letta dopo l'ultimo capitolo.
+    assert book_model.title_is_non_content("Bemerkungen zur Textgestalt")
+    assert not book_model.title_is_non_content("Bemerkungen eines Reisenden")
+
+
 def test_print_book_info_accepts_every_parser_output(capsys):
     info = BookInfo.from_text("T", "A", "ciao mondo")
     book_model.print_book_info(info)
