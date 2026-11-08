@@ -107,6 +107,41 @@ def test_frontespizio_senza_testo_dopo_resta_alle_regole_sui_capitoli():
     assert E._strip_leading_imprint(text) == text
 
 
+def test_pubblicita_dell_editore_in_coda_all_ultimo_capitolo_non_si_legge():
+    # Die Elixiere des Teufels (catalogo, 08/11/2026): la collana con i titoli.
+    ads = ("Typographmaschinensatz der Deutschen Buch- und Kunstdruckerei, Zossen-Berlin.\n\n"
+           "Die Bücher des Deutschen Hauses.\n\nHerausgegeben von Rudolf Presber.\n\n"
+           "In gleicher Ausstattung und zum gleichen Preise gelangen zur Ausgabe:\n\n"
+           "Goethe: Die Leiden des jungen Werther..\n\nPuschkin: Pique Dame..")
+    assert E._strip_trailing_ads(_NOVELLA + "\n\n" + ads) == _NOVELLA.rstrip()
+
+
+def test_prosa_a_righe_brevi_in_coda_resta():
+    # Die Elixiere des Teufels: il Nachtrag a righe brevi, con "geheftet" (appeso).
+    # Anche la pubblicita' e' andata a capo, come nel libro.
+    prosa = ("den Strauß an das Bild geheftet habe. Derselbe Bettler fand sich bei\n"
+             "der Exportation ein und drängte sich unter die Brüder. Wir wollten\n"
+             "ihn zurückweisen, als aber der Prior ihn scharf angeblickt hatte.")
+    ads = ("Typographmaschinensatz der Deutschen Buch- und\nKunstdruckerei, Zossen-Berlin\n\n"
+           "In gleicher Ausstattung und zum gleichen Preise gelangen zur\nAusgabe:\n\n"
+           "Puschkin: Pique Dame..")
+    assert E._strip_trailing_ads(_NOVELLA + "\n" + prosa + "\n\n" + ads) == _NOVELLA + "\n" + prosa
+
+
+def test_ultima_battuta_con_una_parola_da_catalogo_resta():
+    text = _NOVELLA + "\n\n— Um jeden Preis?\n\n— Tausend Dank, sagte er. Der Verlag wartet."
+    assert E._strip_trailing_ads(text) == text
+
+
+def test_capitoletti_di_pubblicita_in_coda_sono_pubblicita():
+    # Bahnwärter Thiel (catalogo, 08/11/2026): dodici capitoletti come questo.
+    assert E._is_ad_chapter("Gesammelte Werke. Volksausgabe in fünf Bänden.\nIn Leinen 15 Mark.")
+    assert E._is_ad_chapter("Dramatische Werke. Auswahl in drei Bänden. In\nLeinen 12 Mark.")
+    assert E._is_ad_chapter("Prijs per deel ƒ 1.50, gebonden ƒ 1.90.\n\nLouis Couperus, Eline Vere.")
+    assert not E._is_ad_chapter("Epilog.\n\nUnd so endete es, um jeden Preis.")
+    assert not E._is_ad_chapter(_NOVELLA * 10)
+
+
 def test_documento_senza_licenza_invariato():
     html = "<html><body><p>Testo.</p></body></html>"
     assert E._strip_site_boilerplate(html) is html

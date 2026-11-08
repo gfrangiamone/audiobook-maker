@@ -368,6 +368,15 @@ _IMPRINT_MAX_LINE_CHARS = 160
 _IMPRINT_MAX_LEAD_LINES = 25
 _IMPRINT_MIN_MARKS = 2
 _IMPRINT_MIN_REST_CHARS = 200
+# Prosa andata a capo a righe brevi (il Nachtrag di Die Elixiere des Teufels):
+# la riga finisce a meta' frase. Le righe di frontespizio e di pubblicita' sono
+# brevi o chiuse da un segno: la ricerca si ferma alla prima riga cosi'.
+_WRAPPED_PROSE_MIN_CHARS = 55
+
+
+def _looks_wrapped_prose(line: str) -> bool:
+    s = line.strip()
+    return len(s) >= _WRAPPED_PROSE_MIN_CHARS and (s[-1].islower() or s[-1] in ",-–")
 
 
 def _strip_leading_imprint(text: str) -> str:
@@ -381,7 +390,8 @@ def _strip_leading_imprint(text: str) -> str:
         if not s:
             continue
         seen += 1
-        if len(s) > _IMPRINT_MAX_LINE_CHARS or seen > _IMPRINT_MAX_LEAD_LINES:
+        if (len(s) > _IMPRINT_MAX_LINE_CHARS or seen > _IMPRINT_MAX_LEAD_LINES
+                or _looks_wrapped_prose(s)):
             break
         if _IMPRINT_LINE_RE.search(s):
             marks, last = marks + 1, i
@@ -391,6 +401,68 @@ def _strip_leading_imprint(text: str) -> str:
     # Un capitolo che e' solo frontespizio lo trattano le regole sui capitoli
     # (frontespizi, apparato): qui non si lascia un capitolo vuoto.
     return rest if len(rest.strip()) >= _IMPRINT_MIN_REST_CHARS else text
+
+
+# Pubblicita' dell'editore in coda al libro: il catalogo della collana con i
+# prezzi ("Gesammelte Werke in zehn Bänden. Geheftet 30 Mark"), il tipografo.
+# Dik Trom ed Eline Vere la avevano in capitoli a parte, Bahnwärter Thiel in
+# dodici capitoletti, Die Elixiere des Teufels in fondo all'ultimo capitolo
+# (catalogo gratuito, 08/11/2026). Conta i segni, non le righe: una riga
+# "In Leinen 15 Mark" ne ha due. Forti: prezzi, la formula della collana, il
+# tipografo. Deboli: rilegature e formule che il racconto puo' usare ("an das
+# Bild geheftet", "um jeden Preis"), buone solo per un capitoletto a parte.
+_AD_STRONG_RE = re.compile(
+    r"\b\d+(?:[.,]\d+)?\s?(?:mark|pfennig|gulden|francs|réis)\b|ƒ\s?\d"
+    r"|in gleicher ausstattung|zum gleichen preise?|prijs per deel|jeder band"
+    r"|druckerei|satz der\b|copyright|alle rechte vorbehalten|all rights reserved"
+    r"|tous droits réservés|imprimerie|tipografia|typographia|drukkerij|printed by",
+    re.IGNORECASE,
+)
+_AD_WEAK_RE = re.compile(
+    r"\b(?:geheftet|kartoniert|in (?:halb)?leinen|halbpergament|in pappb[äa]nden"
+    r"|herausgegeben von|preis|prijs|prix|preço|gebonden|ingenaaid|broché|cartonné"
+    r"|encuadernado|brochado|encadernado)\b",
+    re.IGNORECASE,
+)
+_AD_MAX_LINE_CHARS = 250
+_AD_MAX_TAIL_LINES = 80
+_AD_MIN_MARKS = 2
+_AD_CHAPTER_MAX_CHARS = 3000
+
+
+def _is_ad_chapter(text: str) -> bool:
+    """Capitolo fatto solo di pubblicita' dell'editore: breve, solo righe
+    brevi, almeno due segni forti o deboli."""
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines or len(text) > _AD_CHAPTER_MAX_CHARS:
+        return False
+    if any(len(l) > _AD_MAX_LINE_CHARS for l in lines):
+        return False
+    # Sul testo unito: "In\nLeinen 12 Mark" va a capo a meta' del segno.
+    joined = " ".join(lines)
+    return len(_AD_STRONG_RE.findall(joined)) + len(_AD_WEAK_RE.findall(joined)) >= _AD_MIN_MARKS
+
+
+def _strip_trailing_ads(text: str) -> str:
+    """Toglie la pubblicita' dell'editore dalla fine del testo: fra le righe
+    brevi di coda, dalla prima con un segno forte in giu', se i segni forti
+    sono almeno due. Mai lasciando il capitolo quasi vuoto."""
+    lines = text.split("\n")
+    marks, first, seen = 0, None, 0
+    for i in range(len(lines) - 1, -1, -1):
+        s = lines[i].strip()
+        if not s:
+            continue
+        seen += 1
+        if len(s) > _AD_MAX_LINE_CHARS or seen > _AD_MAX_TAIL_LINES:
+            break
+        n = len(_AD_STRONG_RE.findall(s))
+        if n:
+            marks, first = marks + n, i
+    if marks < _AD_MIN_MARKS or first is None:
+        return text
+    rest = "\n".join(lines[:first]).rstrip()
+    return rest if len(rest) >= _IMPRINT_MIN_REST_CHARS else text
 
 
 def _is_link_list(lst: Tag) -> bool:
@@ -1655,8 +1727,16 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     # ── Revisione semantica degli scarti ──
     _apply_section_judgement(info, dropped_sections)
 
-    # ── Frontespizio dell'edizione in testa al primo capitolo ──
+    # ── Frontespizio dell'edizione in testa, pubblicita' dell'editore in coda ──
+    # Con i capitoletti vanno via le loro voci d'indice vuote ("Werke von
+    # Gerhart Hauptmann:" in Bahnwärter Thiel).
+    ads_seen = False
+    while len(info.chapters) > 1 and (_is_ad_chapter(info.chapters[-1].text)
+                                      or ads_seen and not info.chapters[-1].text.strip()):
+        ads_seen = True
+        info.chapters.pop()
     if info.chapters:
+        info.chapters[-1].text = _strip_trailing_ads(info.chapters[-1].text)
         info.chapters[0].text = _strip_leading_imprint(info.chapters[0].text)
 
     # ── Riconoscimento automatico capitoli (allineamento al parsing PDF) ──
