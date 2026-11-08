@@ -344,6 +344,54 @@ def _strip_site_boilerplate(html_content: str) -> str:
 _PG_END_LINE_RE = re.compile(r"\W*end of (the )?project gutenberg\b", re.IGNORECASE)
 _PG_END_LINE_MAX_CHARS = 300
 
+# Immagini dell'EPUB "senza immagini" di Project Gutenberg: ebookmaker mette al
+# loro posto <span id="img_images_p53.jpg">Abbildung: Hochzeitsfeier</span>, e
+# Die Judenbuche leggeva 28 didascalie (catalogo gratuito, 08/11/2026).
+_EBOOKMAKER_IMG_ID_RE = re.compile(r"^img_.+\.(?:jpe?g|png|gif|svg|webp)$", re.IGNORECASE)
+
+# Frontespizio dell'edizione trascritta in testa al libro: editore, tiratura,
+# "Alle Rechte vorbehalten / Copyright 1926 by S. Fischer Verlag", tipografo,
+# illustratore. Le novelle di Wikisource e Gutenberg lo hanno nel primo
+# capitolo, e Traumnovelle e Fräulein Else lo leggevano (catalogo gratuito,
+# 08/11/2026). Solo righe brevi in testa al primo capitolo, e almeno due che
+# ne hanno i segni: una frase d'apertura con "Verlag" resta.
+_IMPRINT_LINE_RE = re.compile(
+    r"copyright|alle rechte vorbehalten|all rights reserved|tous droits réservés"
+    r"|diritti riservati|derechos reservados|direitos reservados"
+    r"|\bverlag\b|-verlag\b|verlagssignet|buchdruckerei|\bdruck (?:der|von)\b"
+    r"|\btausend\b|\bauflage\b|einbandentwurf|titelbild|zeichnungen von|holzschnitt"
+    r"|imprimerie|librairie|éditeurs?\b|tipografia|typographia|stamperia|editora\b"
+    r"|uitgeverij|drukkerij|printed by|publishers?\b",
+    re.IGNORECASE,
+)
+_IMPRINT_MAX_LINE_CHARS = 160
+_IMPRINT_MAX_LEAD_LINES = 25
+_IMPRINT_MIN_MARKS = 2
+_IMPRINT_MIN_REST_CHARS = 200
+
+
+def _strip_leading_imprint(text: str) -> str:
+    """Toglie il frontespizio dell'edizione dall'inizio del testo (vedi
+    `_IMPRINT_LINE_RE`): fino all'ultima riga con un segno di frontespizio fra
+    le righe brevi d'apertura. Il resto del testo non si tocca."""
+    lines = text.split("\n")
+    marks, last, seen = 0, -1, 0
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if not s:
+            continue
+        seen += 1
+        if len(s) > _IMPRINT_MAX_LINE_CHARS or seen > _IMPRINT_MAX_LEAD_LINES:
+            break
+        if _IMPRINT_LINE_RE.search(s):
+            marks, last = marks + 1, i
+    if marks < _IMPRINT_MIN_MARKS:
+        return text
+    rest = "\n".join(lines[last + 1:]).lstrip("\n")
+    # Un capitolo che e' solo frontespizio lo trattano le regole sui capitoli
+    # (frontespizi, apparato): qui non si lascia un capitolo vuoto.
+    return rest if len(rest.strip()) >= _IMPRINT_MIN_REST_CHARS else text
+
 
 def _is_link_list(lst: Tag) -> bool:
     """Elenco in cui ogni voce e' un link a un altro documento del libro (non
@@ -403,6 +451,9 @@ def html_to_text(html_content: str) -> str:
         if a_text.isdigit() and len(a_text) <= 3:
             a_tag.decompose()
             continue
+
+    for span in soup.find_all("span", id=_EBOOKMAKER_IMG_ID_RE):
+        span.decompose()
 
     # Rimandi all'indice: un blocco fatto solo di un link interno intitolato
     # "Inhoud", "Contents", "Indice"... Project Gutenberg mette in testa a ogni
@@ -1603,6 +1654,10 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
     # ── Revisione semantica degli scarti ──
     _apply_section_judgement(info, dropped_sections)
+
+    # ── Frontespizio dell'edizione in testa al primo capitolo ──
+    if info.chapters:
+        info.chapters[0].text = _strip_leading_imprint(info.chapters[0].text)
 
     # ── Riconoscimento automatico capitoli (allineamento al parsing PDF) ──
     # Se l'indice dell'EPUB codifica meno di 4 capitoli di contenuto (le note e

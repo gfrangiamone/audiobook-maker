@@ -77,6 +77,36 @@ def test_riga_di_chiusura_dei_vecchi_testi_di_gutenberg_non_si_legge():
     assert "desgraçado" in text and "End of" not in text and "outros livros" in text
 
 
+def test_segnaposto_delle_illustrazioni_di_ebookmaker_non_si_leggono():
+    # Die Judenbuche (catalogo, 08/11/2026): 28 "Abbildung: ..." lette.
+    html = ('<html><body><p>Er war ein ordentlicher Mann.</p>'
+            '<p class="center"><span id="img_images_p53.jpg">Abbildung: Hochzeitsfeier</span></p>'
+            '<p>Allgemeiner Aufruhr.</p><p><span id="intro">Ein Satz.</span></p></body></html>')
+    text = E.html_to_text(html)
+    assert "Abbildung" not in text and "Aufruhr" in text and "Ein Satz" in text
+
+
+_NOVELLA = "„Vierundzwanzig braune Sklaven ruderten die prächtige Galeere“, las die Kleine. " * 4
+
+
+def test_frontespizio_con_copyright_in_testa_al_libro_non_si_legge():
+    # Traumnovelle (catalogo, 08/11/2026): letti editore e "Alle Rechte vorbehalten".
+    text = ("TRAUMNOVELLE\n\nVON\n\nARTHUR SCHNITZLER\n\nS. FISCHER VERLAG / BERLIN 1926\n\n"
+            "TITELBILD VON HANS MEID / IN HOLZ\n\n"
+            "1. bis 25. Auflage / Alle Rechte vorbehalten\n\n" + _NOVELLA)
+    assert E._strip_leading_imprint(text) == _NOVELLA
+
+
+def test_un_solo_segno_di_frontespizio_non_basta():
+    text = "Der Verlag hatte geschrieben.\n\n" + _NOVELLA
+    assert E._strip_leading_imprint(text) == text
+
+
+def test_frontespizio_senza_testo_dopo_resta_alle_regole_sui_capitoli():
+    text = "S. FISCHER VERLAG\n\nAlle Rechte vorbehalten\n\nTRAUMNOVELLE"
+    assert E._strip_leading_imprint(text) == text
+
+
 def test_documento_senza_licenza_invariato():
     html = "<html><body><p>Testo.</p></body></html>"
     assert E._strip_site_boilerplate(html) is html
