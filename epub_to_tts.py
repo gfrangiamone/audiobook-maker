@@ -1762,7 +1762,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     reflow_broken_paragraphs(info)
 
     # ── Parti del libro (indice annidato: "Parte seconda" > "Capitolo 1") ──
-    _name_parts(info.chapters, _build_toc_parents(book))
+    _name_parts(info.chapters, _build_toc_parents(book, info.author))
     _retitle_author_chapters(info)
     _localize_lead_titles(info)
 
@@ -1824,6 +1824,10 @@ def _name_parts(chapters, parents):
     prev = None
     for ch in chapters:
         parent = parents.get(ch.source_file or "")
+        # La voce d'indice del capitolo stesso, con le sue sottovoci, non e'
+        # una parte: "Drittes Kapitel – Drittes Kapitel".
+        if parent and _norm_title_key(parent) == _norm_title_key(ch.title):
+            parent = None
         if parent and not ch.synthetic_title:
             generic = bool(_BARE_CHAPTER_NUMBER_RE.match(ch.title) or is_chapter_marker_line(ch.title))
             if generic and counts[ch.title] > 1:
@@ -1835,8 +1839,24 @@ def _name_parts(chapters, parents):
         prev = parent
 
 
-def _build_toc_parents(book: epub.EpubBook) -> dict[str, str]:
-    """file -> titolo della voce d'indice che lo contiene, per i file annidati."""
+# Voce d'indice che e' la firma del frontespizio ("von Johann Wolfgang von
+# Goethe"): Gutenberg ci annida i capitoli e Die Wahlverwandtschaften usciva
+# con "von Johann Wolfgang von Goethe – Zweites Kapitel" (catalogo gratuito,
+# 09/11/2026). Non e' una parte del libro.
+_BYLINE_RE = re.compile(r"^(?:von|by|par|di|de|door|por|da|af|av)\s+(.+)$", re.IGNORECASE)
+
+
+def _is_author_byline(title: str, author: str) -> bool:
+    m = _BYLINE_RE.match((title or "").strip())
+    if not m or not author:
+        return False
+    name, who = _norm_title_key(m.group(1)), _norm_title_key(author)
+    return bool(name and who) and (name == who or who in name or name in who)
+
+
+def _build_toc_parents(book: epub.EpubBook, author: str = "") -> dict[str, str]:
+    """file -> titolo della voce d'indice che lo contiene, per i file annidati.
+    La firma dell'autore non fa da parte (`_is_author_byline`)."""
     parents = {}
 
     def walk(items, parent):
@@ -1846,7 +1866,8 @@ def _build_toc_parents(book: epub.EpubBook) -> dict[str, str]:
                 href = (getattr(section, "href", "") or "").split("#")[0]
                 if parent and href:
                     parents.setdefault(href, parent)
-                walk(children, str(getattr(section, "title", "") or "").strip() or parent)
+                title = str(getattr(section, "title", "") or "").strip()
+                walk(children, parent if _is_author_byline(title, author) else title or parent)
             elif parent and isinstance(getattr(item, "href", None), str):
                 parents.setdefault(item.href.split("#")[0], parent)
 

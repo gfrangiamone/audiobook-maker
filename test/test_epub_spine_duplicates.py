@@ -127,6 +127,27 @@ def test_titoli_distinti_la_parte_si_legge_in_testa(tmp_path):
     assert chapters[2].text.startswith("Parte seconda.\n\n")
 
 
+def test_la_firma_dell_autore_nell_indice_non_e_una_parte():
+    # Die Wahlverwandtschaften (catalogo, 09/11/2026): "von Johann Wolfgang
+    # von Goethe – Zweites Kapitel".
+    class Book:
+        toc = [(epub.Link("t.xhtml", "von Johann Wolfgang von Goethe", "t"),
+                [(epub.Link("p1.xhtml", "Erster Teil", "p1"), [epub.Link("c1.xhtml", "Erstes Kapitel", "c1")]),
+                 epub.Link("c2.xhtml", "Zweites Kapitel", "c2")])]
+    parents = E._build_toc_parents(Book(), "Johann Wolfgang von Goethe")
+    assert parents == {"p1.xhtml": "", "c1.xhtml": "Erster Teil"} or parents == {"c1.xhtml": "Erster Teil"}
+    # Senza l'autore la firma resta una voce come le altre; "Von der Liebe" e' una parte.
+    assert E._build_toc_parents(Book())["c2.xhtml"] == "von Johann Wolfgang von Goethe"
+    assert not E._is_author_byline("Von der Liebe", "Friedrich Nietzsche")
+
+
+def test_la_voce_del_capitolo_stesso_non_e_una_parte():
+    ch = [E.Chapter(index=1, title="Drittes Kapitel", text="Der Hauptmann kam.", source_file="c3.xhtml"),
+          E.Chapter(index=2, title="Drittes Kapitel", text="Er kam wieder.", source_file="c9.xhtml")]
+    E._name_parts(ch, {"c3.xhtml": "Drittes Kapitel"})
+    assert [c.title for c in ch] == ["Drittes Kapitel", "Drittes Kapitel"]
+
+
 def test_spine_senza_ripetizioni_invariato(tmp_path):
     p = tmp_path / "ok.epub"
     docs = {f"c{i}": (f"Capitolo {i}", [f"{i}. {_PARA}"] * 8) for i in range(1, 4)}
