@@ -75,6 +75,14 @@ def test_capitolo_numerato_con_parola_di_apparato_resta():
         assert book_model.title_is_non_content(t), t
 
 
+def test_capitolo_numerato_con_titolo_ambiguo_resta():
+    # Memórias de um Sargento de Milícias (catalogo, 08/11/2026): spariva il XXV.
+    for t in ("Capítulo 25 - Trama", "XII. Sinossi", "Hoofdstuk 3. Inhoud"):
+        assert not book_model.title_is_non_content(t), t
+    for t in ("Trama", "Sinossi", "Inhoud"):
+        assert book_model.title_is_non_content(t), t
+
+
 def test_lista_degli_errori_corretti_e_apparato():
     # O Crime do Padre Amaro (catalogo, 08/11/2026): letta in coda al libro.
     for t in ("Lista de erros corrigidos", "Fe de erratas", "Druckfehlerverzeichnis"):

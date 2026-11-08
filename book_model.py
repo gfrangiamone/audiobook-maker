@@ -235,7 +235,10 @@ def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     Dopo l'etichetta numerata di un capitolo la frase vale solo per intero:
     "12. Bibliografia" e' apparato, "Capitolo XXXI — La caccia al tesoro:
     l'indice di Flint" e' un capitolo (L'isola del tesoro lo perdeva in
-    silenzio, catalogo gratuito, 07/11/2026).
+    silenzio, catalogo gratuito, 07/11/2026). I titoli ambigui non valgono
+    affatto dopo l'etichetta: una quarta di copertina non e' numerata come
+    un capitolo, "Capítulo 25 - Trama" si' (Memórias de um Sargento de
+    Milícias, catalogo gratuito, 08/11/2026).
     """
     tl = (title or "").lower()
     # I titoli ambigui valgono solo per intero, non come parola.
@@ -244,7 +247,7 @@ def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     label = _NUMBERED_CHAPTER_LABEL_RE.match(title or "")
     if label:
         rest = title[label.end():].lower().strip(".:;–—- ")
-        return bool(rest) and (rest in phrases or rest in NON_CONTENT_TITLE_EXACT)
+        return bool(rest) and rest in phrases
     for skip in phrases:
         if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
             return True
