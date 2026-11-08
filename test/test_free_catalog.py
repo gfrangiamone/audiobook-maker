@@ -515,6 +515,13 @@ def test_l_invito_apre_abm_con_la_voce_del_libro(catalog):
             '&amp;utm_campaign=it-storia-di-una-capinera"') in page
 
 
+def test_voce_con_lettere_accentate_resta_nell_invito(catalog):
+    catalog([_book(voice_id="voxcpm:v2:pt-BR/Patrícia")])
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR")
+    assert 'href="/?voice=voxcpm%3Av2%3Apt-BR%2FPatr%C3%ADcia&amp;utm_source=catalog' in page
+
+
 def test_voce_malformata_l_invito_resta_senza_voce(catalog):
     catalog([_book(voice_id="javascript:alert(1)")])
     page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",

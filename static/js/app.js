@@ -1379,7 +1379,7 @@ let _catalogVoice='';
   q.delete('voice');
   const qs=q.toString();
   history.replaceState(null,'',location.pathname+(qs?'?'+qs:'')+location.hash);
-  if(/^(gemini|voxcpm):[A-Za-z0-9:_\/.-]+$/.test(v))_catalogVoice=v;
+  if(/^(gemini|voxcpm):[A-Za-z0-9À-ÖØ-öø-ſ:_\/.-]+$/.test(v))_catalogVoice=v;
 })();
 function _applyCatalogVoice(){
   if(!_catalogVoice||wizMode!=='audio')return;

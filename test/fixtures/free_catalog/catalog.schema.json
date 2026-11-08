@@ -76,7 +76,7 @@
         "est_duration_s": {"type": ["number", "null"]},
         "description": {"type": "string"},
         "voice_label": {"type": "string"},
-        "voice_id": {"type": "string", "pattern": "^((gemini|voxcpm):[A-Za-z0-9:_/.-]+)?$"},
+        "voice_id": {"type": "string", "pattern": "^((gemini|voxcpm):[A-Za-z0-9À-ÖØ-öø-ſ:_/.-]+)?$"},
         "voice_model": {"type": "string"},
         "cover": {
           "type": "object",

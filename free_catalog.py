@@ -70,7 +70,9 @@ _BOOK_ID_RE = re.compile(r"^[a-z]{2}-[a-z0-9]+(?:-[a-z0-9]+)*$")
 # parentesi o backslash (un URL del catalogo non ne ha mai bisogno).
 _URL_RE = re.compile(r"""^(https?://|/)[^\s"'()<>\\]+$""")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-_VOICE_RE = re.compile(r"^(gemini|voxcpm):[A-Za-z0-9:_/.-]+$")
+# Lettere latine accentate comprese: ci sono voci VoxCPM come pt-BR/Patrícia
+# (08/11/2026, il catalogo portoghese non si pubblicava).
+_VOICE_RE = re.compile(r"^(gemini|voxcpm):[A-Za-z0-9À-ÖØ-öø-ſ:_/.-]+$")
 
 _lock = threading.Lock()
 # lingua -> (sorgente, istante di lettura, libri validi o None)
