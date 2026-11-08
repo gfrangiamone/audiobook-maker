@@ -59,8 +59,8 @@ def transfer_landing(token):
 
 def render_catalog_landing(book):
     """`/s/fc-…` senza app: invito a installarla per ascoltare quel libro del
-    catalogo gratuito (spec catalogo §7.6), nella lingua del visitatore fra le
-    6 del catalogo, altrimenti in quella del libro."""
+    catalogo gratuito (spec catalogo §7.6), nella lingua del visitatore fra
+    quelle del catalogo, altrimenti in quella del libro."""
     lang = _i18n.browser_lang(request.headers.get("Accept-Language", ""),
                               supported=_catalog_langs, ranked=True,
                               default=book["book_id"][:2])

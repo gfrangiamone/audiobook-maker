@@ -43,11 +43,11 @@ from og_image_data import og_image_url
 
 SCHEMA_VERSION = 1
 # Lingue del catalogo (spec §2): non coincidono con quelle del sito.
-LANGS = ("it", "en", "de", "pt", "nl", "es")
+LANGS = ("it", "en", "de", "pt", "nl", "es", "fr")
 # Nome di ogni lingua nella lingua stessa: il filtro dell'indice le elenca
 # cosi', qualunque sia la lingua dell'interfaccia.
 LANG_NAMES = {"it": "Italiano", "en": "English", "de": "Deutsch", "pt": "Português",
-              "nl": "Nederlands", "es": "Español"}
+              "nl": "Nederlands", "es": "Español", "fr": "Français"}
 # Token di condivisione permanente di un libro del catalogo (spec §7.6).
 SHARE_PREFIX = "fc-"
 PATH = "/free-audiobooks"

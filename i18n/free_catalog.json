@@ -94,7 +94,8 @@
       "de": "Tedesco",
       "pt": "Portoghese",
       "nl": "Olandese",
-      "es": "Spagnolo"
+      "es": "Spagnolo",
+      "fr": "Francese"
     },
     "g_work": "L'opera",
     "g_audio": "L'audiolibro",
@@ -219,7 +220,8 @@
       "de": "German",
       "pt": "Portuguese",
       "nl": "Dutch",
-      "es": "Spanish"
+      "es": "Spanish",
+      "fr": "French"
     },
     "g_work": "The work",
     "g_audio": "The audiobook",
@@ -344,7 +346,8 @@
       "de": "Allemand",
       "pt": "Portugais",
       "nl": "Néerlandais",
-      "es": "Espagnol"
+      "es": "Espagnol",
+      "fr": "Français"
     },
     "g_work": "L'œuvre",
     "g_audio": "Le livre audio",
@@ -469,7 +472,8 @@
       "de": "Alemán",
       "pt": "Portugués",
       "nl": "Neerlandés",
-      "es": "Español"
+      "es": "Español",
+      "fr": "Francés"
     },
     "g_work": "La obra",
     "g_audio": "El audiolibro",
@@ -594,7 +598,8 @@
       "de": "Deutsch",
       "pt": "Portugiesisch",
       "nl": "Niederländisch",
-      "es": "Spanisch"
+      "es": "Spanisch",
+      "fr": "Französisch"
     },
     "g_work": "Das Werk",
     "g_audio": "Das Hörbuch",
@@ -719,7 +724,8 @@
       "de": "德语",
       "pt": "葡萄牙语",
       "nl": "荷兰语",
-      "es": "西班牙语"
+      "es": "西班牙语",
+      "fr": "法语"
     },
     "g_work": "作品",
     "g_audio": "有声书",
@@ -844,7 +850,8 @@
       "de": "जर्मन",
       "pt": "पुर्तगाली",
       "nl": "डच",
-      "es": "स्पेनिश"
+      "es": "स्पेनिश",
+      "fr": "फ़्रेंच"
     },
     "g_work": "कृति",
     "g_audio": "ऑडियोबुक",
@@ -969,7 +976,8 @@
       "de": "Alemão",
       "pt": "Português",
       "nl": "Holandês",
-      "es": "Espanhol"
+      "es": "Espanhol",
+      "fr": "Francês"
     },
     "g_work": "A obra",
     "g_audio": "O audiolivro",
@@ -1094,7 +1102,8 @@
       "de": "Duits",
       "pt": "Portugees",
       "nl": "Nederlands",
-      "es": "Spaans"
+      "es": "Spaans",
+      "fr": "Frans"
     },
     "g_work": "Het werk",
     "g_audio": "Het luisterboek",

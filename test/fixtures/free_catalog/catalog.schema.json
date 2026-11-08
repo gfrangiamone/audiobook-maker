@@ -7,7 +7,7 @@
   "required": ["schema_version", "lang", "books"],
   "properties": {
     "schema_version": {"const": 1},
-    "lang": {"enum": ["it", "en", "de", "pt", "nl", "es"]},
+    "lang": {"enum": ["it", "en", "de", "pt", "nl", "es", "fr"]},
     "updated_at": {"type": "string"},
     "books": {"type": "array", "items": {"$ref": "#/$defs/book"}}
   },
