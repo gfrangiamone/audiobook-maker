@@ -488,6 +488,7 @@ _NUMBERING_WORDS = frozenset((
     "capitulo", "capítulo", "seccion", "sección", "acto", "escena",
     "kapitel", "teil", "buch", "abschnitt", "akt", "szene",
     "chapitre", "partie", "livre", "acte", "scène",
+    "hoofdstuk", "deel", "boek",
 ))
 
 _SENT_END_CHARS = '.!?…'
@@ -543,23 +544,26 @@ def _sentence_case_shouted_line(line):
 
     I numeri romani di numerazione restano maiuscoli, ma solo dove il contesto
     lo conferma: preceduti da una parola di numerazione («CAPITOLO XIV»), oppure
-    ultimo token della riga e lunghi almeno 3 caratteri («XVIII»). Senza questo
-    vincolo l'italiano si rovina: DI, MI, CI, VI, LI sono numeri romani validi e
+    ultimo token della riga e lunghi almeno 3 caratteri («XVIII») o staccati da
+    un separatore («HOOFDSTUK. – II.», che diventava «Hoofdstuk. – Ii.» nei
+    titoli di De stille kracht, catalogo 08/11/2026). Senza questo vincolo
+    l'italiano si rovina: DI, MI, CI, VI, LI sono numeri romani validi e
     «STORIA DI UN UOMO» diventerebbe «Storia DI un uomo».
     """
     tokens = re.split(r'(\s+)', line)
     word_idx = [i for i, t in enumerate(tokens) if t.strip()]
     out = list(tokens)
-    prev_core = ""
+    prev_core, prev_tok = "", ""
     for pos, i in enumerate(word_idx):
         core = _word_core(tokens[i])
         is_last = (pos == len(word_idx) - 1)
+        after_sep = bool(prev_tok) and (not prev_core or prev_tok[-1] in ".:")
         keep_upper = _is_roman_numeral(core) and (
             prev_core.lower() in _NUMBERING_WORDS
-            or (is_last and len(core) >= 3))
+            or (is_last and (len(core) >= 3 or after_sep)))
         if not keep_upper:
             out[i] = tokens[i].lower()
-        prev_core = core
+        prev_core, prev_tok = core, tokens[i]
     return _recapitalize(''.join(out))
 
 

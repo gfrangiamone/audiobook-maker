@@ -184,6 +184,9 @@ NON_CONTENT_TITLE_PHRASES = [
     "remerciements", "agradecimientos", "danksagung",
     # ── Errata / Crediti ──
     "errata", "errata corrige", "credits", "crediti",
+    # "Lista de erros corrigidos" di Project Gutenberg, letta in coda a O Crime
+    # do Padre Amaro (catalogo, 08/11/2026).
+    "erros corrigidos", "fe de erratas", "druckfehler", "druckfehlerverzeichnis",
     "photo credits", "image credits", "illustration credits",
     # ── Indice riferimenti (testi religiosi/critici) ──
     "indice dei riferimenti",

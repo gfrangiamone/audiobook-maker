@@ -58,6 +58,25 @@ def test_elenchi_che_non_sono_indici_restano():
     assert all(w in text for w in ("Indice", "Pane", "Nota", "Sito", "il capitolo"))
 
 
+def test_rimando_all_indice_in_testa_al_capitolo_non_si_legge():
+    # Project Gutenberg, De Leeuw van Vlaanderen (catalogo, 08/11/2026).
+    html = ('<html><body><h2>4</h2>'
+            '<div class="inhoud"><a href="15682-h-0.htm.html#Inhoud" class="pginternal">Inhoud</a></div>'
+            '<p>Men seght dickwils dat opt velt.</p>'
+            '<p><a href="#top">Contents</a></p>'
+            "</body></html>")
+    text = E.html_to_text(html)
+    assert "Men seght" in text and "Inhoud" not in text and "Contents" not in text
+
+
+def test_link_che_non_rimanda_all_indice_resta():
+    html = ('<html><body><p><a href="c2.xhtml">De inhoud van den brief</a></p>'
+            '<p><a href="https://example.org">Inhoud</a></p>'
+            '<p>Zie de <a href="c0.xhtml">Inhoud</a> van het boek.</p></body></html>')
+    text = E.html_to_text(html)
+    assert "De inhoud van den brief" in text and text.count("Inhoud") == 2
+
+
 def _write_parts_epub(path, parts):
     """EPUB con indice annidato: [(parte, [(titolo capitolo, testo)])]; la
     pagina di ogni parte ha solo il titolo, come in ws-export."""

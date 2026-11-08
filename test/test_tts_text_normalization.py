@@ -90,6 +90,13 @@ def test_roman_alone_on_line_stays_uppercase():
     assert _normalize_shouting("XVIII") == "XVIII"
 
 
+def test_short_roman_after_separator_at_line_end_stays_uppercase():
+    # De stille kracht (catalogo, 08/11/2026): "Eerste hoofdstuk. – Ii."
+    assert _normalize_shouting("EERSTE HOOFDSTUK. – II.") == "Eerste hoofdstuk. – II."
+    assert _normalize_shouting("TWEEDE DEEL. VI") == "Tweede deel. VI"
+    assert _normalize_shouting("HOOFDSTUK IV") == "Hoofdstuk IV"
+
+
 def test_italian_words_that_look_roman_are_lowercased():
     # DI, MI, CI, VI, LI sono numeri romani validi: senza il vincolo di
     # contesto (keyword di numerazione, oppure ultimo token lungo >=3)

@@ -390,6 +390,24 @@ def html_to_text(html_content: str) -> str:
             a_tag.decompose()
             continue
 
+    # Rimandi all'indice: un blocco fatto solo di un link interno intitolato
+    # "Inhoud", "Contents", "Indice"... Project Gutenberg mette in testa a ogni
+    # capitolo <div class="inhoud"><a href="...-h-0.htm.html#Inhoud">Inhoud</a>
+    # </div> e De Leeuw van Vlaanderen diceva "Inhoud." a ogni capitolo
+    # (catalogo, 08/11/2026).
+    for blk in soup.find_all(["p", "div"]):
+        if getattr(blk, "decomposed", False):
+            continue
+        links = blk.find_all("a")
+        if len(links) != 1:
+            continue
+        blk_text = blk.get_text(" ", strip=True)
+        href = (links[0].get("href") or "").strip().lower()
+        if (blk_text == links[0].get_text(" ", strip=True) and href
+                and not href.startswith(("http:", "https:", "mailto:"))
+                and blk_text.lower().strip(".:;–—- ") in _NAV_LINK_TITLES):
+            blk.decompose()
+
     # Indici di sezione: elenchi di soli link ad altri documenti del libro
     # (ws-export: "<h2>Indice</h2><ul>" con i capitoli di ogni parte, letto
     # "Indice. Capitolo 1. Capitolo 2..." in I Vicere', 06/11/2026). Con
@@ -953,6 +971,9 @@ _INLINE_INDEX_HEADERS = (
     "table of contents", "contents", "table des matières", "sommaire",
     "índice", "índice general", "inhaltsverzeichnis", "inhalt",
 )
+
+# Testo di un rimando all'indice che fa blocco da solo (vedi html_to_text).
+_NAV_LINK_TITLES = frozenset(_INLINE_INDEX_HEADERS) | {"inhoud", "inhoudsopgave"}
 
 
 def _find_inline_index_block(lines: list) -> tuple | None:
