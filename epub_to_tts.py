@@ -322,13 +322,27 @@ def _strip_site_boilerplate(html_content: str) -> str:
     Finivano lette, la licenza come ultimo capitolo da 17 mila caratteri; non
     bastava saltarle in `html_to_text`, perche' i file con piu' capitoli si
     tagliano fra un'intestazione e l'altra e il div che le racchiude si perde
-    (catalogo gratuito, 06/11/2026)."""
-    if "pg-boilerplate" not in html_content:
+    (catalogo gratuito, 06/11/2026).
+
+    Fuori da quel div i vecchi testi di Gutenberg chiudono con la riga "End of
+    Project Gutenberg's Amor de Perdição, by Camillo Castello Branco", letta
+    in inglese in coda al libro (catalogo gratuito, 08/11/2026)."""
+    if "pg-boilerplate" not in html_content and "Project Gutenberg" not in html_content:
         return html_content
     soup = BeautifulSoup(html_content, "lxml")
     for tag in soup.find_all(class_="pg-boilerplate"):
         tag.decompose()
+    for tag in soup.find_all(["p", "div", "pre"]):
+        if getattr(tag, "decomposed", False):
+            continue
+        text = tag.get_text(" ", strip=True)
+        if len(text) <= _PG_END_LINE_MAX_CHARS and _PG_END_LINE_RE.match(text):
+            tag.decompose()
     return str(soup)
+
+
+_PG_END_LINE_RE = re.compile(r"\W*end of (the )?project gutenberg\b", re.IGNORECASE)
+_PG_END_LINE_MAX_CHARS = 300
 
 
 def _is_link_list(lst: Tag) -> bool:

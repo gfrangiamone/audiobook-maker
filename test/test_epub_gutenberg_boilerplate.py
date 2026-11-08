@@ -68,6 +68,15 @@ def test_voce_d_indice_della_licenza_non_ruba_il_titolo_all_ultimo_capitolo(tmp_
     assert titles == ["Chapter I", "Chapter II"]
 
 
+def test_riga_di_chiusura_dei_vecchi_testi_di_gutenberg_non_si_legge():
+    # Amor de Perdição (catalogo, 08/11/2026): letta in inglese in coda al libro.
+    html = ("<html><body><p>Vá para casa, que o mais desgraçado é elle.</p>"
+            '<p style="margin-top: 5em">End of Project Gutenberg\'s Amor de Perdição, by Camillo Castello Branco</p>'
+            + FOOTER + "<p>Em Project Gutenberg ha outros livros.</p></body></html>")
+    text = E.html_to_text(E._strip_site_boilerplate(html))
+    assert "desgraçado" in text and "End of" not in text and "outros livros" in text
+
+
 def test_documento_senza_licenza_invariato():
     html = "<html><body><p>Testo.</p></body></html>"
     assert E._strip_site_boilerplate(html) is html
