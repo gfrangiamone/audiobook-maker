@@ -265,6 +265,11 @@ def extract_text_from_element(element, depth: int = 0) -> list[str]:
         text = str(element)
         if text.strip():
             parts.append(text)
+        elif text and "\n" not in text:
+            # Spazio fra due elementi in linea: Wikisource scrive "42<span
+            # typeof="mw:Entity">\xa0</span>feuillets", che diventava
+            # "42feuillets". Gli a capo fra i tag del sorgente restano fuori.
+            parts.append(text)
         return parts
 
     if not isinstance(element, Tag):
@@ -277,7 +282,7 @@ def extract_text_from_element(element, depth: int = 0) -> list[str]:
 
     # Heading → raccolgo come titolo di sezione (senza marcatori)
     if tag_name in HEADING_TAGS:
-        heading_text = element.get_text(strip=True)
+        heading_text = _heading_text(element)
         if heading_text:
             parts.append(f"\n\n{heading_text}\n\n")
         return parts
@@ -486,9 +491,139 @@ def _is_link_list(lst: Tag) -> bool:
     return True
 
 
+# Segnaposto di <br/> e dei blocchi dentro un heading (vedi _heading_text)
+_HEADING_BR, _HEADING_BLOCK = "\x00", "\x01"
+_HEADING_BLOCK_TAGS = sorted(BLOCK_TAGS - {"br"})
+# Fine di un pezzo di titolo che chiude gia' la frase: niente punto aggiunto
+_HEADING_PIECE_END = ".!?:;…»\"'—–-"
+
+
+def _heading_text(element: Tag) -> str:
+    """Testo di un heading. ws-export (Wikisource) mette numero e titolo in
+    blocchi diversi dello stesso <h3>, "II<div> </div>LE PÈRE ET LE FILS." e
+    "I<br/><br/>DE CHARYBDE EN SCYLLA", e va a capo a meta' frase: "OÙ L'ON
+    COMMENCE À<br/>NE PAS COMPRENDRE". get_text(strip=True) incollava i pezzi
+    ("IILE PÈRE", "ÀNE PAS") nei libri francesi del catalogo (09/11/2026). Fra
+    due blocchi, o due <br/> di seguito, va un punto, che il numero si legga a
+    parte; un <br/> solo e' uno spazio."""
+    for br in element.find_all("br"):
+        br.replace_with(_HEADING_BR)
+    for blk in element.find_all(_HEADING_BLOCK_TAGS):
+        blk.insert_before(_HEADING_BLOCK)
+        blk.insert_after(_HEADING_BLOCK)
+    raw = re.sub(_HEADING_BR + r"\s*" + _HEADING_BR, _HEADING_BLOCK, element.get_text())
+    out = ""
+    for piece in raw.split(_HEADING_BLOCK):
+        piece = " ".join(piece.replace(_HEADING_BR, " ").split())
+        if not piece:
+            continue
+        if out:
+            out += " " if out[-1] in _HEADING_PIECE_END else ". "
+        out += piece
+    return out
+
+
+# Lettrine di Wikisource ({{Lettrine}}): l'iniziale in <span class="dropinitial">,
+# come testo ("N ") o immagine (alt "C"), e il resto della parola in maiuscoletto,
+# <span class="sc">ous</span>; le edizioni illustrate hanno l'immagine sola, alt
+# "lettrine M". Il TTS leggeva "N ous étions" (Madame Bovary) e, senza
+# l'iniziale, "e n'est pas" (Le Mystère de la chambre jaune) e "onsieur de
+# Troisvilles" (Les Trois Mousquetaires), catalogo 09/11/2026.
+_DROP_INITIAL_ALT_RE = re.compile(r"^(?:lettrine\s+)?([^\W\d_])$", re.IGNORECASE)
+_WORD_APOSTROPHES = "'’"
+
+
+def _drop_initial_gaps(node):
+    """Spazi fra l'iniziale `node` e il resto della sua parola, se la parola
+    continua: maiuscoletto (span.sc) o apostrofo ("D" + "’abord"). None se
+    dopo l'iniziale viene un'altra parola ("À" + " peine")."""
+    gaps = []
+    for el in node.next_elements:
+        if isinstance(el, Comment):
+            continue
+        if isinstance(el, NavigableString):
+            if str(el).strip():
+                return gaps if str(el)[0] in _WORD_APOSTROPHES else None
+            gaps.append(el)
+            continue
+        if el.name == "span" and "sc" in (el.get("class") or []):
+            return gaps
+        if el.name in BLOCK_TAGS:
+            return None
+    return None
+
+
+def _join_drop_initials(soup) -> None:
+    """Riattacca l'iniziale delle lettrine al resto della parola (vedi sopra)."""
+    for span in soup.find_all("span", class_="dropinitial"):
+        text = span.get_text()
+        letter = text.strip()
+        img = span.find("img", alt=True)
+        if not letter and img is not None:
+            m = _DROP_INITIAL_ALT_RE.match(img["alt"].strip())
+            letter = m.group(1) if m else ""
+        if not letter:
+            continue
+        span.clear()
+        span.append(letter)
+        gaps = _drop_initial_gaps(span.string)
+        if gaps is None:
+            span.string.replace_with(letter + (" " if text[-1:].isspace() else ""))
+            continue
+        for gap in gaps:
+            gap.extract()
+    for img in soup.find_all("img", alt=True):
+        m = _DROP_INITIAL_ALT_RE.match(img["alt"].strip())
+        if not m:
+            continue
+        gaps = _drop_initial_gaps(img)
+        if gaps is None:
+            continue
+        img.replace_with(m.group(1))
+        for gap in gaps:
+            gap.extract()
+
+
+# Apici che fanno parte della parola, da non buttare con gli altri <sup> (note):
+# le abbreviazioni di Wikisource, <abbr class="abbr" title="Madame">M<sup>me
+# </sup></abbr>, si leggono per esteso dal title; fuori da un <abbr>, il
+# suffisso di "M<sup>me</sup>", "XIX<sup>e</sup>", "1<sup>er</sup>" resta. Il
+# TTS leggeva "MBovary" e "le 1octobre" (catalogo, 09/11/2026). L'apice "o" di
+# "1<sup>o</sup>" e "N<sup>o</sup>" e' il segno "°", che text_reflow legge
+# nella lingua del libro ("primo", "numéro").
+_ABBR_TITLE_MAX_CHARS = 40
+_SUP_SUFFIX_RE = re.compile(r"^[^\W\d_]{1,4}$")
+# Cosa precede il suffisso: cifre, numero romano o iniziale ("M", "Mg", "n"), da sola
+_SUP_BASE_RE = re.compile(r"(?<![^\W_])(?:\d+|[IVXLCDM]+|[A-Z][a-z]?|n)$")
+
+
+def _keep_word_superscripts(soup) -> None:
+    for abbr in soup.find_all("abbr", title=True):
+        title = abbr["title"].strip()
+        if abbr.find("sup") is not None and title and len(title) <= _ABBR_TITLE_MAX_CHARS:
+            abbr.replace_with(title)
+    for sup in soup.find_all("sup"):
+        classes = " ".join(sup.get("class") or []).lower()
+        if sup.find("a") is not None or "ref" in classes or "note" in classes:
+            continue
+        if not _SUP_SUFFIX_RE.match(sup.get_text()):
+            continue
+        prev = sup.previous_sibling
+        prev_text = prev.get_text() if isinstance(prev, Tag) else str(prev or "")
+        base = _SUP_BASE_RE.search(prev_text)
+        if base and sup.get_text() == "o" and (base.group(0).isdigit() or base.group(0) in "Nn"):
+            sup.replace_with("°")
+        elif base and base.group(0) != "n":
+            sup.unwrap()
+
+
 def html_to_text(html_content: str) -> str:
     """Converte HTML in testo pulito per TTS."""
     soup = BeautifulSoup(html_content, "lxml")
+
+    # Prima di togliere <sup> e immagini: apici e lettrine fanno parte del testo
+    _keep_word_superscripts(soup)
+    _join_drop_initials(soup)
 
     # Rimuovi completamente tag non voluti
     for tag_name in TAGS_TO_REMOVE_WITH_CONTENT:
@@ -579,6 +714,11 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True, lang: str = "") -> s
     text = unicodedata.normalize("NFC", text)
     # Trattino morbido (U+00AD): "bri\u00adlhante" arrivava intero al TTS.
     text = strip_soft_hyphens(text)
+    # Spazi tipografici francesi dentro le virgolette: \u00ab\u00a0Faust\u00a0\u00bb -> \u00abFaust\u00bb.
+    # Solo spazi indivisibili: il tedesco apre con \u00bb e chiude con \u00ab ("\u00bbNun,\u00ab
+    # sagte ich"), e lo spazio normale li' separa le parole.
+    text = re.sub(r"\u00ab[\u00a0\u202f\u2009]+", "\u00ab", text)
+    text = re.sub(r"[\u00a0\u202f\u2009]+\u00bb", "\u00bb", text)
 
     # 2. Sostituisci caratteri problematici
     replacements = {
@@ -628,6 +768,9 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True, lang: str = "") -> s
         text = text.replace(old, new)
 
     # 2b. Rimuovi caratteri di formattazione inutili per la lettura
+    # Asterischi dei nomi taciuti ("la comtesse de ***", "Mme de B***"): con lo
+    # spazio prima dei segni ("de *** ;") ne restava uno, letto dal TTS.
+    text = re.sub(r"\*{3,}", "", text)
     text = re.sub(r"(?m)^#{1,6}\s*", "", text)    # Markdown headings a inizio riga (# ## ### ...)
     text = re.sub(r"(?<!\w)#+(?!\w)", "", text)    # # isolati (non dentro parole come C#)
     text = re.sub(r"\*{1,3}(\S)", r"\1", text)  # *bold* / **bold** → solo testo
@@ -652,7 +795,13 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True, lang: str = "") -> s
     text = re.sub(r"\?{1,3}\s*dp\s+[^?\n]*\?{1,3}", "", text)  # con delimitatori ?
     # Pulisci ? orfani (residui da PI consecutive):
     #  - "? ??" o " ???" → spazi/vuoto (? non preceduti da lettera = non domande)
-    text = re.sub(r"(?<![a-zA-ZÀ-ÿ])\s*\?+\s*", " ", text)  # ? senza parola prima
+    # Prima, il "?" della tipografia francese, staccato dalla parola da uno
+    # spazio fine ("bord ?"): la regola sotto lo toglieva come residuo e
+    # ogni domanda dei libri francesi perdeva il punto (catalogo, 09/11/2026).
+    # Ne' e' un residuo il "?" dopo una cifra, una virgoletta, un punto
+    # ("en 1830?", "«Faust»?", "mais...?") o una lettera non latina.
+    text = re.sub(r"(?<=[\w\"'.)\]»])[ \t   ]+(?=\?(?!\?))", "", text)
+    text = re.sub(r"(?<![^\W_])(?<![\"'.)\]»])\s*\?+\s*", " ", text)  # ? senza parola prima
 
     # 3. Rimuovi pattern di rumore
     #  - LINE_SKIP_PATTERNS: la riga e' SOLO rumore (numero di pagina, riga
@@ -710,7 +859,17 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True, lang: str = "") -> s
 
     # 7. Pulisci punteggiatura
     text = re.sub(r"\s+([.,;:!?])", r"\1", text)   # Spazio prima di punteggiatura
-    text = re.sub(r"([.,;:!?]){3,}", r"\1\1", text)  # Punteggiatura ripetuta
+    # Punteggiatura ripetuta: l'ultimo segno, doppio. Con i puntini la domanda
+    # o l'esclamazione resta: "qué…?" -> "qué?" (col "\1\1" era "??"), e
+    # "Aiuto!..." di Verga -> "Aiuto!.." (era "Aiuto..", senza esclamazione).
+    def collapse_punctuation(m):
+        run = m.group(0)
+        core = run.strip(".,;:")
+        if "." in run and core[-1:] in ("?", "!"):
+            return core[-1] + (".." if run.endswith(".") else "")
+        return run[-1] * 2
+
+    text = re.sub(r"[.,;:!?]{3,}", collapse_punctuation, text)
     text = re.sub(r'"{2,}', '"', text)              # Virgolette doppie
     # Punto/esclamativo/interrogativo attaccato a parola successiva senza spazio
     # Es: "fine.Inizio" → "fine. Inizio", "no!Fermati" → "no! Fermati"
