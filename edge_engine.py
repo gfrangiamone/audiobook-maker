@@ -37,7 +37,7 @@ import retry_util as _retry
 from slot_gate import SlotGate
 import tts_split
 from audio_utils import _concatenate_mp3, _generate_silence_mp3
-from env_utils import env_int, env_str
+from env_utils import env_float, env_int, env_str
 from text_reflow import _sanitize_tts_text, uzbek_cyrillic_to_latin
 from voice_utils import rate_speed_factor as _rate_speed_factor_vu
 
@@ -231,10 +231,20 @@ def _edge_retry_wait(attempt, exc):
 # una richiesta ogni 20 s, riceveva 429 come il server). L'alternanza riportava il terzo
 # tentativo su un endpoint che rifiutava, e un errore isolato del legacy
 # diventava un chunk muto (66 in un'ora). Dopo un 429 l'endpoint resta in pausa
-# per _EDGE_429_PAUSE_SEC su tutto il processo: i tentativi vanno sull'altro e,
-# finche' ce n'e' uno libero, il 429 (rifiuto all'apertura, nessun audio) non
+# per `_edge_429_pause_sec()` su tutto il processo: i tentativi vanno sull'altro
+# e, finche' ce n'e' uno libero, il 429 (rifiuto all'apertura, nessun audio) non
 # consuma un tentativo. Finita la pausa, il primo chunk che ci arriva lo riprova.
-_EDGE_429_PAUSE_SEC = 60.0
+# 26/10-09/11/2026: di giorno msedge rifiuta con 429 una richiesta su quattro
+# circa (da un PC senza traffico 7 su 24), 20-55 volte l'ora. Con 60 s di pausa
+# restava fermo quasi tutta l'ora e i ritentativi tornavano sul legacy, che a
+# tratti non da' audio: 100-640 chunk muti al giorno, quasi zero di notte, quando
+# i 429 mancano e il ritentativo su msedge li recupera. La pausa breve tiene
+# msedge disponibile per i ritentativi; il 429 resta gratuito.
+def _edge_429_pause_sec():
+    """Secondi di pausa di un endpoint dopo un 429 (`ABM_EDGE_429_PAUSE_SEC`)."""
+    return env_float("ABM_EDGE_429_PAUSE_SEC", 10.0, floor=0.0)
+
+
 _edge_paused_until = {}
 _edge_pause_lock = threading.Lock()
 
@@ -246,11 +256,12 @@ def _edge_paused(name):
 def _edge_pause(name):
     """Mette in pausa l'endpoint `name` dopo un 429; lo annuncia se non lo era."""
     now = time.monotonic()
+    pause = _edge_429_pause_sec()
     with _edge_pause_lock:
         was_paused = _edge_paused_until.get(name, 0.0) > now
-        _edge_paused_until[name] = now + _EDGE_429_PAUSE_SEC
+        _edge_paused_until[name] = now + pause
     if not was_paused:
-        print(f"[edge] {name} in pausa per {_EDGE_429_PAUSE_SEC:.0f} s dopo un 429: "
+        print(f"[edge] {name} in pausa per {pause:.0f} s dopo un 429: "
               f"i tentativi vanno sull'altro endpoint")
 
 
@@ -473,7 +484,7 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
     """
     snippet = text[:60].replace('\n', ' ')
     # Ogni tentativo ripetuto passa all'endpoint successivo (vedi _edge_endpoints),
-    # saltando quelli in pausa per un 429 (vedi _EDGE_429_PAUSE_SEC).
+    # saltando quelli in pausa per un 429 (vedi _edge_429_pause_sec).
     endpoints = _edge_endpoints(env_str("ABM_EDGE_TTS_ENDPOINT"))
     used = {}
 

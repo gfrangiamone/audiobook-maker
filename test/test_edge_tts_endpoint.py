@@ -19,6 +19,7 @@ tentativo finche' c'e' un altro endpoint libero.
 import asyncio
 import os
 import sys
+import time
 
 import aiohttp
 import pytest
@@ -182,7 +183,7 @@ def test_dopo_un_429_msedge_resta_in_pausa_per_gli_altri_chunk(fake_edge, tmp_pa
 
 def test_finita_la_pausa_si_torna_su_msedge(fake_edge, tmp_path, monkeypatch):
     monkeypatch.delenv("ABM_EDGE_TTS_ENDPOINT", raising=False)
-    monkeypatch.setattr(edge_engine, "_EDGE_429_PAUSE_SEC", 0.0)
+    monkeypatch.setenv("ABM_EDGE_429_PAUSE_SEC", "0")
     fake_edge["errors"] = [_Handshake(429)]
     assert _attempts(tmp_path)[0]
     fake_edge["urls"].clear()
@@ -237,3 +238,14 @@ def test_la_pausa_si_annuncia_una_volta(capsys):
     edge_engine._edge_pause("msedge")
     edge_engine._edge_pause("msedge")
     assert capsys.readouterr().out.count("msedge in pausa") == 1
+
+
+def test_pausa_dopo_un_429_breve_e_configurabile(monkeypatch, capsys):
+    """26/10-09/11/2026: con 60 s di pausa msedge restava fermo quasi tutto il
+    giorno e i ritentativi tornavano sul legacy senza audio."""
+    monkeypatch.delenv("ABM_EDGE_429_PAUSE_SEC", raising=False)
+    assert edge_engine._edge_429_pause_sec() == 10.0
+    monkeypatch.setenv("ABM_EDGE_429_PAUSE_SEC", "30")
+    edge_engine._edge_pause("msedge")
+    assert "msedge in pausa per 30 s" in capsys.readouterr().out
+    assert 29 < edge_engine._edge_paused_until["msedge"] - time.monotonic() <= 30
