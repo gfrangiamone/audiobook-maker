@@ -1428,6 +1428,17 @@ Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi cl
 | `QUOTA_ABUSE_BLOCK` | 403 pre-claim per cid bloccato dal verdetto abuso |
 | `REUSE` | avvio servito con l'output di un job identico (`run_reuse`) |
 
+### 17.5 Inserto iniziale dei libri gratuiti (`free_intro.py`)
+
+Dal 09/11/2026 (v3.188.0). Ogni libro letto da una voce edge-tts per chi non ha un abbonamento pagato comincia con «Questo libro e' stato generato gratuitamente tramite il servizio audiobook maker punto com. Buon ascolto!» nella lingua del libro (voce standard: la sua locale; Multilingual: `_audit_language` del job). Il pagamento di traduzione od ottimizzazione AI non lo toglie (decisione utente 09/11/2026). Abbonamento letto alla richiesta (`routes_account.current_account_is_subscriber`, in `_stash_voice_options` di `/api/generate` e `/api/optimize`), salvato nel job come `gen_subscriber` e nel descrittore di recovery. M4B/MP3: primo capitolo; ZIP/podcast: primo file `000_audiobook-maker.com.mp3` (l'RSS prende il titolo di un file `000_` dal nome). Testi e voce di ripiego in `i18n/free_intro.json` (30 lingue: it en es fr de pt nl ru uk pl cs zh ja ko ar hi tr sv da nb fi el ro hu he id vi th ca bg); un'altra lingua esce senza inserto. Voce: la standard (non Multilingual) piu' usata per la lingua nei `GENERATE` del business log, poi quella del JSON se la prima non da' audio o il log non dice niente. Cache in `ABM_DATA_DIR/_free_intros/<lingua>-<sha1 testo>.mp3` (+ `.json` con voce e testo): sintesi solo al primo libro della lingua, poi copia; un testo cambiato rigenera e toglie il file vecchio della lingua. Esito nel job: `free_intro = {lang, voice, cached}`.
+
+| Variabile / costante | Default | Descrizione | File | Riga |
+|---|---|---|---|---|
+| `ABM_FREE_INTRO_ENABLE` | `1` | `0` toglie l'inserto da tutti i libri nuovi (i test lo spengono in `conftest`). | `free_intro.py` | 54 |
+| `_USO_GIORNI` | `90` | Giorni di business log su cui si conta la voce piu' usata (solo alla prima sintesi della lingua). | `free_intro.py` | 47 |
+| `CHAPTER_TITLE` / `FILE_NAME` | `audiobook-maker.com` / `000_audiobook-maker.com.mp3` | Titolo del capitolo M4B e dell'episodio, nome del file nello ZIP. | `free_intro.py` | 42 |
+| `CACHE_DIRNAME` | `_free_intros` | Cartella della cache nel data dir; il `_` la tiene fuori da `cleanup._is_job_dir`. Scrittura con `fileio.atomic_produce`: un MP3 a meta' non entra mai in cache. | `free_intro.py` | 44 |
+
 ---
 
 ## 18. Moderazione anti-abuso della quota voci standard (`abuse_watch.py`)

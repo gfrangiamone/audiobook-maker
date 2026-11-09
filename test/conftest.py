@@ -157,6 +157,14 @@ def _no_edge_alert(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_free_intro(monkeypatch):
+    """Nessun inserto dei libri gratuiti: i test che montano un libro edge
+    chiamerebbero edge-tts vero e scriverebbero nella cartella dati.
+    test_free_intro.py lo riaccende."""
+    monkeypatch.setenv("ABM_FREE_INTRO_ENABLE", "0")
+
+
+@pytest.fixture(autouse=True)
 def _no_gemini_silence_check(monkeypatch):
     """I trasporti finti rispondono con PCM di zeri: muto per definizione.
     Lo scarto dell'audio muto e' spento qui e riacceso da chi lo prova

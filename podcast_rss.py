@@ -106,9 +106,13 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
         ch_title = f"Episode {ep_num}"
         ch_desc = ""
         try:
-            idx_str = fname.split("_")[0]
+            idx_str, _, rest = fname.partition("_")
             idx = int(idx_str)
-            matched_ch = chapter_by_seq.get(idx) or chapter_by_idx.get(idx)
+            # I capitoli sono numerati da 001: il file 000 sta fuori dal libro
+            # (inserto iniziale, free_intro) e il titolo e' il resto del nome.
+            matched_ch = (chapter_by_seq.get(idx) or chapter_by_idx.get(idx)) if idx else None
+            if idx == 0 and rest:
+                ch_title = os.path.splitext(rest)[0]
             if matched_ch is not None:
                 ch_title = matched_ch.title
                 ch_desc = f"Chapter {idx}: {ch_title}"

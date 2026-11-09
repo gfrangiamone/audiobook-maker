@@ -95,6 +95,7 @@ from tts_split import (
     prepare_tts_text, _normalize_shouting,
 )
 import edge_engine
+import free_intro
 from edge_engine import generate_chunk_mp3
 from premium_chunk import (generate_chunk_pcm_gemini, gemini_single_call_text,
                            _generate_silence_pcm, generate_chunk_pcm_speechify)
@@ -4817,6 +4818,17 @@ def _audit_language(job, info):
     return (_norm_lang(fallback) if fallback else "")
 
 
+def _free_intro(job_id, job, info, voice, dest):
+    """Inserto iniziale dei libri gratuiti edge copiato in `dest`, o None
+    (`free_intro.prepare` decide se va messo). Lo annota sul job."""
+    fi = free_intro.prepare(job, voice, _audit_language(job, info), dest)
+    if fi:
+        job["free_intro"] = {k: fi[k] for k in ("lang", "voice", "cached")}
+        print(f"[{job_id}] Inserto gratuito {fi['lang']} ({fi['voice']}, "
+              f"{'dalla cache' if fi['cached'] else 'sintetizzato'})", flush=True)
+    return fi
+
+
 # ---------------------------------------------------------------------------
 # Tag di generazione incisi nei file audio consegnati
 # ---------------------------------------------------------------------------
@@ -7589,6 +7601,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                sample_rate=_pcm_sr) * 1000)
             return _get_audio_duration_ms(part_path)
 
+        def _prepend_intro(parts, path, title, gap_ms=0):
+            """Mette `path` in testa a `parts` come capitolo `title` (inserto
+            iniziale): i capitoli slittano della sua durata piu' `gap_ms`, il
+            silenzio che il concat mette dopo di lui. Ritorna lo slittamento."""
+            nonlocal current_ms
+            shift = _part_duration_ms(path) + gap_ms
+            for c in m4b_chapters:
+                c["start"] += shift
+                c["end"] += shift
+            m4b_chapters.insert(0, {"title": title, "start": 0, "end": shift})
+            parts.insert(0, path)
+            current_ms += shift
+            return shift
+
         if single_file:
             all_parts = []
             m4b_chapters = []
@@ -7717,19 +7743,21 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     book_parts=[p for p in all_parts if p != silence_path],
                     work_dir=work_dir, gemini_accent=job.get("gemini_accent"))
                 if _intro:
-                    _shift = _part_duration_ms(_intro["path"]) + (gap_ms_inter if all_parts else 0)
-                    for _c in m4b_chapters:
-                        _c["start"] += _shift
-                        _c["end"] += _shift
-                    m4b_chapters.insert(0, {"title": _intro["chapter"], "start": 0, "end": _shift})
-                    all_parts.insert(0, _intro["path"])
-                    current_ms += _shift
+                    _shift = _prepend_intro(all_parts, _intro["path"], _intro["chapter"],
+                                            gap_ms_inter if all_parts else 0)
                     _vox_inizi_ms = {k: (a + _shift, b + _shift)
                                      for k, (a, b) in _vox_inizi_ms.items()}
                     job["catalog_intro"] = {k: _intro[k]
                                             for k in ("key", "voice", "sha256", "gain_db")}
                     print(f"[{job_id}] Inserto iniziale {_intro['key']} ({_intro['voice']}, "
                           f"{_intro['gain_db']:+.1f} dB): {_shift} ms", flush=True)
+            elif not use_pcm:
+                # Inserto dei libri gratuiti edge (free_intro): MP3 come i
+                # chunk, capitolo a se' prima del primo. Il silenzio d'inizio
+                # capitolo del primo capitolo lo separa dal libro.
+                _fi = _free_intro(job_id, job, info, voice, work_dir / "_free_intro.mp3")
+                if _fi:
+                    _prepend_intro(all_parts, _fi["path"], free_intro.CHAPTER_TITLE)
 
             if _vox_inizi_ms:
                 _voxcpm_posiziona_code(job, _vox_inizi_ms)
@@ -8031,6 +8059,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _d = _get_audio_duration_ms(_mp3)
                     _c["start"], _c["end"] = current_ms, current_ms + _d
                     current_ms += _d
+
+            # Inserto dei libri gratuiti edge (free_intro): primo file dello
+            # ZIP e primo episodio del podcast, con i tag di generazione come
+            # gli altri.
+            if not use_pcm:
+                _fi_src = work_dir / "_free_intro.mp3"
+                if _free_intro(job_id, job, info, voice, _fi_src):
+                    _fi_mp3 = str(output_dir / free_intro.FILE_NAME)
+                    _concatenate_mp3([str(_fi_src)], _fi_mp3, extra_tags=gen_tags)
+                    _remove_parts([str(_fi_src)])
+                    _prepend_intro(mp3_files, _fi_mp3, free_intro.CHAPTER_TITLE)
 
             # Coda di ammissione: da qui parte la parte CPU-bound del ramo
             # multi-file (deflate dello ZIP + concat + encode M4B). Gli encode

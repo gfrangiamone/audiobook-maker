@@ -23,6 +23,35 @@ def test_atomic_write_json_creates_parents_and_leaves_no_tmp(tmp_path):
     assert json.loads(p.read_text(encoding="utf-8")) == {"k": 2}
 
 
+def test_atomic_produce_rende_visibile_solo_un_file_riuscito(tmp_path):
+    p = tmp_path / "c" / "x.mp3"
+    visti = []
+
+    def scrive(dati, esito=True):
+        def produce(tmp):
+            visti.append(tmp)
+            open(tmp, "wb").write(dati)
+            return esito
+        return produce
+    assert fileio.atomic_produce(p, scrive(b"uno")) is True
+    assert p.read_bytes() == b"uno" and visti[0].endswith(".tmp.mp3")
+    # Esito falso o file vuoto: resta il precedente, niente tmp.
+    assert fileio.atomic_produce(p, scrive(b"due", esito=False)) is False
+    assert fileio.atomic_produce(p, scrive(b"")) is False
+    assert fileio.atomic_produce(p, lambda tmp: True) is False
+    assert p.read_bytes() == b"uno"
+
+    def rotto(tmp):
+        open(tmp, "wb").write(b"meta'")
+        raise RuntimeError("rete giu'")
+    try:
+        fileio.atomic_produce(p, rotto)
+        assert False, "doveva sollevare"
+    except RuntimeError:
+        pass
+    assert p.read_bytes() == b"uno" and sorted(f.name for f in p.parent.iterdir()) == ["x.mp3"]
+
+
 def test_atomic_write_text_removes_tmp_on_failure(tmp_path, monkeypatch):
     p = tmp_path / "t.txt"
     import os as _os

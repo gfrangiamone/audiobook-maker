@@ -11,6 +11,7 @@ ripetuto in nove file):
   esistente e non vuota (l'avvio si rifiuta altrimenti);
 - `atomic_write_json` / `atomic_write_text`: tmp + fsync opzionale +
   `os.replace`, mai un file osservabile troncato; propagano le eccezioni;
+- `atomic_produce`: lo stesso per un file scritto da altri (callback sul tmp);
 - `write_json_safe`: come sopra ma non solleva mai (True/False) e non lascia
   il `.tmp` in giro, per gli store best-effort;
 - `load_json`: file assente o illeggibile -> default, con controllo del tipo
@@ -104,6 +105,29 @@ def atomic_write_text(path, text, *, fsync=True, encoding="utf-8"):
         except OSError:
             pass
         raise
+
+
+def atomic_produce(path, produce):
+    """Fa scrivere a `produce(tmp)` un file che non nasce da una stringa (un
+    MP3 di edge-tts, un encode) e lo rende visibile come `path` solo se e'
+    riuscito: `produce` ritorna un valore vero e il tmp non e' vuoto.
+    Altrimenti `path` resta com'era. Il tmp, unico per processo e thread,
+    finisce con l'estensione di `path` (chi lo scrive puo' dedurne il
+    formato) e non resta mai su disco. Ritorna True se `path` e' stato
+    scritto; propaga le eccezioni di `produce`."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp{path.suffix}")
+    try:
+        ok = bool(produce(str(tmp))) and tmp.is_file() and tmp.stat().st_size > 0
+        if ok:
+            os.replace(str(tmp), str(path))
+        return ok
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def atomic_write_json(path, data, *, fsync=True, ensure_ascii=False, indent=None):

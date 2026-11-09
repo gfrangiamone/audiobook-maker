@@ -37,6 +37,7 @@ Punti chiave nel codice:
 - M4B saltato per `output_format in ('mp3', 'zip', 'zip_rss')` (`generation_engine.run_generation`, cercare quella condizione).
 - RSS generato ed embedded **solo** per `zip_rss` (`run_generation`, subito prima della creazione dello ZIP); il flag `podcast_rss_included` viene impostato a true al successo.
 - Cover normalizzata a 1400×1400 in `audio_utils.py` prima dell'embedding M4B.
+- **Inserto dei libri gratuiti** (voce edge, utente non abbonato; `free_intro.py`, dal v3.188.0): in `m4b`/`mp3` e' il primo capitolo (`audiobook-maker.com`), in `zip`/`zip_rss` il primo file `000_audiobook-maker.com.mp3` e il primo episodio dell'RSS (i capitoli partono da `001_`). Senza testo per la lingua o senza audio da edge il libro esce senza inserto.
 - **Storage cleanup post-ZIP**: per `output_format in ('zip', 'zip_rss')`, subito dopo la creazione dello ZIP si verifica l'integrità con `zipfile.is_zipfile()` e si rimuovono i singoli MP3 da `output_dir` (sono pure duplicazioni del contenuto ZIP). Per `zip_rss` la purge avviene solo se `podcast_rss_included` è True (altrimenti il fallback in `/api/download_podcast` ricostruisce lo ZIP dai singoli MP3). `job["podcast_mp3s"]` mantiene comunque la lista dei path originali per logging/audit, ma i file fisici sono assenti — non è un problema perché il download serve lo ZIP direttamente.
 
 ## 4. Pulsanti di download post-generazione (`static/js/app.js`, pannello di completamento)

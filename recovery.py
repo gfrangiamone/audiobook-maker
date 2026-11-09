@@ -21,6 +21,7 @@ import time
 
 import activity_log
 import email_service
+import free_intro
 import free_quota
 import gemini_tts
 import i18n as _i18n
@@ -318,6 +319,7 @@ def _reenqueue_orphan(job_id, rec):
         "gemini_accent": rec.get("gemini_accent"),
         # Senza questa riga un job Speechify recuperato ripartiva in tono neutro.
         "speechify_emotion": rec.get("speechify_emotion", ""),
+        free_intro.SUBSCRIBER_KEY: bool(rec.get(free_intro.SUBSCRIBER_KEY)),
         "voxcpm_voice_pace": rec.get("voxcpm_voice_pace"),
         # Il batch gia' creato si riprende, non si ripaga.
         "voxcpm_batch_id": rec.get("voxcpm_batch_id"),

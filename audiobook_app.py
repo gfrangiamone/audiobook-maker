@@ -173,6 +173,7 @@ import push_service
 import metrics_store
 import free_quota
 import free_tts_quota
+import free_intro
 import abuse_watch
 import output_reuse
 import privacy_content
@@ -1646,6 +1647,9 @@ def _build_job_descriptor(job, phase):
         "platform": job.get("platform", ""),
         "gemini_accent": job.get("gemini_accent"),
         "speechify_emotion": job.get("speechify_emotion", ""),
+        # Abbonamento alla richiesta: il recovery non ha la sessione per
+        # rileggerlo, e un abbonato non riceve l'inserto gratuito.
+        free_intro.SUBSCRIBER_KEY: bool(job.get(free_intro.SUBSCRIBER_KEY)),
         # Passo VoxCPM congelato al primo avvio (velocita' della voce
         # campionata): il recovery non deve rileggere quella corrente.
         "voxcpm_voice_pace": job.get("voxcpm_voice_pace"),
@@ -2700,8 +2704,14 @@ def run_optimization(job_id, selected_chapters=None):
 
 def _stash_voice_options(job, data):
     """Stile e accento Gemini ed emozione Speechify della richiesta, nel job
-    (li legge run_generation). Comune a /api/generate e /api/optimize con
-    auto_generate. Ritorna (stile, accento, emozione) normalizzati."""
+    (li legge run_generation), piu' l'abbonamento di chi la fa (un abbonato
+    non riceve l'inserto dei libri gratuiti, free_intro). Comune a
+    /api/generate e /api/optimize con auto_generate. Ritorna (stile, accento,
+    emozione) normalizzati."""
+    if routes_account.current_account_is_subscriber():
+        job[free_intro.SUBSCRIBER_KEY] = True
+    else:
+        job.pop(free_intro.SUBSCRIBER_KEY, None)
     style_instruction = (data.get("gemini_style_instruction") or "")[:200]
     accent_variant = (data.get("gemini_accent") or "").strip()[:8]
     speechify_emotion = (data.get("speechify_emotion") or "").strip().lower()
