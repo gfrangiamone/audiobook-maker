@@ -597,11 +597,24 @@ _SUP_SUFFIX_RE = re.compile(r"^[^\W\d_]{1,4}$")
 _SUP_BASE_RE = re.compile(r"(?<![^\W_])(?:\d+|[IVXLCDM]+|[A-Z][a-z]?|n)$")
 
 
+def _shouted_heading(tag) -> bool:
+    """`tag` sta in un heading scritto tutto in maiuscolo, a parte `tag`."""
+    heading = tag.find_parent(list(HEADING_TAGS))
+    if heading is None:
+        return False
+    own = set(id(s) for s in tag.find_all(string=True))
+    letters = [c for s in heading.find_all(string=True) if id(s) not in own for c in s if c.isalpha()]
+    return bool(letters) and all(c.isupper() for c in letters)
+
+
 def _keep_word_superscripts(soup) -> None:
     for abbr in soup.find_all("abbr", title=True):
         title = abbr["title"].strip()
         if abbr.find("sup") is not None and title and len(title) <= _ABBR_TITLE_MAX_CHARS:
-            abbr.replace_with(title)
+            # Nel titolo maiuscolo «LE MYSTÈRE DE M<sup>lle</sup> STANGERSON»
+            # l'esteso resta maiuscolo, o la riga non e' piu' tutta maiuscola
+            # e "STANGERSON" restava al TTS come una sigla.
+            abbr.replace_with(title.upper() if _shouted_heading(abbr) else title)
     for sup in soup.find_all("sup"):
         classes = " ".join(sup.get("class") or []).lower()
         if sup.find("a") is not None or "ref" in classes or "note" in classes:
@@ -617,11 +630,28 @@ def _keep_word_superscripts(soup) -> None:
             sup.unwrap()
 
 
+# Numero romano maiuscolo per stile in linea: Notre-Dame de Paris di Wikisource
+# numera i capitoli con <span style="text-transform:uppercase;">i</span> e
+# scrive "Louis <span ...>iv</span>": il TTS riceveva "i. La grand'salle"
+# (catalogo, 09/11/2026). Solo i numeri: una parola in maiuscolo in mezzo alla
+# prosa ("minha URSULA") il TTS la prende per una sigla.
+_UPPERCASE_STYLE_RE = re.compile(r"text-transform\s*:\s*uppercase", re.IGNORECASE)
+_LOWER_ROMAN_RE = re.compile(r"^[ivxlcdm]+$")
+
+
+def _apply_uppercase_numerals(soup) -> None:
+    for tag in soup.find_all(style=_UPPERCASE_STYLE_RE):
+        for s in tag.find_all(string=True):
+            if not isinstance(s, Comment) and _LOWER_ROMAN_RE.match(s.strip()):
+                s.replace_with(str(s).upper())
+
+
 def html_to_text(html_content: str) -> str:
     """Converte HTML in testo pulito per TTS."""
     soup = BeautifulSoup(html_content, "lxml")
 
     # Prima di togliere <sup> e immagini: apici e lettrine fanno parte del testo
+    _apply_uppercase_numerals(soup)
     _keep_word_superscripts(soup)
     _join_drop_initials(soup)
 

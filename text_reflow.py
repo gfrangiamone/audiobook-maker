@@ -504,6 +504,13 @@ def _is_roman_numeral(core):
     return bool(core) and bool(_ROMAN_RE.match(core))
 
 
+def _is_leading_numeral(pos, token, core):
+    """Numero romano che apre la riga col suo punto, «XXVII. JOSEPH
+    ROULETABILLE…»: i titoli dei capitoli di Wikisource dopo `_heading_text`.
+    Diventava «Xxvii.» (Le Mystère de la chambre jaune, catalogo 09/11/2026)."""
+    return pos == 0 and _is_roman_numeral(core) and token.rstrip().endswith(".")
+
+
 def _is_shouted_word(core):
     """True se il token ha almeno 2 lettere e sono tutte maiuscole."""
     letters = [c for c in core if c.isalpha()]
@@ -558,7 +565,7 @@ def _sentence_case_shouted_line(line):
         core = _word_core(tokens[i])
         is_last = (pos == len(word_idx) - 1)
         after_sep = bool(prev_tok) and (not prev_core or prev_tok[-1] in ".:")
-        keep_upper = _is_roman_numeral(core) and (
+        keep_upper = _is_leading_numeral(pos, tokens[i], core) or _is_roman_numeral(core) and (
             prev_core.lower() in _NUMBERING_WORDS
             or (is_last and (len(core) >= 3 or after_sep)))
         if not keep_upper:
@@ -608,16 +615,19 @@ def _lower_inline_shouted_runs(line):
                 end = scan
                 real += 1
         if real >= 2:
-            for k in range(pos, end + 1):
+            first = pos
+            if _is_leading_numeral(pos, tokens[word_idx[pos]], cores[pos]):
+                first = pos + 1
+            for k in range(first, end + 1):
                 out[word_idx[k]] = tokens[word_idx[k]].lower()
             # La maiuscola torna solo se la sequenza apriva una frase. Il resto
             # della riga ha la sua punteggiatura originale: un _recapitalize
             # globale rovinerebbe le abbreviazioni («es. testo» -> «es. Testo»).
             starts_sentence = (
-                pos == 0
-                or tokens[word_idx[pos - 1]].rstrip()[-1:] in _SENT_END_CHARS)
-            if starts_sentence:
-                out[word_idx[pos]] = _recapitalize(out[word_idx[pos]])
+                first == 0
+                or tokens[word_idx[first - 1]].rstrip()[-1:] in _SENT_END_CHARS)
+            if starts_sentence and first <= end:
+                out[word_idx[first]] = _recapitalize(out[word_idx[first]])
             changed = True
         pos = end + 1
     return ''.join(out) if changed else line

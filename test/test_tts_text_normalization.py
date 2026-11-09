@@ -97,6 +97,14 @@ def test_short_roman_after_separator_at_line_end_stays_uppercase():
     assert _normalize_shouting("HOOFDSTUK IV") == "Hoofdstuk IV"
 
 
+def test_roman_opening_the_line_with_its_period_stays_uppercase():
+    # Le Mystère de la chambre jaune (catalogo, 09/11/2026): "Xxvii. Joseph rouletabille"
+    assert _normalize_shouting("XXVII. JOSEPH ROULETABILLE APPARAÎT") == "XXVII. Joseph rouletabille apparaît"
+    assert _normalize_shouting("II. LE PÈRE ET LE FILS.") == "II. Le père et le fils."
+    assert _normalize_shouting("VIII. LE JUGE INTERROGE Mademoiselle") == "VIII. Le juge interroge Mademoiselle"
+    assert _normalize_shouting("DI QUESTO NON PARLO") == "Di questo non parlo"
+
+
 def test_italian_words_that_look_roman_are_lowercased():
     # DI, MI, CI, VI, LI sono numeri romani validi: senza il vincolo di
     # contesto (keyword di numerazione, oppure ultimo token lungo >=3)

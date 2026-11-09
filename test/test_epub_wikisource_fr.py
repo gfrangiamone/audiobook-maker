@@ -48,6 +48,19 @@ def test_abbreviazione_con_apice_si_legge_per_esteso():
     assert _text(body) == "Au mois de mars, Madame Bovary était enceinte."
 
 
+def test_numero_romano_maiuscolo_per_stile_in_linea():
+    body = ('<h4> <span title="1" style="text-transform:uppercase;">i</span><br/><br/>LA GRAND’SALLE.</h4>'
+            '<p>Le roi Louis <span style="text-transform:uppercase">iv</span> et ma '
+            '<span style="text-transform:uppercase">Ursula</span>.</p>')
+    assert _text(body) == "I. LA GRAND’SALLE. Le roi Louis IV et ma Ursula."
+
+
+def test_abbreviazione_in_un_titolo_maiuscolo_resta_maiuscola():
+    body = ('<h3> XXIX<div> </div>LE MYSTÈRE DE <abbr class="abbr" title="Mademoiselle">M<sup>lle</sup></abbr>'
+            '<span typeof="mw:Entity"> </span>STANGERSON</h3><p>Les jours suivants.</p>')
+    assert _text(body) == "XXIX. LE MYSTÈRE DE MADEMOISELLE STANGERSON Les jours suivants."
+
+
 def test_suffissi_in_apice_restano_le_note_no():
     body = ('<p>De M<sup>me</sup> Bonacieux, au XIX<sup>e</sup> siècle, le 1<sup>er</sup> octobre'
             '<sup class="mw-ref reference"><a href="#cite_note-1">1</a></sup>, un mot<sup>a</sup>.</p>')
