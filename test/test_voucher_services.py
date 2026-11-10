@@ -164,6 +164,7 @@ def test_notification_email_lists_services(monkeypatch):
     assert "AI text optimisation of the same book" in sent[0]
     assert "<li>AI text optimisation</li>" in sent[1] and "of the same book" not in sent[1]
     assert "any premium service" in sent[2] and "<ul>" not in sent[2]
+    assert all("/guide/vouchers/" in html for html in sent)
 
 
 def test_admin_notify_passes_services(client, monkeypatch):

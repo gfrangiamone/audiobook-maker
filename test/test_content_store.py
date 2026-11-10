@@ -12,7 +12,7 @@ def test_content_tree_is_complete():
     meta = cs.content_json("guides", "meta.json")
     assert set(meta) == {"free-ebooks", "epub-to-audiobook", "m4b-format",
                          "text-to-speech-audiobook", "gemini-tts", "podcast",
-                         "pdf-to-audiobook"}
+                         "pdf-to-audiobook", "vouchers"}
     for gid in meta:
         for lang in ("en", "it", "fr", "es", "de", "zh"):
             assert cs.content_exists("guides", gid, f"{lang}.html"), (gid, lang)
@@ -35,6 +35,7 @@ def test_modules_load_the_files_and_keep_their_api():
     assert gc._GUIDE_BODY_EN["podcast"].startswith("<") or "<" in gc._GUIDE_BODY_EN["podcast"][:200]
     assert gc._GUIDE_BODY_HI == {"voice-cloning-audiobook": gvc.body("hi"),
                                  "pdf-to-audiobook": cs.content_text("guides", "pdf-to-audiobook", "hi.html"),
+                                 "vouchers": cs.content_text("guides", "vouchers", "hi.html"),
                                  "free-ebooks": cs.content_text("guides", "free-ebooks", "hi.html"),
                                  "epub-to-audiobook": cs.content_text("guides", "epub-to-audiobook", "hi.html")}
     assert sc._CONTENT["en"]["heading"] and len(sc._VOICE_TABLE) == 8

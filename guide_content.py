@@ -97,6 +97,7 @@ _GUIDE_PUBLISHED = {
     "podcast": "2025-01-20",
     "gemini-tts": "2026-06-09",
     "pdf-to-audiobook": "2026-10-18",
+    "vouchers": "2026-11-10",
     _gvc.GUIDE_ID: _gvc.PUBLISHED,
 }
 
@@ -107,6 +108,7 @@ _GUIDE_SECTION = {
     "podcast": "Podcast Publishing",
     "gemini-tts": "Text-to-Speech",
     "pdf-to-audiobook": "Tutorials",
+    "vouchers": "Help",
     _gvc.GUIDE_ID: _gvc.SECTION,
 }
 

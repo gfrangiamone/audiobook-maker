@@ -830,6 +830,7 @@ button.donate-btn{cursor:pointer;font-family:inherit;justify-content:center}
 .community-card{background:var(--srf);border-radius:var(--rs);border:1px solid var(--brd);padding:24px 28px;margin-bottom:24px}
 .community-card h3{font-size:.95rem;font-weight:650;margin-bottom:10px;color:var(--tx);display:flex;align-items:center;gap:8px}
 .community-desc{font-size:.82rem;color:var(--txd);line-height:1.5;margin-bottom:14px}
+.community-desc a{color:var(--ac);font-weight:500}
 .resources-card{background:var(--srf);border-radius:var(--rs);border:1px solid var(--brd);padding:24px 28px}
 .resources-card h3{font-size:.95rem;font-weight:650;margin-bottom:14px;color:var(--tx);display:flex;align-items:center;gap:8px}
 .resource-link{display:flex;align-items:center;gap:8px;padding:8px 0;font-size:.84rem;color:var(--ac);text-decoration:none;transition:color .2s;border-bottom:1px solid var(--srf3)}

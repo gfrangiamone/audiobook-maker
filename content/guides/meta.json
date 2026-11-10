@@ -306,5 +306,49 @@
    "kw": "pdf से ऑडियोबुक, pdf को ऑडियो में बदलें, pdf to mp3, pdf पढ़कर सुनाएँ, pdf टेक्स्ट टू स्पीच, pdf to audiobook hindi",
    "h1": "PDF को मुफ़्त में ऑडियोबुक में कैसे बदलें"
   }
+ },
+ "vouchers": {
+  "en": {
+   "title": "Audiobook Maker Vouchers: What They Cover & How to Use Them",
+   "desc": "How Audiobook Maker vouchers and coupons work: refund, donation and subscription vouchers, which PREMIUM services they pay for and how to redeem them.",
+   "kw": "audiobook maker voucher, audiobook maker coupon, voucher code, redeem voucher, donation coupon, refund voucher, premium voices voucher, voucher balance",
+   "h1": "Vouchers and Coupons: What They Pay For and How to Use Them"
+  },
+  "it": {
+   "title": "Buoni e coupon Audiobook Maker: cosa pagano e come usarli",
+   "desc": "Come funzionano i buoni (coupon) di Audiobook Maker: rimborso, donazione e abbonamento, quali servizi PREMIUM pagano e come usarli al pagamento.",
+   "kw": "buono audiobook maker, coupon audiobook maker, codice buono, usare un buono, coupon donazione, buono di rimborso, buono premium, saldo buono",
+   "h1": "Buoni e coupon: cosa pagano e come si usano"
+  },
+  "fr": {
+   "title": "Bons et coupons Audiobook Maker : services et utilisation",
+   "desc": "Comment fonctionnent les bons (coupons) d'Audiobook Maker : remboursement, don et abonnement, services PREMIUM couverts et utilisation au paiement.",
+   "kw": "bon audiobook maker, coupon audiobook maker, code du bon, utiliser un bon, coupon don, bon de remboursement, bon premium, solde du bon",
+   "h1": "Bons et coupons : ce qu'ils paient et comment les utiliser"
+  },
+  "es": {
+   "title": "Bonos y cupones de Audiobook Maker: qué pagan y cómo usarlos",
+   "desc": "Cómo funcionan los bonos (cupones) de Audiobook Maker: reembolso, donación y suscripción, qué servicios PREMIUM pagan y cómo usarlos al pagar.",
+   "kw": "bono audiobook maker, cupón audiobook maker, código de bono, usar un bono, cupón donación, bono de reembolso, bono premium, saldo del bono",
+   "h1": "Bonos y cupones: qué pagan y cómo se usan"
+  },
+  "de": {
+   "title": "Gutscheine bei Audiobook Maker: Leistungen und Einlösung",
+   "desc": "So funktionieren Gutscheine (Coupons) bei Audiobook Maker: Erstattung, Spende und Abo, welche PREMIUM-Dienste sie bezahlen und wie Sie sie einlösen.",
+   "kw": "audiobook maker gutschein, audiobook maker coupon, gutscheincode, gutschein einlösen, spenden gutschein, erstattungsgutschein, premium gutschein, gutschein guthaben",
+   "h1": "Gutscheine und Coupons: was sie bezahlen und wie Sie sie einlösen"
+  },
+  "zh": {
+   "title": "Audiobook Maker 代金券与优惠券：适用服务与使用方法",
+   "desc": "了解 Audiobook Maker 代金券（优惠券）的运作方式：退款、捐赠和订阅代金券，可支付哪些高级服务，以及如何在付款时使用。",
+   "kw": "audiobook maker 代金券, audiobook maker 优惠券, 代金券代码, 使用代金券, 捐赠优惠券, 退款代金券, 高级语音代金券, 代金券余额",
+   "h1": "代金券与优惠券：可支付哪些服务以及如何使用"
+  },
+  "hi": {
+   "title": "Audiobook Maker वाउचर और कूपन: सेवाएँ और उपयोग का तरीका",
+   "desc": "Audiobook Maker के वाउचर (कूपन) कैसे काम करते हैं: रिफंड, दान और सदस्यता वाउचर, वे किन PREMIUM सेवाओं का भुगतान करते हैं और उन्हें कैसे इस्तेमाल करें।",
+   "kw": "audiobook maker वाउचर, audiobook maker कूपन, वाउचर कोड, वाउचर का उपयोग, दान कूपन, रिफंड वाउचर, प्रीमियम वाउचर, वाउचर शेष राशि",
+   "h1": "वाउचर और कूपन: किन सेवाओं का भुगतान करते हैं और कैसे इस्तेमाल करें"
+  }
  }
 }

@@ -1169,6 +1169,7 @@ def _send_voucher_notification_email(code, email, amount_eur, valid_days, create
   {_layout.voucher_box(code_safe, f"{amount_eur:.2f}", value_label="Value")}
 {_voucher_services_html(services)}
   <p>Please use it within <strong>{days_int} days</strong> from <strong>{gen_date}</strong>.</p>
+  <p>How to use it, step by step: <a href="{BASE_URL}/guide/vouchers/">vouchers guide</a>.</p>
   <p>Thank you for your support!</p>""", BASE_URL, extra_style=";color:#333")
     return _send_email(email, subject, html_body)
 
