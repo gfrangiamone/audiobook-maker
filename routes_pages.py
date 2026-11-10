@@ -31,9 +31,10 @@ import seo_content
 import seo_ld
 import seo_reviews
 import support_content
+from content_store import file_lastmod
 from env_utils import env_str
 from favicon_data import get_apple_touch_icon, get_favicon_ico, get_favicon_png_192, get_favicon_svg
-from guide_content import _guide_path, build_guide_html
+from guide_content import _guide_path, build_guide_html, guide_lastmod
 from og_image_data import get_og_image
 from page_brand import render_page as _render_page
 from version import __version__
@@ -404,28 +405,6 @@ def free_catalog_file(name):
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def _file_lastmod(*paths) -> str:
-    """Data ISO (UTC) del piu' recente fra i file esistenti; oggi se nessuno esiste."""
-    stamps = []
-    for p in paths:
-        try:
-            stamps.append(os.path.getmtime(p))
-        except OSError:
-            continue
-    if not stamps:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return datetime.fromtimestamp(max(stamps), timezone.utc).strftime("%Y-%m-%d")
-
-
-def _guide_lastmod(guide_id: str, lang: str) -> str:
-    """lastmod di una guida in una lingua: codice comune, metadati e corpo.
-    Un title cambiato in meta.json deve cambiare la data (IndexNow la legge)."""
-    g = os.path.join(_HERE, "content", "guides")
-    return _file_lastmod(os.path.join(_HERE, "guide_content.py"),
-                         os.path.join(g, "meta.json"),
-                         os.path.join(g, guide_id, "meta.json"),
-                         os.path.join(g, guide_id, f"{lang}.html"))
-
 
 @bp.route("/sitemap.xml")
 def sitemap():
@@ -449,9 +428,9 @@ def sitemap_xml():
     # The home page reflects content from app + visible SEO + live user
     # reviews; pick the most recent of all three so Google sees a real change
     # signal whenever new feedback is approved.
-    candidates = [_file_lastmod(os.path.join(_HERE, "audiobook_app.py"),
-                                os.path.join(_HERE, "seo_content.py"),
-                                os.path.join(_HERE, "content", "seo", "content.json"))]
+    candidates = [file_lastmod(os.path.join(_HERE, "audiobook_app.py"),
+                               os.path.join(_HERE, "seo_content.py"),
+                               os.path.join(_HERE, "content", "seo", "content.json"))]
     try:
         latest_review_ts = seo_reviews.build_reviews("en").get("latest_ts", 0)
         if latest_review_ts:
@@ -520,7 +499,7 @@ def sitemap_xml():
         for lc in page_brand.SITE_LANGS:
             urls.append(f"""  <url>
     <loc>{_base_url()}{_guide_path(guide_id, lc)}</loc>
-    <lastmod>{_guide_lastmod(guide_id, lc)}</lastmod>
+    <lastmod>{guide_lastmod(guide_id, lc)}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
 {guide_alternates}

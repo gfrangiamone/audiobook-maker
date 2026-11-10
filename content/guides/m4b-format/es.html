@@ -1,67 +1,94 @@
 
 <section>
-<h2>¿Qué es el Formato M4B?</h2>
-<p><strong>M4B</strong> (MPEG-4 Audiobook) es el formato estándar para audiolibros. Basado en el contenedor MPEG-4 (misma familia que el video MP4), M4B es esencialmente un archivo de audio AAC con funciones especiales diseñadas específicamente para audiolibros:</p>
+<h2>¿Qué es un archivo M4B?</h2>
+<p>Un <strong>archivo M4B es un audiolibro</strong>: audio AAC dentro de un contenedor MPEG-4, con capítulos, portada y posición de escucha guardada. Se abre con Apple Books en iPhone y Mac, con VLC en Windows y Linux, y con cualquier app de audiolibros en Android.</p>
+<p><strong>M4B</strong> (MPEG-4 Audiobook) pertenece a la misma familia que los vídeos MP4 y los archivos de música M4A. Lo que lo convierte en un formato de audiolibro son funciones pensadas para escuchas largas:</p>
 <ul>
-<li><strong>Marcadores de capítulos</strong>: Puntos de navegación integrados que permiten saltar entre capítulos</li>
-<li><strong>Portada</strong>: La portada del libro se incrusta en los metadatos del archivo</li>
-<li><strong>Marcadores</strong>: Los reproductores de audiolibros recuerdan tu posición de escucha (incluso entre dispositivos con iCloud)</li>
-<li><strong>Metadatos</strong>: Título, autor, narrador, género y fecha de publicación se almacenan en el archivo</li>
-<li><strong>Velocidad variable</strong>: Los reproductores pueden acelerar o ralentizar la reproducción sin cambiar el tono</li>
+<li><strong>Marcadores de capítulo</strong>: puntos de navegación integrados para saltar entre capítulos</li>
+<li><strong>Portada</strong>: la portada del libro va integrada en los metadatos del archivo</li>
+<li><strong>Marcadores de posición</strong>: los reproductores recuerdan dónde te quedaste (incluso entre dispositivos con iCloud)</li>
+<li><strong>Metadatos</strong>: título, autor, narrador, género y fecha de publicación se guardan en el archivo</li>
+<li><strong>Velocidad variable</strong>: los reproductores aceleran o ralentizan la reproducción sin cambiar el tono de la voz</li>
 </ul>
-<p>M4B es el formato utilizado por <strong>Apple Books</strong>, <strong>Audible</strong> (Aax es una variante M4B con DRM) y la mayoría de las aplicaciones de audiolibros en iOS y Android.</p>
+<p>M4B es el formato que usan <strong>Apple Books</strong> y la mayoría de las apps de audiolibros en iOS y Android. Los archivos AAX de Audible se basan en el mismo contenedor, pero están protegidos con DRM y solo se reproducen en las apps de Audible.</p>
 </section>
 
 <section>
 <h2>M4B vs MP3 para Audiolibros: Comparación Completa</h2>
-<table>
+<div class="tablewrap"><table>
 <thead><tr><th>Característica</th><th>M4B</th><th>MP3</th></tr></thead>
 <tbody>
-<tr><td>Navegación por capítulos</td><td>Marcadores de capítulos integrados</td><td>Sin capítulos integrados</td></tr>
-<tr><td>Portada</td><td>Incrustada en el archivo</td><td>Se puede incrustar (ID3) pero no es universalmente compatible</td></tr>
-<tr><td>Guardado de posición</td><td>Sí (todos los reproductores M4B)</td><td>Depende del reproductor</td></tr>
-<tr><td>Tamaño del archivo (misma calidad)</td><td>~30-40% más pequeño (códec AAC)</td><td>Más grande a igual calidad</td></tr>
-<tr><td>Compatibilidad</td><td>Apple Books, Audible, BookPlayer, Listen, la mayoría de apps de audiolibros</td><td>Universal — todos los dispositivos</td></tr>
-<tr><td>Archivo único</td><td>Sí — libro completo en un solo archivo</td><td>Generalmente un archivo por capítulo o uno combinado</td></tr>
+<tr><td>Navegación por capítulos</td><td>Marcadores de capítulo integrados</td><td>Sin capítulos integrados</td></tr>
+<tr><td>Portada</td><td>Integrada en el archivo</td><td>Se puede integrar (ID3), pero no siempre se muestra</td></tr>
+<tr><td>Guardar la posición</td><td>Sí (todos los reproductores M4B)</td><td>Depende del reproductor</td></tr>
+<tr><td>Tamaño (misma calidad)</td><td>Menor (AAC es más eficiente que MP3)</td><td>Mayor a igual calidad</td></tr>
+<tr><td>Compatibilidad</td><td>Apple Books, BookPlayer, VLC, la mayoría de las apps de audiolibros</td><td>Universal — cualquier dispositivo</td></tr>
+<tr><td>Archivo único</td><td>Sí — todo el libro en un archivo</td><td>Normalmente un archivo por capítulo o uno combinado</td></tr>
 <tr><td>Sincronización de marcadores</td><td>Sí (ecosistema Apple)</td><td>No</td></tr>
-<tr><td>Ideal para</td><td>Usuarios de iOS/Mac, coleccionistas de audiolibros, libros largos</td><td>Máxima compatibilidad, compartir, reproductores simples</td></tr>
+<tr><td>Ideal para</td><td>Usuarios de iOS/Mac, coleccionistas, libros largos</td><td>Máxima compatibilidad, compartir, reproductores sencillos</td></tr>
 </tbody>
-</table>
-<p><strong>En resumen:</strong> Elige M4B si usas Apple Books o una aplicación dedicada de audiolibros. Elige MP3 si necesitas reproducir el archivo en un reproductor MP3 básico o en el estéreo del coche que no soporta M4B.</p>
+</table></div>
+<p><strong>En resumen:</strong> elige M4B si usas Apple Books o una app de audiolibros. Elige MP3 si el archivo tiene que sonar en un reproductor MP3 básico o en una radio de coche que no lee M4B.</p>
+</section>
+
+<section>
+<h2>Cómo abrir un archivo M4B</h2>
+<h3>iPhone y iPad</h3>
+<ol>
+<li>Guarda el archivo M4B en la app <strong>Archivos</strong> (o recíbelo por AirDrop).</li>
+<li>Toca el archivo, luego el icono de compartir, y elige <strong>Libros</strong>. Aparece en <em>Audiolibros</em>, con sus capítulos.</li>
+<li>¿Prefieres un reproductor dedicado? <strong>BookPlayer</strong> (gratuito y de código abierto) y <strong>Bound</strong> importan los M4B directamente desde Archivos.</li>
+</ol>
+<h3>Mac</h3>
+<p>Haz doble clic en el archivo M4B: se abre en <strong>Apple Books</strong>, que recuerda la posición y la sincroniza con el iPhone mediante iCloud. También lo reproducen <strong>VLC</strong> e <strong>IINA</strong>, con los capítulos en el menú de reproducción.</p>
+<h3>Windows</h3>
+<p>Windows no trae una app de audiolibros. Usa <strong>VLC media player</strong> (gratuito): abre el archivo y elige el capítulo en <em>Reproducción → Capítulo</em>. <strong>foobar2000</strong> y <strong>MusicBee</strong> también leen M4B, y <strong>iTunes para Windows</strong> lo guarda en Audiolibros. Si una app no reconoce el archivo, cambia la extensión de <code>.m4b</code> a <code>.m4a</code>: el contenido es el mismo, solo que algunos reproductores ignorarán entonces los capítulos.</p>
+<h3>Android</h3>
+<p>Instala un reproductor de audiolibros: <strong>Smart AudioBook Player</strong>, <strong>Listen Audiobook Player</strong> o <strong>Voice</strong> (código abierto). Copia el M4B al teléfono (en una carpeta como <em>Audiolibros</em>), indica esa carpeta a la app y los capítulos aparecen solos. <strong>VLC para Android</strong> también sirve.</p>
+<h3>Linux</h3>
+<p><strong>VLC</strong>, <strong>mpv</strong> o <strong>Cozy</strong>, un reproductor de audiolibros GTK que recuerda la posición.</p>
+<h3>En el coche y en un servidor doméstico</h3>
+<p>La mayoría de las radios de coche leen MP3 pero no M4B desde un USB: convierte el archivo (ver más abajo) o escúchalo desde el móvil con CarPlay o Android Auto y una de las apps anteriores. Para tener tu biblioteca en streaming en casa, <strong>Audiobookshelf</strong> y <strong>Plex</strong> (con el agente Audnexus) manejan M4B con capítulos.</p>
+</section>
+
+<section>
+<h2>Cómo convertir M4B a MP3 (y MP3 a M4B)</h2>
+<p><strong>De M4B a MP3.</strong> La herramienta gratuita de línea de comandos <a href="https://ffmpeg.org/" rel="noopener">ffmpeg</a> convierte el libro entero en un solo paso:</p>
+<p><code>ffmpeg -i libro.m4b -vn -c:a libmp3lame -b:a 64k libro.mp3</code></p>
+<p>64 kbps son más que suficientes para una voz narrada. La mayoría de los reproductores MP3 ignoran los marcadores de capítulo, así que si necesitas saltar entre capítulos conviene tener un MP3 por capítulo: <code>m4b-tool split</code> corta el M4B en cada capítulo.</p>
+<p><strong>De MP3 a M4B.</strong> Para unir una carpeta de MP3 en un solo M4B, con un capítulo por archivo, usa <code>m4b-tool merge "carpeta-libro/" --output-file="libro.m4b"</code> o la app de código abierto <strong>AudioBookConverter</strong> (Windows, Mac, Linux).</p>
+<p><strong>¿Partes de un ebook?</strong> No necesitas ninguna de estas herramientas: <a href="/es/">Audiobook Maker</a> lee el EPUB o el PDF y te da un M4B con capítulos, un único MP3 o un ZIP con un MP3 por capítulo.</p>
 </section>
 
 <section>
 <h2>Cómo Crear Archivos M4B con Capítulos — Gratis</h2>
-<p>Crear archivos M4B solía requerir comandos ffmpeg complejos o software de pago. <a href="/es/">Audiobook Maker</a> automatiza todo el proceso:</p>
+<p>Crear un M4B solía exigir comandos ffmpeg complejos o software de pago. <a href="/es/">Audiobook Maker</a> automatiza todo el proceso:</p>
 <ol>
 <li><strong>Sube tu ebook</strong> (EPUB, PDF o TXT) — los capítulos se extraen automáticamente</li>
-<li><strong>Selecciona M4B como formato de salida</strong> — la herramienta se encarga de todo: narración TTS, codificación AAC, marcadores de capítulos, incrustación de portada</li>
-<li><strong>Descarga el archivo M4B</strong> — listo para importar en Apple Books o cualquier reproductor compatible con M4B</li>
+<li><strong>Elige M4B como formato de salida</strong> — la herramienta se encarga de todo: narración TTS, codificación AAC, marcadores de capítulo y portada</li>
+<li><strong>Descarga el archivo M4B</strong> — listo para importar en Apple Books o en cualquier reproductor compatible</li>
 </ol>
-<p>El M4B generado utiliza <strong>audio AAC a 64 kbps</strong> (optimizado para voz), incluye <strong>portada de 1400×1400</strong> y tiene etiquetas de metadatos compatibles con iTunes. Cada capítulo aparece como un punto de navegación en tu reproductor de audiolibros.</p>
-</section>
-
-<section>
-<h2>Cómo Reproducir Archivos M4B</h2>
-<p><strong>iOS / Mac:</strong> Apple Books (integrado) — arrastra el M4B a Books o sincroniza vía Finder/iCloud.</p>
-<p><strong>Android:</strong> Listen Audiobook Player, Smart Audiobook Player, Sirin — todos soportan M4B con capítulos.</p>
-<p><strong>Windows:</strong> Apple Books (vía iTunes), VLC media player, BookPlayer (Microsoft Store).</p>
-<p><strong>Linux:</strong> VLC, Cozy (reproductor de audiolibros GTK).</p>
-<p><strong>Coche / Reproductor MP3 básico:</strong> Convierte a MP3 — la mayoría de los estéreos de coche no leen archivos M4B.</p>
+<p>El M4B generado mantiene el <strong>bitrate de la narración</strong> (AAC a 48 kbps con las voces gratuitas, de sobra para la voz), incluye <strong>portada de 1400×1400</strong> y metadatos compatibles con iTunes. Cada capítulo aparece como punto de navegación en tu reproductor.</p>
 </section>
 
 <section>
 <h2>Preguntas Frecuentes</h2>
-<details><summary>¿Puedo convertir M4B a MP3?</summary>
-<p>Sí. Puedes usar Audiobook Maker para generar salida MP3, o usar ffmpeg para convertir un M4B existente: <code>ffmpeg -i libro.m4b -acodec libmp3lame -b:a 128k libro.mp3</code>. Ten en cuenta que los marcadores de capítulos se pierden en la conversión.</p>
+<details><summary>¿Qué diferencia hay entre M4A y M4B?</summary>
+<p>Ninguna en el audio: los dos son AAC en un contenedor MPEG-4 y los dos pueden llevar capítulos. La extensión <code>.m4b</code> le dice al reproductor que el archivo es un audiolibro, así que recuerda la posición y lo guarda en Audiolibros en lugar de en Música. Cambiar una extensión por la otra no daña el archivo.</p>
+</details>
+<details><summary>¿Por qué no se abre mi archivo M4B?</summary>
+<p>Suele ser por uno de tres motivos: la app no reconoce la extensión <code>.m4b</code> (prueba VLC o renómbralo a <code>.m4a</code>), la descarga se interrumpió (el archivo pesa menos de lo esperado o se corta antes del final: descárgalo de nuevo), o el archivo tiene DRM, como los AAX de Audible y algunas compras antiguas de la iTunes Store, que solo se reproducen en la app de la tienda.</p>
+</details>
+<details><summary>¿M4B es lo mismo que el AAX de Audible?</summary>
+<p>Comparten el contenedor MPEG-4, pero el AAX está cifrado con el DRM de Audible y necesita una app de Audible autorizada. Los M4B creados con Audiobook Maker no tienen DRM y se reproducen en cualquier reproductor compatible.</p>
 </details>
 <details><summary>¿Puedo dividir un M4B en capítulos?</summary>
-<p>Sí. Herramientas como <code>m4b-tool</code> o ffmpeg pueden dividir archivos M4B en los marcadores de capítulos. Audiobook Maker también puede generar archivos MP3 individuales por capítulo si prefieres archivos separados.</p>
+<p>Sí. Herramientas como <code>m4b-tool</code> o ffmpeg dividen un M4B en sus marcadores de capítulo. Audiobook Maker también puede generar un MP3 por capítulo si prefieres archivos separados.</p>
 </details>
-<details><summary>¿Qué aplicaciones de audiolibros soportan M4B?</summary>
-<p>Apple Books (iOS/Mac), BookPlayer (iOS), Listen Audiobook Player (Android), Smart Audiobook Player (Android), Bound (iOS), Sirin (Android), VLC (todas las plataformas) y Plex con el plugin Audnexus.</p>
+<details><summary>¿Qué apps de audiolibros admiten M4B?</summary>
+<p>Apple Books (iOS/Mac), BookPlayer y Bound (iOS), Smart AudioBook Player, Listen Audiobook Player y Voice (Android), VLC (todas las plataformas), Audiobookshelf y Plex con el agente Audnexus.</p>
 </details>
-<details><summary>¿Qué bitrate debo usar para audiolibros M4B?</summary>
-<p>Audiobook Maker utiliza 64 kbps AAC, que es el estándar para contenido de voz. La voz no necesita bitrates altos — 64 kbps AAC suena idéntico a 128 kbps MP3 para narración, pero usa la mitad del tamaño de archivo.</p>
+<details><summary>¿Qué bitrate usar para audiolibros M4B?</summary>
+<p>Para la voz se suele usar AAC entre 48 y 64 kbps: la narración suena limpia y un libro de 10 horas ocupa unos 200–300 MB. Audiobook Maker mantiene el bitrate de la narración, 48 kbps con las voces gratuitas.</p>
 </details>
 </section>

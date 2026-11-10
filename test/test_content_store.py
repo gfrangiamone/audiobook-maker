@@ -66,4 +66,4 @@ def test_content_store_is_a_leaf():
     src = Path(cs.__file__).read_text(encoding="utf-8")
     mods = {(n.names[0].name if isinstance(n, ast.Import) else n.module).split(".")[0]
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
-    assert mods <= {"copy", "json", "pathlib"}
+    assert mods <= {"copy", "datetime", "json", "pathlib"}

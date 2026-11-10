@@ -13,6 +13,7 @@ volta per processo.
 """
 import copy
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 CONTENT_DIR = Path(__file__).resolve().parent / "content"
@@ -42,3 +43,16 @@ def content_json(*parts):
 
 def content_exists(*parts):
     return content_path(*parts).exists()
+
+
+def file_lastmod(*paths) -> str:
+    """Data ISO (UTC) del piu' recente fra i file esistenti; oggi se nessuno esiste."""
+    stamps = []
+    for p in paths:
+        try:
+            stamps.append(Path(p).stat().st_mtime)
+        except OSError:
+            continue
+    if not stamps:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(max(stamps), timezone.utc).strftime("%Y-%m-%d")

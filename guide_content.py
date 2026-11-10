@@ -11,7 +11,7 @@ Each guide has full EN content + metadata for all 6 languages.
 
 from __future__ import annotations
 
-from content_store import content_json, content_text, content_exists
+from content_store import content_json, content_path, content_text, content_exists, file_lastmod
 from i18n import pick as _i18n_pick
 import page_brand as _brand
 from og_image_data import og_image_url
@@ -32,6 +32,17 @@ def _guide_path(guide_id: str, lang: str) -> str:
     tutte le sorgenti producano la stessa forma di URL.
     """
     return f"/guide/{guide_id}/" if lang == "en" else f"/guide/{guide_id}/{lang}/"
+
+
+def guide_lastmod(guide_id: str, lang: str) -> str:
+    """Data di ultima modifica di una guida in una lingua: codice comune,
+    metadati e corpo. Unica fonte per il lastmod della sitemap (IndexNow lo
+    legge) e per dateModified / «Ultimo aggiornamento» della pagina: un title
+    o un corpo cambiati devono cambiare la data in entrambi."""
+    return file_lastmod(__file__,
+                        content_path("guides", "meta.json"),
+                        content_path("guides", guide_id, "meta.json"),
+                        content_path("guides", guide_id, f"{lang}.html"))
 
 # ── Guide metadata per language ──────────────────────────────────────────────
 
@@ -106,19 +117,12 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
     Include datePublished/dateModified/image/keywords per AI citation engines
     (ChatGPT, Perplexity, Google AI Overview) e ranking E-E-A-T.
     """
-    import os as _os
-    from datetime import datetime as _dt, timezone as _tz
-
     # Stesso URL del <link rel=canonical> della pagina: EN su /guide/<id>/,
     # le altre lingue su /guide/<id>/<lang>/ (prima era sempre l'URL EN).
     canonical = f"{base_url}{_guide_path(guide_id, lang)}"
     base = base_url or _seo_ld.SITE_URL
 
-    try:
-        _mtime = _os.path.getmtime(__file__)
-        date_modified = _dt.fromtimestamp(_mtime, _tz.utc).strftime("%Y-%m-%d")
-    except OSError:
-        date_modified = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    date_modified = guide_lastmod(guide_id, lang)
     date_published = _GUIDE_PUBLISHED.get(guide_id, "2024-09-01")
 
     ld = {
@@ -185,13 +189,7 @@ def build_guide_html(
     article_ld = _build_article_ld(guide_id, lang, base_url, meta)
 
     # Date visibili (datePublished/dateModified) per UX + AI scraping.
-    import os as _os
-    from datetime import datetime as _dt, timezone as _tz
-    try:
-        _mtime = _os.path.getmtime(__file__)
-        _date_modified = _dt.fromtimestamp(_mtime, _tz.utc).strftime("%Y-%m-%d")
-    except OSError:
-        _date_modified = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    _date_modified = guide_lastmod(guide_id, lang)
     _date_published = _GUIDE_PUBLISHED.get(guide_id, "2024-09-01")
     _updated_label = {
         "it": "Ultimo aggiornamento", "en": "Last updated", "fr": "Dernière mise à jour",
