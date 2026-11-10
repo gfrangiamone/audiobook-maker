@@ -8920,6 +8920,9 @@ def _ensure_background_threads():
     threading.Thread(target=recovery._recover_orphan_jobs, daemon=True).start()
     # IndexNow: URL della sitemap cambiati, una volta per boot (spento senza chiave).
     indexnow.start(routes_pages.sitemap_xml, lambda: BASE_URL)
+    # Inserti dei libri gratuiti superati (testo o modello cambiati): rifatti
+    # subito, non al primo libro della lingua.
+    free_intro.start_refresh()
     # Rientro automatico su Cloudflare: il sorvegliante delle sonde. Parte
     # sempre che gemini_tts sia caricato, anche senza failover in corso - e'
     # lui a notare quello che un riavvio ha trovato gia' aperto sul disco.

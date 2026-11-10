@@ -1626,7 +1626,9 @@ _LANG_LOCALE = {
 # Nome lingua leggibile (in inglese) per la direttiva di accento. Gemini TTS
 # comprende meglio direttive in linguaggio naturale: indicare la lingua per nome
 # ancora l'accento ed evita che chunk diversi (ogni chiamata e' stateless) vengano
-# letti con varianti regionali differenti.
+# letti con varianti regionali differenti. Le lingue dell'ultima riga non sono in
+# SUPPORTED_UI_LANGUAGES ma Gemini le legge (inserto dei libri gratuiti,
+# free_intro): senza nome il ceco usciva letto da slovacco (10/11/2026).
 LANG_DISPLAY_NAME = {
     "it": "Italian", "en": "English", "fr": "French", "es": "Spanish",
     "de": "German", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
@@ -1634,6 +1636,9 @@ LANG_DISPLAY_NAME = {
     "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "hi": "Hindi",
     "ar": "Arabic", "bn": "Bengali", "mr": "Marathi", "ta": "Tamil",
     "te": "Telugu", "th": "Thai", "id": "Indonesian", "vi": "Vietnamese",
+    "cs": "Czech", "sv": "Swedish", "da": "Danish", "nb": "Norwegian Bokmål",
+    "fi": "Finnish", "el": "Greek", "hu": "Hungarian", "he": "Hebrew",
+    "ca": "Catalan", "bg": "Bulgarian",
 }
 
 # Catalogo varianti di accento per lingua. Solo le lingue con varianti regionali
