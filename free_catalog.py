@@ -392,14 +392,16 @@ def ui_lang(requested, fallback):
 
 
 def _ui_switch(current, path, t):
-    """Selettore della lingua della pagina: link `?lang=` (senza JS, la rotta
-    ricorda la scelta nel cookie della SPA). Vuoto con una sola lingua."""
+    """Selettore della lingua della pagina: link `?lang=` (senza JS: la rotta
+    mette la scelta nel cookie della SPA e risponde 302 all'URL pulito).
+    `nofollow`: i link portano a un redirect, non a pagine da scansionare.
+    Vuoto con una sola lingua."""
     langs = ui_langs()
     if len(langs) < 2:
         return ""
     current_attr = ' aria-current="true"'
     items = "".join(
-        f'<li><a href="{_esc(path)}?lang={l}" hreflang="{l}" lang="{l}"'
+        f'<li><a href="{_esc(path)}?lang={l}" rel="nofollow" hreflang="{l}" lang="{l}"'
         f'{current_attr if l == current else ""}>{_esc(UI_LANG_NAMES[l])}</a></li>'
         for l in langs)
     return (f'<details class="fc-uilang"><summary title="{_esc(t["ui_lang_label"])}">'

@@ -9,8 +9,10 @@ import pytest
 
 import audiobook_app
 import free_catalog
+import i18n
 import page_brand
 import routes_pages
+import routes_voice_clone
 import seo_ld
 import storage_backend
 
@@ -392,7 +394,7 @@ def test_l_indice_e_unico_con_tutte_le_lingue(catalog, client, tmp_path):
 def test_filtro_su_tutte_se_la_lingua_dell_utente_non_ha_libri(catalog, client):
     page = client.get("/free-audiobooks/", headers={"Accept-Language": "fr-FR"}).get_data(as_text=True)
     assert '<option value="" data-short="Toutes" selected>' in page
-    page = client.get("/free-audiobooks/?lang=it").get_data(as_text=True)
+    page = client.get("/free-audiobooks/?lang=it", follow_redirects=True).get_data(as_text=True)
     assert '<option value="it" data-short="IT" selected>Italiano</option>' in page
 
 
@@ -408,9 +410,9 @@ def test_pagina_di_lingua_filtra_sulla_lingua_dell_interfaccia(catalog, client, 
                                              author={"name": "Multatuli", "died": 1887}, status="coming")])
     page = client.get("/free-audiobooks/it/").get_data(as_text=True)          # di default la lingua della pagina
     assert '<option value="it" data-short="IT" selected>' in page
-    page = client.get("/free-audiobooks/it/?lang=nl").get_data(as_text=True)
+    page = client.get("/free-audiobooks/it/?lang=nl", follow_redirects=True).get_data(as_text=True)
     assert '<option value="nl" data-short="NL" selected>' in page
-    page = client.get("/free-audiobooks/it/?lang=fr").get_data(as_text=True)   # niente libri in francese
+    page = client.get("/free-audiobooks/it/?lang=fr", follow_redirects=True).get_data(as_text=True)   # niente libri in francese
     assert '<option value="" data-short="Toutes" selected>' in page
     # La scelta resta nel cookie: la stessa pagina senza ?lang resta in francese.
     page = client.get("/free-audiobooks/it/").get_data(as_text=True)
@@ -668,9 +670,12 @@ def test_selettore_della_lingua_della_pagina(catalog, client):
     assert re.search(r'lang="it" aria-current="true">Italiano<', sw)
 
     r = client.get("/free-audiobooks/it/storia-di-una-capinera/?lang=en")
+    assert r.status_code == 302 and "abm_lang=en" in r.headers.get("Set-Cookie", "")
+    assert r.headers["Location"].endswith("/free-audiobooks/it/storia-di-una-capinera/")
+    r = client.get("/free-audiobooks/it/storia-di-una-capinera/")
     html = r.get_data(as_text=True)
-    assert '<html lang="en">' in html and "abm_lang=en" in r.headers.get("Set-Cookie", "")
-    assert 'href="/free-audiobooks/it/storia-di-una-capinera/?lang=it"' in html
+    assert '<html lang="en">' in html
+    assert 'href="/free-audiobooks/it/storia-di-una-capinera/?lang=it" rel="nofollow"' in html
     # Senza scelta la scheda resta nella lingua del libro; col cookie segue la scelta.
     assert '<html lang="it">' in audiobook_app.app.test_client().get(
         "/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
@@ -678,16 +683,51 @@ def test_selettore_della_lingua_della_pagina(catalog, client):
     assert "Cookie" in r.headers["Vary"]
 
 
+@pytest.mark.parametrize("url", ["/free-audiobooks/", "/free-audiobooks/it/",
+                                 "/free-audiobooks/it/storia-di-una-capinera/"])
+def test_ogni_pagina_del_catalogo_ha_un_solo_url(catalog, url):
+    # ?lang= non e' una pagina a se': 302 all'URL pulito, senza cache (Search
+    # Console scansionava le varianti e lasciava le schede vere non indicizzate).
+    c = audiobook_app.app.test_client()
+    r = c.get(f"{url}?lang=pt")
+    assert r.status_code == 302 and r.headers["Location"].endswith(url)
+    assert r.headers["Cache-Control"] == "no-store"
+    assert "abm_lang=pt" in r.headers.get("Set-Cookie", "")
+    assert '<html lang="pt">' in c.get(url).get_data(as_text=True)
+    # Lingua sconosciuta: stesso redirect, nessun cookie.
+    r = audiobook_app.app.test_client().get(f"{url}?lang=zz")
+    assert r.status_code == 302 and r.headers["Location"].endswith(url)
+    assert "abm_lang" not in r.headers.get("Set-Cookie", "")
+
+
+def test_il_redirect_di_lang_conserva_gli_altri_parametri(catalog, client):
+    r = client.get("/free-audiobooks/it/?utm_source=news&lang=en&ref=a%26b")
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/free-audiobooks/it/?utm_source=news&ref=a%26b")
+
+
+def test_lingua_pt_del_catalogo_non_cambia_le_altre_pagine(catalog, client):
+    # pt va nel cookie della SPA, ma le pagine del sito senza pt lo ignorano.
+    client.get("/free-audiobooks/it/?lang=pt")
+    cookie = f"abm_lang={client.get_cookie('abm_lang').value}"
+    assert cookie == "abm_lang=pt"
+    with audiobook_app.app.test_request_context(
+            "/vc/x/delete", headers={"Accept-Language": "de", "Cookie": cookie}):
+        assert routes_voice_clone._vc_page_lang() == "de"
+
+
 def test_pagine_del_catalogo_in_tutte_le_lingue_dell_interfaccia(catalog):
     # Ogni lingua del selettore ha tutti i testi: nessun segnaposto rimasto,
     # nessun errore, l'attributo lang della pagina e' quello scelto.
     langs = free_catalog.ui_langs()
     assert set(langs) == {"it", "en", "fr", "es", "de", "zh", "hi", "pt", "nl"}
+    assert set(langs) - set(i18n.LANGS) <= set(page_brand.EXTRA_HTML_LANGS)
     for ui in langs:
         c = audiobook_app.app.test_client()
         for url in ("/free-audiobooks/", "/free-audiobooks/it/", "/free-audiobooks/it/storia-di-una-capinera/"):
-            r = c.get(f"{url}?lang={ui}")
+            r = c.get(f"{url}?lang={ui}", follow_redirects=True)
             html = r.get_data(as_text=True)
             assert r.status_code == 200, (ui, url)
+            assert page_brand.html_lang(ui) == ("zh-Hans" if ui == "zh" else ui)   # pt e nl non ripiegano su en
             assert re.search(r'<html lang="' + re.escape(page_brand.html_lang(ui)) + '"', html), (ui, url)
             assert not re.search(r"\{(n|total|title|author|min|duration|voice|model|site|license|h|m|y|d|mb)\}", html), (ui, url)

@@ -17,6 +17,7 @@ import html as html_mod
 import json
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, redirect, request, send_file, send_from_directory
 
@@ -290,45 +291,66 @@ _HTML_TYPE = {"Content-Type": "text/html; charset=utf-8"}
 
 
 def _catalog_choice():
-    """Lingua scelta per le pagine del catalogo: ?lang (selettore della
-    pagina), poi il cookie della SPA."""
-    return [(request.args.get("lang") or "").strip().lower(),
-            (request.cookies.get("abm_lang") or "").strip().lower()]
+    """Lingua scelta per le pagine del catalogo: il cookie della SPA, posato
+    anche dal selettore della pagina (`_catalog_lang_redirect`)."""
+    return [(request.cookies.get("abm_lang") or "").strip().lower()]
 
 
-def _catalog_page(page, vary):
-    """Risposta di una pagina del catalogo; una lingua scelta col selettore
-    (?lang) resta nel cookie della SPA e vale per il resto del sito."""
-    if not page:
-        return "Not found", 404
-    resp = current_app.make_response((page, 200, {**_HTML_TYPE, "Vary": vary}))
+def _catalog_lang_redirect():
+    """Il selettore della pagina (?lang): la scelta va nel cookie `abm_lang` e
+    la pagina risponde 302 all'URL senza il parametro, cosi' ogni pagina del
+    catalogo ha un solo URL. Con una variante 200 per lingua dell'interfaccia
+    Google scansionava i doppioni e lasciava le schede vere in «Rilevata, ma
+    non indicizzata» (Search Console, 10/11/2026). Anche pt e nl, che il resto
+    del sito non ha, vanno nel cookie: `i18n.choose_lang` li ignora e ripiega
+    sul browser. None senza ?lang."""
+    if "lang" not in request.args:
+        return None
+    rest = [(k, v) for k, v in request.args.items(multi=True) if k != "lang"]
+    resp = redirect(request.path + (f"?{urlencode(rest)}" if rest else ""), code=302)
+    resp.headers["Cache-Control"] = "no-store"
     chosen = (request.args.get("lang") or "").strip().lower()
-    if chosen in _i18n.LANGS and chosen in free_catalog.ui_langs():
+    if chosen in free_catalog.ui_langs():
         resp.set_cookie("abm_lang", chosen, max_age=31536000, path="/", samesite="Lax",
                         secure=request.is_secure)
     return resp
 
 
+def _catalog_page(page, vary):
+    """Risposta di una pagina del catalogo."""
+    if not page:
+        return "Not found", 404
+    return current_app.make_response((page, 200, {**_HTML_TYPE, "Vary": vary}))
+
+
 @bp.route("/free-audiobooks/")
 def free_catalog_root():
-    """Indice unico del catalogo, nella lingua dell'interfaccia (?lang, cookie
-    della SPA, Accept-Language) fra quelle con i testi del catalogo. Il filtro
+    """Indice unico del catalogo, nella lingua dell'interfaccia (cookie della
+    SPA, Accept-Language) fra quelle con i testi del catalogo. Il filtro
     parte su quella lingua se ha almeno un libro, pubblicato o in arrivo,
     altrimenti su tutte."""
-    scelta = _catalog_choice()
-    ui = free_catalog.ui_lang(scelta + [_detect_lang_from_request()], "en")
+    moved = _catalog_lang_redirect()
+    if moved:
+        return moved
+    ui = free_catalog.ui_lang(_catalog_choice() + [_detect_lang_from_request()], "en")
     return _catalog_page(free_catalog.index_html(ui, _base_url() or "", free_catalog.preset_lang([ui])),
                          "Accept-Language, Cookie")
 
 
 @bp.route("/free-audiobooks/<lang>/")
 def free_catalog_hub(lang):
+    moved = _catalog_lang_redirect()
+    if moved:
+        return moved
     ui = free_catalog.ui_lang(_catalog_choice(), lang)
     return _catalog_page(free_catalog.hub_html(lang, _base_url() or "", ui=ui), "Cookie")
 
 
 @bp.route("/free-audiobooks/<lang>/<slug>/")
 def free_catalog_book(lang, slug):
+    moved = _catalog_lang_redirect()
+    if moved:
+        return moved
     ui = free_catalog.ui_lang(_catalog_choice(), lang)
     page = free_catalog.book_html(lang, slug, _base_url() or "", _qr_data_uri,
                                   app_url=_app_url_for_device,

@@ -12,6 +12,9 @@ def test_maps_follow_site_langs():
     assert pb.SITE_LANGS == i18n.LANGS
     assert tuple(pb.HREFLANG) == pb.SITE_LANGS and tuple(pb.OG_LOCALE) == pb.SITE_LANGS
     assert pb.html_lang("zh") == "zh-Hans" and pb.html_lang("it") == "it" and pb.html_lang("xx") == "en"
+    # pt e nl (interfaccia del catalogo gratuito) restano tali; vuoto o None -> en.
+    assert pb.html_lang("pt") == "pt" and pb.html_lang("nl") == "nl"
+    assert pb.html_lang("") == "en" and pb.html_lang(None) == "en"
     assert seo_ld.IN_LANGUAGES == ["it", "en", "fr", "es", "de", "zh-Hans", "hi"]
 
 

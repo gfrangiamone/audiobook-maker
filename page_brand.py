@@ -66,6 +66,9 @@ HREFLANG = {"it": "it", "en": "en", "fr": "fr", "es": "es", "de": "de", "zh": "z
 OG_LOCALE = {"it": "it_IT", "en": "en_US", "fr": "fr_FR", "es": "es_ES", "de": "de_DE",
              "zh": "zh_CN", "hi": "hi_IN"}
 assert tuple(HREFLANG) == SITE_LANGS and tuple(OG_LOCALE) == SITE_LANGS
+# Lingue di pagina oltre a quelle del sito: l'interfaccia del catalogo
+# gratuito c'e' anche in portoghese e olandese (free_catalog.UI_LANG_NAMES).
+EXTRA_HTML_LANGS = ("pt", "nl")
 
 
 # URL nel testo di una pagina gia' passato da html.escape: niente spazi,
@@ -85,8 +88,9 @@ def linkify(escaped, site_host="audiobook-maker.com"):
 
 
 def html_lang(lang):
-    """Valore di `<html lang>` / `inLanguage` per la lingua ('zh' -> 'zh-Hans')."""
-    return HREFLANG.get(lang, "en")
+    """Valore di `<html lang>` / `inLanguage` per la lingua ('zh' -> 'zh-Hans');
+    'en' per una lingua sconosciuta."""
+    return HREFLANG.get(lang) or (lang if lang in EXTRA_HTML_LANGS else "en")
 
 
 def hreflang_links(path_fn, x_default, *, sep="\n", xhtml=False, langs=None):
