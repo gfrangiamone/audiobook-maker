@@ -28,6 +28,21 @@ def test_ogni_lingua_ha_la_sua_fascia(tmp_path):
     assert len(seen) == 7
 
 
+def test_indirizzo_del_sito_in_fondo(tmp_path, monkeypatch):
+    from PIL import ImageDraw
+    scritti = []
+    originale = ImageDraw.ImageDraw.text
+
+    def registra(self, xy, text, *a, **k):
+        scritti.append((xy[1], text))
+        return originale(self, xy, text, *a, **k)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", registra)
+    assert cover_utils._generate_fallback_cover(str(tmp_path / "c.jpg"), title="Libro",
+                                                author="Autore", target_size=1400)
+    assert max(scritti)[1] == "https://audiobook-maker.com"
+    assert max(scritti)[0] < 1400 - 80                           # dentro la copertina
+
+
 def test_lingua_con_variante_o_sconosciuta():
     assert cover_utils.cover_band_color("pt-BR") == cover_utils.COVER_BAND_COLORS["pt"]
     assert cover_utils.cover_band_color("EN") == cover_utils.COVER_BAND_COLORS["en"]

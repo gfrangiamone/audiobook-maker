@@ -172,6 +172,11 @@ COVER_BAND_COLORS = {
 }
 
 
+# Indirizzo in basso nelle copertine generate (libri senza copertina propria).
+# Stesso valore di `seo_ld.SITE_URL`, che qui non si importa: modulo foglia.
+COVER_SITE_URL = "https://audiobook-maker.com"
+
+
 def cover_band_color(lang):
     """Colore RGB della fascia per la lingua del libro ("en", "pt-BR", ...)."""
     return COVER_BAND_COLORS.get((lang or "")[:2].lower(), COVER_BAND_DEFAULT)
@@ -179,7 +184,8 @@ def cover_band_color(lang):
 
 def _generate_fallback_cover(output_path, title="", author="", target_size=1400, lang=""):
     """Generate a simple branded cover when no EPUB cover is available.
-    `lang`, la lingua del libro, sceglie il colore della fascia in alto."""
+    `lang`, la lingua del libro, sceglie il colore della fascia in alto; in
+    basso marchio e `COVER_SITE_URL`."""
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
@@ -235,10 +241,14 @@ def _generate_fallback_cover(output_path, title="", author="", target_size=1400,
                           fill=(120, 100, 80), font=font_author)
                 y += int((bbox[3] - bbox[1]) * 1.3)
 
-        label = "Audiobook Maker"
-        bbox = draw.textbbox((0, 0), label, font=font_small)
-        draw.text(((sz - bbox[2] + bbox[0]) // 2, sz - int(sz * 0.08)),
-                  label, fill=(180, 165, 145), font=font_small)
+        # Piede: marchio e indirizzo del sito, piu' scuro perche' si legga
+        # anche nella miniatura del lettore.
+        y = sz - int(sz * 0.12)
+        for label, fill in (("Audiobook Maker", (180, 165, 145)),
+                            (COVER_SITE_URL, (120, 100, 80))):
+            bbox = draw.textbbox((0, 0), label, font=font_small)
+            draw.text(((sz - bbox[2] + bbox[0]) // 2, y), label, fill=fill, font=font_small)
+            y += int(sz * 0.045)
         img.save(output_path, "JPEG", quality=85)
         return output_path
     except Exception:
