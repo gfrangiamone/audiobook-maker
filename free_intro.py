@@ -7,10 +7,8 @@ audiobook maker punto com. Buon ascolto!». Il pagamento di traduzione od
 ottimizzazione AI non lo toglie: la sintesi resta gratuita. Testi per lingua in
 `i18n/free_intro.json`; una lingua che non c'e' esce senza inserto.
 
-La frase e' letta da Gemini 3.8 (`MODEL_KEY`), non da edge, la cui lettura
-dell'inserto suonava male (10/11/2026). Voce: la Gemini piu' usata nei GENERATE
-degli ultimi `_USO_GIORNI` giorni dalle richieste con il browser in quella
-lingua (il log non porta la lingua del libro); senza dati `VOCE_RIPIEGO`.
+La frase e' letta da Gemini 3.8 (`MODEL_KEY`) con la voce fissa `VOCE` in tutte
+le lingue, non da edge, la cui lettura dell'inserto suonava male (10/11/2026).
 Niente ripiego su edge: se Gemini non da' audio il libro esce senza inserto e
 la lingua resta in pausa `_PAUSA_S` secondi, cosi' un guasto di Gemini non
 aggiunge una chiamata fallita a ogni libro.
@@ -30,10 +28,8 @@ import os
 import shutil
 import threading
 import time
-from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-import activity_log
 import ffmpeg_tools
 import gemini_tts
 import i18n
@@ -41,7 +37,6 @@ from audio_utils import pcm_to_mp3
 from env_utils import env_bool
 from fileio import atomic_produce, data_path, load_json, write_json_safe
 from tts_split import _is_multilingual_voice
-from user_stats import GENERATE_OP
 from voice_utils import engine_for_voice
 
 # Titolo del capitolo M4B, del file nello ZIP e dell'episodio del podcast.
@@ -53,8 +48,9 @@ CACHE_DIRNAME = "_free_intros"
 # Flag del job: utente con abbonamento pagato al momento della richiesta.
 SUBSCRIBER_KEY = "gen_subscriber"
 MODEL_KEY = "flash38"
-# Voce senza dati d'uso per la lingua: la stessa degli inserti del catalogo.
-VOCE_RIPIEGO = "Sulafat"
+# Voce dell'inserto in tutte le lingue (scelta dell'utente, 10/11/2026). Non
+# entra nella chiave della cache: per cambiarla vanno tolti i file in cache.
+VOCE = "Orus"
 # Bitrate degli MP3 di edge (audio-24khz-48kbitrate-mono-mp3).
 _MP3_BITRATE = "48k"
 # Loudness delle voci edge (Jenny -20,1, Denise -20,0, Diego -20,7, Katja -21,2
@@ -62,7 +58,6 @@ _MP3_BITRATE = "48k"
 # dal libro. Correzione massima `_GAIN_MAX_DB`: oltre e' un difetto, non un livello.
 _LUFS = -20.0
 _GAIN_MAX_DB = 12.0
-_USO_GIORNI = 90
 _TENTATIVI = 2
 _PAUSA_S = 600
 
@@ -87,33 +82,6 @@ def _entry(lang):
     """{"text"} della lingua, o None se manca il testo."""
     e = i18n.load("free_intro").get(lang)
     return e if isinstance(e, dict) and e.get("text") else None
-
-
-def _gemini_name(voice):
-    """Nome della voce Gemini di un id `gemini:<modello>:<nome>`, o None."""
-    if engine_for_voice(voice) != "gemini":
-        return None
-    name = voice.rsplit(":", 1)[-1]
-    return name if name in gemini_tts.GEMINI_VOICE_NAMES else None
-
-
-def most_used_voice(lang, now=None):
-    """Voce Gemini piu' usata nei GENERATE degli ultimi `_USO_GIORNI` giorni
-    dalle richieste con browser in `lang` (a parita', la prima in ordine
-    alfabetico), o None."""
-    since = (now or datetime.now()) - timedelta(days=_USO_GIORNI)
-    names = (_gemini_name(row.voice) for row in activity_log.iter_rows(since, ops={GENERATE_OP})
-             if i18n.norm_lang(row.lang) == lang)
-    uso = Counter(n for n in names if n)
-    return min(uso, key=lambda v: (-uso[v], v)) if uso else None
-
-
-def _voice(lang):
-    try:
-        return most_used_voice(lang) or VOCE_RIPIEGO
-    except Exception as e:      # noqa: BLE001 - senza log resta la voce di ripiego
-        print(f"[free-intro] uso voci {lang} non letto: {e}", flush=True)
-        return VOCE_RIPIEGO
 
 
 def _gain_db(pcm):
@@ -179,16 +147,15 @@ def _cached_or_synth(lang, entry):
             return path, load_json(meta, {}, expect=dict).get("voice", ""), True
         if time.monotonic() < _pausa_fino.get(lang, 0.0):
             return None
-        voice = _voice(lang)
         try:
-            ok = atomic_produce(path, lambda tmp: _synth(entry["text"], lang, voice, tmp))
+            ok = atomic_produce(path, lambda tmp: _synth(entry["text"], lang, VOCE, tmp))
         except Exception as e:      # noqa: BLE001 - libro senza inserto, si riprova dopo la pausa
-            print(f"[free-intro] {lang} con {voice}: {e}", flush=True)
+            print(f"[free-intro] {lang} con {VOCE}: {e}", flush=True)
             ok = False
         if not ok:
             _pausa_fino[lang] = time.monotonic() + _PAUSA_S
             return None
-        voice_id = f"gemini:{MODEL_KEY}:{voice}"
+        voice_id = f"gemini:{MODEL_KEY}:{VOCE}"
         write_json_safe(meta, {"lang": lang, "voice": voice_id, "text": entry["text"],
                                "created": datetime.now(timezone.utc).isoformat()})
         _drop_stale(lang, path)

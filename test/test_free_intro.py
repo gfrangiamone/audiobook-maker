@@ -16,7 +16,7 @@ import podcast_rss
 import recovery
 from test.test_failed_chunk_retry import _setup
 
-_RIPIEGO = f"gemini:flash38:{free_intro.VOCE_RIPIEGO}"
+_ORUS = "gemini:flash38:Orus"
 
 
 @pytest.fixture
@@ -25,7 +25,6 @@ def acceso(monkeypatch, tmp_path):
     (lingua, voce)."""
     monkeypatch.setenv("ABM_FREE_INTRO_ENABLE", "1")
     monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setattr(free_intro, "most_used_voice", lambda lang: None)
     monkeypatch.setattr(free_intro, "_pausa_fino", {})
     sintesi = []
 
@@ -42,10 +41,6 @@ def _cache(tmp_path):
     return tmp_path / "data" / free_intro.CACHE_DIRNAME
 
 
-def _righe(*coppie):
-    return [SimpleNamespace(voice=v, lang=lang) for v, lang in coppie]
-
-
 def test_lingua_dalla_voce_o_dal_job_per_le_multilingual():
     assert free_intro.intro_lang("it-IT-DiegoNeural", "en") == "it"
     assert free_intro.intro_lang("en-US-AvaMultilingualNeural", "it") == "it"
@@ -60,28 +55,8 @@ def test_testi_del_json():
         assert e["text"].strip() and "audiobook maker" in e["text"]
 
 
-def test_voce_piu_usata_gemini_del_browser_nella_lingua(monkeypatch):
-    righe = _righe(("gemini:flash38:Kore", "it"), ("gemini:flash31:Kore", "it-IT"),
-                   ("gemini:flash38:Puck", "it"), ("gemini:flash38:Sulafat", "en"),
-                   ("gemini:flash38:Sulafat", "en"), ("it-IT-ElsaNeural", "it"),
-                   ("it-IT-ElsaNeural", "it"), ("it-IT-ElsaNeural", "it"),
-                   ("gemini:flash38:Nessuna", "it"), ("gemini:flash38:Nessuna", "it"),
-                   ("gemini:flash38:Nessuna", "it"), ("", None))
-    visti = {}
-
-    def iter_rows(since, until=None, ops=None):
-        visti["ops"] = ops
-        return iter(righe)
-    monkeypatch.setattr(free_intro.activity_log, "iter_rows", iter_rows)
-    assert free_intro.most_used_voice("it") == "Kore"
-    assert visti["ops"] == {"GENERATE"}
-    assert free_intro.most_used_voice("fr") is None
-
-
-def test_voce_piu_usata_a_parita_la_prima_in_ordine(monkeypatch):
-    monkeypatch.setattr(free_intro.activity_log, "iter_rows", lambda *a, **k: iter(
-        _righe(("gemini:flash38:Puck", "it"), ("gemini:flash38:Kore", "it"))))
-    assert free_intro.most_used_voice("it") == "Kore"
+def test_voce_fissa_orus_esistente():
+    assert free_intro.VOCE == "Orus" and "Orus" in free_intro.gemini_tts.GEMINI_VOICE_NAMES
 
 
 @pytest.mark.parametrize("voce, job", [
@@ -105,29 +80,17 @@ def test_pagamento_di_ottimizzazione_non_toglie_l_inserto(acceso, tmp_path):
     assert free_intro.prepare(job, "it-IT-ElsaNeural", "it", tmp_path / "x.mp3")
 
 
-def test_prima_sintesi_poi_cache(acceso, monkeypatch, tmp_path):
-    monkeypatch.setattr(free_intro, "most_used_voice", lambda lang: "Kore")
+def test_prima_sintesi_poi_cache(acceso, tmp_path):
     primo = free_intro.prepare({}, "it-IT-IsabellaNeural", "it", tmp_path / "a.mp3")
     assert primo == {"path": str(tmp_path / "a.mp3"), "lang": "it",
-                     "voice": "gemini:flash38:Kore", "cached": False}
-    secondo = free_intro.prepare({}, "it-IT-ElsaNeural", "it", tmp_path / "b.mp3")
-    assert secondo["cached"] is True and secondo["voice"] == "gemini:flash38:Kore"
-    assert acceso == [("it", "Kore")]
-    assert (tmp_path / "b.mp3").read_bytes() == b"\x02" * 500
-    assert sorted(f.suffix for f in _cache(tmp_path).iterdir()) == [".json", ".mp3"]
-
-
-def test_senza_dati_d_uso_voce_di_ripiego(acceso, tmp_path):
-    assert free_intro.prepare({}, "de-DE-ConradNeural", "de", tmp_path / "a.mp3")["voice"] \
-        == _RIPIEGO
-
-
-def test_log_illeggibile_voce_di_ripiego(acceso, monkeypatch, tmp_path):
-    def rotto(lang):
-        raise OSError("log assente")
-    monkeypatch.setattr(free_intro, "most_used_voice", rotto)
-    assert free_intro.prepare({}, "de-DE-ConradNeural", "de", tmp_path / "a.mp3")["voice"] \
-        == _RIPIEGO
+                     "voice": _ORUS, "cached": False}
+    secondo = free_intro.prepare({}, "de-DE-ConradNeural", "de", tmp_path / "b.mp3")
+    assert secondo["voice"] == _ORUS
+    terzo = free_intro.prepare({}, "it-IT-ElsaNeural", "it", tmp_path / "c.mp3")
+    assert terzo["cached"] is True and terzo["voice"] == _ORUS
+    assert acceso == [("it", "Orus"), ("de", "Orus")]
+    assert (tmp_path / "c.mp3").read_bytes() == b"\x02" * 500
+    assert sorted(f.suffix for f in _cache(tmp_path).glob("it-*")) == [".json", ".mp3"]
 
 
 @pytest.mark.parametrize("guasto", [lambda *a: False, lambda *a: 1 / 0])
@@ -179,7 +142,7 @@ def _vecchio_edge(tmp_path, lang):
 def test_l_inserto_edge_in_cache_non_si_usa_piu(acceso, tmp_path):
     vecchio = _vecchio_edge(tmp_path, "it")
     out = free_intro.prepare({}, "it-IT-ElsaNeural", "it", tmp_path / "a.mp3")
-    assert out["cached"] is False and out["voice"] == _RIPIEGO
+    assert out["cached"] is False and out["voice"] == _ORUS
     assert (tmp_path / "a.mp3").read_bytes() == b"\x02" * 500
     assert not vecchio.exists() and not vecchio.with_suffix(".json").exists()
 
@@ -190,7 +153,7 @@ def test_refresh_rifa_solo_gli_inserti_superati(acceso, tmp_path):
     (_cache(tmp_path) / "sw-0123456789ab.mp3").write_bytes(b"\x01")    # lingua senza testo
     del acceso[:]
     assert free_intro.refresh_cached() == ["fr", "it"]
-    assert acceso == [("fr", "Sulafat"), ("it", "Sulafat")]
+    assert acceso == [("fr", "Orus"), ("it", "Orus")]
     assert not any(v.exists() for v in vecchi)
     for lang in ("en", "fr", "it"):
         testo = i18n.load("free_intro")[lang]["text"]
@@ -339,7 +302,7 @@ def test_m4b_inserto_primo_capitolo(acceso, monkeypatch, tmp_path):
     capitoli = visti["chapters"]
     assert capitoli[0] == {"title": "audiobook-maker.com", "start": 0, "end": 1000}
     assert capitoli[1]["title"] == "Cap 1" and capitoli[1]["start"] == 1000
-    assert job["free_intro"] == {"lang": "en", "voice": _RIPIEGO, "cached": False}
+    assert job["free_intro"] == {"lang": "en", "voice": _ORUS, "cached": False}
     assert not (tmp_path / "jr" / "_free_intro.mp3").exists()
 
 
