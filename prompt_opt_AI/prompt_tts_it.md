@@ -59,12 +59,36 @@ Rimuovi tag d'agenzia (`(ANSA)`, `(AGI)`), marcatori multimediali (`(Video)`, `(
 
 ### 6. Disambiguazione di eteronimi italiani
 
-Aggiungi accento grafico SOLO per disambiguare eteronimi reali. Cerca attivamente:
+Aggiungi accento grafico SOLO per disambiguare eteronimi reali, decidendo dal contesto. Cerca attivamente:
 
+*Posizione dell'accento tonico:*
 - `principi` → `prìncipi` (figli di re) vs `princìpi` (concetti fondamentali)
 - `ancora` → `àncora` (oggetto della nave) vs `ancora` lasciato senza accento (di nuovo, tuttora)
 - `subito` → `sùbito` (immediatamente) vs `subìto` (participio passato di subire)
 - `capitano` → `capitàno` (grado militare) vs `càpitano` (3a plur. di capitare)
+- `capito` → `càpito` (1a sing. di capitare) vs `capìto` (participio di capire)
+- `compito` → `còmpito` (lavoro assegnato) vs `compìto` (educato)
+- `ambiti` → `àmbiti` (settori) vs `ambìti` (desiderati)
+- `condomini` → `condòmini` (proprietari) vs `condomìni` (edifici)
+- `desideri` → `desidèri` (sostantivo) vs `desìderi` (verbo)
+- `intimo` → `ìntimo` (aggettivo) vs `intìmo` (1a sing. di intimare)
+- `balia` → `bàlia` (nutrice) vs `balìa` («in balìa di»)
+- `seguito` → `séguito` (corteo, «in séguito») vs `seguìto` (participio di seguire)
+- `regia` → `règia` (del re) vs `regìa` (di film o spettacolo)
+- `nocciolo` → `nòcciolo` (seme, parte centrale) vs `nocciòlo` (albero)
+- `viola` → `vìola` (verbo violare) vs `viòla` (fiore, colore, strumento)
+- `altero` → `altèro` (superbo) vs `àltero` (1a sing. di alterare)
+- `impari` → `ìmpari` (disuguali) vs `impàri` (2a sing. di imparare)
+- congiuntivi presenti con l'accento sulla terzultima, che il TTS legge sbagliati: `amino` → `àmino` («che i sudditi àmino»), `abitino` → `àbitino` (vs `abitìno`, piccolo abito)
+
+*Vocale aperta o chiusa* (`è`/`ò` aperte, `é`/`ó` chiuse):
+- `pesca` → `pèsca` (frutto) vs `pésca` (attività)
+- `botte` → `bòtte` (percosse) vs `bótte` (recipiente)
+- `venti` → `vènti` (correnti d'aria) vs `vénti` (numero)
+- `legge` → `légge` (norma) vs `lègge` (verbo leggere)
+- `colto` → `còlto` (raccolto) vs `cólto` (istruito)
+- `accetta` → `accètta` (verbo accettare) vs `accétta` (scure)
+- `foro` → `fòro` (piazza, tribunale) vs `fóro` (buco)
 
 **🚨 NON ACCENTARE PAROLE NON ETERONIME.** Non scrivere `màngia` per `mangia`, `càsa` per `casa`, `vìta` per `vita`. Accenti su parole comuni causano glitch al TTS, micropause innaturali, sillabe sovraenfatizzate. **Nel dubbio, lascia senza accento.** Una pronuncia leggermente sbagliata di un eteronimo è meno fastidiosa di un accento sbagliato che spezza la fluenza.
 

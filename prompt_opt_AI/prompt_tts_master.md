@@ -183,14 +183,38 @@ Heteronyms are words spelled identically but pronounced differently based on mea
 **🚨 CRITICAL BOUNDARY — DO NOT OVER-CORRECT.** Only mark genuine heteronyms. Adding accents to regular unambiguous words (e.g. IT `màngia` for `mangia`, EN unnecessary accents on `the`) causes TTS engines to glitch, create unnatural micro-pauses, or over-emphasize syllables. **If there is any ambiguity about whether a word requires disambiguation, leave it unaccented.** Incorrect or excessive accents are more disruptive to TTS flow than the occasional mispronunciation of a common heteronym.
 
 ### B1. Italian
-Actively scan for and disambiguate:
+Actively scan for and disambiguate, deciding from context:
+
+*Stress position:*
 - `principi` → `prìncipi` (princes) vs. `princìpi` (principles)
 - `ancora` → `àncora` (anchor) vs. `ancora` (again/still — leave unaccented)
 - `subito` → `sùbito` (immediately) vs. `subìto` (suffered)
 - `capitano` → `capitàno` (captain) vs. `càpitano` (they happen)
-- `àncora` / `ancóra` follow the same logic
+- `capito` → `càpito` (I happen) vs. `capìto` (understood)
+- `compito` → `còmpito` (task) vs. `compìto` (polite)
+- `ambiti` → `àmbiti` (fields) vs. `ambìti` (coveted)
+- `condomini` → `condòmini` (co-owners) vs. `condomìni` (buildings)
+- `desideri` → `desidèri` (wishes, noun) vs. `desìderi` (you wish, verb)
+- `intimo` → `ìntimo` (intimate) vs. `intìmo` (I order)
+- `balia` → `bàlia` (wet nurse) vs. `balìa` (mercy, «in balìa di»)
+- `seguito` → `séguito` (retinue, «in séguito») vs. `seguìto` (followed)
+- `regia` → `règia` (royal) vs. `regìa` (film/stage direction)
+- `nocciolo` → `nòcciolo` (stone, core) vs. `nocciòlo` (hazel tree)
+- `viola` → `vìola` (violates) vs. `viòla` (violet, viola)
+- `altero` → `altèro` (haughty) vs. `àltero` (I alter)
+- `impari` → `ìmpari` (unequal) vs. `impàri` (you learn)
+- present subjunctives stressed on the antepenult, misread by TTS: `amino` → `àmino`, `abitino` → `àbitino` (vs. `abitìno`, small dress)
 
-Place the grave accent (`à è ì ò ù`) or acute (`é ó`) on the correct stressed vowel.
+*Open vs. closed vowel (`è`/`ò` open, `é`/`ó` closed):*
+- `pesca` → `pèsca` (peach) vs. `pésca` (fishing)
+- `botte` → `bòtte` (blows) vs. `bótte` (barrel)
+- `venti` → `vènti` (winds) vs. `vénti` (twenty)
+- `legge` → `légge` (law) vs. `lègge` (reads)
+- `colto` → `còlto` (picked) vs. `cólto` (educated)
+- `accetta` → `accètta` (accepts) vs. `accétta` (hatchet)
+- `foro` → `fòro` (forum, court) vs. `fóro` (hole)
+
+Place the grave accent (`à è ì ò ù`) or acute (`é ó`) on the correct stressed vowel. Listening tests (11/2026) on two neural engines showed explicit accents on these heteronyms fix the reading and introduce no glitches; the boundary above still holds for every other word.
 
 ### B2. English
 Scan for and disambiguate via context-aware rewriting (English does not natively use diacritics, so prefer unobtrusive markers compatible with your TTS engine — typically grave/acute on the stressed vowel; if the engine ignores them, the rule still has documentary value, and many modern TTS engines do honour SSML phoneme tags or stress accents):
