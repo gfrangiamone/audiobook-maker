@@ -1478,6 +1478,14 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
     else:
         credit_hint = (f"ricarica dalla dashboard di {p_name}, oppure riattiva "
                        f"subito {p_name}")
+    # Un trip per fallimenti consecutivi il cui ultimo errore e' un 429 non e'
+    # mai credito: il credito rifiutato arriva come 402 e fa scattare
+    # `*_backend_down`. Il 11/11/2026 l'email suggeriva il credito con oltre
+    # 30 € di saldo OpenRouter. "rate limit" e' il testo che gemini_transport
+    # mette su ogni TransportError di kind `rate_limited` (Cloudflare e
+    # OpenRouter), e `detail` lo riporta dopo "ultimo:".
+    rate_limited = (str(reason or "").endswith("_consecutive_failures")
+                    and "rate limit" in str(detail or "").lower())
 
     # `probe_first_sec` assente significa "nessuna sonda armata": rientro
     # automatico spento per configurazione, oppure causa di trip non
@@ -1485,6 +1493,19 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
     # solo). In quel caso l'unica via di rientro resta la console, e l'email
     # non deve promettere un appuntamento che nessuno ha fissato.
     probe_label = _fmt_durata_it(probe_first_sec) if probe_first_sec else ""
+    if rate_limited:
+        cause_par = (
+            "<p><strong>Non e' il credito.</strong> L'ultimo errore e' un 429: "
+            f"limite di frequenza del provider dietro {p_name}, che dura oltre "
+            "le pause gia' fatte. Non serve ricaricare; riattivare a mano "
+            f"{p_name} mentre il limite dura farebbe solo riscattare il "
+            "breaker.</p>")
+    else:
+        cause_par = (
+            "<p>Se la causa e' il credito esaurito la sonda non basta: "
+            f"{credit_hint} dal pannello "
+            "<em>Backend TTS</em> della console admin senza aspettare il "
+            "prossimo appuntamento.</p>")
     if probe_label:
         probe_row = _layout.kv("Prima sonda di rientro", f"fra {_esc_html(probe_label)}")
         probe_par = (
@@ -1496,17 +1517,16 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
             "email. Nessun job viene mai usato per provare: un audiolibro "
             "rimandato su un backend ancora guasto costerebbe l'intera "
             "generazione, la sonda costa una richiesta rifiutata.</p>"
-            "<p>Se la causa e' il credito esaurito la sonda non basta: "
-            f"{credit_hint} dal pannello "
-            "<em>Backend TTS</em> della console admin senza aspettare il "
-            "prossimo appuntamento.</p>")
+            + cause_par)
     else:
         probe_row = ""
+        di_norma = "" if rate_limited else f" (di norma: ricaricare il credito {p_name})"
         probe_par = (
             "<p><strong>Il rientro e' manuale.</strong> Per questo trip non "
-            "e' stata armata alcuna sonda: risolta la causa (di norma: "
-            f"ricaricare il credito {p_name}), riattiva {p_name} dal "
-            "pannello <em>Backend TTS</em> della console admin.</p>")
+            f"e' stata armata alcuna sonda: risolta la causa{di_norma}, "
+            f"riattiva {p_name} dal pannello <em>Backend TTS</em> della "
+            "console admin.</p>"
+            + (cause_par if rate_limited else ""))
 
     html_body = _layout.admin_panel(f"TTS: passaggio automatico a {f_name}", "#c0392b", f"""        <p>Il modello <strong>{model_safe}</strong> non viene piu' servito da
            {p_name}. I job in corso proseguono su {f_name} dal chunk

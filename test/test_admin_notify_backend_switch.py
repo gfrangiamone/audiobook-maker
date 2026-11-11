@@ -114,6 +114,41 @@ def test_openrouter_trip_names_the_real_backends_and_no_cf_credit(_sent):
     assert "31.19" not in html
 
 
+def test_openrouter_429_trip_does_not_point_at_the_credit(_sent):
+    # 11/11/2026, job cU4cFOGUJheU8BohhPdIlQ: trip per 429 sostenuti con oltre
+    # 30 € di credito OpenRouter; l'email suggeriva di ricaricare.
+    email_service.admin_notify_tts_backend_switch(
+        "flash38", "or_consecutive_failures",
+        "3 fallimenti consecutivi; ultimo: OpenRouter rate limit: "
+        "Provider returned 429", "j",
+        probe_first_sec=900, primary="openrouter", fallback="apikey")
+    html = _sent[0][2]
+    assert "Non e' il credito" in html
+    assert "ricarica dalla dashboard" not in html
+    assert "credito esaurito" not in html
+
+
+def test_openrouter_429_trip_without_probe_does_not_point_at_the_credit(_sent):
+    email_service.admin_notify_tts_backend_switch(
+        "flash38", "or_consecutive_failures",
+        "3 fallimenti consecutivi; ultimo: OpenRouter rate limit: x", "j",
+        primary="openrouter", fallback="apikey")
+    html = _sent[0][2]
+    assert "manuale" in html.lower()
+    assert "ricaricare il credito" not in html
+    assert "Non e' il credito" in html
+
+
+def test_non_429_consecutive_failures_keep_the_credit_hint(_sent):
+    email_service.admin_notify_tts_backend_switch(
+        "flash38", "or_consecutive_failures",
+        "3 fallimenti consecutivi; ultimo: OpenRouter HTTP 502: x", "j",
+        probe_first_sec=900, primary="openrouter", fallback="apikey")
+    html = _sent[0][2]
+    assert "ricarica dalla dashboard di OpenRouter" in html
+    assert "Non e' il credito" not in html
+
+
 def test_openrouter_return_names_openrouter(_sent):
     email_service.admin_notify_tts_backend_return(
         "flash38", probe_attempts=0, down_seconds=900, credit_left_usd=31.19,
