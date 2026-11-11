@@ -205,6 +205,33 @@ NON_CONTENT_TITLE_EXACT = {
     "inhoud",               # indice olandese; "De inhoud van den brief" e' un capitolo
 }
 
+# "Note"/"Notes" sono apparato quando chiudono il titolo ("Translator's
+# note"), quando lo seguono un complemento o un numero ("Notes de cette
+# édition", "A note on the text", "Notes 1-20") o un aggettivo da apparato
+# ("Note finali"). Seguite da un'altra parola sono l'inizio di un titolo vero:
+# la "Note ajoutée à l'édition définitive (1832)" di Victor Hugo spariva da
+# Notre-Dame de Paris (catalogo gratuito, 11/11/2026), come "Notes from
+# Underground".
+_NOTE_WORDS = {"note", "notes"}
+_NOTE_FOLLOWERS = (
+    # preposizioni, articoli, congiunzioni
+    "de", "du", "des", "d", "di", "del", "dello", "della", "dell", "dei", "degli", "delle",
+    "al", "allo", "alla", "all", "ai", "agli", "alle", "sul", "sullo", "sulla", "sui", "sugli",
+    "sulle", "su", "a", "à", "au", "aux", "sur", "pour", "par", "en", "dans", "in", "nel", "nella",
+    "et", "e", "y", "and", "on", "to", "of", "for", "by", "about", "zu", "zum", "zur", "und",
+    "la", "le", "les", "l", "il", "lo", "gli", "the", "un", "une", "da", "do", "dos", "das",
+    "para", "sobre", "van", "bij",
+    # aggettivi da apparato
+    "finali", "finales", "final", "critiche", "critiques", "critical", "bibliografiche",
+    "bibliographiques", "bibliographical", "esplicative", "explicatives", "explanatory",
+    "storiche", "historiques", "historical", "complementari", "complémentaires", "aggiuntive",
+    "additionnelles", "additional", "editoriali", "éditoriales", "editorial", "generali",
+    "générales", "general", "testuali", "textuelles", "textual",
+)
+_NOTE_TITLE_RE = re.compile(
+    r"(?<!\w)notes?(?!\w)(?!\s+(?!(?:" + "|".join(map(re.escape, _NOTE_FOLLOWERS))
+    + r"|\d+)(?!\w))\w)")
+
 # Colophon nelle lingue del catalogo. Nei libri di Project Gutenberg fatti da
 # TEI e' una voce di indice con figlie (Beschikbaarheid, Codering,
 # Documentgeschiedenis, Externe Referenties, Verbeteringen; in tedesco
@@ -239,6 +266,9 @@ def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     affatto dopo l'etichetta: una quarta di copertina non e' numerata come
     un capitolo, "Capítulo 25 - Trama" si' (Memórias de um Sargento de
     Milícias, catalogo gratuito, 08/11/2026).
+
+    "Note"/"Notes" seguite da un'altra parola non sono apparato (vedi
+    _NOTE_TITLE_RE).
     """
     tl = (title or "").lower()
     # I titoli ambigui valgono solo per intero, non come parola.
@@ -249,7 +279,10 @@ def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
         rest = title[label.end():].lower().strip(".:;–—- ")
         return bool(rest) and rest in phrases
     for skip in phrases:
-        if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
+        if skip in _NOTE_WORDS:
+            if _NOTE_TITLE_RE.search(tl):
+                return True
+        elif re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
             return True
     return False
 
