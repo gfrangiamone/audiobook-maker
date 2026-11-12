@@ -30,5 +30,6 @@ def render_support_page(lang="it", base_url=""):
 <h2>{t['contact_h']}</h2>
 <div class="box"><p>{t['contact']}</p></div>
 </article>"""
+    head = page_brand.query_lang_head(base_url, "/support", t["lang"], _TXT, "it")
     return page_brand.public_page(lang=t["lang"], title=t["title"], home=home, crumb=t["crumb"],
-                                  body=body, footer=f"<p>{t['footer']}</p>", css=css)
+                                  body=body, footer=f"<p>{t['footer']}</p>", head=head, css=css)

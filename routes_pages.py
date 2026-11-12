@@ -299,16 +299,20 @@ def _catalog_choice():
 
 def _catalog_lang_redirect():
     """Il selettore della pagina (?lang): la scelta va nel cookie `abm_lang` e
-    la pagina risponde 302 all'URL senza il parametro, cosi' ogni pagina del
+    la pagina risponde 301 all'URL senza il parametro, cosi' ogni pagina del
     catalogo ha un solo URL. Con una variante 200 per lingua dell'interfaccia
     Google scansionava i doppioni e lasciava le schede vere in «Rilevata, ma
-    non indicizzata» (Search Console, 10/11/2026). Anche pt e nl, che il resto
-    del sito non ha, vanno nel cookie: `i18n.choose_lang` li ignora e ripiega
-    sul browser. None senza ?lang."""
+    non indicizzata» (Search Console, 10/11/2026). Permanente perche' Google
+    sposti sull'URL pulito le ~170 varianti ?lang= che aveva gia' indicizzato
+    (un 302 e' per lui un segnale debole, Search Console 12/11/2026);
+    `no-store` impedisce al browser di tenerlo in cache, cosi' ogni scelta
+    passa dal server e aggiorna il cookie. Anche pt e nl, che il resto del
+    sito non ha, vanno nel cookie: `i18n.choose_lang` li ignora e ripiega sul
+    browser. None senza ?lang."""
     if "lang" not in request.args:
         return None
     rest = [(k, v) for k, v in request.args.items(multi=True) if k != "lang"]
-    resp = redirect(request.path + (f"?{urlencode(rest)}" if rest else ""), code=302)
+    resp = redirect(request.path + (f"?{urlencode(rest)}" if rest else ""), code=301)
     resp.headers["Cache-Control"] = "no-store"
     chosen = (request.args.get("lang") or "").strip().lower()
     if chosen in free_catalog.ui_langs():

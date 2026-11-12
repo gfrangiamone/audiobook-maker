@@ -19,7 +19,7 @@ fr:{link:"À propos du projet",title:"À propos du projet",paras:[
 "Je me suis mis au travail après avoir constaté qu’il n’existe pas d’outils simples et prêts à l’emploi pour convertir un livre en audio avec des lecteurs de bonne qualité.",
 "Par la suite, en en parlant avec des amis, j’ai réalisé qu’un tel outil pourrait aider d’autres personnes comme moi et, surtout, les nombreuses personnes qui, pour diverses raisons (malvoyants, dyslexie,...), ont des difficultés de lecture.",
 "J’ai donc décidé de mettre cet outil à la disposition de tous gratuitement.",
-"Le projet est open source (licence AGPL-3.0) et le code source est disponible sur <a href=’https://github.com/gfrangiamone/audiobook-maker’ target=’_blank’ rel=’noopener’>GitHub</a>. Vous pouvez aussi trouver Audiobook Maker sur <a href=’https://alternativeto.net/software/audiobook-maker/’ target=’_blank’ rel=’noopener’>AlternativeTo</a> comparé avec des outils similaires.",
+"Le projet est open source (licence AGPL-3.0) et le code source est disponible sur <a href='https://github.com/gfrangiamone/audiobook-maker' target='_blank' rel='noopener'>GitHub</a>. Vous pouvez aussi trouver Audiobook Maker sur <a href='https://alternativeto.net/software/audiobook-maker/' target='_blank' rel='noopener'>AlternativeTo</a> comparé avec des outils similaires.",
 "Essayez-le, utilisez-le et pour signaler des erreurs ou suggérer de nouvelles fonctionnalités, écrivez-moi à :"]},
 es:{link:"Sobre el proyecto",title:"Sobre el proyecto",paras:[
 "El proyecto Audiobook Maker nace de mi deseo personal de poder escuchar, aprovechando mis desplazamientos de trabajo, algunos libros que no tengo tiempo de “leer con los ojos”.",

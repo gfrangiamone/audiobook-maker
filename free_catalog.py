@@ -74,6 +74,16 @@ _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 # (08/11/2026, il catalogo portoghese non si pubblicava).
 _VOICE_RE = re.compile(r"^(gemini|voxcpm):[A-Za-z0-9À-ÖØ-öø-ſ:_/.-]+$")
 
+# Licenze del testo come le scrive la produzione del catalogo, in italiano
+# (abm-free-catalog: `catalog_cli.GUTENBERG_LICENSE`,
+# `tools/produce.WIKISOURCE_LICENSE`) -> chiave di `licenses` in
+# i18n/free_catalog.json. Le schede in altre lingue le mostravano in italiano
+# (12/11/2026); una licenza fuori da qui resta com'e'.
+_LICENSE_KEYS = {
+    "pubblico dominio (testo di Project Gutenberg, senza la licenza e il marchio)": "gutenberg",
+    "pubblico dominio (trascrizione di Wikisource, CC BY-SA 3.0)": "wikisource",
+}
+
 _lock = threading.Lock()
 # lingua -> (sorgente, istante di lettura, libri validi o None)
 _cache = {}
@@ -393,7 +403,7 @@ def ui_lang(requested, fallback):
 
 def _ui_switch(current, path, t):
     """Selettore della lingua della pagina: link `?lang=` (senza JS: la rotta
-    mette la scelta nel cookie della SPA e risponde 302 all'URL pulito).
+    mette la scelta nel cookie della SPA e risponde 301 all'URL pulito).
     `nofollow`: i link portano a un redirect, non a pagine da scansionare.
     Vuoto con una sola lingua."""
     langs = ui_langs()
@@ -701,6 +711,12 @@ def _source_link(src):
     return _esc(src["site"])
 
 
+def _license_text(src, t):
+    """Licenza del testo nella lingua della pagina, se e' una di quelle note
+    (`_LICENSE_KEYS`); altrimenti quella del catalogo."""
+    return _dict(t["licenses"]).get(_LICENSE_KEYS.get(src["license"], "")) or src["license"]
+
+
 def _ebook_html(b, t):
     """Riquadro con l'ebook da cui e' nato l'audiolibro: lettura online e,
     se c'e', il file EPUB. '' se la fonte non ha un URL."""
@@ -713,7 +729,7 @@ def _ebook_html(b, t):
                      f'{_esc(t["ebook_epub"])}</a>')
     if not links:
         return ""
-    text = t["ebook_text"].format(site=src["site"] or "—", license=src["license"] or "—")
+    text = t["ebook_text"].format(site=src["site"] or "—", license=_license_text(src, t) or "—")
     return (f'<section class="fc-ebook"><h2>{_esc(t["ebook_title"])}</h2><p>{_esc(text)}</p>'
             f'<div class="fc-ebook-links">{"".join(links)}</div></section>')
 
@@ -761,7 +777,7 @@ def _scheda_html(lang, b, t):
             (t["m_ebook"], f'<a href="{_esc(src["ebook_url"])}" rel="noopener">{_esc(t["ebook_epub"])}</a>'
              if src["ebook_url"].startswith("https://") else ""),
             (t["m_edition"], _esc(src["edition"])),
-            (t["m_license"], _esc(src["license"])),
+            (t["m_license"], _esc(_license_text(src, t))),
             (t["m_pd_eu"], _esc(_yes_no(rights["eu_pd"], t)) if "eu_pd" in rights else ""),
             (t["m_pd_us"], _esc(_yes_no(rights["us_pd"], t)) if "us_pd" in rights else ""),
         ]),

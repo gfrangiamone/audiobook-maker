@@ -670,7 +670,7 @@ def test_selettore_della_lingua_della_pagina(catalog, client):
     assert re.search(r'lang="it" aria-current="true">Italiano<', sw)
 
     r = client.get("/free-audiobooks/it/storia-di-una-capinera/?lang=en")
-    assert r.status_code == 302 and "abm_lang=en" in r.headers.get("Set-Cookie", "")
+    assert r.status_code == 301 and "abm_lang=en" in r.headers.get("Set-Cookie", "")
     assert r.headers["Location"].endswith("/free-audiobooks/it/storia-di-una-capinera/")
     r = client.get("/free-audiobooks/it/storia-di-una-capinera/")
     html = r.get_data(as_text=True)
@@ -686,23 +686,24 @@ def test_selettore_della_lingua_della_pagina(catalog, client):
 @pytest.mark.parametrize("url", ["/free-audiobooks/", "/free-audiobooks/it/",
                                  "/free-audiobooks/it/storia-di-una-capinera/"])
 def test_ogni_pagina_del_catalogo_ha_un_solo_url(catalog, url):
-    # ?lang= non e' una pagina a se': 302 all'URL pulito, senza cache (Search
-    # Console scansionava le varianti e lasciava le schede vere non indicizzate).
+    # ?lang= non e' una pagina a se': 301 all'URL pulito, senza cache (Search
+    # Console scansionava le varianti e lasciava le schede vere non indicizzate;
+    # col 302 teneva indicizzate le varianti gia' viste).
     c = audiobook_app.app.test_client()
     r = c.get(f"{url}?lang=pt")
-    assert r.status_code == 302 and r.headers["Location"].endswith(url)
+    assert r.status_code == 301 and r.headers["Location"].endswith(url)
     assert r.headers["Cache-Control"] == "no-store"
     assert "abm_lang=pt" in r.headers.get("Set-Cookie", "")
     assert '<html lang="pt">' in c.get(url).get_data(as_text=True)
     # Lingua sconosciuta: stesso redirect, nessun cookie.
     r = audiobook_app.app.test_client().get(f"{url}?lang=zz")
-    assert r.status_code == 302 and r.headers["Location"].endswith(url)
+    assert r.status_code == 301 and r.headers["Location"].endswith(url)
     assert "abm_lang" not in r.headers.get("Set-Cookie", "")
 
 
 def test_il_redirect_di_lang_conserva_gli_altri_parametri(catalog, client):
     r = client.get("/free-audiobooks/it/?utm_source=news&lang=en&ref=a%26b")
-    assert r.status_code == 302
+    assert r.status_code == 301
     assert r.headers["Location"].endswith("/free-audiobooks/it/?utm_source=news&ref=a%26b")
 
 
@@ -731,3 +732,22 @@ def test_pagine_del_catalogo_in_tutte_le_lingue_dell_interfaccia(catalog):
             assert page_brand.html_lang(ui) == ("zh-Hans" if ui == "zh" else ui)   # pt e nl non ripiegano su en
             assert re.search(r'<html lang="' + re.escape(page_brand.html_lang(ui)) + '"', html), (ui, url)
             assert not re.search(r"\{(n|total|title|author|min|duration|voice|model|site|license|h|m|y|d|mb)\}", html), (ui, url)
+
+
+@pytest.mark.parametrize("raw,key", sorted(free_catalog._LICENSE_KEYS.items()))
+def test_la_licenza_del_catalogo_segue_la_lingua_della_pagina(catalog, raw, key):
+    # Il catalogo scrive la licenza in italiano: le schede in altre lingue la
+    # mostravano cosi' due volte (Search Console 12/11/2026, testo misto).
+    catalog([_book(source={**_book()["source"], "license": raw})])
+    texts = i18n.load("free_catalog")
+    for ui in free_catalog.ui_langs():
+        page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                      lambda text: "", ui=ui)
+        assert texts[ui]["licenses"][key] in page.replace("&#x27;", "'"), ui
+        assert raw not in page, ui
+
+
+def test_una_licenza_sconosciuta_resta_com_e(catalog):
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "", ui="fr")
+    assert "pubblico dominio" in page

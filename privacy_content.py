@@ -38,5 +38,6 @@ def render_privacy_page(lang="it", base_url=""):
 <h2>{t['changes_h']}</h2>
 <p>{t['changes_p']}</p>
 </article>"""
+    head = page_brand.query_lang_head(base_url, "/privacy", t["lang"], _TXT, "it")
     return page_brand.public_page(lang=t["lang"], title=t["title"], home=home, crumb=t["crumb"],
-                                  body=body, footer=f"<p>{t['footer']}</p>", css=css)
+                                  body=body, footer=f"<p>{t['footer']}</p>", head=head, css=css)

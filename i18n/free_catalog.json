@@ -120,6 +120,10 @@
     "m_ebook": "Ebook di origine",
     "m_edition": "Edizione",
     "m_license": "Licenza del testo",
+    "licenses": {
+      "gutenberg": "pubblico dominio, senza la licenza e il marchio Project Gutenberg",
+      "wikisource": "pubblico dominio; trascrizione di Wikisource con licenza CC BY-SA 3.0"
+    },
     "m_pd_eu": "Pubblico dominio UE",
     "m_pd_us": "Pubblico dominio USA",
     "landing_title": "Ascolta questo audiolibro nell'app",
@@ -246,6 +250,10 @@
     "m_ebook": "Source ebook",
     "m_edition": "Edition",
     "m_license": "Text licence",
+    "licenses": {
+      "gutenberg": "public domain, without the Project Gutenberg licence and trademark",
+      "wikisource": "public domain; Wikisource transcription under CC BY-SA 3.0"
+    },
     "m_pd_eu": "Public domain (EU)",
     "m_pd_us": "Public domain (US)",
     "landing_title": "Listen to this audiobook in the app",
@@ -372,6 +380,10 @@
     "m_ebook": "Ebook d'origine",
     "m_edition": "Édition",
     "m_license": "Licence du texte",
+    "licenses": {
+      "gutenberg": "domaine public, sans la licence ni la marque Project Gutenberg",
+      "wikisource": "domaine public ; transcription de Wikisource sous licence CC BY-SA 3.0"
+    },
     "m_pd_eu": "Domaine public (UE)",
     "m_pd_us": "Domaine public (États-Unis)",
     "landing_title": "Écoutez ce livre audio dans l'application",
@@ -498,6 +510,10 @@
     "m_ebook": "Ebook de origen",
     "m_edition": "Edición",
     "m_license": "Licencia del texto",
+    "licenses": {
+      "gutenberg": "dominio público, sin la licencia ni la marca Project Gutenberg",
+      "wikisource": "dominio público; transcripción de Wikisource con licencia CC BY-SA 3.0"
+    },
     "m_pd_eu": "Dominio público (UE)",
     "m_pd_us": "Dominio público (EE. UU.)",
     "landing_title": "Escucha este audiolibro en la app",
@@ -624,6 +640,10 @@
     "m_ebook": "Ursprüngliches E-Book",
     "m_edition": "Ausgabe",
     "m_license": "Lizenz des Textes",
+    "licenses": {
+      "gutenberg": "gemeinfrei, ohne Lizenz und Marke von Project Gutenberg",
+      "wikisource": "gemeinfrei; Wikisource-Transkription unter CC BY-SA 3.0"
+    },
     "m_pd_eu": "Gemeinfrei (EU)",
     "m_pd_us": "Gemeinfrei (USA)",
     "landing_title": "Dieses Hörbuch in der App hören",
@@ -750,6 +770,10 @@
     "m_ebook": "来源电子书",
     "m_edition": "版本",
     "m_license": "文本许可",
+    "licenses": {
+      "gutenberg": "公有领域，已去除 Project Gutenberg 的许可协议和商标",
+      "wikisource": "公有领域；Wikisource 转录文本，采用 CC BY-SA 3.0 许可"
+    },
     "m_pd_eu": "公有领域（欧盟）",
     "m_pd_us": "公有领域（美国）",
     "landing_title": "在应用中收听这本有声书",
@@ -876,6 +900,10 @@
     "m_ebook": "मूल ई-बुक",
     "m_edition": "संस्करण",
     "m_license": "पाठ का लाइसेंस",
+    "licenses": {
+      "gutenberg": "सार्वजनिक डोमेन, Project Gutenberg के लाइसेंस और ट्रेडमार्क के बिना",
+      "wikisource": "सार्वजनिक डोमेन; Wikisource का प्रतिलेखन, CC BY-SA 3.0 लाइसेंस के तहत"
+    },
     "m_pd_eu": "सार्वजनिक डोमेन (EU)",
     "m_pd_us": "सार्वजनिक डोमेन (USA)",
     "landing_title": "यह ऑडियोबुक ऐप में सुनें",
@@ -1002,6 +1030,10 @@
     "m_ebook": "E-book de origem",
     "m_edition": "Edição",
     "m_license": "Licença do texto",
+    "licenses": {
+      "gutenberg": "domínio público, sem a licença e a marca Project Gutenberg",
+      "wikisource": "domínio público; transcrição do Wikisource sob licença CC BY-SA 3.0"
+    },
     "m_pd_eu": "Domínio público (UE)",
     "m_pd_us": "Domínio público (EUA)",
     "landing_title": "Ouça este audiolivro no app",
@@ -1128,6 +1160,10 @@
     "m_ebook": "Oorspronkelijk e-book",
     "m_edition": "Editie",
     "m_license": "Licentie van de tekst",
+    "licenses": {
+      "gutenberg": "publiek domein, zonder de licentie en het handelsmerk van Project Gutenberg",
+      "wikisource": "publiek domein; Wikisource-transcriptie onder CC BY-SA 3.0"
+    },
     "m_pd_eu": "Publiek domein (EU)",
     "m_pd_us": "Publiek domein (VS)",
     "landing_title": "Luister dit luisterboek in de app",

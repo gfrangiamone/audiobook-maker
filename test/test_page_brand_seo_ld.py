@@ -136,3 +136,18 @@ def test_public_pages_share_the_shell():
     assert '<meta property="og:locale" content="fr_FR">' in guide
     assert guide.count('<script type="application/ld+json">') == 2
     assert '"@type": "BreadcrumbList"' in guide and '"@type": "Article"' in guide
+
+
+def test_privacy_e_supporto_hanno_canonical_e_hreflang():
+    # /support?lang=it era un doppione senza canonical (Search Console, 12/11/2026):
+    # l'italiano sta sull'URL nudo, l'inglese su ?lang=en.
+    import privacy_content, support_content
+    for path, render in (("/privacy", privacy_content.render_privacy_page),
+                         ("/support", support_content.render_support_page)):
+        it, en = render("it", "https://x"), render("en", "https://x")
+        assert f'<link rel="canonical" href="https://x{path}">' in it
+        assert f'<link rel="canonical" href="https://x{path}?lang=en">' in en
+        for html in (it, en):
+            assert f'<link rel="alternate" hreflang="it" href="https://x{path}">' in html
+            assert f'<link rel="alternate" hreflang="en" href="https://x{path}?lang=en">' in html
+            assert f'<link rel="alternate" hreflang="x-default" href="https://x{path}">' in html

@@ -109,6 +109,18 @@ def hreflang_links(path_fn, x_default, *, sep="\n", xhtml=False, langs=None):
     return sep.join(lines)
 
 
+def query_lang_head(base_url, path, lang, langs, default):
+    """canonical e hreflang di una pagina che sceglie la lingua con ?lang=
+    (privacy, supporto): `default` sta sull'URL nudo, che e' anche x-default,
+    le altre lingue di `langs` su `?lang=<codice>`. Senza canonical Google
+    trattava /support?lang=it come doppione di /support (Search Console,
+    12/11/2026)."""
+    def url(lc):
+        return f"{base_url}{path}" + ("" if lc == default else f"?lang={lc}")
+    return seo_head(canonical=url(lang),
+                    hreflang=hreflang_links(url, url(default), langs={lc: HREFLANG[lc] for lc in langs}))
+
+
 def og_locale_tags(lang, *, sep="\n"):
     """(og:locale della lingua, blocco dei `<meta property="og:locale:alternate">`
     per tutte le altre lingue)."""
