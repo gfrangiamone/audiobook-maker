@@ -296,6 +296,20 @@ _BACKNOTE_TITLE_RE = re.compile(
 )
 
 
+# Rimando a nota in coda a una voce d'indice: l'NCX di Liber Liber copia il
+# <sup> del titolo e scrive "XXXI. Regina Mabnota 35", che si leggeva ad alta
+# voce (Moby Dick, catalogo 12/11/2026).
+_TOC_NOTE_REF_RE = re.compile(r"(?:\s*nota\s*\d{1,4})+\s*$")
+
+
+def clean_toc_title(title) -> str:
+    """Titolo di una voce d'indice senza spazi ai lati e senza rimandi a nota
+    in coda ("Regina Mabnota 35" → "Regina Mab"). Se non resta nulla ("nota
+    3" e' tutta la voce) torna il titolo com'era."""
+    title = str(title or "").strip()
+    return _TOC_NOTE_REF_RE.sub("", title).strip() or title
+
+
 def is_backnote_toc_title(title) -> bool:
     """True se il titolo TOC è un back-link a nota (freccia indietro + numero).
 

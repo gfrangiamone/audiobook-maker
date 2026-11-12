@@ -29,7 +29,7 @@ from text_reflow import _title_already_in_text, dehyphenate_breaks, reflow_book,
 from book_model import (BookInfo, Chapter, WORDS_PER_MINUTE, NON_CONTENT_FILENAMES_EXACT,
                         NON_CONTENT_FILENAMES_SUBSTR, NON_CONTENT_TITLE_PHRASES, NON_CONTENT_TITLE_EXACT,
                         COLOPHON_TITLE_PHRASES, title_is_non_content as _title_is_non_content,
-                        is_backnote_toc_title as _is_backnote_toc_title,
+                        is_backnote_toc_title as _is_backnote_toc_title, clean_toc_title,
                         synthetic_section_title as _synthetic_section_title, print_book_info,
                         LEAD_SECTION_TITLE_IT, lead_section_title)
 
@@ -2055,7 +2055,7 @@ def _build_toc_parents(book: epub.EpubBook, author: str = "") -> dict[str, str]:
                 href = (getattr(section, "href", "") or "").split("#")[0]
                 if parent and href:
                     parents.setdefault(href, parent)
-                title = str(getattr(section, "title", "") or "").strip()
+                title = clean_toc_title(getattr(section, "title", ""))
                 walk(children, parent if _is_author_byline(title, author) else title or parent)
             elif parent and isinstance(getattr(item, "href", None), str):
                 parents.setdefault(item.href.split("#")[0], parent)
@@ -2153,7 +2153,7 @@ def _toc_entries(book: epub.EpubBook) -> list[tuple[str, str, str]]:
                 add(item)
 
     def add(item):
-        title = str(item.title or "").strip()
+        title = clean_toc_title(item.title)
         if not _skip_toc_title(title):
             href_file, _, frag = str(item.href or "").partition("#")
             entries.append((href_file, frag, title))
