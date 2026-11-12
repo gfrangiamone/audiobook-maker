@@ -148,8 +148,8 @@ def test_presynth_updates_progress_per_chunk(monkeypatch, tmp_path):
     monkeypatch.setattr(speechify_tts, "per_job_concurrency", lambda: 1)
     monkeypatch.setattr(speechify_tts, "max_concurrency", lambda: 3)
 
-    out = generation_engine._speechify_presynth(
-        job, plan, tmp_path, "speechify:simba-3.2:wyatt_32",
+    out = generation_engine._direct_presynth(
+        job, "speechify", plan, tmp_path, "speechify:simba-3.2:wyatt_32",
         emotion=None, rate="-10%", check_cancelled=lambda: False,
         start_time=0.0)
 
@@ -171,6 +171,6 @@ def test_presynth_propagates_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(speechify_tts, "per_job_concurrency", lambda: 1)
     monkeypatch.setattr(speechify_tts, "max_concurrency", lambda: 3)
     with pytest.raises(generation_engine._CancelledError):
-        generation_engine._speechify_presynth(
-            job, plan, tmp_path, "speechify:simba-3.2:wyatt_32",
+        generation_engine._direct_presynth(
+            job, "speechify", plan, tmp_path, "speechify:simba-3.2:wyatt_32",
             emotion=None, rate="+0%", check_cancelled=lambda: True, start_time=0.0)

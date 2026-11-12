@@ -54,8 +54,9 @@ def test_user_stats_counts_voxcpm_as_premium():
 def test_audit_free_thresholds_come_from_engines():
     import inspect
     import generation_engine as ge
-    src = inspect.getsource(ge._write_speechify_audit)
-    assert "speechify_tts.free_threshold_eur()" in src
+    # Speechify e Pocket: soglia dal modulo motore (`mod.free_threshold_eur()`).
+    src = inspect.getsource(ge._write_direct_audit)
+    assert "mod.free_threshold_eur()" in src
     assert 'ABM_SPEECHIFY_FREE_THRESHOLD_EUR' not in src
     src = inspect.getsource(ge._write_gemini_audit)
     assert "gemini_tts.FREE_THRESHOLD_EUR" in src

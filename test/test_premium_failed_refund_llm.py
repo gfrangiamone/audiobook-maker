@@ -171,6 +171,7 @@ def test_paypal_senza_email_niente_marker(combined_paypal_job):
 @pytest.mark.parametrize("engine,audit_fn", [
     ("voxcpm", "_write_voxcpm_audit"),
     ("speechify", "_write_speechify_audit"),
+    ("pocket", "_write_pocket_audit"),
 ])
 def test_ramo_di_fallimento_premium_avvisa_tutti(monkeypatch, engine, audit_fn):
     chiamate = {}
@@ -215,9 +216,10 @@ def test_allerta_admin_caduta_non_salta_il_pending(monkeypatch):
 
 
 def test_run_generation_passa_dal_ramo_premium():
-    # Il gestore delle eccezioni di run_generation deve delegare entrambi i
-    # motori a _premium_job_failed, non rimborsare in silenzio.
+    # Il gestore delle eccezioni di run_generation deve delegare VoxCPM e i
+    # motori a chunk diretto (Speechify, Pocket) a _premium_job_failed, non
+    # rimborsare in silenzio.
     import inspect
     src = inspect.getsource(ge.run_generation)
     assert '_premium_job_failed(job_id, job, voice, info, e, "voxcpm")' in src
-    assert '_premium_job_failed(job_id, job, voice, info, e, "speechify")' in src
+    assert '_premium_job_failed(job_id, job, voice, info, e, direct)' in src

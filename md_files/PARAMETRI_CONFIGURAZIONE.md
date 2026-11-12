@@ -1133,8 +1133,28 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 - Endpoint API selezionabile via `ABM_SPEECHIFY_USE_STREAM` (default `false` = `/v1/audio/speech`; `true` = `/v1/audio/stream`). In streaming il corpo della risposta è audio WAV grezzo (`audio_format=wav`) e il download viene consumato dentro lo slot del gate per rispettare l'invariante di concorrenza.
 - **Invariante concorrenza:** chiamate simultanee verso l'API ≤ `ABM_SPEECHIFY_MAX_CONCURRENCY` su tutti i job del processo; ogni job usa al più `ABM_SPEECHIFY_PER_JOB_CONCURRENCY` slot del gate globale.
 - **Retry per chunk** (`speechify_tts.synthesize`, `max_attempts=3`, backoff `2^n` s con cap 30 s, `Retry-After` onorato): un solo livello di retry, dentro `synthesize`, per errori di rete (`Read timed out`, `ConnectionError`, `requests.RequestException`) e 429/5xx. Il wrapper `premium_chunk.generate_chunk_pcm_speechify` (F1d, prima in `tts_split`) fa un solo giro (`max_retries=1`; prima del 2026-10-09 ne faceva 3, cioe' fino a 9 chiamate HTTP per chunk). Un 4xx fatale (`SpeechifyFatalError`, es. SSML invalido) **non** viene ritentato. Solo dopo il fallimento dei 3 tentativi il chunk diventa 1 s di silenzio (a 48 kHz). Timeout HTTP per chiamata: `120` s.
-- **Pre-sintesi** (`generation_engine._speechify_presynth`): tutti i chunk vengono sintetizzati in un pool da `min(PER_JOB, MAX)` worker prima dell'assemblaggio; `progress_current`/`progress_message` ("Synthesizing audio: chunk n/N") avanzano a ogni chunk completato e il contatore resta monotono durante l'assemblaggio.
+- **Pre-sintesi** (`generation_engine._direct_presynth`, comune ai motori a chunk diretto Speechify e Pocket dal 12/11/2026): tutti i chunk vengono sintetizzati in un pool da `min(PER_JOB, MAX)` worker prima dell'assemblaggio; `progress_current`/`progress_message` ("Synthesizing audio: chunk n/N") avanzano a ogni chunk completato e il contatore resta monotono durante l'assemblaggio. Wrapper di chunk comune `premium_chunk.generate_chunk_pcm_direct`, audit comune `_write_direct_audit`.
 - Cancel di un job con voce Speechify → refund **integrale** (`retained_eur=0.0`), nessuna retention parziale né consegna audio parziale (a differenza di Gemini).
+
+---
+
+## 8b. Pocket TTS (worker abm-pocket-worker su VPS, solo catalogo) (`pocket_tts.py`)
+
+Motore a chunk diretto come Speechify: una `POST /v1/synthesize` per chunk verso il worker `gfrangiamone/abm-pocket-worker` (VPS a canone fisso, `https://pocketts.audiobook-maker.com`), PCM 16-bit mono a 24 kHz. Voci `pocket:v1:<locale>/<Nome>` = le voci di riferimento di `voxcpm2/voci_inventate`, caricate sul worker come stati `.safetensors` (`tools/export_voices.py` del worker). Il worker normalizza il testo italiano e carica una sola lingua (oggi `italian_24l`). **Non ha listino**: dove e' acceso genera gratis, quindi le due variabili vanno solo nell'istanza del catalogo (`scripts/run_catalog_local.ps1`), mai nell'unit di produzione. Senza le due variabili `_premium_model_gate` rifiuta la voce con `pocket_not_configured`.
+
+| Variabile | Descrizione | Default | File |
+|---|---|---|---|
+| `ABM_POCKET_URL` | Indirizzo del worker (senza `/` finale). Con il token accende il motore. | — | `pocket_tts.py` `base_url()` |
+| `ABM_POCKET_TOKEN` | Token Bearer del worker (`POCKET_API_TOKEN` in `/etc/abm-pocket-worker.env` sul VPS). | — | `pocket_tts.py` `api_token()` |
+| `ABM_POCKET_MAX_CONCURRENCY` | Chunk in volo verso il worker su tutto il processo (gate `SlotGate`). Il worker regge fino a 128 attese contemporanee. | `32` | `pocket_tts.py` `max_concurrency()` |
+| `ABM_POCKET_PER_JOB_CONCURRENCY` | Chunk in volo per singolo job: il worker ha un processo per vCPU (16 sul VPS). | `16` | `pocket_tts.py` `per_job_concurrency()` |
+| `ABM_POCKET_ATTEMPTS` | Tentativi per chunk su rete, 429 e 5xx (502 chunk fallito sul worker, 503 riavvio, 504 coda): backoff 5-10-20-40-60 s, copre un deploy del worker. Un 4xx (voce assente sul worker) non si ritenta. | `5` | `pocket_tts.py` `attempts()` |
+| `ABM_POCKET_CHUNK_CHARS` | Cap caratteri per chunk, clampato a `[80, 1000]` (1000 = `POCKET_MAX_CHUNK_CHARS` del worker). | `280` | `pocket_tts.py` `chunk_max_chars()` |
+
+- Timeout HTTP per chiamata `960` s: il worker tiene il chunk in coda fino a `POCKET_SYNC_TIMEOUT_S` (900).
+- Velocita' ed emozione non si applicano: Pocket legge al ritmo della voce.
+- Prezzo sempre 0 (`compute_user_price_eur`), soglia di gratuita' `FREE_THRESHOLD_EUR = 0.01`; l'audit (`provider: "pocket"`) registra caratteri e secondi di audio a costo zero.
+- Riuso dei chunk dopo un riavvio: `pocket` e' in `chunk_reuse.REUSABLE_ENGINES` (sample rate fisso) e la pre-sintesi salta i chunk riusati.
 
 ---
 

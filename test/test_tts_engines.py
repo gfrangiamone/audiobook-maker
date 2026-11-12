@@ -9,16 +9,18 @@ import pytest
 import tts_engines
 import tts_split
 import generation_engine as ge
-import gemini_tts, speechify_tts, voxcpm_tts
+import gemini_tts, pocket_tts, speechify_tts, voxcpm_tts
 
 
 def test_engine_for_voice_and_registry_shape():
     assert tts_engines.engine_for_voice("gemini:flash31:Zephyr") == "gemini"
     assert tts_engines.engine_for_voice("speechify:simba-3.2:harper_32") == "speechify"
     assert tts_engines.engine_for_voice("voxcpm:it:anna") == "voxcpm"
+    assert tts_engines.engine_for_voice("pocket:v1:it-IT/Chiara") == "pocket"
     assert tts_engines.engine_for_voice("it-IT-ElsaNeural") == "edge" and tts_engines.engine_for_voice("") == "edge"
     assert tts_engines.premium_for_voice("it-IT-ElsaNeural") is None
-    assert set(tts_engines.ENGINES) == set(tts_engines.PREMIUM) == {"gemini", "speechify", "voxcpm"}
+    assert set(tts_engines.ENGINES) == set(tts_engines.PREMIUM) == {"gemini", "speechify", "voxcpm", "pocket"}
+    assert tts_engines.DIRECT == ("speechify", "pocket")
     for name, eng in tts_engines.ENGINES.items():
         assert eng.name == name and eng.mod().__name__ == eng.module
         assert eng.estimate_key == f"{name}_estimate" and eng.audit_writer == f"_write_{name}_audit"
@@ -53,8 +55,9 @@ def test_sample_rate_from_registry():
     E = tts_engines.ENGINES
     assert E["gemini"].sample_rate({}) == 24000 and E["voxcpm"].sample_rate({"speechify_sample_rate": 1}) == 48000
     assert E["speechify"].sample_rate({}) == 48000 and E["speechify"].sample_rate({"speechify_sample_rate": 44100}) == 44100
-    assert ge._pcm_sample_rate({"speechify_sample_rate": 44100}, True, False) == 44100
-    assert ge._pcm_sample_rate({}, False, True) == 48000 and ge._pcm_sample_rate({}, False, False) == 24000
+    assert ge._pcm_sample_rate({"speechify_sample_rate": 44100}, "speechify") == 44100
+    assert ge._pcm_sample_rate({}, "voxcpm") == 48000 and ge._pcm_sample_rate({}, "edge") == 24000
+    assert ge._pcm_sample_rate({"speechify_sample_rate": 44100}, "pocket") == 24000
 
 
 def test_estimate_dispatch_passes_each_engine_its_signature(monkeypatch):
@@ -85,14 +88,15 @@ def test_no_direct_estimate_dispatch_left_in_app_and_engine():
     src = "".join(inspect.getsource(m) for m in (app, recovery))
     # i rami combinati di /api/optimize passano dal dispatcher via _combined_tts_estimate
     assert src.count('tts_engines.estimate("') + src.count('_combined_tts_estimate("') >= 14
-    assert inspect.getsource(ge).count('_tts_engines.estimate("') == 3        # auto-gen: stima mancante
+    assert inspect.getsource(ge).count('_tts_engines.estimate(') == 3         # auto-gen: stima mancante
 
 
 def test_premium_audit_names_and_unavailable_exceptions(monkeypatch):
     assert ge._PREMIUM_AUDIT == {"gemini": "_write_gemini_audit", "speechify": "_write_speechify_audit",
-                                 "voxcpm": "_write_voxcpm_audit"}
+                                 "voxcpm": "_write_voxcpm_audit", "pocket": "_write_pocket_audit"}
     excs = tts_engines.unavailable_exceptions()
-    assert set(excs) == {gemini_tts.GeminiUnavailable, speechify_tts.SpeechifyUnavailable, voxcpm_tts.VoxcpmUnavailable}
+    assert set(excs) == {gemini_tts.GeminiUnavailable, speechify_tts.SpeechifyUnavailable,
+                         voxcpm_tts.VoxcpmUnavailable, pocket_tts.PocketUnavailable}
     assert issubclass(voxcpm_tts.VoxcpmUnavailable, voxcpm_tts.VoxcpmJobError)
     monkeypatch.setattr(voxcpm_tts, "endpoint_id", lambda: "")
     with pytest.raises(voxcpm_tts.VoxcpmUnavailable):

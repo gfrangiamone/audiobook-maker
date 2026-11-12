@@ -18,14 +18,14 @@ class _Info:
 
 
 # ---------------------------------------------------------------------------
-# _accumulate_speechify_actual
+# _accumulate_direct_actual (Speechify)
 # ---------------------------------------------------------------------------
 def test_accumulate_speechify_actual_sums_chars_and_seconds():
     job = {"speechify_actual": {"chars": 0, "billable_chars": 0,
                                 "audio_seconds": 0.0, "model_key": None}}
     block = {"text": "Hello world."}
     result = {"billable_chars": 30, "bytes_written": 48000 * 2, "sample_rate": 48000}
-    generation_engine._accumulate_speechify_actual(job, block, result)
+    generation_engine._accumulate_direct_actual(job, "speechify", block, result)
     sa = job["speechify_actual"]
     assert sa["chars"] == len("Hello world.")
     assert sa["billable_chars"] == 30
@@ -38,7 +38,7 @@ def test_accumulate_speechify_actual_ignores_failed_chunk():
     job = {"speechify_actual": {"chars": 0, "billable_chars": 0,
                                 "audio_seconds": 0.0, "model_key": None}}
     # result False = chunk fallito -> nessun accumulo
-    generation_engine._accumulate_speechify_actual(job, {"text": "x"}, False)
+    generation_engine._accumulate_direct_actual(job, "speechify", {"text": "x"}, False)
     assert job["speechify_actual"]["chars"] == 0
     assert job["speechify_actual"]["billable_chars"] == 0
 

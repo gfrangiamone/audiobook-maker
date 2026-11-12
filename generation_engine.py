@@ -68,6 +68,7 @@ import gemini_cost_audit
 import translation_cost_audit
 import optimization_cost_audit
 import speechify_tts
+import pocket_tts
 import voxcpm_tts
 import tts_engines as _tts_engines
 import voxcpm_ranking
@@ -97,8 +98,12 @@ from tts_split import (
 import edge_engine
 import free_intro
 from edge_engine import generate_chunk_mp3
+# I wrapper di chunk dei motori diretti (tts_engines.Engine.chunk_fn) si
+# risolvono per nome in questo modulo: i test che li sostituiscono qui vengono
+# visti da `_direct_chunk_fn`.
 from premium_chunk import (generate_chunk_pcm_gemini, gemini_single_call_text,
-                           _generate_silence_pcm, generate_chunk_pcm_speechify)
+                           _generate_silence_pcm, generate_chunk_pcm_speechify,
+                           generate_chunk_pcm_pocket)
 
 # ---------------------------------------------------------------------------
 # LLM (text-optimization) config — engine-agnostic, env-driven
@@ -237,6 +242,7 @@ def _account_notify_token(job_id, token):
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
+from voice_utils import is_pocket_voice as _is_pocket_voice
 from voice_utils import is_premium_voice as _is_premium_voice
 from voice_utils import is_cloned_voice as _is_cloned_voice, parse_rate_pct as _parse_rate_pct, rate_step as _rate_step
 from voice_utils import voice_for_log as _voice_for_log
@@ -1671,9 +1677,10 @@ def _friendly_voice_name(voice):
         name = v.split(":")[-1]
         name = re.sub(r"_\d+$", "", name)
         return name.replace("_", " ").strip().title()
-    if _is_voxcpm_voice(v):
-        # 'voxcpm:v2:it-IT/Stefano' -> 'Stefano'. Il locale serve a distinguere
-        # le voci dentro il catalogo, non a chi legge l'email di consegna.
+    if _is_voxcpm_voice(v) or _is_pocket_voice(v):
+        # 'voxcpm:v2:it-IT/Stefano', 'pocket:v1:it-IT/Chiara' -> 'Stefano',
+        # 'Chiara'. Il locale serve a distinguere le voci dentro il catalogo,
+        # non a chi legge l'email di consegna.
         if "/" in v:
             return v.split("/")[-1].strip()
         # 'voxcpm:mine:<token>' -> nessuno slash: e' una voce clonata
@@ -1705,7 +1712,7 @@ def _generation_details_lines(job, lang):
     resta nei chiamanti."""
     d = _i18n_pick(_email_details_i18n, lang, merge=False)
     voice = (job.get("voice") or "").strip()
-    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice) or _is_voxcpm_voice(voice)
+    is_premium = _is_premium_voice(voice)
     lines = []
 
     # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
@@ -3481,25 +3488,27 @@ def run_optimization(job_id, selected_chapters=None):
                 except Exception as _e_est_ag:
                     print(f"[{job_id}] auto-gen gemini_estimate persist failed (non-fatal): {_e_est_ag}")
 
-            # Idem per le voci PREMIUM Speechify (Simba): popola speechify_estimate
-            # cosi` l'audit TTS (_write_speechify_audit) ha i campi *_est anche sui
-            # job free-threshold, dove /api/optimize non ha lockato una stima.
-            # Come per Gemini: non sovrascrivere lo snapshot pre-LLM salvato in
-            # /api/optimize (combined_optimize_autogen), su cui e` stato lockato
-            # payment["total_eur"].
-            if (_is_speechify_voice(voice) and speechify_tts.is_available()
-                    and not job.get("speechify_estimate")):
+            # Idem per i motori a chunk diretto (Speechify, Pocket): popola
+            # `<motore>_estimate` cosi' l'audit TTS (_write_direct_audit) ha i
+            # campi *_est anche sui job free-threshold, dove /api/optimize non
+            # ha lockato una stima. Come per Gemini: non sovrascrivere lo
+            # snapshot pre-LLM salvato in /api/optimize (combined_optimize_autogen),
+            # su cui e` stato lockato payment["total_eur"].
+            _direct_ag = _engine_for_voice(voice)
+            _eng_ag = _tts_engines.ENGINES.get(_direct_ag)
+            if (_direct_ag in _tts_engines.DIRECT and _eng_ag.is_available()
+                    and not job.get(_eng_ag.estimate_key)):
                 try:
-                    _est_spx_ag = _tts_engines.estimate("speechify", 
-                        info.chapters,
+                    job[_eng_ag.estimate_key] = _tts_engines.estimate(
+                        _direct_ag, info.chapters,
                         language=((job.get("opt_lang") or "").lower()
                                   or _norm_lang(getattr(info, "language", ""))
                                   or "en"),
                         **text_reflow.paren_strip_flags(job),
                     )
-                    job["speechify_estimate"] = _est_spx_ag
-                except Exception as _e_est_spx_ag:
-                    print(f"[{job_id}] auto-gen speechify_estimate persist failed (non-fatal): {_e_est_spx_ag}")
+                except Exception as _e_est_ag:
+                    print(f"[{job_id}] auto-gen {_eng_ag.estimate_key} persist failed "
+                          f"(non-fatal): {_e_est_ag}")
 
             # Idem per VoxCPM: senza questa stima l'audit (_write_voxcpm_audit)
             # e il rilevatore di margine lavoravano con *_est = 0 sui job
@@ -4061,19 +4070,17 @@ def _ranking_point_allowed(voice):
     return _is_voxcpm_voice(voice) and not _is_cloned_voice(voice)
 
 
-def _pcm_sample_rate(job, use_speechify, use_voxcpm):
-    """Sample rate del flusso PCM in corso: unica fonte di verita', usata sia
-    per il calcolo delle durate sia per generare il silenzio fra i capitoli
-    (prima i due punti divergevano, ed e' cosi' che il silenzio VoxCPM usciva
-    a 24 kHz invece che nativo 48 kHz, dimezzando la pausa richiesta).
+def _pcm_sample_rate(job, engine):
+    """Sample rate del flusso PCM in corso col motore `engine`: unica fonte di
+    verita', usata sia per il calcolo delle durate sia per generare il silenzio
+    fra i capitoli (prima i due punti divergevano, ed e' cosi' che il silenzio
+    VoxCPM usciva a 24 kHz invece che nativo 48 kHz, dimezzando la pausa).
 
     Speechify: nativo 48000, ma il valore vero arriva dal primo chunk
     sintetizzato (job['speechify_sample_rate']); prima che la pre-sintesi lo
-    scriva, 48000 e' comunque la stima giusta. VoxCPM: nativo 48000, fisso
-    (nessun campo di job da rileggere: il worker non lo varia mai). Gli altri
-    motori (Gemini incluso) restano a 24000, lo standard usato ovunque nel
-    resto della pipeline."""
-    eng = _tts_engines.ENGINES.get(_premium_engine(False, use_speechify, use_voxcpm))
+    scriva, 48000 e' comunque la stima giusta. VoxCPM: nativo 48000, fisso.
+    Gemini e Pocket: 24000, come Edge e lo standard del resto della pipeline."""
+    eng = _tts_engines.ENGINES.get(engine)
     return eng.sample_rate(job) if eng else 24000
 
 
@@ -4946,6 +4953,14 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
                 accent = _loc or ""
             except Exception:
                 pass
+        elif engine == "pocket":
+            try:
+                _mk, _loc, voice_name = pocket_tts.parse_voice_id(voice_id)
+                model_label = pocket_tts.MODEL_LABEL
+                # Come VoxCPM: la locale della voce di riferimento.
+                language = accent = _loc
+            except ValueError:
+                pass
         else:
             # Edge/Google: la locale e' nel nome stesso della voce (it-IT-DiegoNeural).
             parts = voice_id.replace("gcloud:", "").split("-")
@@ -5377,13 +5392,29 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] audit write failed (non-fatal): {e}")
 
 
-def _speechify_presynth(job, plan, work_dir, voice, emotion, rate,
-                        check_cancelled, start_time):
-    """Pre-sintesi parallela Speechify: pool di min(K, N) worker.
+def _direct_chunk_fn(engine):
+    """Il wrapper di chunk del motore diretto `engine`, risolto per nome in
+    questo modulo (tts_engines.Engine.chunk_fn)."""
+    return globals()[_tts_engines.ENGINES[engine].chunk_fn]
 
-    Ogni chiamata attraversa il gate globale (invariante concorrenza
-    abbonamento); l'attesa su slot saturo e' trasparente. Ritorna
-    {idx: result} con i .pcm gia' scritti in work_dir/chunk_XXXXXX.pcm.
+
+def _note_direct_sample_rate(job, engine, result):
+    """Primo chunk riuscito di un motore che dichiara il sample rate dal
+    risultato (Speechify): lo scrive sul job per `_pcm_sample_rate`."""
+    eng = _tts_engines.ENGINES[engine]
+    if eng.sample_rate_job_key and isinstance(result, dict) and not job.get(eng.sample_rate_job_key):
+        job[eng.sample_rate_job_key] = result.get("sample_rate", eng.sample_rate_default)
+
+
+def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
+                     check_cancelled, start_time, skip=frozenset()):
+    """Pre-sintesi parallela di un motore a chunk diretto (Speechify, Pocket):
+    pool di min(K, N) worker, K per job e N sul processo.
+
+    Ogni chiamata attraversa il gate globale del motore (limite abbonamento,
+    capienza del worker); l'attesa su slot saturo e' trasparente. Ritorna
+    {idx: result} con i .pcm gia' scritti in work_dir/chunk_XXXXXX.pcm. Gli
+    indici in `skip` (chunk riusati da un tentativo precedente) restano fuori.
 
     Il progresso del job (progress_current/progress_message/elapsed_seconds)
     avanza a ogni chunk completato: con K=1 e ~8 s/chunk un libro da 300
@@ -5391,13 +5422,14 @@ def _speechify_presynth(job, plan, work_dir, voice, emotion, rate,
     vedevano un job fermo a 0% (incidente 2026-08-31).
     """
     import concurrent.futures as _cf
-    k = speechify_tts.per_job_concurrency()
-    n = speechify_tts.max_concurrency()
-    workers = max(1, min(k, n))
+    mod = _tts_engines.ENGINES[engine].mod()
+    chunk_fn = _direct_chunk_fn(engine)
+    workers = max(1, min(mod.per_job_concurrency(), mod.max_concurrency()))
+    todo = [(i, blk) for i, blk in enumerate(plan) if i not in skip]
     total = len(plan)
-    if speechify_tts.free_slots() <= 0:
+    if mod.free_slots() <= 0:
         job["progress_message"] = "In attesa di uno slot disponibile..."
-    done = 0
+    done = total - len(todo)            # i riusati contano come gia' fatti
     done_lock = threading.Lock()
 
     def _pre_one(ib):
@@ -5411,8 +5443,7 @@ def _speechify_presynth(job, plan, work_dir, voice, emotion, rate,
             raise _CancelledError("Job cancelled")
         pp = str(chunk_reuse.chunk_path(work_dir, idx, "pcm"))
         fi = {}
-        res = generate_chunk_pcm_speechify(
-            blk["text"], voice, pp, emotion=emotion, rate=rate, failure_info=fi)
+        res = chunk_fn(blk["text"], voice, pp, emotion=emotion, rate=rate, failure_info=fi)
         with done_lock:
             done += 1
             d = done
@@ -5423,66 +5454,84 @@ def _speechify_presynth(job, plan, work_dir, voice, emotion, rate,
 
     out = {}
     with _cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        for idx, res in ex.map(_pre_one, list(enumerate(plan))):
+        for idx, res in ex.map(_pre_one, todo):
             out[idx] = res
-            if isinstance(res, dict) and not job.get("speechify_sample_rate"):
-                job["speechify_sample_rate"] = res.get("sample_rate", 48000)
+            _note_direct_sample_rate(job, engine, res)
     job["progress_message"] = "Assembling audio..."
     return out
 
 
-def _accumulate_speechify_actual(job, block, result):
-    """Accumula in job['speechify_actual'] i caratteri e i secondi audio del
+def _new_direct_actual():
+    """Contatori di un job a chunk diretto (`job['<motore>_actual']`)."""
+    return {"chars": 0, "billable_chars": 0, "audio_seconds": 0.0, "model_key": None}
+
+
+def _accumulate_direct_actual(job, engine, block, result):
+    """Accumula in job['<motore>_actual'] i caratteri e i secondi audio del
     chunk `block` appena sintetizzato. No-op se il chunk e' fallito (result
     non e' un dict) o se lo store non e' inizializzato. Chiamata una sola volta
     per chunk durante l'assemblaggio (vedi _synthesize_chunk)."""
-    sa = job.get("speechify_actual")
+    sa = job.get(f"{engine}_actual")
     if sa is None or not isinstance(result, dict):
         return
+    eng = _tts_engines.ENGINES[engine]
     try:
         # Prima i calcoli, poi le scritture: un valore malformato non deve
         # lasciare lo store aggiornato a meta'.
         chars = len(block.get("text", "") or "")
         billable = int(result.get("billable_chars", 0) or 0)
         bw = int(result.get("bytes_written", 0) or 0)
-        sr = int(result.get("sample_rate", 48000) or 48000) or 48000
+        sr = int(result.get("sample_rate", eng.sample_rate_default)
+                 or eng.sample_rate_default) or eng.sample_rate_default
     except (TypeError, ValueError) as e:
         # Chunk non contabilizzato: senza traccia il costo reale resterebbe
         # sottostimato in silenzio (M4). Il contatore finisce nell'audit.
         sa["skipped_chunks"] = int(sa.get("skipped_chunks", 0) or 0) + 1
-        print(f"[speechify] chunk non contabilizzato ({e}); "
+        print(f"[{engine}] chunk non contabilizzato ({e}); "
               f"skipped_chunks={sa['skipped_chunks']}", flush=True)
         return
     sa["chars"] += chars
     sa["billable_chars"] += billable
     sa["audio_seconds"] += bw / (sr * 2.0)
     if not sa.get("model_key"):
-        sa["model_key"] = getattr(speechify_tts, "MODEL_ID", "simba-3.2")
+        sa["model_key"] = eng.mod().MODEL_ID
 
 
 def _write_speechify_audit(job_id, job, voice_id, language, outcome):
-    """Append audit record al termine di un job Speechify (Simba). Best-effort,
-    non-fatale. Mirror di _write_gemini_audit ma con la contabilita' costo/prezzo
-    di speechify_tts (char-based). Il costo provider (USD->EUR) viene scritto nel
-    campo `google_cost_eur_actual` cosi' l'aggregato /admin/audit-tts —
-    provider-agnostico — lo tratta come costo vivo esattamente come per Gemini."""
+    """Audit di fine job Speechify (Simba): `_write_direct_audit`."""
+    _write_direct_audit("speechify", job_id, job, voice_id, language, outcome)
+
+
+def _write_pocket_audit(job_id, job, voice_id, language, outcome):
+    """Audit di fine job Pocket (costo e prezzo zero): `_write_direct_audit`."""
+    _write_direct_audit("pocket", job_id, job, voice_id, language, outcome)
+
+
+def _write_direct_audit(engine, job_id, job, voice_id, language, outcome):
+    """Append audit record al termine di un job di un motore a chunk diretto
+    (Speechify, Pocket). Best-effort, non-fatale. Come _write_gemini_audit ma
+    con la contabilita' costo/prezzo a caratteri del modulo motore. Il costo
+    provider (USD->EUR) viene scritto nel campo `google_cost_eur_actual` cosi'
+    l'aggregato /admin/audit-tts — provider-agnostico — lo tratta come costo
+    vivo esattamente come per Gemini."""
+    eng = _tts_engines.ENGINES[engine]
     try:
-        if not _is_speechify_voice(voice_id):
+        if not eng.is_voice(voice_id):
             return
-        actual = job.get("speechify_actual") or {}
+        mod = eng.mod()
+        actual = job.get(f"{engine}_actual") or {}
         parts = voice_id.split(":")
-        model_key = parts[1] if len(parts) >= 3 else getattr(
-            speechify_tts, "MODEL_ID", "simba-3.2")
+        model_key = parts[1] if len(parts) >= 3 else mod.MODEL_ID
         # --- Pagamento (stessa tasca premium job["payment"] di Gemini) ---
         pay = _payment_audit_fields(job)
         charged = pay["charged"]
-        # --- Costo provider + prezzo "dovuto" (char-based Simba) ---
+        # --- Costo provider + prezzo "dovuto" (a caratteri) ---
         metered_chars = int(actual.get("billable_chars", 0) or 0) or int(
             actual.get("chars", 0) or 0)
         provider_cost_eur = 0.0
         should_have_been = 0.0
         try:
-            price = speechify_tts.compute_user_price_eur(metered_chars)
+            price = mod.compute_user_price_eur(metered_chars)
             provider_cost_eur = float(price.get("cost_usd", 0.0) or 0.0) * float(
                 pricing_common.usd_eur_rate())
             should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
@@ -5494,12 +5543,12 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         # Costo provider STIMATO (EUR) dallo snapshot pre-generazione, se presente
         # (lockato in /api/optimize o popolato nel path auto-gen). Parita' col
         # campo `google_cost_eur_est` dell'audit Gemini; i *_tokens_est /
-        # audio_seconds_est non si applicano a Simba (modello char-based) e
+        # audio_seconds_est non si applicano ai modelli a caratteri e
         # restano 0. Nessuna stima disponibile -> 0.0 (invariato).
-        _spx_est = job.get("speechify_estimate") or {}
+        _est = job.get(eng.estimate_key) or {}
         provider_cost_eur_est = 0.0
         try:
-            _cost_usd_est = float(_spx_est.get("cost_usd", 0.0) or 0.0)
+            _cost_usd_est = float(_est.get("cost_usd", 0.0) or 0.0)
             if _cost_usd_est > 0:
                 provider_cost_eur_est = round(
                     _cost_usd_est * float(pricing_common.usd_eur_rate()), 4)
@@ -5507,7 +5556,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             provider_cost_eur_est = 0.0
         rec = {
             "job_id": job_id,
-            "provider": "speechify",
+            "provider": engine,
             "model_key": model_key,
             "language": language or "",
             **_rate_audit_fields(job),
@@ -5534,12 +5583,12 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             "acquisition_source": pay["acquisition_source"],
         }
         _common_audit_tail(rec, job)
-        # Stessa soglia del listino (speechify_tts): la copia locale aveva
-        # default 0.40 contro 0.50 e divergeva dal prezzo applicato.
-        _finish_audit(job_id, job, rec, "speechify", _spx_est, speechify_tts.free_threshold_eur(),
-                      should_have_been=should_have_been, pay=pay, label="Speechify")
+        # Stessa soglia del listino del motore: la copia locale di Speechify
+        # aveva default 0.40 contro 0.50 e divergeva dal prezzo applicato.
+        _finish_audit(job_id, job, rec, engine, _est, mod.free_threshold_eur(),
+                      should_have_been=should_have_been, pay=pay, label=engine.capitalize())
     except Exception as e:
-        print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
+        print(f"[{job_id}] {engine} audit write failed (non-fatal): {e}")
 
 
 # Il dataset delle code tagliate e' un file a parte, non una colonna in piu'
@@ -6195,9 +6244,9 @@ def _failed_chunk_retry_params():
 _PREMIUM_AUDIT = {name: eng.audit_writer for name, eng in _tts_engines.ENGINES.items()}
 
 
-def _premium_engine(use_gemini, use_speechify, use_voxcpm):
-    """Nome del motore premium in uso, o "" per Edge/Google."""
-    return "gemini" if use_gemini else "speechify" if use_speechify else "voxcpm" if use_voxcpm else ""
+def _premium_name(engine):
+    """`engine` se e' un motore del registro, "" per Edge/Google."""
+    return engine if engine in _tts_engines.PREMIUM else ""
 
 
 def _all_chunks_failed_exit(job_id, job, voice, info, engine, failed, total):
@@ -6219,7 +6268,7 @@ def _all_chunks_failed_exit(job_id, job, voice, info, engine, failed, total):
     job["user_facing_error"] = _user_msg
     print(f"[{job_id}] ALL CHUNKS FAILED ({failed}/{total}) "
           f"engine={engine} -> error + refund, nessuna consegna.")
-    _eng = _premium_engine(False, engine == "speechify", engine == "voxcpm")
+    _eng = _premium_name(engine)
     if _eng:
         # Motore premium: il pagamento vive in job["payment"] (stessa
         # tasca di Gemini); chiusura unica con audit, rimborso, avvisi
@@ -6471,7 +6520,7 @@ def is_premium_job(job):
     if not isinstance(job, dict):
         return False
     voice = (job.get("voice") or job.get("opt_voice") or "").strip()
-    if _is_gemini_voice(voice) or _is_speechify_voice(voice) or _is_voxcpm_voice(voice):
+    if _is_premium_voice(voice):
         return True
     if (job.get("payment_token") or "").strip():
         return True
@@ -6733,7 +6782,7 @@ def run_reuse(job_id, info, voice, rate, single_file, output_format='m4b',
             except Exception as e:
                 print(f"[{job_id}] Failed to write .abm: {e}")
                 job["abm_generation_error"] = str(e)
-        _finalize_delivery(job_id, job, info, voice, False, False, False)
+        _finalize_delivery(job_id, job, info, voice, "", False)
     except BaseException as e:
         if isinstance(e, (SystemExit, KeyboardInterrupt)):
             raise
@@ -6744,8 +6793,7 @@ def run_reuse(job_id, info, voice, rate, single_file, output_format='m4b',
 
 
 
-def _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial,
-                       use_voxcpm=False):
+def _finalize_delivery(job_id, job, info, voice, engine, _is_partial):
     """Coda comune di consegna di una generazione conclusa: stato done/partial,
     log COMPLETE, marker di fine generazione + offload cold, audit premium,
     push, email/token di download, chiusura del descrittore di recovery e
@@ -6786,8 +6834,7 @@ def _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_
     except Exception as e:
         print(f"[{job_id}] cloud offload spawn error: {e}", flush=True)
 
-    _write_premium_audit(job_id, job, voice, info, "completed",
-                         _premium_engine(use_gemini, use_speechify, use_voxcpm))
+    _write_premium_audit(job_id, job, voice, info, "completed", _premium_name(engine))
 
     # Send push notification to mobile devices
     if _send_push:
@@ -6930,9 +6977,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     # Determina il motore TTS
     engine = _engine_for_voice(voice)
     use_gemini = (engine == "gemini")
-    use_speechify = (engine == "speechify")
     use_voxcpm = (engine == "voxcpm")
-    use_pcm = use_gemini or use_speechify or use_voxcpm
+    # Motore a chunk diretto (Speechify, Pocket): pre-sintesi parallela e
+    # contatori in job["<motore>_actual"]; "" per gli altri.
+    direct = engine if engine in _tts_engines.DIRECT else ""
+    use_pcm = use_gemini or bool(direct) or use_voxcpm
     if use_voxcpm and _ranking_point_allowed(voice):
         # La voce e' usata davvero: pagamento o quota gia' passati, la
         # sintesi sta per partire. Un punto alla voce, una volta per job
@@ -6942,13 +6991,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             voxcpm_ranking.punto(voice, job_id)
         except Exception as _e:      # noqa: BLE001
             print(f"[{job_id}] classifica voci VoxCPM non aggiornata: {_e}")
-    if use_speechify:
+    if engine == "speechify":
         speechify_emotion = speechify_emotion or job.get("speechify_emotion")
     # Sample rate reale del PCM: vedi `_pcm_sample_rate` per la scelta motore
     # per motore (Speechify dal job una volta popolato, VoxCPM fisso 48000,
-    # Gemini/altri 24000). Riletto piu' sotto una volta che la pre-sintesi
-    # Speechify ha popolato job['speechify_sample_rate'].
-    _pcm_sr = _pcm_sample_rate(job, use_speechify, use_voxcpm)
+    # Gemini/Pocket/altri 24000). Riletto piu' sotto una volta che la
+    # pre-sintesi Speechify ha popolato job['speechify_sample_rate'].
+    _pcm_sr = _pcm_sample_rate(job, engine)
 
     # Parametri di generazione incisi nei metadati di OGNI file consegnato
     # (MP3 unico, MP3 di capitolo dello ZIP, M4B, MP3 parziale del rimborso).
@@ -7028,14 +7077,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # loro costo era solo in RAM. Senza questa riga il job ripartirebbe con
         # un libro quasi fatto e una contabilita' a zero.
         cost_carry.resume(work_dir, "gemini", job["gemini_actual"])
-        if use_speechify:
-            job["speechify_actual"] = {
-                "chars": 0,
-                "billable_chars": 0,
-                "audio_seconds": 0.0,
-                "model_key": None,
-            }
-            cost_carry.resume(work_dir, "speechify", job["speechify_actual"])
+        if direct:
+            job[f"{direct}_actual"] = _new_direct_actual()
+            cost_carry.resume(work_dir, direct, job[f"{direct}_actual"])
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
@@ -7153,12 +7197,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["progress_current"] = 1
         job["progress_message"] = "Analisi testo..."
 
-        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini/Speechify/VoxCPM, MP3 altrimenti)
+        # Genera file di silenzio da preporre a ogni capitolo (PCM per i motori del registro, MP3 per Edge)
         if use_pcm:
             silence_path = str(work_dir / "_silence.pcm")
             _generate_silence_pcm(silence_path, CHAPTER_SILENCE_SEC,
-                                  sample_rate=_pcm_sample_rate(
-                                      job, use_speechify, use_voxcpm))
+                                  sample_rate=_pcm_sample_rate(job, engine))
             silence_ok = os.path.exists(silence_path)
         else:
             silence_path = str(work_dir / "_silence.mp3")
@@ -7234,7 +7277,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         # Risultati pre-sintetizzati in pool parallelo (vedi sotto), letti da
         # _synthesize_chunk invece di richiamare l'API una seconda volta.
-        _speechify_pre = {}
+        _direct_pre = {}
         _voxcpm_pre = {}
         _carry_every = cost_carry.flush_every()
 
@@ -7250,9 +7293,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 return
             if use_gemini:
                 cost_carry.write(work_dir, "gemini", job.get("gemini_actual"))
-            elif use_speechify:
-                cost_carry.write(work_dir, "speechify",
-                                 job.get("speechify_actual"))
+            elif direct:
+                cost_carry.write(work_dir, direct, job.get(f"{direct}_actual"))
 
         def _synthesize_chunk(i, block):
             """Sintetizza il chunk `i`. Ritorna (result, part_path).
@@ -7284,21 +7326,19 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 part_path = str(chunk_reuse.chunk_path(work_dir, i, "pcm"))
                 return _voxcpm_chunk_result(i, _voxcpm_pre, _reusable_chunks,
                                             job_id), part_path
-            if use_speechify:
+            if direct:
                 part_path = str(chunk_reuse.chunk_path(work_dir, i, "pcm"))
-                pre = _speechify_pre.get(i)
+                pre = _direct_pre.get(i)
                 if pre is not None:
-                    if isinstance(pre, dict) and not job.get("speechify_sample_rate"):
-                        job["speechify_sample_rate"] = pre.get("sample_rate", 48000)
-                    _accumulate_speechify_actual(job, block, pre)
+                    _note_direct_sample_rate(job, direct, pre)
+                    _accumulate_direct_actual(job, direct, block, pre)
                     return pre, part_path
                 _chunk_fi = {}
-                result = generate_chunk_pcm_speechify(
+                result = _direct_chunk_fn(direct)(
                     block["text"], voice, part_path,
                     emotion=speechify_emotion, rate=rate, failure_info=_chunk_fi)
-                if isinstance(result, dict) and not job.get("speechify_sample_rate"):
-                    job["speechify_sample_rate"] = result.get("sample_rate", 48000)
-                _accumulate_speechify_actual(job, block, result)
+                _note_direct_sample_rate(job, direct, result)
+                _accumulate_direct_actual(job, direct, block, result)
                 return result, part_path
             if use_gemini:
                 part_path = str(chunk_reuse.chunk_path(work_dir, i, "pcm"))
@@ -7499,18 +7539,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 cancelled=_check_cancelled, job=job)
             job["progress_message"] = "Assembling audio..."
 
-        # Pre-sintesi parallela Speechify (vedi _speechify_presynth): produce
-        # tutti i .pcm prima dell'assemblaggio sequenziale sotto, che li
-        # legge via _speechify_pre.
-        if use_speechify:
-            _speechify_pre = _speechify_presynth(
-                job, plan, work_dir, voice, emotion=speechify_emotion,
+        # Pre-sintesi parallela dei motori diretti (vedi _direct_presynth):
+        # produce tutti i .pcm prima dell'assemblaggio sequenziale sotto, che
+        # li legge via _direct_pre.
+        if direct:
+            _direct_pre = _direct_presynth(
+                job, direct, plan, work_dir, voice, emotion=speechify_emotion,
                 rate=rate, check_cancelled=_check_cancelled,
-                start_time=start_time)
+                start_time=start_time, skip=_reusable_chunks)
         # Re-read del sample rate reale ora che la pre-sintesi Speechify ha
-        # popolato job['speechify_sample_rate'] (VoxCPM e' fisso: nessun
-        # campo da rileggere, vedi `_pcm_sample_rate`).
-        _pcm_sr = _pcm_sample_rate(job, use_speechify, use_voxcpm)
+        # popolato job['speechify_sample_rate'] (VoxCPM e Pocket sono fissi:
+        # nessun campo da rileggere, vedi `_pcm_sample_rate`).
+        _pcm_sr = _pcm_sample_rate(job, engine)
 
         def _log_progress(i):
             """Riga di avanzamento ogni 10 chunk (e sull'ultimo), per entrambi i rami."""
@@ -7561,11 +7601,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             di edge per due ore) non deve lasciare buchi di silenzio nel libro
             se il servizio torna mentre il job e' ancora in corso. Ritorna
             `{indice: part_path}` dei chunk recuperati, con `failed_chunks` e
-            il segno su disco gia' aggiornati. VoxCPM (per capitolo) e Speechify
-            (pre-sintesi parallela) hanno i loro ritentativi e restano fuori."""
+            il segno su disco gia' aggiornati. VoxCPM (per capitolo) e i motori
+            diretti (pre-sintesi parallela) hanno i loro ritentativi e restano fuori."""
             nonlocal failed_chunks
             recovered = {}
-            if use_voxcpm or use_speechify or not _failed_idx:
+            if use_voxcpm or direct or not _failed_idx:
                 return recovered
             rounds, pause = _failed_chunk_retry_params()
             for rnd in range(1, rounds + 1):
@@ -8284,7 +8324,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] EMPTY OUTPUT after assembly "
                   f"(failed_chunks={failed_chunks}, output_format={output_format}, "
                   f"m4b_failed={job.get('m4b_failed')}) -> error + refund.")
-            _eng = _premium_engine(use_gemini, use_speechify, use_voxcpm)
+            _eng = _premium_name(engine)
             if _eng:
                 # Premium: tasca job["payment"]; dal 2026-10-09 anche Speechify
                 # e VoxCPM avvisano utente e admin (prima solo audit + rimborso).
@@ -8334,8 +8374,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Failed to write .abm: {e}")
                 job["abm_generation_error"] = str(e)
 
-        _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial,
-                           use_voxcpm=use_voxcpm)
+        _finalize_delivery(job_id, job, info, voice, engine, _is_partial)
 
     except _GeminiQualityAbort as _qa:
         # Early-abort: troppi chunk silenziati sul campione iniziale. Stesso path
@@ -8436,13 +8475,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                   str(refund_err)[:80], "")
         elif use_gemini and not still_current:
             print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
-        elif (use_speechify or use_voxcpm) and still_current:
+        elif (direct or use_voxcpm) and still_current:
             # Trattenuta solo sul cancel utente, rimborso del resto; nessun
             # audio parziale. I capitoli VoxCPM restano nella work_dir per il
             # riuso (`_cancel_cleanup_workdir`).
-            _cancel_refund_no_partial(
-                job_id, job, voice, info,
-                _premium_engine(False, use_speechify, use_voxcpm))
+            _cancel_refund_no_partial(job_id, job, voice, info, _premium_name(engine))
 
         if still_current:
             # Cancel volontario = job concluso per il batch: senza questo mark
@@ -8589,8 +8626,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _premium_fail(job_id, job, voice, info, "gemini", "failed_refunded", f"failed: {e}",
                           notify_reason=f"generic_error: {e}", failure_kind="quality",
                           reason_detail=f"{type(e).__name__}: {str(e)[:300]}")
-        if use_speechify:
-            _premium_job_failed(job_id, job, voice, info, e, "speechify")
+        if direct:
+            _premium_job_failed(job_id, job, voice, info, e, direct)
         if use_voxcpm:
             _premium_job_failed(job_id, job, voice, info, e, "voxcpm")
         if not _dir_gone:

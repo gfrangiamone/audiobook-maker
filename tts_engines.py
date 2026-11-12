@@ -17,7 +17,8 @@ tengono i loro default (MP3, 2000 caratteri, 24 kHz).
 import importlib
 from dataclasses import dataclass
 
-from voice_utils import engine_for_voice, is_gemini_voice, is_speechify_voice, is_voxcpm_voice
+from voice_utils import (engine_for_voice, is_gemini_voice, is_pocket_voice, is_speechify_voice,
+                         is_voxcpm_voice)
 
 # Cap generico dei caratteri per chunk: default di `tts_split.split_text_into_chunks`
 # e tetto che nessun motore supera (F1c, 2026-10-10; prima in tts_split).
@@ -37,6 +38,12 @@ class Engine:
     sample_rate_job_key: str = ""    # Speechify: valore vero dal primo chunk
     sentence_slack: float = 0.0      # frazione di sforamento di una frase intera
     only_language: str = ""          # Speechify: solo inglese
+    # Motore a chunk diretto (Speechify, Pocket): una chiamata HTTP per chunk,
+    # pre-sintesi parallela in `generation_engine._direct_presynth`, wrapper
+    # di chunk `chunk_fn` di premium_chunk, errore non ritentabile `fatal_exc`.
+    direct: bool = False
+    chunk_fn: str = ""
+    fatal_exc: str = ""
 
     def mod(self):
         return importlib.import_module(self.module)
@@ -128,18 +135,24 @@ ENGINES = {
     "speechify": Engine("speechify", "speechify_tts", is_speechify_voice, "speechify_estimate",
                         "_write_speechify_audit", "SpeechifyUnavailable", chunk_fallback=1800,
                         sample_rate_default=48000, sample_rate_job_key="speechify_sample_rate",
-                        only_language="en"),
+                        only_language="en", direct=True,
+                        chunk_fn="generate_chunk_pcm_speechify", fatal_exc="SpeechifyFatalError"),
     # Il cap VoxCPM e' di qualita' (il timbro deriva sui chunk lunghi) e il
     # tetto vero e' allargato dallo sforamento di frase (280 x 1,15 = 322):
     # vedi il commento in tts_split._pick_sentence_slack.
     "voxcpm": Engine("voxcpm", "voxcpm_tts", is_voxcpm_voice, "voxcpm_estimate", "_write_voxcpm_audit",
                      "VoxcpmUnavailable", chunk_fallback=300, sample_rate_default=48000,
                      sentence_slack=0.15),
+    # Worker su VPS a canone fisso, per ora solo per il catalogo: vedi pocket_tts.
+    "pocket": Engine("pocket", "pocket_tts", is_pocket_voice, "pocket_estimate", "_write_pocket_audit",
+                     "PocketUnavailable", chunk_fallback=280, sample_rate_default=24000,
+                     direct=True, chunk_fn="generate_chunk_pcm_pocket", fatal_exc="PocketFatalError"),
 }
 PREMIUM = tuple(ENGINES)
+DIRECT = tuple(name for name, eng in ENGINES.items() if eng.direct)
 
 
-# `engine_for_voice(voice)` -> "gemini" / "speechify" / "voxcpm" / "edge" e'
+# `engine_for_voice(voice)` -> "gemini" / "speechify" / "voxcpm" / "pocket" / "edge" e'
 # quello di voice_utils (B3), riesportato: il registro non ne tiene una copia.
 
 

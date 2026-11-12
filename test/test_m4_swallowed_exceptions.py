@@ -67,8 +67,8 @@ def _sa_job():
 
 def test_speechify_chunk_malformato_contato_non_perso(capsys):
     job = _sa_job()
-    generation_engine._accumulate_speechify_actual(
-        job, {"text": "ciao"}, {"billable_chars": "boh", "bytes_written": 10})
+    generation_engine._accumulate_direct_actual(
+        job, "speechify", {"text": "ciao"}, {"billable_chars": "boh", "bytes_written": 10})
     sa = job["speechify_actual"]
     assert sa["skipped_chunks"] == 1
     assert sa["chars"] == 0 and sa["billable_chars"] == 0   # niente scrittura a meta'
@@ -77,8 +77,9 @@ def test_speechify_chunk_malformato_contato_non_perso(capsys):
 
 def test_speechify_chunk_valido_invariato():
     job = _sa_job()
-    generation_engine._accumulate_speechify_actual(
-        job, {"text": "ciao"}, {"billable_chars": 4, "bytes_written": 96000, "sample_rate": 48000})
+    generation_engine._accumulate_direct_actual(
+        job, "speechify", {"text": "ciao"},
+        {"billable_chars": 4, "bytes_written": 96000, "sample_rate": 48000})
     sa = job["speechify_actual"]
     assert sa["chars"] == 4 and sa["billable_chars"] == 4
     assert abs(sa["audio_seconds"] - 1.0) < 1e-6

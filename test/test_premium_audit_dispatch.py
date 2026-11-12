@@ -4,12 +4,11 @@ import inspect
 import generation_engine as ge
 
 
-def test_premium_engine_and_table():
-    assert ge._premium_engine(True, False, False) == "gemini"
-    assert ge._premium_engine(False, True, False) == "speechify"
-    assert ge._premium_engine(False, False, True) == "voxcpm"
-    assert ge._premium_engine(False, False, False) == ""
-    assert set(ge._PREMIUM_AUDIT) == {"gemini", "speechify", "voxcpm"}
+def test_premium_name_and_table():
+    for name in ("gemini", "speechify", "voxcpm", "pocket"):
+        assert ge._premium_name(name) == name
+    assert ge._premium_name("edge") == "" and ge._premium_name("") == ""
+    assert set(ge._PREMIUM_AUDIT) == {"gemini", "speechify", "voxcpm", "pocket"}
     for name in ge._PREMIUM_AUDIT.values():
         assert callable(getattr(ge, name))
 

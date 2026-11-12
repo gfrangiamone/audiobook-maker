@@ -66,11 +66,12 @@ def test_nome_amichevole_voce_clonata_senza_slash():
 
 
 def test_pcm_sample_rate_per_motore():
-    assert generation_engine._pcm_sample_rate({}, False, True) == 48000    # voxcpm
-    assert generation_engine._pcm_sample_rate({}, False, False) == 24000   # gemini/edge/google
-    assert generation_engine._pcm_sample_rate({}, True, False) == 48000    # speechify, default
+    assert generation_engine._pcm_sample_rate({}, "voxcpm") == 48000
+    assert generation_engine._pcm_sample_rate({}, "gemini") == 24000
+    assert generation_engine._pcm_sample_rate({}, "edge") == 24000
+    assert generation_engine._pcm_sample_rate({}, "speechify") == 48000    # default
     assert generation_engine._pcm_sample_rate(
-        {"speechify_sample_rate": 44100}, True, False) == 44100
+        {"speechify_sample_rate": 44100}, "speechify") == 44100
 
 
 def test_i_chunk_si_raggruppano_per_capitolo():

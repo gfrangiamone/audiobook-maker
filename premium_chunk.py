@@ -3,11 +3,12 @@
 - `generate_chunk_pcm_gemini`: pre-split per frase, retry, modello e voce di
   ripiego, errori fatali di quota/budget (`_gemini_fatal`), ripiego su Edge in
   PCM (`_edge_fallback_to_pcm`, voce scelta per lingua/genere/accento);
-- `generate_chunk_pcm_speechify`;
+- `generate_chunk_pcm_direct` per i motori a chunk diretto del registro, con i
+  nomi per motore `generate_chunk_pcm_speechify` e `generate_chunk_pcm_pocket`;
 - `_generate_silence_pcm`, `_mp3_to_pcm_24k` (via `ffmpeg_tools`).
 
-I moduli motore (`gemini_tts`, `speechify_tts`) restano importati tardi, come
-prima. `tts_split` e `edge_engine` sono chiamati qualificati: i test che
+I moduli motore (`gemini_tts`, `speechify_tts`, `pocket_tts`) restano
+importati tardi, come prima (`tts_engines` li carica a ogni chiamata). `tts_split` e `edge_engine` sono chiamati qualificati: i test che
 sostituiscono `tts_split._pick_chunk_max_bytes` o `edge_engine.generate_chunk_mp3`
 continuano a essere visti da qui.
 """
@@ -17,6 +18,7 @@ import os
 import edge_engine
 import ffmpeg_tools
 import retry_util as _retry
+import tts_engines
 import tts_split
 from env_utils import env_int
 from i18n import norm_lang as _norm_lang
@@ -598,15 +600,20 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     return _fail("synthesize_failed", str(last_error) if last_error else "")
 
 
-def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
-                                 rate="+0%", max_retries=1, failure_info=None):
-    """Genera PCM 16-bit mono da testo via Speechify Simba-3.2 con fallback silenzio.
+def generate_chunk_pcm_direct(engine, text, voice_id, output_path, emotion=None,
+                              rate="+0%", max_retries=1, failure_info=None):
+    """PCM 16-bit mono di un chunk con un motore a chunk diretto del registro
+    (Speechify, Pocket: `tts_engines.DIRECT`), con fallback silenzio.
 
-    SpeechifyUnavailable viene ri-sollevata (errore permanente: silenziarlo
-    silenzierebbe l'intero libro). Su testo vuoto o fallimento totale scrive
-    silenzio PCM e ritorna False.
+    L'eccezione "non disponibile" del motore viene ri-sollevata (errore
+    permanente: silenziarlo silenzierebbe l'intero libro). Su testo vuoto o
+    fallimento totale scrive 1 s di silenzio al sample rate del motore e
+    ritorna False.
     """
-    import speechify_tts as _spx
+    eng = tts_engines.ENGINES[engine]
+    mod = eng.mod()
+    unavailable = eng.unavailable()
+    fatal = getattr(mod, eng.fatal_exc)
 
     def _fail(reason, detail=""):
         if isinstance(failure_info, dict):
@@ -616,42 +623,54 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
 
     clean = _sanitize_tts_text(text)
     if clean is None:
-        # Speechify Simba-3.2 e' nativo a 48000 Hz: il silenzio di fallback deve
-        # usare lo stesso sample rate, altrimenti a 24000 durerebbe ~0.5s reali
-        # nello stream a 48kHz e sballerebbe i marker M4B.
-        _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
+        # Il silenzio di ripiego va al sample rate nativo del motore (Speechify
+        # 48 kHz): a 24 kHz durerebbe ~0,5 s reali e sballerebbe i marker M4B.
+        _generate_silence_pcm(output_path, duration_sec=1, sample_rate=eng.sample_rate_default)
         return _fail("empty_after_sanitize")
 
     last_error = None
     snippet = clean[:60].replace('\n', ' ')
 
     def _log(attempt, e, _wait):
-        print(f"[speechify] Attempt {attempt+1}/{max_retries} failed "
+        print(f"[{engine}] Attempt {attempt+1}/{max_retries} failed "
               f"({len(clean)} chars: \"{snippet}...\"): {e}")
 
     try:
-        # I ritentativi (rete, 429, 5xx, Retry-After) vivono tutti dentro
-        # `speechify_tts.synthesize`: qui un solo giro (D2 passo 5, prima 3 x 3
+        # I ritentativi (rete, 429, 5xx, Retry-After) vivono tutti dentro la
+        # `synthesize` del motore: qui un solo giro (D2 passo 5, prima 3 x 3
         # = 9 chiamate HTTP per chunk). `max_retries` resta per i test.
         return _retry.retry_call(
-            lambda _a: _spx.synthesize(clean, voice_id, output_path,
-                                       emotion=emotion, rate=rate),
+            lambda _a: mod.synthesize(clean, voice_id, output_path,
+                                      emotion=emotion, rate=rate),
             attempts=max_retries, wait=1.0, on_retry=_log,
-            is_retryable=lambda e: not isinstance(
-                e, (_spx.SpeechifyUnavailable, _spx.SpeechifyFatalError)))
-    except _spx.SpeechifyUnavailable:
+            is_retryable=lambda e: not isinstance(e, (unavailable, fatal)))
+    except unavailable:
         raise  # non silenziare: il caller decide
-    except _spx.SpeechifyFatalError as e:
-        # 4xx non ritentabile (es. SSML invalido): ritentare costa
-        # chiamate a vuoto con esito identico.
+    except fatal as e:
+        # 4xx non ritentabile (SSML invalido, voce assente sul worker):
+        # ritentare costa chiamate a vuoto con esito identico.
         last_error = e
-        print(f"[speechify] Fatal error, no retry "
+        print(f"[{engine}] Fatal error, no retry "
               f"({len(clean)} chars: \"{snippet}...\"): {e}")
     except Exception as e:      # noqa: BLE001 - esauriti i tentativi
         last_error = e
         _log(max_retries - 1, e, 0)
 
-    print(f"[speechify] WARNING: synthesis failed, silence "
+    print(f"[{engine}] WARNING: synthesis failed, silence "
           f"({len(clean)} chars). Last error: {last_error}")
-    _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
+    _generate_silence_pcm(output_path, duration_sec=1, sample_rate=eng.sample_rate_default)
     return _fail("synthesize_failed", str(last_error) if last_error else "")
+
+
+def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
+                                 rate="+0%", max_retries=1, failure_info=None):
+    """Chunk Speechify Simba-3.2 (`generate_chunk_pcm_direct`)."""
+    return generate_chunk_pcm_direct("speechify", text, voice_id, output_path, emotion=emotion,
+                                     rate=rate, max_retries=max_retries, failure_info=failure_info)
+
+
+def generate_chunk_pcm_pocket(text, voice_id, output_path, emotion=None,
+                              rate="+0%", max_retries=1, failure_info=None):
+    """Chunk Pocket TTS sul worker del VPS (`generate_chunk_pcm_direct`)."""
+    return generate_chunk_pcm_direct("pocket", text, voice_id, output_path, emotion=emotion,
+                                     rate=rate, max_retries=max_retries, failure_info=failure_info)

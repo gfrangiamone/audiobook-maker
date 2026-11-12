@@ -61,9 +61,11 @@ SCHEMA_VERSION = 1
 # Motori per cui il riuso e' abilitato. Speechify e' escluso di proposito: la
 # pre-sintesi parallela popola `speechify_sample_rate` dal primo risultato API,
 # che un chunk riusato non produrrebbe (rischio di assembly a sample rate errato).
+# Pocket ha la stessa pre-sintesi ma un sample rate fisso (24 kHz): un libro
+# del catalogo dura ore sul VPS e un riavvio non deve rifarlo da capo.
 # VoxCPM e' incluso ma con una regola diversa (vedi `_voxcpm_reusable_indices`):
 # il job e' per capitolo, non per chunk, quindi il riuso e' per capitolo intero.
-REUSABLE_ENGINES = ("gemini", "edge", "google", "voxcpm")
+REUSABLE_ENGINES = ("gemini", "edge", "google", "voxcpm", "pocket")
 
 # Motori col riuso per contenuto: un file per chunk, funzione del solo testo
 # del chunk e dei parametri di sintesi. VoxCPM no: il suo audio e' per

@@ -47,13 +47,27 @@ def is_voxcpm_voice(voice):
     return bool(voice) and isinstance(voice, str) and voice.startswith(VOXCPM_VOICE_PREFIX)
 
 
+POCKET_VOICE_PREFIX = "pocket:"
+
+
+def is_pocket_voice(voice):
+    """True se la voce e' una voce Pocket TTS (formato pocket:v1:<locale>/<Nome>,
+    worker abm-pocket-worker su VPS; per ora solo il catalogo).
+
+    Safe su input non-stringa/None/"": ritorna False senza sollevare.
+    """
+    return bool(voice) and isinstance(voice, str) and voice.startswith(POCKET_VOICE_PREFIX)
+
+
 def is_premium_voice(voice):
-    """True per qualunque voce PREMIUM a pagamento (Gemini, Speechify, VoxCPM).
+    """True per qualunque voce dei motori del registro (Gemini, Speechify,
+    VoxCPM, Pocket).
 
     Governa retention dei download, protezione no-download e finestra calda:
-    i tre motori premium hanno gli stessi criteri di disponibilita'.
+    i motori premium hanno gli stessi criteri di disponibilita'.
     """
-    return is_gemini_voice(voice) or is_speechify_voice(voice) or is_voxcpm_voice(voice)
+    return (is_gemini_voice(voice) or is_speechify_voice(voice) or is_voxcpm_voice(voice)
+            or is_pocket_voice(voice))
 
 
 # === Interruttori per modello PREMIUM ======================================
@@ -170,14 +184,16 @@ def is_premium_log_voice(voice):
 
 
 def engine_for_voice(voice):
-    """Motore TTS dal prefisso del voice id: 'gemini', 'speechify', 'voxcpm'
-    o 'edge' (tutto il resto, incluse voci vuote)."""
+    """Motore TTS dal prefisso del voice id: 'gemini', 'speechify', 'voxcpm',
+    'pocket' o 'edge' (tutto il resto, incluse voci vuote)."""
     if is_gemini_voice(voice):
         return "gemini"
     if is_speechify_voice(voice):
         return "speechify"
     if is_voxcpm_voice(voice):
         return "voxcpm"
+    if is_pocket_voice(voice):
+        return "pocket"
     return "edge"
 
 

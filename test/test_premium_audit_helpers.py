@@ -56,7 +56,10 @@ def test_finish_audit_writes_clears_checks_and_warns(monkeypatch, capsys):
 
 
 def test_writers_share_the_helpers():
-    for fn in (ge._write_gemini_audit, ge._write_speechify_audit, ge._write_voxcpm_audit):
+    # Speechify e Pocket scrivono da _write_direct_audit (motori a chunk diretto).
+    for name in ("_write_speechify_audit", "_write_pocket_audit"):
+        assert "_write_direct_audit(" in inspect.getsource(getattr(ge, name))
+    for fn in (ge._write_gemini_audit, ge._write_direct_audit, ge._write_voxcpm_audit):
         src = inspect.getsource(fn)
         for helper in ("_payment_audit_fields(job)", "_rate_audit_fields(job)", "_common_audit_tail(rec, job)",
                        "_finish_audit("):

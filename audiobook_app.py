@@ -736,6 +736,14 @@ def _premium_model_gate(voice):
             return jsonify({"error": "voice_model_unavailable",
                             "error_code": "voice_model_unavailable",
                             "model_key": mk}), 503
+    # Pocket (worker su VPS, per ora solo il catalogo): senza ABM_POCKET_URL e
+    # ABM_POCKET_TOKEN il motore e' spento. Non ha listino, quindi dove e'
+    # acceso genera gratis: mai nell'unit di produzione.
+    if (tts_engines.engine_for_voice(voice) == "pocket"
+            and not tts_engines.ENGINES["pocket"].is_available()):
+        return jsonify({"error": "pocket_not_configured",
+                        "error_code": "voice_model_disabled",
+                        "model_key": "pocket"}), 400
     if _voice_model_enabled(voice):
         return None
     return jsonify({"error": "voice_model_disabled",
