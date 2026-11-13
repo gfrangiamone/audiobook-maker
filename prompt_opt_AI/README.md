@@ -61,6 +61,8 @@ When changing a rule:
 
 ## Version
 
+v1.7 — **Italian imperatives with an attached pronoun.** Master `B1` and rule `6` in `prompt_tts_it.md` add the class `svegliati` → `svégliati` (wake up!) vs. `svegliàti` (woken up), with `àlzati`, `càlmati`, `vòltati`: stressed on the antepenult, the engine reads them as the plural past participle (11/2026).
+
 v1.6 — **Italian heteronyms.** The Italian list (master `B1`, rule `6` in `prompt_tts_it.md`) grows from four pairs to twenty-six, split into stress position (`còmpito`/`compìto`, `àmbiti`/`ambìti`, `condòmini`/`condomìni`, `desìderi`/`desidèri`, `séguito`/`seguìto`, `regìa`, `nòcciolo`, the subjunctives `àmino`, `àbitino`…) and open/closed vowel (`pèsca`/`pésca`, `bòtte`/`bótte`, `vènti`/`vénti`, `légge`/`lègge`, `còlto`/`cólto`, `accètta`/`accétta`, `fòro`/`fóro`). Motivated by listening tests (11/2026) where twelve sentences with marked heteronyms read better than the unmarked ones on both VoxCPM2 and Pocket TTS, with no glitches. The ban on accenting non-heteronyms is unchanged.
 
 v1.5 — **Dutch.** `prompt_tts_nl.md`, derived from `prompt_tts_de.md`: same structure and enforcement, with Dutch-specific rules — Roman numerals (`Willem de Derde`), abbreviations (`bijv.`, `d.w.z.`, `Mr.` → `meester`), stress marks for homographs (`één`/`een`, `vóór`/`voor`, `vóórkomen`/`voorkómen`), comma between two finite verbs, trema restoration (`ideeen` → `ideeën`), and pre-1947 spelling (`mensch`, `zoo`) explicitly left as is. Before this, Dutch books went through `prompt_tts_generic.md`.

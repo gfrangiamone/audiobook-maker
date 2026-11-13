@@ -80,6 +80,7 @@ Aggiungi accento grafico SOLO per disambiguare eteronimi reali, decidendo dal co
 - `altero` → `altèro` (superbo) vs `àltero` (1a sing. di alterare)
 - `impari` → `ìmpari` (disuguali) vs `impàri` (2a sing. di imparare)
 - congiuntivi presenti con l'accento sulla terzultima, che il TTS legge sbagliati: `amino` → `àmino` («che i sudditi àmino»), `abitino` → `àbitino` (vs `abitìno`, piccolo abito)
+- imperativi con il pronome attaccato, accento sulla terzultima, che il TTS legge come il participio plurale: `svegliati` → `svégliati` («svégliati, è tardi!») vs `svegliàti` (participio: «si sono svegliàti presto»); allo stesso modo `àlzati`/`alzàti`, `càlmati`/`calmàti`, `vòltati`/`voltàti`
 
 *Vocale aperta o chiusa* (`è`/`ò` aperte, `é`/`ó` chiuse):
 - `pesca` → `pèsca` (frutto) vs `pésca` (attività)

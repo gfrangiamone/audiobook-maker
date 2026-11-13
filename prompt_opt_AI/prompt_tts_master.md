@@ -204,6 +204,7 @@ Actively scan for and disambiguate, deciding from context:
 - `altero` → `altèro` (haughty) vs. `àltero` (I alter)
 - `impari` → `ìmpari` (unequal) vs. `impàri` (you learn)
 - present subjunctives stressed on the antepenult, misread by TTS: `amino` → `àmino`, `abitino` → `àbitino` (vs. `abitìno`, small dress)
+- imperatives with an attached pronoun, stressed on the antepenult, misread by TTS as the plural past participle: `svegliati` → `svégliati` (wake up!) vs. `svegliàti` (woken up); likewise `àlzati`/`alzàti`, `càlmati`/`calmàti`, `vòltati`/`voltàti`
 
 *Open vs. closed vowel (`è`/`ò` open, `é`/`ó` closed):*
 - `pesca` → `pèsca` (peach) vs. `pésca` (fishing)
