@@ -170,6 +170,8 @@ NOMI_MODELLI = {
     "lbl_model_flash38": "Gemini 3.8 (PREMIUM+)",
     "lbl_model_simba": "Simba 3.2",
     "lbl_model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    # Decisione dell'utente del 13/11/2026: il modello Pocket si chiama cosi'.
+    "lbl_model_pocket": "Audiobook Maker (batch)",
 }
 
 

@@ -37,12 +37,13 @@ import payment
 import speechify_tts
 import subscriptions
 import tts_backend_state
+import tts_engines
 import voice_clone
 import voxcpm_tts
 from env_utils import env_str
 from page_brand import page_template as _page_template
-from voice_utils import (is_gemini_voice as _is_gemini_voice, is_speechify_voice as _is_speechify_voice,
-                         is_voxcpm_voice as _is_voxcpm_voice, parse_rate_pct as _parse_rate_pct)
+from voice_utils import (is_gemini_voice as _is_gemini_voice, is_voxcpm_voice as _is_voxcpm_voice,
+                         parse_rate_pct as _parse_rate_pct)
 
 bp = Blueprint("admin_audit", __name__)
 
@@ -232,9 +233,9 @@ def _synth_running_gemini_audit_records():
                 continue
             voice = job.get("voice") or job.get("opt_voice") or ""
             is_gem = _is_gemini_voice(voice)
-            is_spe = _is_speechify_voice(voice)
             is_vox = _is_voxcpm_voice(voice)
-            if not (is_gem or is_spe or is_vox):
+            direct = tts_engines.engine_for_voice(voice) in tts_engines.DIRECT
+            if not (is_gem or is_vox or direct):
                 continue
             parts = voice.split(":")
             model_key = parts[1] if len(parts) >= 3 else "?"
@@ -298,11 +299,12 @@ def _synth_running_gemini_audit_records():
                 chars_total = chars_metered
                 audio_seconds = float(va.get("audio_seconds", 0) or 0)
                 vat_actual = 0.0
-            else:  # Speechify / Simba
-                sa = job.get("speechify_actual") or {}
+            else:  # motori a chunk diretto: Speechify / Simba, Pocket (VPS, costo 0)
+                eng = tts_engines.premium_for_voice(voice)
+                sa = job.get(f"{eng.name}_actual") or {}
                 metered = int(sa.get("billable_chars", 0) or 0) or int(sa.get("chars", 0) or 0)
                 try:
-                    price = speechify_tts.compute_user_price_eur(metered)
+                    price = eng.mod().compute_user_price_eur(metered)
                     provider_cost_actual = float(price.get("cost_usd", 0.0) or 0.0) * float(
                         speechify_tts.usd_eur_rate())
                     should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)

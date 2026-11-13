@@ -351,3 +351,27 @@ test('spagnolo: l`accento di ripiego e` il primo per diffusione', () => {
   assert.strictEqual(r.standard.accents[0], 'es-ES');
   assert.strictEqual(r.standard.accent, 'es-ES');
 });
+
+/* Modello batch: le stesse voci inventate lette da un altro motore, con id
+   `pocket:`. Sta subito dopo VOXCPM2 e compare solo col motore acceso. */
+function conBatch(acceso) {
+  const c = JSON.parse(JSON.stringify(CATALOGO));
+  c._pocket = {available: acceso, model_label: 'Audiobook Maker (batch)'};
+  c.it.voices.push({id: 'pocket:v1:it-IT/Bianca', name: 'Bianca', gender: 'Female',
+                    locale: 'it-IT', engine: 'pocket'});
+  return c;
+}
+
+test('modello batch: dopo VOXCPM2, con le sole voci sue', () => {
+  const r = resolveAudioSelection({lang: 'it', catalog: conBatch(true),
+                                   current: {tab: 'premium', model: 'pocket'}});
+  assert.deepStrictEqual(r.premium.models, ['voxcpm', 'pocket', 'flash31', 'flash38']);
+  assert.strictEqual(r.premium.model, 'pocket');
+  assert.deepStrictEqual(r.premium.voices.map(v => v.id), ['pocket:v1:it-IT/Bianca']);
+});
+
+test('modello batch spento: non compare, il predefinito resta VOXCPM2', () => {
+  const r = resolveAudioSelection({lang: 'it', catalog: conBatch(false), current: {}});
+  assert.ok(!r.premium.models.includes('pocket'));
+  assert.strictEqual(r.premium.model, 'voxcpm');
+});

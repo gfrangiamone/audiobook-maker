@@ -44,6 +44,9 @@ class Engine:
     direct: bool = False
     chunk_fn: str = ""
     fatal_exc: str = ""
+    # Worker con coda per libro (Pocket): la pre-sintesi dichiara il libro con
+    # `mod.BookTicket`, aspetta il turno e passa il biglietto a ogni chunk.
+    book_queue: bool = False
 
     def mod(self):
         return importlib.import_module(self.module)
@@ -143,13 +146,18 @@ ENGINES = {
     "voxcpm": Engine("voxcpm", "voxcpm_tts", is_voxcpm_voice, "voxcpm_estimate", "_write_voxcpm_audit",
                      "VoxcpmUnavailable", chunk_fallback=300, sample_rate_default=48000,
                      sentence_slack=0.15),
-    # Worker su VPS a canone fisso, per ora solo per il catalogo: vedi pocket_tts.
+    # Worker su VPS a canone fisso, un libro alla volta: vedi pocket_tts.
     "pocket": Engine("pocket", "pocket_tts", is_pocket_voice, "pocket_estimate", "_write_pocket_audit",
                      "PocketUnavailable", chunk_fallback=280, sample_rate_default=24000,
-                     direct=True, chunk_fn="generate_chunk_pcm_pocket", fatal_exc="PocketFatalError"),
+                     direct=True, chunk_fn="generate_chunk_pcm_pocket", fatal_exc="PocketFatalError",
+                     book_queue=True),
 }
 PREMIUM = tuple(ENGINES)
 DIRECT = tuple(name for name, eng in ENGINES.items() if eng.direct)
+# Listino a caratteri in piu' lingue: stima, quota e pagamento nello stesso
+# ramo delle route di prezzo (Speechify ha il suo, solo inglese; Gemini il suo,
+# con budget e RPD).
+MULTILINGUAL_CHAR_PRICED = ("voxcpm", "pocket")
 
 
 # `engine_for_voice(voice)` -> "gemini" / "speechify" / "voxcpm" / "pocket" / "edge" e'

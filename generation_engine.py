@@ -5406,10 +5406,56 @@ def _note_direct_sample_rate(job, engine, result):
         job[eng.sample_rate_job_key] = result.get("sample_rate", eng.sample_rate_default)
 
 
+# Messaggio di avanzamento di un libro in coda sul worker (chiave in
+# SERVER_MSG_KEYS della SPA); posizione e stima stanno in job["book_queue"].
+BOOK_QUEUED_MSG = "Queued for synthesis..."
+
+
+def _note_book_queue(job, state):
+    """Posto del libro nella coda del worker (motori `book_queue`), per la
+    UI e l'admin: stato, posizione (da 1), attesa e consegna stimate in
+    secondi da `at`."""
+    if not isinstance(state, dict):
+        return
+    pos = state.get("position")
+    job["book_queue"] = {
+        "state": state.get("state"),
+        "position": pos + 1 if isinstance(pos, int) else None,
+        "wait_s": state.get("wait_s"), "eta_s": state.get("eta_s"), "at": round(time.time()),
+    }
+    if state.get("state") != "active":
+        job["progress_message"] = BOOK_QUEUED_MSG
+
+
+def _open_book_ticket(job, engine, job_id, voice, todo, check_cancelled):
+    """Biglietto di coda del libro per un motore `book_queue`, gia' di turno;
+    None per gli altri motori o senza `job_id`. Raises _CancelledError se il
+    job e' annullato in attesa del turno."""
+    eng = _tts_engines.ENGINES[engine]
+    if not (eng.book_queue and job_id and todo):
+        return None
+    mod = eng.mod()
+    ticket = mod.BookTicket(job_id, sum(len(blk["text"]) for _, blk in todo),
+                            mod.voice_language(voice), check_cancelled=check_cancelled,
+                            on_state=lambda st: _note_book_queue(job, st))
+    try:
+        if not ticket.join():
+            raise _CancelledError("Job cancelled")
+    except BaseException:
+        ticket.close()
+        raise
+    job["progress_message"] = "Synthesizing audio..."
+    return ticket
+
+
 def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
-                     check_cancelled, start_time, skip=frozenset()):
+                     check_cancelled, start_time, skip=frozenset(), job_id=None):
     """Pre-sintesi parallela di un motore a chunk diretto (Speechify, Pocket):
     pool di min(K, N) worker, K per job e N sul processo.
+
+    Un motore con coda per libro (Pocket) prima dichiara il libro (id =
+    `job_id`) e aspetta il turno, poi passa il biglietto a ogni chunk; alla
+    fine, o su errore, lo chiude e lascia il worker al prossimo libro.
 
     Ogni chiamata attraversa il gate globale del motore (limite abbonamento,
     capienza del worker); l'attesa su slot saturo e' trasparente. Ritorna
@@ -5431,6 +5477,8 @@ def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
         job["progress_message"] = "In attesa di uno slot disponibile..."
     done = total - len(todo)            # i riusati contano come gia' fatti
     done_lock = threading.Lock()
+    ticket = _open_book_ticket(job, engine, job_id, voice, todo, check_cancelled)
+    chunk_kw = {"book": ticket} if ticket is not None else {}
 
     def _pre_one(ib):
         nonlocal done
@@ -5443,7 +5491,8 @@ def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
             raise _CancelledError("Job cancelled")
         pp = str(chunk_reuse.chunk_path(work_dir, idx, "pcm"))
         fi = {}
-        res = chunk_fn(blk["text"], voice, pp, emotion=emotion, rate=rate, failure_info=fi)
+        res = chunk_fn(blk["text"], voice, pp, emotion=emotion, rate=rate, failure_info=fi,
+                       **chunk_kw)
         with done_lock:
             done += 1
             d = done
@@ -5453,10 +5502,14 @@ def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
         return idx, res
 
     out = {}
-    with _cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        for idx, res in ex.map(_pre_one, todo):
-            out[idx] = res
-            _note_direct_sample_rate(job, engine, res)
+    try:
+        with _cf.ThreadPoolExecutor(max_workers=workers) as ex:
+            for idx, res in ex.map(_pre_one, todo):
+                out[idx] = res
+                _note_direct_sample_rate(job, engine, res)
+    finally:
+        if ticket is not None:
+            ticket.close()
     job["progress_message"] = "Assembling audio..."
     return out
 
@@ -5503,7 +5556,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
 
 
 def _write_pocket_audit(job_id, job, voice_id, language, outcome):
-    """Audit di fine job Pocket (costo e prezzo zero): `_write_direct_audit`."""
+    """Audit di fine job Pocket (costo zero, VPS a canone fisso): `_write_direct_audit`."""
     _write_direct_audit("pocket", job_id, job, voice_id, language, outcome)
 
 
@@ -7546,7 +7599,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _direct_pre = _direct_presynth(
                 job, direct, plan, work_dir, voice, emotion=speechify_emotion,
                 rate=rate, check_cancelled=_check_cancelled,
-                start_time=start_time, skip=_reusable_chunks)
+                start_time=start_time, skip=_reusable_chunks, job_id=job_id)
         # Re-read del sample rate reale ora che la pre-sintesi Speechify ha
         # popolato job['speechify_sample_rate'] (VoxCPM e Pocket sono fissi:
         # nessun campo da rileggere, vedi `_pcm_sample_rate`).

@@ -32,8 +32,7 @@ import voice_clone
 import voxcpm_tts
 from env_utils import env_bool, env_int
 from text_reflow import expand_book_abbreviations, paren_strip_flags
-from voice_utils import (is_gemini_voice as _is_gemini_voice, is_speechify_voice as _is_speechify_voice,
-                         is_voxcpm_voice as _is_voxcpm_voice)
+from voice_utils import is_gemini_voice as _is_gemini_voice
 
 _cfg = {}
 _jobs_lock = None
@@ -167,11 +166,9 @@ def _recovery_generate_gate(job_id, rec, info):
     else:
         chs = all_chs
     out = {"info": info, "estimate_key": None, "estimate": None, "quota_charge": None}
-    is_gem = _is_gemini_voice(voice)
-    is_spx = _is_speechify_voice(voice)
-    is_vox = _is_voxcpm_voice(voice)
+    eng = tts_engines.premium_for_voice(voice)
     _recovery_reject_retired_model(voice)
-    if not (is_gem or is_spx or is_vox):
+    if eng is None:
         return out
     total_chars = sum(getattr(ch, "char_count", 0) or 0 for ch in chs)
     max_chars = _effective_max_text_chars(voice, None)
@@ -182,16 +179,12 @@ def _recovery_generate_gate(job_id, rec, info):
              or getattr(info, "language", "") or "it")) or "it")
     # Il testo tra parentesi scelto al lancio: la stima e' quella del pagamento.
     paren = paren_strip_flags(rec)
-    if is_gem:
+    if eng.name == "gemini":
         if gemini_tts is None:
             raise _RecoveryRejected("modulo gemini_tts non disponibile")
         est = tts_engines.estimate("gemini", chs, voice, language=lang,
                                    rate_pct=rec.get("rate", "+0%"), **paren)
-        key = "gemini_estimate"
-    elif is_spx:
-        est = tts_engines.estimate("speechify", chs, language="en", **paren)
-        key = "speechify_estimate"
-    else:
+    elif eng.name == "voxcpm":
         if voxcpm_tts is None:
             raise _RecoveryRejected("modulo voxcpm_tts non disponibile")
         if voice.startswith(voice_clone.VOICE_ID_PREFIX):
@@ -203,7 +196,10 @@ def _recovery_generate_gate(job_id, rec, info):
             if _err:
                 raise _RecoveryRejected(f"voce campione non usabile: {_err}")
         est = tts_engines.estimate("voxcpm", chs, language=lang, **paren)
-        key = "voxcpm_estimate"
+    else:
+        # Speechify (solo inglese) e Pocket: listino a caratteri.
+        est = tts_engines.estimate(eng.name, chs, language=eng.only_language or lang, **paren)
+    key = eng.estimate_key
     if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
         raise _RecoveryRejected("stima ex-ante su testo vuoto")
     out["estimate_key"] = key

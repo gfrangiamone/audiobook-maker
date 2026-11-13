@@ -76,3 +76,5 @@ activity.db*
 # Syncthing (sync di cartella, non di repo)
 .stignore
 .stfolder/
+# Clip dimostrative del modello batch (Pocket), generate da abm-pocket-worker
+pocket_demo/

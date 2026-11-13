@@ -207,7 +207,9 @@ def test_l_anteprima_lascia_il_posto_al_campione():
     # Il bottone anteprima non deve restare attivo su una voce VoxCPM: il
     # backend la respinge con 400 (Task 10) e l'utente vedrebbe un errore.
     i = JS.find("function _updatePreviewBtn")
-    assert "_isVoxcpmVoiceId" in JS[i:i + 700]
+    # Lo stesso per le voci del modello batch: _isCatalogVoiceId le comprende.
+    assert "_isCatalogVoiceId" in JS[i:i + 700]
+    assert "_isPocketVoiceId(id)" in JS[JS.find("function _isCatalogVoiceId"):][:120]
 
 
 def test_il_modale_di_pagamento_non_dimentica_voxcpm_eur():

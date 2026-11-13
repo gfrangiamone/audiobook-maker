@@ -150,6 +150,7 @@ _MODEL_LABEL_KEYS = {
     "flash38": "model_flash38",
     "simba-3.2": "model_simba",
     "voxcpm": "model_voxcpm",
+    "pocket": "model_pocket",
 }
 
 

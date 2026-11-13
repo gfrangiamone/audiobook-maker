@@ -601,9 +601,10 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
 
 def generate_chunk_pcm_direct(engine, text, voice_id, output_path, emotion=None,
-                              rate="+0%", max_retries=1, failure_info=None):
+                              rate="+0%", max_retries=1, failure_info=None, extra=None):
     """PCM 16-bit mono di un chunk con un motore a chunk diretto del registro
-    (Speechify, Pocket: `tts_engines.DIRECT`), con fallback silenzio.
+    (Speechify, Pocket: `tts_engines.DIRECT`), con fallback silenzio. `extra`
+    sono argomenti in piu' per la `synthesize` del motore (Pocket: `book`).
 
     L'eccezione "non disponibile" del motore viene ri-sollevata (errore
     permanente: silenziarlo silenzierebbe l'intero libro). Su testo vuoto o
@@ -641,7 +642,7 @@ def generate_chunk_pcm_direct(engine, text, voice_id, output_path, emotion=None,
         # = 9 chiamate HTTP per chunk). `max_retries` resta per i test.
         return _retry.retry_call(
             lambda _a: mod.synthesize(clean, voice_id, output_path,
-                                      emotion=emotion, rate=rate),
+                                      emotion=emotion, rate=rate, **(extra or {})),
             attempts=max_retries, wait=1.0, on_retry=_log,
             is_retryable=lambda e: not isinstance(e, (unavailable, fatal)))
     except unavailable:
@@ -670,7 +671,9 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
 
 
 def generate_chunk_pcm_pocket(text, voice_id, output_path, emotion=None,
-                              rate="+0%", max_retries=1, failure_info=None):
-    """Chunk Pocket TTS sul worker del VPS (`generate_chunk_pcm_direct`)."""
+                              rate="+0%", max_retries=1, failure_info=None, book=None):
+    """Chunk Pocket TTS sul worker del VPS (`generate_chunk_pcm_direct`);
+    `book` e' il `pocket_tts.BookTicket` del libro."""
     return generate_chunk_pcm_direct("pocket", text, voice_id, output_path, emotion=emotion,
-                                     rate=rate, max_retries=max_retries, failure_info=failure_info)
+                                     rate=rate, max_retries=max_retries, failure_info=failure_info,
+                                     extra={"book": book} if book is not None else None)

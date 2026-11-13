@@ -102,6 +102,7 @@ except Exception as _voxcpm_err:      # noqa: BLE001
     print(f"VoxCPM non disponibile: {_voxcpm_err}")
     voxcpm_catalog = None
     voxcpm_tts = None
+import pocket_catalog
 # La classifica d'uso delle voci VoxCPM: modulo foglia (json + voice_utils),
 # quindi importato senza rete di protezione.
 import voxcpm_ranking
@@ -755,11 +756,11 @@ from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 
 def _max_text_chars_for_voice(voice):
     """Cap caratteri appropriato per la voce: Gemini -> MAX_GEMINI_TEXT_CHARS,
-    Speechify -> MAX_SPEECHIFY_TEXT_CHARS, VoxCPM -> MAX_VOXCPM_TEXT_CHARS,
-    altrimenti MAX_TEXT_CHARS."""
+    Speechify -> MAX_SPEECHIFY_TEXT_CHARS, VoxCPM e Pocket ->
+    MAX_VOXCPM_TEXT_CHARS, altrimenti MAX_TEXT_CHARS."""
     if _is_gemini_voice(voice):
         return MAX_GEMINI_TEXT_CHARS
-    if _is_voxcpm_voice(voice):
+    if tts_engines.engine_for_voice(voice) in tts_engines.MULTILINGUAL_CHAR_PRICED:
         return MAX_VOXCPM_TEXT_CHARS
     if _is_speechify_voice(voice):
         return MAX_SPEECHIFY_TEXT_CHARS
@@ -2652,6 +2653,13 @@ async def _fetch_voices():
             # Un catalogo illeggibile toglie un motore, non l'applicazione.
             print(f"Error merging VoxCPM voices: {e}")
 
+    # 5. Modello batch (Pocket): le stesse voci inventate, solo dove e' a
+    # pagamento (il modo catalogo, tariffa 0, non si offre agli utenti).
+    if tts_engines.ENGINES["pocket"].mod().is_offered():
+        for lc_short, v_list in pocket_catalog.get_voices().items():
+            languages.setdefault(lc_short, {"name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
+                                            "voices": []})["voices"].extend(v_list)
+
     # Sorting: Female prima di Male, poi per nome; fra le voci VoxCPM
     # decidono prima i punti d'uso (ultimi 30 giorni, poi assoluti).
     voxcpm_ranking.ordina(languages)
@@ -2781,7 +2789,7 @@ def _voice_public_label(voice):
                 return voice_name
             except Exception:
                 return v.rsplit(":", 1)[-1]
-        if _is_voxcpm_voice(v):
+        if tts_engines.engine_for_voice(v) in tts_engines.MULTILINGUAL_CHAR_PRICED:
             return v.rsplit("/", 1)[-1] if "/" in v else v.rsplit(":", 1)[-1]
         if _is_speechify_voice(v):
             return v.rsplit(":", 1)[-1]
@@ -2822,6 +2830,8 @@ def _voice_plan_info(voice):
             # Catalogo e voce campionata girano sullo stesso modello: una sola
             # etichetta, il token della voce clonata non entra mai qui.
             return "premium", "voxcpm"
+        if tts_engines.engine_for_voice(v) == "pocket":
+            return "premium", "pocket"
         return "standard", ""
     except Exception:  # noqa: BLE001
         return "", ""
@@ -3422,6 +3432,12 @@ def api_voices():
             except Exception:
                 voices["_voxcpm"] = {"available": False, "model_label": "",
                                      "personas": []}
+        # Modello batch: listino per l'etichetta del selettore e la stima.
+        _pk = tts_engines.ENGINES["pocket"].mod()
+        voices["_pocket"] = {"available": bool(_pk.is_offered() and pocket_catalog.voices()),
+                             "model_label": _pk.MODEL_LABEL,
+                             "rate_eur_per_mchar": _pk.rate_eur_per_mchar(),
+                             "min_price_eur": _pk.min_price_eur()}
         # Voci campionate dell'utente (spec voci-campionate, piano 2): calcolo
         # per richiesta, mai dentro _fetch_voices (la cache e' condivisa fra
         # tutti gli utenti, "_mine" no).
@@ -3484,10 +3500,13 @@ def api_voice_demo():
     """
     voice_id = (request.args.get("voice") or "").strip()
     clip_id = (request.args.get("clip") or "").strip()
-    if voxcpm_catalog is None:
+    # Le voci del modello batch hanno clip loro, lette dalla loro cartella.
+    catalogo = (pocket_catalog if tts_engines.engine_for_voice(voice_id) == "pocket"
+                else voxcpm_catalog)
+    if catalogo is None:
         return jsonify({"error": "voxcpm non disponibile"}), 404
     try:
-        percorso = voxcpm_catalog.demo_path(voice_id, clip_id)
+        percorso = catalogo.demo_path(voice_id, clip_id)
     except ValueError as e:
         # Id malformato -> 400; clip o voce che non ci sono (piu') -> 404,
         # stesso criterio di /api/voice_sample.
@@ -3991,15 +4010,16 @@ def api_preview_audio(job_id):
     if not job_id:
         return jsonify({"error": "Job non trovato"}), 404
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
-    if _is_voxcpm_voice(voice):
+    if tts_engines.engine_for_voice(voice) in tts_engines.MULTILINGUAL_CHAR_PRICED:
         # §5.2: per VoxCPM l'anteprima e' sostituita dall'ascolto del campione
         # (/api/voice_sample). Un'anteprima costerebbe l'accensione di un
         # worker — circa tre minuti e il prezzo di un capitolo — per pochi
         # secondi di audio. Il rifiuto esplicito serve anche a non far cadere
         # la voce nel ramo Edge, che la leggerebbe con un'altra voce. Il
         # controllo precede la verifica del job apposta: la sola voce VoxCPM
-        # basta a rifiutare, anche se il job non esiste ancora.
-        return jsonify({"error": "voxcpm_preview_unsupported"}), 400
+        # basta a rifiutare, anche se il job non esiste ancora. Pocket idem: il
+        # worker legge un libro alla volta e l'anteprima aspetterebbe la coda.
+        return jsonify({"error": f"{tts_engines.engine_for_voice(voice)}_preview_unsupported"}), 400
     _job, _err, _sc = _check_job_owner(job_id)
     if _err is not None:
         return _err, _sc
@@ -5070,14 +5090,14 @@ def api_generate():
     # Speechify non ha prenotazione budget ne' preflight RPD, quindi non va
     # chiamato alcun gemini_tts.* qui (ne' reserve_budget ne'
     # release_reservation: nulla e' stato prenotato in questo ramo).
-    # VoxCPM entra qui e non in un terzo ramo: il percorso e' identico —
+    # VoxCPM e Pocket entrano qui e non in rami loro: il percorso e' identico —
     # stessa tasca job["payment"], stesso gate soglia/consumo token, nessun
     # budget Google e nessun preflight RPD da rilasciare. Duplicare le
     # novanta righe una terza volta darebbe tre copie da tenere allineate su
     # un percorso di pagamento.
-    if _is_speechify_voice(voice) or _is_voxcpm_voice(voice):
+    _direct_eng = tts_engines.premium_for_voice(voice)
+    if _direct_eng is not None and _direct_eng.name != "gemini":
         # TODO(refactor): estrarre un helper _consume_premium_payment condiviso col ramo gemini (duplicazione ~90 righe).
-        _is_vox = _is_voxcpm_voice(voice)
         info_pre = job.get("info")
         all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
         sel = selected_chapters or []
@@ -5101,35 +5121,22 @@ def api_generate():
                 "chars_selected": _sel_chars_pre,
                 "chars_limit": _max_chars_pre,
             }), 413
-        if _is_vox:
-            # VoxCPM legge libri in piu' lingue (non solo inglese come
-            # Speechify): stessa priorita' UI > metadata > "it" usata da
-            # /api/combined_estimate, altrimenti la stima qui e quella vista
-            # dal client divergerebbero.
-            _ui_lang_pre = _i18n.norm_lang(data.get("lang"))
-            lang_pre = (_ui_lang_pre
-                        or _i18n.norm_lang(getattr(info_pre, "language", ""))
-                        or "it")
-            job["gen_lang"] = lang_pre
-            try:
-                est_pre = tts_engines.estimate("voxcpm", chs_pre, language=lang_pre, **_paren)
-                # Persisti la stima sul job: serve all'eventuale audit VoxCPM
-                # (Task 11) per popolare i campi *_est.
-                job["voxcpm_estimate"] = est_pre
-            except Exception as e:
-                return jsonify({"error": f"estimate failed: {e}"}), 500
-        else:
-            # Speechify e' solo inglese: nessuna selezione lingua come nel ramo
-            # Gemini. Persisti comunque gen_lang="en" per coerenza con l'audit e
-            # con /api/combined_estimate.
-            job["gen_lang"] = "en"
-            try:
-                est_pre = tts_engines.estimate("speechify", chs_pre, language="en", **_paren)
-                # Persisti la stima sul job: serve all'eventuale audit Speechify
-                # per popolare i campi *_est.
-                job["speechify_estimate"] = est_pre
-            except Exception as e:
-                return jsonify({"error": f"estimate failed: {e}"}), 500
+        # VoxCPM e Pocket leggono libri in piu' lingue: stessa priorita' UI >
+        # metadata > "it" usata da /api/combined_estimate, altrimenti la stima
+        # qui e quella vista dal client divergerebbero. Speechify e' solo
+        # inglese: gen_lang="en" per coerenza con l'audit e con la stima.
+        lang_pre = (_direct_eng.only_language
+                    or _i18n.norm_lang(data.get("lang"))
+                    or _i18n.norm_lang(getattr(info_pre, "language", ""))
+                    or "it")
+        job["gen_lang"] = lang_pre
+        try:
+            est_pre = tts_engines.estimate(_direct_eng.name, chs_pre, language=lang_pre, **_paren)
+            # Persisti la stima sul job: serve all'audit del motore per
+            # popolare i campi *_est.
+            job[_direct_eng.estimate_key] = est_pre
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
         # Fail-closed: vedi nota nel ramo Gemini.
         if not _assert_priced_on_real_text(job_id, chs_pre,
                                            est_pre.get("chars_total", 0)):
@@ -5180,7 +5187,7 @@ def api_generate():
             try:
                 _pay_method = payment.consume_payment_token(
                     payment_token, total_eur_pre, job_id,
-                    purpose=("voxcpm" if _is_vox else "speechify"),
+                    purpose=_direct_eng.name,
                     service=payment.voucher_service_for_voice(voice),
                     account_id=routes_account.current_account_id()
                 )
@@ -5198,17 +5205,14 @@ def api_generate():
                 "ts": time.time(),
                 "llm_eur": llm_eur_pre,
             }
-            if _is_vox:
-                job["payment"]["voxcpm_est"] = est_pre
-            else:
-                job["payment"]["speechify_est"] = est_pre
+            job["payment"][f"{_direct_eng.name}_est"] = est_pre
             _note_acquisition(job)
             # Batch implicito per job PAGATO (stessa logica del ramo Gemini):
             # un job pagato non deve morire per heartbeat alla chiusura del
             # browser.
             _register_paid_job_batch(
                 job_id, job, payment_token,
-                engine=("VoxCPM" if _is_vox else "Speechify"),
+                engine=_direct_eng.name,
                 lang=(data.get("lang") or "en"), output_format=output_format,
                 podcast_base_url=podcast_base_url)
         # Stash emotion for run_generation (outer indent: vale per speechify,
@@ -5222,9 +5226,7 @@ def api_generate():
     # `job["voice"]` viene scritto solo al claim (sotto), quindi la voce
     # richiesta va valutata qui a parte: is_premium_job() da sola vedrebbe
     # ancora il job senza voce e classificherebbe free una richiesta Gemini.
-    _premium_req = (_is_gemini_voice(voice) or _is_speechify_voice(voice)
-                    or _is_voxcpm_voice(voice)
-                    or generation_engine.is_premium_job(job))
+    _premium_req = _is_premium_voice(voice) or generation_engine.is_premium_job(job)
     # Moderazione anti-abuso: cid nello scope di un verdetto `abuse` valido
     # (abuse_watch). Mai su job premium/pagati ne' per chi e' connesso con un
     # abbonamento pagato (ticket del 28/10/2026: abbonata fermata dal verdetto
@@ -5743,6 +5745,9 @@ def api_progress(job_id):
             "processed_chars": job.get("processed_chars", 0),
             "total_chars": job.get("total_chars", 0),
         }
+        # Posto nella coda del modello batch (motori `book_queue`).
+        if job.get("book_queue"):
+            payload["book_queue"] = job["book_queue"]
         # M4B progress (visibile solo se la fase M4B è attiva)
         if job.get("m4b_progress_total"):
             payload["m4b_progress_current"] = job.get("m4b_progress_current", 0)
@@ -6811,11 +6816,13 @@ def api_combined_estimate():
             "margin_percent": est_spx["margin_percent"],
         }
 
-    voxcpm_eur = 0.0
-    voxcpm_breakdown = {}
-    if _is_voxcpm_voice(voice_id):
+    # VoxCPM e Pocket: chiavi `<motore>_eur` e `<motore>_breakdown`.
+    multi_eur = dict.fromkeys(tts_engines.MULTILINGUAL_CHAR_PRICED, 0.0)
+    multi_breakdown = {name: {} for name in tts_engines.MULTILINGUAL_CHAR_PRICED}
+    _multi = tts_engines.engine_for_voice(voice_id)
+    if _multi in multi_eur:
         try:
-            est_vox = tts_engines.estimate("voxcpm", chs, language=lang, **_paren)
+            est_vox = tts_engines.estimate(_multi, chs, language=lang, **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         # list_price_eur, non user_price_eur: quest'ultimo e' gia' azzerato da
@@ -6826,9 +6833,9 @@ def api_combined_estimate():
         # ATTENZIONE UI: il frontend deve renderizzare da `total_eur`/`is_free`
         # nella risposta JSON, MAI da `voxcpm_eur` — qui e' listino grezzo, non
         # il dovuto (puo' restare > 0 anche quando il job e' gratuito).
-        voxcpm_eur = round(est_vox.get("list_price_eur", 0.0), 2)
-        _premium_list_eur = round(est_vox.get("list_price_eur", 0.0), 2)
-        voxcpm_breakdown = {
+        multi_eur[_multi] = round(est_vox.get("list_price_eur", 0.0), 2)
+        _premium_list_eur = multi_eur[_multi]
+        multi_breakdown[_multi] = {
             "chars": est_vox["chars_total"],
             "chars_total": est_vox["chars_total"],
             "user_price_eur": est_vox["user_price_eur"],
@@ -6838,14 +6845,18 @@ def api_combined_estimate():
             # quello che l'audit del Task 11 confronta col listino.
             "cost_usd": est_vox["cost_usd"],
         }
+        if _multi == "pocket":
+            # Modello «lento»: attesa e consegna stimate dalla coda del worker.
+            _pmod = tts_engines.ENGINES["pocket"].mod()
+            multi_breakdown[_multi]["delivery"] = _pmod.estimate_delivery(
+                est_vox["chars_total"], _pmod.voice_language(voice_id))
 
     # Quota ottimizzazione AI: sul ramo STANDALONE (voce standard, nessun
     # PREMIUM) l'importo mostrato DEVE applicare il floor minimo, come fanno
     # ordine PayPal/voucher/addebito. Sul ramo PREMIUM combinato la quota LLM
     # resta grezza (si somma al TTS, il pagamento e' del totale). Unica fonte:
     # payment.llm_price_eur (incidente stima 0,48 vs addebito 1,00).
-    _has_premium = (_is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
-                    or _is_voxcpm_voice(voice_id))
+    _has_premium = _is_premium_voice(voice_id)
     llm_eur = 0.0
     llm_breakdown = {}
     if ai_opt:
@@ -6859,7 +6870,7 @@ def api_combined_estimate():
             "floored": _lp["floored"],
         }
 
-    total = round(gemini_eur + speechify_eur + voxcpm_eur + llm_eur, 2)
+    total = round(gemini_eur + speechify_eur + sum(multi_eur.values()) + llm_eur, 2)
     # Quota gratuita cumulativa per client: sul listino (TTS premium + quota LLM
     # combinata), non sul prezzo gia' azzerato sotto soglia. Sola lettura: qui
     # non si consuma nulla.
@@ -6889,7 +6900,7 @@ def api_combined_estimate():
     # un totale Speechify compreso tra le due soglie (soglia Speechify < Gemini)
     # risulterebbe is_free lato UI ma verrebbe respinto con 402 dal backend, con il
     # job bloccato a 0% (nessun payment token inviato). Vedi incidente 402 Speechify.
-    if _is_voxcpm_voice(voice_id):
+    if _multi in multi_eur:
         threshold = free_quota._premium_threshold_eur(voice_id)
     elif _is_speechify_voice(voice_id):
         threshold = speechify_tts.free_threshold_eur()
@@ -6936,7 +6947,8 @@ def api_combined_estimate():
     return jsonify({
         "gemini_eur": gemini_eur,
         "speechify_eur": speechify_eur,
-        "voxcpm_eur": voxcpm_eur,
+        "voxcpm_eur": multi_eur["voxcpm"],
+        "pocket_eur": multi_eur["pocket"],
         "llm_eur": llm_eur,
         "total_eur": total,
         "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
@@ -6952,7 +6964,8 @@ def api_combined_estimate():
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
         "speechify_breakdown": speechify_breakdown,
-        "voxcpm_breakdown": voxcpm_breakdown,
+        "voxcpm_breakdown": multi_breakdown["voxcpm"],
+        "pocket_breakdown": multi_breakdown["pocket"],
         "llm_breakdown": llm_breakdown,
         "gemini_overloaded": overload_info is not None,
         "gemini_overload_info": overload_info,
@@ -7064,19 +7077,19 @@ def api_paypal_create_order_gemini():
         _premium_list_eur = round(est.get("list_price_eur", 0.0), 2)
 
     voxcpm_eur = 0.0
-    if _is_voxcpm_voice(voice_id):
+    _multi = tts_engines.engine_for_voice(voice_id)
+    if _multi in tts_engines.MULTILINGUAL_CHAR_PRICED:
         try:
             # `lang` gia' risolto sopra (UI > metadata > "it"), stessa
             # priorita' di /api/combined_estimate: necessario per non
             # produrre un amount mismatch server-side (Fix round 1).
-            est = tts_engines.estimate("voxcpm", chs, language=lang, **_paren)
+            est = tts_engines.estimate(_multi, chs, language=lang, **_paren)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         voxcpm_eur = round(est["user_price_eur"], 2)
         _premium_list_eur = round(est.get("list_price_eur", 0.0), 2)
 
-    _has_premium = (_is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
-                    or _is_voxcpm_voice(voice_id))
+    _has_premium = _is_premium_voice(voice_id)
     llm_eur = 0.0
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
@@ -7284,8 +7297,7 @@ def api_optimize():
     # solo per la corsia gratuita (chi paga non ha tetto).
     if auto_generate and client_id:
         _auto_voice = data.get("voice", "")
-        _auto_premium = (_is_gemini_voice(_auto_voice)
-                         or _is_speechify_voice(_auto_voice)
+        _auto_premium = (_is_premium_voice(_auto_voice)
                          or generation_engine.is_premium_job(job))
         if not _auto_premium:
             _capped, _active_gen, _cap = _client_gen_cap_reached(client_id, job_id)
@@ -7396,10 +7408,11 @@ def api_optimize():
     # Prima di quel blocco, `_is_combined_voxcpm=True` senza un charge a valle
     # lasciava passare un job VoxCPM gratis (ne' LLM ne' TTS incassati) — vedi
     # task-10-report.md "Fix round 1".
+    # Pocket passa dallo stesso blocco (`_mname`): listino a caratteri in piu' lingue.
+    _mname = tts_engines.engine_for_voice(data.get("voice", ""))
     _is_combined_voxcpm = (auto_generate
-                           and _is_voxcpm_voice(data.get("voice", ""))
-                           and voxcpm_tts is not None
-                           and voxcpm_tts.is_available())
+                           and _mname in tts_engines.MULTILINGUAL_CHAR_PRICED
+                           and tts_engines.ENGINES[_mname].is_available())
     if (estimated_cost > LLM_FREE_THRESHOLD_EUR
             and not _is_combined_gemini and not _is_combined_speechify
             and not _is_combined_voxcpm):
@@ -7842,12 +7855,12 @@ def api_optimize():
         else:
             _chs_for_est_vox = _all_chs_vox
         try:
-            _est_vox = _combined_tts_estimate("voxcpm", _chs_for_est_vox, language=_lang_for_vox,
+            _est_vox = _combined_tts_estimate(_mname, _chs_for_est_vox, language=_lang_for_vox,
                                               **paren_strip_flags(data))
             _voxcpm_eur_quota = round(_est_vox.get("user_price_eur", 0.0), 2)
             _voxcpm_list_quota = round(_est_vox.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_vox:
-            return _combined_estimate_failed("voxcpm", _e_est_vox)
+            return _combined_estimate_failed(_mname, _e_est_vox)
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_vox = data.get("voice", "")
         _quota_who_vox = _premium_quota_who(job)
@@ -7888,7 +7901,7 @@ def api_optimize():
                     "error_code": ("free_quota_exhausted"
                                    if _quota_dec_vox["quota_exhausted"] else "payment_required"),
                     "total_eur": _expected_total_vox,
-                    "voxcpm_eur": _voxcpm_eur_quota,
+                    f"{_mname}_eur": _voxcpm_eur_quota,
                     "llm_eur": estimated_cost,
                     "threshold_eur": _threshold_vox,
                     **free_quota.client_fields(_quota_dec_vox),
@@ -7914,7 +7927,8 @@ def api_optimize():
             elif payment.voucher_info(_combined_token_vox) is not None:
                 try:
                     payment._voucher_consume(_combined_token_vox, _expected_total_vox,
-                                             job_id=job_id, service="voxcpm",
+                                             job_id=job_id,
+                                             service=payment.voucher_service_for_voice(_voice_vox),
                                              account_id=routes_account.current_account_id())
                     _v_vox = payment.voucher_info(_combined_token_vox) or {}
                     _consumed_method_vox = "voucher"
@@ -7942,7 +7956,7 @@ def api_optimize():
                     _expected_total_vox, estimated_cost),
                 "method": _consumed_method_vox,
                 "ts": time.time(),
-                "voxcpm_est": _est_vox,
+                f"{_mname}_est": _est_vox,
                 "llm_eur": float(estimated_cost),
                 "source": "combined_optimize_autogen",
             }
@@ -7953,13 +7967,13 @@ def api_optimize():
             job["payment_amount_eur"] = _expected_total_vox
             # Snapshot stima pre-LLM: allinea i campi *_est dell'audit al prezzo
             # lockato in payment["total_eur"] (come per Gemini/Speechify).
-            job["voxcpm_estimate"] = _est_vox
+            job[tts_engines.ENGINES[_mname].estimate_key] = _est_vox
             print(f"[{job_id}] combined payment consumed at /api/optimize: "
-                  f"voxcpm={_voxcpm_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
+                  f"{_mname}={_voxcpm_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                   f"= {_expected_total_vox:.2f}€ ({_consumed_method_vox})")
             # Batch implicito per job PAGATO (vedi ramo Gemini sopra).
             _register_paid_job_batch(
-                job_id, job, _combined_token_vox, engine="VoxCPM",
+                job_id, job, _combined_token_vox, engine=_mname,
                 lang=data.get("lang", "en"), email=_consumed_email_vox,
                 pending_kind="")
 

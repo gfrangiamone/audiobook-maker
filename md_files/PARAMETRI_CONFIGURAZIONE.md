@@ -1141,9 +1141,17 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 
 ---
 
-## 8b. Pocket TTS (worker abm-pocket-worker su VPS, solo catalogo) (`pocket_tts.py`)
+## 8b. Pocket TTS — modello «Audiobook Maker (batch)» (worker abm-pocket-worker su VPS) (`pocket_tts.py`, `pocket_catalog.py`)
 
-Motore a chunk diretto come Speechify: una `POST /v1/synthesize` per chunk verso il worker `gfrangiamone/abm-pocket-worker` (VPS a canone fisso, `https://pocketts.audiobook-maker.com`), PCM 16-bit mono a 24 kHz. Voci `pocket:v1:<locale>/<Nome>` = le voci di riferimento di `voxcpm2/voci_inventate`, caricate sul worker come stati `.safetensors` (`tools/export_voices.py` del worker). Il worker normalizza il testo italiano e carica una sola lingua (oggi `italian_24l`). **Non ha listino**: dove e' acceso genera gratis, quindi le due variabili vanno solo nell'istanza del catalogo (`scripts/run_catalog_local.ps1`), mai nell'unit di produzione. Senza le due variabili `_premium_model_gate` rifiuta la voce con `pocket_not_configured`.
+Motore a chunk diretto come Speechify: una `POST /v1/synthesize` per chunk verso il worker `gfrangiamone/abm-pocket-worker` (VPS a canone fisso, `https://pocketts.audiobook-maker.com`), PCM 16-bit mono a 24 kHz. Voci `pocket:v1:<locale>/<Nome>` = le voci inventate del catalogo VoxCPM, caricate sul worker come stati `.safetensors` calcolati da un taglio di ~10 s del campione. Lingue del worker: it, en, es, fr, de, pt, nl (un modello per lingua, uno caricato alla volta). Per l'utente e' il modello «lento» a prezzo basso: niente gratuita', niente anteprima sul testo del libro, niente voci campionate, niente velocita'. Senza `ABM_POCKET_URL` + `ABM_POCKET_TOKEN` `_premium_model_gate` rifiuta la voce con `pocket_not_configured`.
+
+**Coda per libro** (dal 13/11/2026): il worker serve un libro alla volta. `generation_engine._direct_presynth` apre un `pocket_tts.BookTicket` (id = job di ABM, `PUT /v1/books/<id>`), aspetta il turno interrogando `GET /v1/books/<id>` (pausa = un quarto dell'attesa stimata, fra 15 e 120 s, annullo controllato ogni 5 s), passa il biglietto a ogni chunk (`book`, `book_chars`, `priority` nel payload) e alla fine lo chiude (`DELETE`). Un chunk che torna 423 (libro scavalcato da uno a priorita' piu' alta) aspetta di nuovo il turno dentro lo stesso tentativo; un 404 sul controllo ridichiara il libro. Posizione e stime finiscono in `job["book_queue"]` (`state`, `position` da 1, `wait_s`, `eta_s`, `at`) e, in coda, `progress_message = "Queued for synthesis..."`. La stima di consegna per l'UI (`pocket_breakdown.delivery` in `combined_estimate`) viene da `GET /v1/eta`, timeout 5 s, `None` se il worker non risponde.
+
+**Voci offerte** (`pocket_catalog.py`): le voci del catalogo VoxCPM nelle lingue di `ABM_POCKET_LANGUAGES` che hanno una clip dimostrativa Pocket in `demos.json` dentro `ABM_POCKET_DEMO_DIR` (clip prodotte da `tools/make_demos.py` del worker). Consegnare la cartella accende le voci; senza `demos.json` il modello non compare. Le clip si ascoltano da `/api/voice_demo` come quelle VoxCPM.
+
+**Due usi**, decisi dalla tariffa:
+- `ABM_POCKET_RATE_EUR_PER_MCHAR` > 0 (produzione): a pagamento per tutti, mai gratuito (`free_quota.never_free`: la quota gratuita non si legge ne' si consuma), prezzo = max(tariffa x caratteri, `ABM_POCKET_MIN_PRICE_EUR`); in `/api/voices` (`_pocket.available`) e nel selettore MODELLO.
+- `ABM_POCKET_RATE_EUR_PER_MCHAR=0` (istanze locali del catalogo, `scripts/run_catalog_local.ps1`): prezzo zero, soglia `FREE_THRESHOLD_EUR = 0.01`, il modello non si mostra agli utenti; va con `ABM_POCKET_PRIORITY=0` per passare dietro ai libri di produzione.
 
 | Variabile | Descrizione | Default | File |
 |---|---|---|---|
@@ -1153,10 +1161,18 @@ Motore a chunk diretto come Speechify: una `POST /v1/synthesize` per chunk verso
 | `ABM_POCKET_PER_JOB_CONCURRENCY` | Chunk in volo per singolo job: il worker ha un processo per vCPU (16 sul VPS). | `16` | `pocket_tts.py` `per_job_concurrency()` |
 | `ABM_POCKET_ATTEMPTS` | Tentativi per chunk su rete, 429 e 5xx (502 chunk fallito sul worker, 503 riavvio, 504 coda): backoff 5-10-20-40-60 s, copre un deploy del worker. Un 4xx (voce assente sul worker) non si ritenta. | `5` | `pocket_tts.py` `attempts()` |
 | `ABM_POCKET_CHUNK_CHARS` | Cap caratteri per chunk, clampato a `[80, 1000]` (1000 = `POCKET_MAX_CHUNK_CHARS` del worker). | `280` | `pocket_tts.py` `chunk_max_chars()` |
+| `ABM_POCKET_RATE_EUR_PER_MCHAR` | Tariffa all'utente in EUR per milione di caratteri, uguale in ogni lingua. `0` = modo catalogo (gratis, modello nascosto). | `11` | `pocket_tts.py` `rate_eur_per_mchar()` |
+| `ABM_POCKET_MIN_PRICE_EUR` | Prezzo minimo per libro sul motore a pagamento. | `0.50` | `pocket_tts.py` `min_price_eur()` |
+| `ABM_POCKET_PRIORITY` | Priorita' dei libri di questa istanza nella coda del worker (fra -100 e 100): passa avanti la piu' alta. Produzione `10`, catalogo `0`. | `10` | `pocket_tts.py` `priority()` |
+| `ABM_POCKET_MAX_QUEUE_WAIT_S` | Attesa massima del turno in coda (minimo 60 s); oltre, `PocketQueueTimeout`: job fallito e rimborsato come a motore spento. | `172800` (48 h) | `pocket_tts.py` `max_queue_wait_s()` |
+| `ABM_POCKET_DEMO_DIR` | Cartella delle clip dimostrative Pocket con `demos.json` (`<lingua>-<PAESE>/<Nome>-<clip>.wav`). | `<repo>/pocket_demo` (gitignorata) | `pocket_catalog.py` `demo_dir()` |
+| `ABM_POCKET_LANGUAGES` | Lingue offerte, codici a due lettere separati da virgola, dentro quelle del worker. Vuota = tutte. | — (it,en,es,fr,de,pt,nl) | `pocket_catalog.py` `languages()` |
 
 - Timeout HTTP per chiamata `960` s: il worker tiene il chunk in coda fino a `POCKET_SYNC_TIMEOUT_S` (900).
 - Velocita' ed emozione non si applicano: Pocket legge al ritmo della voce.
-- Prezzo sempre 0 (`compute_user_price_eur`), soglia di gratuita' `FREE_THRESHOLD_EUR = 0.01`; l'audit (`provider: "pocket"`) registra caratteri e secondi di audio a costo zero.
+- Timeout delle chiamate di coda (`PUT/GET/DELETE /v1/books`) `30` s, della stima `/v1/eta` `5` s.
+- `cost_usd` sempre 0 (canone fisso del VPS); l'audit (`provider: "pocket"`) registra caratteri e secondi di audio. Sul cancel la trattenuta si calcola su `list_price_eur` dei caratteri gia' letti, senza minimo.
+- Voucher: servizio `pocket` (`payment.VOUCHER_SERVICES`), etichetta «Audiobook Maker (batch)» nelle email e nella console voucher.
 - Riuso dei chunk dopo un riavvio: `pocket` e' in `chunk_reuse.REUSABLE_ENGINES` (sample rate fisso) e la pre-sintesi salta i chunk riusati.
 
 ---

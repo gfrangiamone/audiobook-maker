@@ -1116,12 +1116,13 @@ _VOUCHER_SERVICE_LABELS = {
     "llm": "AI text optimisation",
     "translate": "AI book translation",
     "voxcpm": "Audiobook Maker TTS voices (VoxCPM2)",
+    "pocket": "PREMIUM voices, Audiobook Maker (batch) model",
     "flash31": "PREMIUM voices, Gemini 3.1 TTS model",
     "flash38": "PREMIUM voices, Gemini 3.8 (PREMIUM+) model",
     "speechify": "PREMIUM voices, Simba 3.2 model",
     "voice_clone": "Voice cloning (your own sampled voice)",
 }
-_VOUCHER_TTS_SERVICES = ("voxcpm", "flash31", "flash38", "speechify")
+_VOUCHER_TTS_SERVICES = ("voxcpm", "pocket", "flash31", "flash38", "speechify")
 
 
 def _voucher_services_html(services):

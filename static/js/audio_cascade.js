@@ -42,17 +42,21 @@ function _ePremium(id) {
   if (typeof id !== 'string') return false;
   return id.indexOf('gemini:') === 0
       || id.indexOf('voxcpm:') === 0
+      || id.indexOf('pocket:') === 0
       || id.indexOf('speechify:') === 0;
 }
 
 /* Modelli premium disponibili per la lingua. L'ordine e' quello mostrato
-   nel selettore, e il primo e' anche il predefinito: VOXCPM2, Simba, poi i
-   Gemini (3.1, 3.8 PREMIUM+). */
+   nel selettore, e il primo e' anche il predefinito: VOXCPM2, il modello
+   batch (lento, a prezzo basso, sulle stesse voci), Simba, poi i Gemini
+   (3.1, 3.8 PREMIUM+). */
 function modelliPer(catalog, lang) {
   var voci = _voci(catalog, lang);
   var out = [];
   var voxAttivo = !!(catalog && catalog._voxcpm && catalog._voxcpm.available);
   if (voxAttivo && _haPrefisso(voci, 'voxcpm:')) out.push('voxcpm');
+  var pocketAttivo = !!(catalog && catalog._pocket && catalog._pocket.available);
+  if (pocketAttivo && _haPrefisso(voci, 'pocket:')) out.push('pocket');
   if (lang === 'en' && _haPrefisso(voci, 'speechify:simba-3.2:')) out.push('simba-3.2');
   /* Un modello Gemini per volta: il server puo' spegnerne uno (interruttore
      ABM_<MODELLO>_ENABLE o canale non disponibile) e allora le sue voci non
@@ -149,6 +153,7 @@ function localiStandard(catalog, lang) {
  * silenziosamente, mentre questo non restituisce nulla e il difetto si vede. */
 function vociPremium(catalog, lang, model) {
   var prefisso = model === 'voxcpm' ? 'voxcpm:'
+               : model === 'pocket' ? 'pocket:'
                : model === 'simba-3.2' ? 'speechify:simba-3.2:'
                : 'gemini:' + model + ':';
   var out = [];

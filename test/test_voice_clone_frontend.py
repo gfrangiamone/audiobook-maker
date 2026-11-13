@@ -45,8 +45,10 @@ def test_vociMie_esportata():
 
 def test_combo_voxcpm_mette_le_voci_personali_in_testa():
     corpo = _estrai_funzione(JS, "updVoicesPremium")
-    ramo = corpo[corpo.index("vmEl.value==='voxcpm'"):corpo.index("simba-3.2")]
+    ramo = corpo[corpo.index("_isVoxcpmModelSelected()"):corpo.index("simba-3.2")]
     assert "vociMie(" in ramo
+    # Il modello batch legge le stesse voci di catalogo ma non le campionate.
+    assert "!_isPocketModelSelected()&&typeof vociMie" in ramo
     assert "t('vc_group_mine')" in ramo
     assert ramo.index("vc_group_mine") < ramo.index("'♀'"), "il gruppo Le tue voci deve precedere i gruppi di catalogo"
     assert "_vcJustCreated" in ramo

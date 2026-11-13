@@ -31,7 +31,7 @@ from pathlib import Path
 import free_tts_quota
 from fileio import data_dir
 from monthly_ledger import MonthlyLedger, month_key
-from voice_utils import is_speechify_voice, is_voxcpm_voice
+from voice_utils import is_pocket_voice, is_speechify_voice, is_voxcpm_voice
 
 _KEEP_MONTHS = 3
 _ANON = "_anon"
@@ -212,8 +212,23 @@ def client_fields(dec):
     }
 
 
+def _pocket():
+    # Import locale come per voxcpm_tts sotto: il listino vive nel modulo del
+    # motore e free_quota resta importabile senza le sue dipendenze.
+    import pocket_tts
+    return pocket_tts
+
+
+def never_free(voice_id):
+    """True per un motore senza gratuita' (Pocket a pagamento): niente soglia
+    ne' quota, si paga sempre il listino col minimo per libro."""
+    return is_pocket_voice(voice_id) and _pocket().is_paid()
+
+
 def _premium_threshold_eur(voice_id):
     """Soglia sotto la quale il job premium e' gratuito, per motore."""
+    if is_pocket_voice(voice_id):
+        return _pocket().free_threshold_eur()
     if is_voxcpm_voice(voice_id):
         return _env_float("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.50")
     if is_speechify_voice(voice_id):
@@ -228,7 +243,10 @@ def _premium_floor_eur(voice_id):
     scorporare la lettura dal corpo di `decision()` non cambia il loro prezzo.
     VoxCPM ha la sua perche' il suo costo non sta nei caratteri ma
     nell'accensione del worker (§8.3), e il minimo esiste proprio per quello.
+    Pocket ha il minimo per libro del suo listino (`ABM_POCKET_MIN_PRICE_EUR`).
     """
+    if is_pocket_voice(voice_id):
+        return _pocket().min_price_eur()
     if is_voxcpm_voice(voice_id):
         return _env_float("ABM_VOXCPM_MIN_COST_EUR", "0.50")
     return _env_float("ABM_PREMIUM_MIN_COST_EUR", "0.50")
@@ -308,6 +326,11 @@ def decision(client_id, voice_id, list_total_eur, job_id=None, book_chars=None,
         "threshold_eur": threshold,
         "list_total_eur": list_total,
     }
+    if never_free(voice_id):
+        # Motore senza gratuita': la quota non si legge ne' si consuma.
+        out["due_eur"] = round(max(list_total, _premium_floor_eur(voice_id)), 2)
+        out["threshold_eur"] = 0.0
+        return out
     if list_total > threshold:
         # Job gia' a pagamento: la quota non c'entra, percorso invariato.
         return out

@@ -200,7 +200,8 @@ const SERVER_MSG_KEYS={
   "Completion email sent.":"opt_email_sent",
   "Optimization complete (email error, retry manually).":"opt_done_email_error",
   "Optimization complete!":"opt_done",
-  "Optimization cancelled":"opt_cancelled"
+  "Optimization cancelled":"opt_cancelled",
+  "Queued for synthesis...":"book_queued"
 };
 // Il messaggio del capitolo in lavorazione porta dentro numeri e titolo,
 // quindi non e' una stringa fissa da mappare. Il client lo riconosce da qui e
@@ -1156,6 +1157,7 @@ function _tOr(k,ripiego){
    l'i18n non copre: se scattano, scattano per tutti. */
 function _modelLabel(m){
   if(m==='voxcpm')return _tOr('lbl_model_voxcpm','Audiobook Maker (VOXCPM2)');
+  if(m==='pocket')return _tOr('lbl_model_pocket','Audiobook Maker (batch)');
   if(m==='flash31')return _tOr('lbl_model_flash31','Gemini 3.1 TTS');
   if(m==='flash38')return _tOr('lbl_model_flash38','Gemini 3.8 (PREMIUM+)');
   if(m==='simba-3.2')return _tOr('lbl_model_simba','Simba 3.2');
@@ -1339,10 +1341,28 @@ function _isSpeechifyModelSelected(){
 }
 
 function _isVoxcpmVoiceId(id){return typeof id==='string'&&id.indexOf('voxcpm:')===0;}
+function _isPocketVoiceId(id){return typeof id==='string'&&id.indexOf('pocket:')===0;}
+// Voce del catalogo delle voci inventate: VoxCPM o il modello batch, che
+// legge le stesse voci con un altro motore. Ascolto dalle clip, niente
+// anteprima.
+function _isCatalogVoiceId(id){return _isVoxcpmVoiceId(id)||_isPocketVoiceId(id);}
 
+// Vero per i due modelli del catalogo delle voci inventate (VoxCPM e batch):
+// stessi controlli (accento, voce col carattere, clip d'ascolto).
 function _isVoxcpmModelSelected(){
   const vm=document.getElementById('vmPremium');
-  return !!(vm&&vm.value==='voxcpm');
+  return !!(vm&&(vm.value==='voxcpm'||vm.value==='pocket'));
+}
+function _isPocketModelSelected(){
+  const vm=document.getElementById('vmPremium');
+  return !!(vm&&vm.value==='pocket');
+}
+// Prefisso degli id del modello di catalogo selezionato.
+function _catalogPrefix(){return _isPocketModelSelected()?'pocket:v1:':'voxcpm:v2:';}
+// La stessa voce nel modello selezionato: passando da VoxCPM al batch (e
+// ritorno) resta scelta la voce che l'utente ha ascoltato.
+function _sameCatalogVoice(id){
+  return (typeof id==='string')?id.replace(/^(voxcpm:v2|pocket:v1):/,_catalogPrefix()):id;
 }
 
 // Selezioni VoxCPM persistite fuori dal DOM. Stessa ragione documentata per
@@ -1361,7 +1381,7 @@ let _geminiVoiceSel='';
    combo: e' il prefisso a decidere di quale motore e' quella voce. */
 function _allineaMemoriaVocePremium(id){
   if(typeof id!=='string'||!id)return;
-  if(id.startsWith('voxcpm:'))_voxcpmVoiceSel=id;
+  if(_isCatalogVoiceId(id))_voxcpmVoiceSel=id;
   else if(id.startsWith('speechify:'))_speechifyVoiceSel=id;
   else if(id.startsWith('gemini:'))_geminiVoiceSel=id;
 }
@@ -1379,20 +1399,20 @@ let _catalogVoice='';
   q.delete('voice');
   const qs=q.toString();
   history.replaceState(null,'',location.pathname+(qs?'?'+qs:'')+location.hash);
-  if(/^(gemini|voxcpm):[A-Za-z0-9À-ÖØ-öø-ſ:_\/.-]+$/.test(v))_catalogVoice=v;
+  if(/^(gemini|voxcpm|pocket):[A-Za-z0-9À-ÖØ-öø-ſ:_\/.-]+$/.test(v))_catalogVoice=v;
 })();
 function _applyCatalogVoice(){
   if(!_catalogVoice||wizMode!=='audio')return;
   const id=_catalogVoice;
   _catalogVoice='';
-  const model=id.startsWith('voxcpm:')?'voxcpm':id.split(':')[1];
+  const model=_isCatalogVoiceId(id)?id.split(':')[0]:id.split(':')[1];
   const vm=document.getElementById('vmPremium');
   if(!vm||!Array.prototype.some.call(vm.options,o=>o.value===model))return;
   if(wizardState.audioTab!=='premium')switchAudioTab('premium');
   // Manutenzione o testo oltre il tetto PREMIUM: switchAudioTab non cambia tab.
   if(wizardState.audioTab!=='premium')return;
   _allineaMemoriaVocePremium(id);
-  if(model==='voxcpm'){
+  if(model==='voxcpm'||model==='pocket'){
     const loc=(id.split(':')[2]||'').split('/')[0];
     if(loc)_voxcpmAccentSel=loc;
   }
@@ -1413,6 +1433,9 @@ function _onPremiumModelChanged(){
   // solo VoxCPM.
   if(styleRow)styleRow.hidden=simba||vox;
   if(emoRow)emoRow.hidden=!simba;
+  // Il modello batch legge sempre al passo della voce: niente velocita'.
+  const speedRow=document.getElementById('speedRow');
+  if(speedRow)speedRow.hidden=_isPocketModelSelected();
   /* Il box d'ascolto vive FUORI da #tabPremium (sta nella
      .preview-cost-row, accanto alla stima costo e sotto lo slider della
      velocita' che lo influenza): tabPremium.hidden non lo copre. E questa
@@ -1469,7 +1492,8 @@ function _voxcpmVoicesForLang(){
   const lang=bookLangState.code||'it';
   const d=voices&&voices[lang];
   const arr=(d&&Array.isArray(d.voices))?d.voices:[];
-  return arr.filter(v=>v&&_isVoxcpmVoiceId(v.id));
+  const pref=_catalogPrefix();
+  return arr.filter(v=>v&&typeof v.id==='string'&&v.id.indexOf(pref)===0);
 }
 
 function _populateVoxcpmAccents(){
@@ -1545,7 +1569,7 @@ function _voxcpmLocaleLabel(loc){
 function _voxcpmSelectedVoice(){
   const sel=document.getElementById('vvPremium');
   const id=sel?sel.value:'';
-  if(!_isVoxcpmVoiceId(id))return null;
+  if(!_isCatalogVoiceId(id))return null;
   for(const v of _voxcpmVoicesForLang())if(v.id===id)return v;
   // Voci personali (campionate): stessa forma delle voci di catalogo.
   const mie=(typeof vociMie==='function')?vociMie(voices,bookLangState.code||'it',''):[];
@@ -1637,6 +1661,7 @@ function _syncVoxcpmClipIcons(){
 // proprietario (voice_clone.speed), che va moltiplicata qui.
 function _voxcpmListenRate(){
   const vr=document.getElementById('vr');
+  if(_isPocketModelSelected())return 1;
   const pct=parseFloat(String((vr&&vr.value)||'+0%').replace('%','').replace('+',''))||0;
   const v=_voxcpmSelectedVoice();
   const base=(v&&v.mine&&Number(v.speed)>0)?Number(v.speed):1;
@@ -1726,15 +1751,17 @@ function updVoicesPremium(){
   // menu' non compongono una richiesta al motore: sono filtri su un
   // catalogo (§5.1). Il carattere non e' un filtro: e' scritto accanto al
   // nome di ogni voce, dove distingue senza confondere.
-  if(vmEl&&vmEl.value==='voxcpm'){
+  if(_isVoxcpmModelSelected()){
     const loc=_voxcpmAccentSel;
     const lista=_voxcpmVoicesForLang().filter(v=>!loc||v.locale===loc);
-    let prevVoice=_voxcpmVoiceSel||sel.value;
+    let prevVoice=_sameCatalogVoice(_voxcpmVoiceSel||sel.value);
     sel.innerHTML='';
     // Le voci personali del dispositivo con lingua e accento coincidenti
     // stanno in un gruppo in testa (spec §3.8). Se ce n'e' una sola ed e' la
-    // prima popolazione dopo la creazione, e' preselezionata.
-    const mie=(typeof vociMie==='function')?vociMie(voices,bookLangState.code||'it',loc):[];
+    // prima popolazione dopo la creazione, e' preselezionata. Il modello
+    // batch non legge le voci campionate.
+    const mie=(!_isPocketModelSelected()&&typeof vociMie==='function')
+      ?vociMie(voices,bookLangState.code||'it',loc):[];
     if(mie.length){
       const gm=document.createElement('optgroup');
       gm.label=t('vc_group_mine');
@@ -2332,6 +2359,9 @@ function renderEstimate(data){
       }
       if(extra)segs.push(extra);
       if(minsStr)segs.push(minsStr);
+      // Modello batch: quando arriva il libro, non solo quanto costa.
+      const deliv=_pocketDeliveryText(data);
+      if(deliv)segs.push(deliv);
       detailEl.textContent=segs.join(' · ');
     }
   }
@@ -2493,7 +2523,8 @@ function _paySubHintRender(ctx) {
   const sub = promo && _acctMe.subscription;
   const purpose = ctx.voucherPurpose || '';
   const svc = (purpose === 'llm' || purpose === 'translate') ? purpose
-    : (purpose === 'gemini' && _isVoxcpmVoiceId(ctx.voucherVoice)) ? 'voxcpm' : '';
+    : (purpose === 'gemini' && _isVoxcpmVoiceId(ctx.voucherVoice)) ? 'voxcpm'
+    : (purpose === 'gemini' && _isPocketVoiceId(ctx.voucherVoice)) ? 'pocket' : '';
   const total = Number(ctx.total) || 0;
   el.hidden = !(sub && sub.enabled && !sub.subscription && !generating && svc
     && (promo.services || []).indexOf(svc) >= 0 && total > 0 && total <= Number(promo.max_eur));
@@ -2574,8 +2605,33 @@ function _payMinNoteText(estimate, adjust){
   return segs.join(' ');
 }
 
+// Importo del TTS premium della stima: un solo motore e' attivo per volta.
+function _premiumTtsEur(est){
+  return ['gemini_eur','speechify_eur','voxcpm_eur','pocket_eur']
+    .reduce((s,k)=>s+(Number(est&&est[k])||0),0);
+}
+
+// Stima di consegna del modello batch per il modale di pagamento: dalla coda
+// del worker quando risponde, altrimenti l'avviso generico. '' per gli altri
+// motori.
+function _pocketDeliveryText(est){
+  if(!(Number(est&&est.pocket_eur)>0))return '';
+  const d=est.pocket_breakdown&&est.pocket_breakdown.delivery;
+  if(d&&typeof d.eta_s==='number'&&d.eta_s>0)
+    return (t('pocket_delivery_eta')||'').replace('{eta}',fmtDur(d.eta_s/60));
+  return t('pocket_delivery_unknown')||'';
+}
+
+// Posto del libro nella coda del modello batch (job["book_queue"] via SSE):
+// testo per la riga di stato finche' il libro non e' di turno, '' dopo.
+function _bookQueueText(q){
+  if(!q||q.state==='active'||typeof q.position!=='number')return '';
+  return (t('book_queue_pos')||'').replace('{pos}',q.position)
+    .replace('{wait}',fmtDur((Number(q.wait_s)||0)/60));
+}
+
 function openPaymentModal(estimate) {
-  const _premium = (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0)+(Number(estimate.voxcpm_eur)||0);
+  const _premium = _premiumTtsEur(estimate);
   const _adjust = Math.max(0, Math.round(((Number(estimate.total_eur)||0)
     - _premium - (Number(estimate.llm_eur)||0)) * 100) / 100);
   _openPayModalCtx({
@@ -2590,7 +2646,8 @@ function openPaymentModal(estimate) {
     ],
     total: estimate.total_eur,
     minAdjust: _adjust,
-    minNote: _payMinNoteText(estimate, _adjust),
+    minNote: [_payMinNoteText(estimate, _adjust), _pocketDeliveryText(estimate)]
+      .filter(Boolean).join(' '),
     geminiAmount: _premium,
     voucherPurpose: 'gemini',
     // Voce attiva: il server verifica che il buono copra quel modello TTS.
@@ -2692,7 +2749,7 @@ async function _refreshQuoteInPayModal(serverAmount){
   const est=_estimateCache&&_estimateCache.value;
   const tot=(est&&typeof est.total_eur==='number')?est.total_eur:(Number(serverAmount)||0);
   if(!(tot>0))return;
-  const gem=est?((Number(est.gemini_eur)||0)+(Number(est.speechify_eur)||0)):tot;
+  const gem=est?_premiumTtsEur(est):tot;
   _payState.total=tot;_payState.gemini=gem;
   const gEl=document.getElementById('payLineGemini');
   if(gEl)gEl.textContent=(gem>0)?('€'+gem.toFixed(2)):'—';
@@ -3053,7 +3110,7 @@ function _updatePreviewBtn(){
   // /api/preview risponde 400 per queste voci. Spegnere il bottone evita
   // all'utente un errore per una funzione che gli e' stata sostituita.
   const sez=document.getElementById('previewSection');
-  const vox=_isVoxcpmVoiceId(getCurrentVoiceId());
+  const vox=_isCatalogVoiceId(getCurrentVoiceId());
   if(sez)sez.hidden=vox;
   if(vox){btn.disabled=true;btn.classList.remove('loading');return;}
   const ok=!!(bookData&&bookData.preview_text&&!generating&&!jobDone);
@@ -5183,7 +5240,7 @@ function listenProgress(){
       // Un solo messaggio, gia' tradotto, per i due riquadri: progressPhase
       // mostrava la stringa cruda del server accanto a pMsg tradotto, e nello
       // stesso pannello convivevano due lingue.
-      const msg=tServerMsg(d.progress_message);
+      const msg=_bookQueueText(d.book_queue)||tServerMsg(d.progress_message);
       _legacyTxt('pMsg',msg);
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
@@ -5199,7 +5256,12 @@ function listenProgress(){
       if(d.elapsed_seconds>0)
         _legacyTxt('xEl',fmtTime(d.elapsed_seconds));
 
-      if(d.processed_chars>0&&d.elapsed_seconds>1&&d.total_chars>0){
+      // In coda la velocita' misurata non dice nulla: vale la consegna
+      // stimata dal worker.
+      const _q=d.book_queue;
+      if(_q&&_q.state!=='active'&&Number(_q.eta_s)>0)
+        _legacyTxt('xEta','~'+fmtTime(Math.round(_q.eta_s)));
+      else if(d.processed_chars>0&&d.elapsed_seconds>1&&d.total_chars>0){
         const cps=d.processed_chars/d.elapsed_seconds;
         const left=d.total_chars-d.processed_chars;
         const eta=Math.round(left/cps);
@@ -5859,7 +5921,7 @@ function cancelJob(){
   var voice=_activeJobVoiceId();
   // Tutte le voci PREMIUM chiedono conferma: il cancel trattiene la quota
   // gia' sintetizzata (VoxCPM/Speechify compresi, senza audio parziale).
-  if(_isGeminiVoiceId(voice)||_isSpeechifyVoiceId(voice)||_isVoxcpmVoiceId(voice)){
+  if(_isGeminiVoiceId(voice)||_isSpeechifyVoiceId(voice)||_isCatalogVoiceId(voice)){
     // Snapshot autoritativo dal server: paid_eur viene letto da
     // job.payment.total_eur (stessa fonte usata dal refund handler).
     // Evita race condition con SSE quando l'utente fa F5 e clicca cancel

@@ -192,7 +192,7 @@ def test_il_cancello_del_pagamento_non_guarda_il_catalogo():
 def test_generate_pretende_il_pagamento_sulle_voci_premium():
     """Il ramo 402 vive nel route, keyed sull'id della voce."""
     sorgente = _sorgente_app()
-    assert 'if _is_speechify_voice(voice) or _is_voxcpm_voice(voice):' in sorgente
+    assert 'if _direct_eng is not None and _direct_eng.name != "gemini":' in sorgente
     assert '"error": "payment_required"' in sorgente
 
 

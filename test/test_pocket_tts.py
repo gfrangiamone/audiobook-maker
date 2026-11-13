@@ -22,10 +22,16 @@ def worker_env(monkeypatch):
 
 
 class _Resp:
-    def __init__(self, status, content=b"", text=""):
+    def __init__(self, status, content=b"", text="", body=None):
         self.status_code = status
         self.content = content
         self.text = text
+        self.body = body
+
+    def json(self):
+        if self.body is None:
+            raise ValueError("no json")
+        return self.body
 
 
 class _Session:
@@ -65,14 +71,55 @@ def test_available_only_with_url_and_token(monkeypatch):
     assert pocket_tts.is_available()
 
 
-def test_price_is_zero_and_estimate_counts_chars():
+def test_price_flat_rate_with_book_minimum(monkeypatch):
+    monkeypatch.delenv("ABM_POCKET_RATE_EUR_PER_MCHAR", raising=False)
+    monkeypatch.delenv("ABM_POCKET_MIN_PRICE_EUR", raising=False)
+    big = pocket_tts.compute_user_price_eur(1_000_000, "de")
+    assert big["list_price_eur"] == big["user_price_eur"] == 11.0 and not big["is_free"]
+    assert big["cost_usd"] == 0.0 and big["free_threshold_eur"] == 0.0
+    small = pocket_tts.compute_user_price_eur(10_000, "it")
+    assert small["list_price_eur"] == 0.11 and small["user_price_eur"] == 0.5   # minimo per libro
+    assert pocket_tts.compute_user_price_eur(0)["user_price_eur"] == 0.5        # mai gratis
+    monkeypatch.setenv("ABM_POCKET_RATE_EUR_PER_MCHAR", "20")
+    monkeypatch.setenv("ABM_POCKET_MIN_PRICE_EUR", "1.5")
+    assert pocket_tts.compute_user_price_eur(1_000_000)["user_price_eur"] == 20.0
+    assert pocket_tts.compute_user_price_eur(10_000)["user_price_eur"] == 1.5
+
+
+def test_catalog_mode_is_free_and_not_offered(worker_env, monkeypatch):
+    assert pocket_tts.is_paid() and pocket_tts.is_offered()
+    monkeypatch.setenv("ABM_POCKET_RATE_EUR_PER_MCHAR", "0")
     price = pocket_tts.compute_user_price_eur(1_000_000, "it")
     assert price["user_price_eur"] == price["list_price_eur"] == 0.0 and price["is_free"]
+    assert not pocket_tts.is_paid() and not pocket_tts.is_offered()
+    assert pocket_tts.free_threshold_eur() == pocket_tts.FREE_THRESHOLD_EUR
+
+
+def test_estimate_counts_chars_and_consumed_uses_list_price():
     chs = [types.SimpleNamespace(title="", text="Uno due tre."), types.SimpleNamespace(title="", text="Quattro.")]
     est = tts_engines.estimate("pocket", chs, language="it")
     assert est["chars_total"] == len("Uno due tre.") + len("Quattro.")
-    assert est["user_price_eur"] == 0.0 and est["model_label"] == pocket_tts.MODEL_LABEL
-    assert tts_engines.ENGINES["pocket"].consumed_list_price_eur({"pocket_actual": {"chars": 500}}) == 0.0
+    assert est["user_price_eur"] == pocket_tts.min_price_eur() and est["model_label"] == pocket_tts.MODEL_LABEL
+    consumed = tts_engines.ENGINES["pocket"].consumed_list_price_eur({"pocket_actual": {"chars": 500_000}})
+    assert consumed == pocket_tts.compute_user_price_eur(500_000)["list_price_eur"] == 5.5
+
+
+def test_free_quota_never_free_for_paid_pocket(monkeypatch, tmp_path):
+    import free_quota
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("ABM_POCKET_RATE_EUR_PER_MCHAR", raising=False)
+    assert free_quota.never_free(VOICE) and not free_quota.never_free("voxcpm:v2:it-IT/Chiara")
+    d = free_quota.decision("cid-x", VOICE, 0.11, job_id="J1", book_chars=10_000, language="it")
+    assert d["due_eur"] == 0.5 and not d["is_free"] and d["threshold_eur"] == 0.0
+    assert free_quota.decision("cid-x", VOICE, 3.2)["due_eur"] == 3.2
+    monkeypatch.setenv("ABM_POCKET_RATE_EUR_PER_MCHAR", "0")
+    assert not free_quota.never_free(VOICE)
+
+
+def test_voice_language():
+    assert pocket_tts.voice_language("pocket:v1:de-DE/Franziska") == "de"
+    with pytest.raises(ValueError):
+        pocket_tts.voice_language("voxcpm:v2:de-DE/Franziska")
 
 
 # --- client HTTP ---------------------------------------------------------------
@@ -181,3 +228,202 @@ def test_model_gate_rejects_pocket_without_worker(monkeypatch):
         monkeypatch.setenv("ABM_POCKET_URL", "https://pocket.example")
         monkeypatch.setenv("ABM_POCKET_TOKEN", "tok")
         assert audiobook_app._premium_model_gate(VOICE) is None
+
+
+# --- coda per libro (BookTicket) ------------------------------------------------
+
+QUEUED = {"state": "queued", "position": 1, "wait_s": 100, "eta_s": 400}
+ACTIVE = {"state": "active", "position": 0, "wait_s": 0, "eta_s": 300}
+
+
+class _QSession:
+    """Risposte in coda per metodo HTTP; registra (metodo, url, json)."""
+
+    def __init__(self, **by_method):
+        self.resp = {m: list(v) for m, v in by_method.items()}
+        self.calls = []
+
+    def _take(self, method, url, json=None):
+        self.calls.append((method, url, json))
+        r = self.resp[method].pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    def put(self, url, json=None, headers=None, timeout=None):
+        return self._take("put", url, json)
+
+    def get(self, url, headers=None, timeout=None):
+        return self._take("get", url)
+
+    def delete(self, url, headers=None, timeout=None):
+        return self._take("delete", url)
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+def _ticket(sess, clock, **kw):
+    return pocket_tts.BookTicket("J1", 5000, "de-DE", session=sess, sleep=clock.sleep, clock=clock, **kw)
+
+
+def test_ticket_join_waits_for_turn(worker_env):
+    sess, clock, seen = _QSession(put=[_Resp(200, body=QUEUED)],
+                                  get=[_Resp(200, body=QUEUED), _Resp(200, body=ACTIVE)]), _Clock(), []
+    t = _ticket(sess, clock, on_state=seen.append)
+    assert t.join() is True
+    assert sess.calls[0] == ("put", "https://pocket.example/v1/books/J1",
+                             {"lang": "de", "chars": 5000, "priority": 10})
+    assert [s["state"] for s in seen] == ["queued", "queued", "active"]
+    assert clock.t == 50                    # due pause da wait_s/4 = 25 s
+    assert t.chunk_fields() == {"book": "J1", "book_chars": 5000, "priority": 10}
+
+
+def test_ticket_join_cancelled_while_waiting(worker_env):
+    sess, clock = _QSession(put=[_Resp(200, body=QUEUED)]), _Clock()
+    t = _ticket(sess, clock, check_cancelled=lambda: clock.t >= 10)
+    assert t.join() is False
+    assert [c[0] for c in sess.calls] == ["put"]          # nessun controllo dopo l'annullo
+
+
+def test_ticket_times_out(worker_env, monkeypatch):
+    monkeypatch.setenv("ABM_POCKET_MAX_QUEUE_WAIT_S", "60")
+    far = {**QUEUED, "wait_s": 10_000}
+    sess, clock = _QSession(put=[_Resp(200, body=far)], get=[_Resp(200, body=far)] * 3), _Clock()
+    with pytest.raises(pocket_tts.PocketQueueTimeout):
+        _ticket(sess, clock).join()
+    assert issubclass(pocket_tts.PocketQueueTimeout, pocket_tts.PocketUnavailable)
+
+
+def test_ticket_redeclares_book_lost_by_worker(worker_env):
+    # Worker in riavvio alla dichiarazione, poi 404 (coda persa): il libro si
+    # ridichiara e riprende il turno.
+    sess, clock = _QSession(put=[requests.ConnectionError("giu'"), _Resp(200, body=ACTIVE)],
+                            get=[_Resp(404)]), _Clock()
+    assert _ticket(sess, clock).join() is True
+    assert [c[0] for c in sess.calls] == ["put", "get", "put"]
+
+
+def test_ticket_rejected_book_is_fatal_and_close_is_best_effort(worker_env):
+    sess, clock = _QSession(put=[_Resp(422, text="lingua")], delete=[requests.ConnectionError("x")]), _Clock()
+    t = _ticket(sess, clock)
+    with pytest.raises(pocket_tts.PocketFatalError):
+        t.join()
+    t.close()                                             # non solleva
+
+
+def test_synthesize_waits_turn_on_423_within_same_attempt(worker_env, tmp_path):
+    qs, clock = _QSession(get=[_Resp(200, body=ACTIVE)]), _Clock()
+    ticket = pocket_tts.BookTicket("J1", 100, "it", session=qs, sleep=clock.sleep, clock=clock)
+    sess = _Session(_Resp(423, body=QUEUED), _Resp(200, b"\x00\x00"))
+    res = pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess,
+                                book=ticket, max_attempts=1)
+    assert res["success"] and len(sess.calls) == 2 and ticket.state["state"] == "active"
+    payload = sess.calls[0][1]
+    assert (payload["book"], payload["book_chars"], payload["priority"]) == ("J1", 100, 10)
+
+
+def test_synthesize_cancelled_while_queued_is_fatal(worker_env, tmp_path):
+    ticket = pocket_tts.BookTicket("J1", 100, "it", check_cancelled=lambda: True,
+                                   session=_QSession(), sleep=lambda s: None)
+    sess = _Session(_Resp(423, body=QUEUED))
+    with pytest.raises(pocket_tts.PocketFatalError, match="cancelled"):
+        pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess, book=ticket)
+    assert len(sess.calls) == 1
+
+
+def test_estimate_delivery(worker_env, monkeypatch):
+    seen = {}
+
+    def _get(url, headers=None, params=None, timeout=None):
+        seen.update(url=url, params=params, timeout=timeout)
+        return _Resp(200, body={"position": 0, "wait_s": 0, "eta_s": 1200})
+
+    monkeypatch.setattr(pocket_tts.requests, "get", _get)
+    assert pocket_tts.estimate_delivery(48_000, "fr-FR")["eta_s"] == 1200
+    assert seen["url"] == "https://pocket.example/v1/eta"
+    assert seen["params"] == {"lang": "fr", "chars": 48_000, "priority": 10} and seen["timeout"] <= 5
+
+    def _down(*a, **k):
+        raise requests.ConnectionError("giu'")
+
+    monkeypatch.setattr(pocket_tts.requests, "get", _down)
+    assert pocket_tts.estimate_delivery(1, "it") is None
+    monkeypatch.delenv("ABM_POCKET_URL")
+    assert pocket_tts.estimate_delivery(1, "it") is None
+
+
+class _FakeTicket:
+    def __init__(self, book_id, chars, language, check_cancelled=None, on_state=None, joins=True):
+        self.args, self.on_state, self.closed, self.joins = (book_id, chars, language), on_state, False, joins
+
+    def join(self):
+        self.on_state({"state": "queued", "position": 2, "wait_s": 60, "eta_s": 600})
+        return self.joins
+
+    def close(self):
+        self.closed = True
+
+
+def test_presynth_holds_book_ticket_and_closes_it(monkeypatch, tmp_path):
+    plan = [{"text": f"chunk {i}"} for i in range(3)]
+    job, books, made = {}, [], []
+
+    def _fake(text, voice, path, emotion=None, rate="+0%", failure_info=None, book=None):
+        books.append(book)
+        pathlib.Path(path).write_bytes(b"\x00\x00")
+        return {"success": True, "bytes_written": 2, "sample_rate": 24000, "billable_chars": len(text)}
+
+    monkeypatch.setattr(ge, "generate_chunk_pcm_pocket", _fake)
+    monkeypatch.setattr(pocket_tts, "BookTicket", lambda *a, **k: made.append(_FakeTicket(*a, **k)) or made[-1])
+    out = ge._direct_presynth(job, "pocket", plan, tmp_path, VOICE, emotion=None, rate="+0%",
+                              check_cancelled=lambda: False, start_time=0.0, skip={0}, job_id="J1")
+    (ticket,) = made
+    assert sorted(out) == [1, 2] and ticket.args == ("J1", len("chunk 1") + len("chunk 2"), "it")
+    assert books == [ticket, ticket] and ticket.closed
+    assert job["book_queue"]["position"] == 3 and job["book_queue"]["eta_s"] == 600
+
+
+def test_presynth_cancelled_in_queue_closes_ticket(monkeypatch, tmp_path):
+    made = []
+    monkeypatch.setattr(pocket_tts, "BookTicket",
+                        lambda *a, **k: made.append(_FakeTicket(*a, joins=False, **k)) or made[-1])
+    with pytest.raises(ge._CancelledError):
+        ge._direct_presynth({}, "pocket", [{"text": "x"}], tmp_path, VOICE, emotion=None, rate="+0%",
+                            check_cancelled=lambda: False, start_time=0.0, job_id="J1")
+    assert made[0].closed
+
+
+def test_book_queue_note_sets_queued_message():
+    job = {}
+    ge._note_book_queue(job, QUEUED)
+    assert job["book_queue"]["position"] == 2 and job["progress_message"] == ge.BOOK_QUEUED_MSG
+    job["progress_message"] = "x"
+    ge._note_book_queue(job, ACTIVE)
+    assert job["book_queue"]["state"] == "active" and job["progress_message"] == "x"
+    ge._note_book_queue(job, None)                         # stato illeggibile: no-op
+    assert job["book_queue"]["state"] == "active"
+
+
+def test_recovery_rejects_unpaid_pocket_job(monkeypatch, tmp_path):
+    # Mai gratuito: un descrittore senza pagamento non riparte al boot.
+    import audiobook_app  # noqa: F401 — configura recovery
+    import recovery
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    text = "Testo del capitolo. " * 20
+    info = types.SimpleNamespace(chapters=[types.SimpleNamespace(index=0, title="", text=text,
+                                                                 char_count=len(text))],
+                                 language="it")
+    with pytest.raises(recovery._RecoveryRejected, match="SENZA pagamento"):
+        recovery._recovery_generate_gate("J1", {"voice": VOICE, "client_id": "c"}, info)
+    out = recovery._recovery_generate_gate("J1", {"voice": VOICE, "payment": {"total_eur": 0.5}}, info)
+    assert out["estimate_key"] == tts_engines.ENGINES["pocket"].estimate_key
+    assert out["estimate"]["chars_total"] == len(text)

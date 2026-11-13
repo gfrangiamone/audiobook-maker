@@ -24,7 +24,7 @@ import pricing_common
 from i18n import norm_lang as _norm_lang
 from ratelimit import lockout_record as _lockout_record, lockout_remaining as _lockout_remaining, sliding_check as _sliding_check, window_record as _window_record
 from client_identity import norm_email as _norm_email
-from voice_utils import (is_gemini_voice, is_speechify_voice, is_voxcpm_voice,
+from voice_utils import (is_gemini_voice, is_pocket_voice, is_speechify_voice, is_voxcpm_voice,
                          voice_model_key)
 import shutil
 import threading
@@ -463,10 +463,10 @@ def _generate_voucher_code():
 # Servizi pagabili con un voucher, scelti dall'admin alla creazione. Un
 # voucher senza campo "services" (rimborsi automatici, voucher legacy) li
 # copre tutti. Le voci TTS si distinguono per modello: flash31/flash38 sono il
-# model_key della voce Gemini, "speechify" e "voxcpm" il motore. Un voucher
-# valido per un modello TTS paga anche l'ottimizzazione AI addebitata insieme
-# alla sintesi: il consumo combinato passa il solo servizio TTS.
-VOUCHER_SERVICES = ("llm", "translate", "voxcpm", "flash31", "flash38",
+# model_key della voce Gemini, "speechify", "voxcpm" e "pocket" il motore. Un
+# voucher valido per un modello TTS paga anche l'ottimizzazione AI addebitata
+# insieme alla sintesi: il consumo combinato passa il solo servizio TTS.
+VOUCHER_SERVICES = ("llm", "translate", "voxcpm", "pocket", "flash31", "flash38",
                     "speechify", "voice_clone")
 VOUCHER_DEFAULT_SERVICES = ("llm", "translate", "voxcpm", "voice_clone")
 
@@ -477,6 +477,8 @@ def voucher_service_for_voice(voice) -> str:
     model_key, quindi nessun voucher ristretto lo copre."""
     if is_voxcpm_voice(voice):
         return "voxcpm"
+    if is_pocket_voice(voice):
+        return "pocket"
     if is_speechify_voice(voice):
         return "speechify"
     if is_gemini_voice(voice):
