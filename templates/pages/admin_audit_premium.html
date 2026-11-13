@@ -145,7 +145,7 @@
           <option value="flash31">Gemini 3.1 Flash TTS</option>
           <option value="flash38">Gemini 3.8 (PREMIUM+)</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
-          <option value="v2">VoxCPM2 (PREMIUM)</option>
+          <option value="v2">Audiobook Maker (Fast)</option>
         </select>
       </div>
       <div>
@@ -642,8 +642,8 @@
   }
   // Chiave modello persistita -> etichetta di colonna. "v2" e' la chiave
   // storica del catalogo VoxCPM (resta nel JSONL e nei filtri), ma a video
-  // il modello si chiama voxcpm2, sia per le voci di catalogo sia campionate.
-  const MODEL_DISPLAY = {"v2": "voxcpm2"};
+  // il modello si chiama Fast, sia per le voci di catalogo sia campionate.
+  const MODEL_DISPLAY = {"v2": "Fast"};
   function modelLabel(k){ return MODEL_DISPLAY[k] || k; }
   function esc(s){
     const d = document.createElement('div');

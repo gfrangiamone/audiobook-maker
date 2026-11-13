@@ -115,7 +115,7 @@ def admin_api_vouchers():
                 "origin_order_id": v.get("origin_order_id"),
                 "revoked": bool(v.get("revoked")),
                 # None = tutti i servizi (rimborsi automatici, voucher legacy).
-                "services": v.get("services"),
+                "services": payment.voucher_services(v),
                 # Email col codice inviate dal bottone della console.
                 "notified": v.get("notified", []),
             })
@@ -242,7 +242,7 @@ def admin_api_voucher_notify(code):
     else:
         valid_days = VOUCHER_EXPIRY_DAYS
     ok = email_service._send_voucher_notification_email(
-        code, email, amount_eur, valid_days, created_at, services=v.get("services")
+        code, email, amount_eur, valid_days, created_at, services=payment.voucher_services(v)
     )
     if not ok:
         return jsonify({"error": "send failed"}), 502

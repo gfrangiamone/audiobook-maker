@@ -154,7 +154,7 @@ def test_account_page_plan_optimize_with_audio(logged):
     html = c.get("/account", headers={"Accept-Language": "it"}).data.decode()
     cells = [p.split("</td>")[0] for p in html.split('<td class="plan">')[1:]]
     assert len(cells) == 3
-    assert "Ottimizzazione testo +" in cells[0] and "PREMIUM" in cells[0] and "VOXCPM2" in cells[0]
+    assert "Ottimizzazione testo +" in cells[0] and "PREMIUM" in cells[0] and "Audiobook Maker (Fast)" in cells[0]
     assert "Ottimizzazione testo +" in cells[1] and "Gratis" in cells[1]
     assert cells[2] == "Ottimizzazione testo"
 
@@ -241,7 +241,7 @@ def test_account_page_voices_avvio_campionamento(logged, monkeypatch):
     html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
     assert 'href="/?vc=new"' in html
     assert "Campiona la tua voce" in html
-    assert "VOXCPM2" in html and "PREMIUM" in html
+    assert "Audiobook Maker (Fast)" in html and "PREMIUM" in html
 
 
 def test_account_page_voices_senza_feature_niente_bottone(logged, monkeypatch):
@@ -253,7 +253,7 @@ def test_account_page_voices_senza_feature_niente_bottone(logged, monkeypatch):
     html = c.get("/account?tab=voices", headers={"Accept-Language": "it"}).data.decode()
     assert "?vc=new" not in html
     assert "Campiona la tua voce" not in html
-    assert "VOXCPM2" in html
+    assert "Audiobook Maker (Fast)" in html
 
 
 def test_account_page_title_brand_and_no_hint(logged):

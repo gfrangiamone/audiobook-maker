@@ -6,7 +6,7 @@ const {resolveAudioSelection, ordinaLocali} = require('../../static/js/audio_cas
    veri (75 lingue, 1.957 voci) non rendono un test piu' vero, solo piu' lento
    da leggere quando fallisce. */
 const CATALOGO = {
-  _voxcpm: {available: true, model_label: 'VoxCPM2', personas: []},
+  _voxcpm: {available: true, model_label: 'Audiobook Maker (Fast)', personas: []},
   _premium_status: {capability_ok: true, admin_disabled: false},
   _translate_available: false,
   it: {name: 'Italian', voices: [

@@ -103,8 +103,8 @@
     <div class="svc" id="cServices">
       <label><input type="checkbox" value="llm" checked> Ottimizzazione AI del testo</label>
       <label><input type="checkbox" value="translate" checked> Traduzione</label>
-      <label><input type="checkbox" value="voxcpm" checked> TTS VoxCPM2</label>
-      <label><input type="checkbox" value="pocket"> TTS Audiobook Maker (batch)</label>
+      <label><input type="checkbox" value="voxcpm" checked> TTS Audiobook Maker (Fast)</label>
+      <label title="Incluso in ogni voucher"><input type="checkbox" value="pocket" checked disabled> TTS Audiobook Maker (batch) (sempre)</label>
       <label><input type="checkbox" value="flash31"> TTS Gemini 3.1</label>
       <label><input type="checkbox" value="flash38"> TTS Gemini 3.8</label>
       <label><input type="checkbox" value="speechify"> TTS Speechify</label>
@@ -206,7 +206,7 @@ function statusOf(v){
 
 function escapeHtml(s){return(s||'').replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 
-var SVC_NAMES={llm:'Ottimizzazione AI',translate:'Traduzione',voxcpm:'VoxCPM2',flash31:'Gemini 3.1',flash38:'Gemini 3.8',speechify:'Speechify',voice_clone:'Voce campionata'};
+var SVC_NAMES={llm:'Ottimizzazione AI',translate:'Traduzione',voxcpm:'Fast',pocket:'Batch',flash31:'Gemini 3.1',flash38:'Gemini 3.8',speechify:'Speechify',voice_clone:'Voce campionata'};
 function servicesLabel(s){
   if(s==null)return'<span style="color:var(--muted)">tutti</span>';
   return s.map(function(k){return escapeHtml(SVC_NAMES[k]||k)}).join(', ');

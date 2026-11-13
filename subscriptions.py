@@ -24,9 +24,14 @@ import billing_paypal
 import db
 import email_service
 import payment
+import pocket_catalog
 import retry_util
 import voxcpm_catalog
 from env_utils import env_bool, env_float, env_int
+
+# I modelli di voce PREMIUM che il buono mensile paga (VOUCHER_DEFAULT_SERVICES),
+# con le etichette del selettore MODELLO: testo di email e Area personale.
+VOUCHER_MODELS = f"{voxcpm_catalog.MODEL_LABEL}, {pocket_catalog.MODEL_LABEL}"
 
 
 # Stati di una riga `subscriptions`:
@@ -376,10 +381,10 @@ def _mail(kind, sub, *, code=None, renews_at=None, ends_at=None):
         if kind == "active":
             email_service.send_subscription_active(
                 email, lang, space=space, **voucher, renews_at=_day(renews_at),
-                model=voxcpm_catalog.MODEL_LABEL)
+                model=VOUCHER_MODELS)
         elif kind == "voucher":
             email_service.send_subscription_voucher(
-                email, lang, space=space, **voucher, model=voxcpm_catalog.MODEL_LABEL)
+                email, lang, space=space, **voucher, model=VOUCHER_MODELS)
         else:
             email_service.send_subscription_cancelled(
                 email, lang, space=space, ends_at=_day(ends_at),
@@ -1048,7 +1053,7 @@ def _send_reminders(now):
         try:
             email_service.send_subscription_reminder(
                 email, lang, code=code, remaining=accounts.format_eur(payment._voucher_remaining(v)),
-                voucher_until=_day(v["expires_at"]), model=voxcpm_catalog.MODEL_LABEL)
+                voucher_until=_day(v["expires_at"]), model=VOUCHER_MODELS)
             sent += 1
         except Exception as e:  # noqa: BLE001 - email best-effort
             print(f"[subscriptions] promemoria {payment.mask_code(code)}: {e}", flush=True)
@@ -1119,7 +1124,7 @@ def _archive_warnings(now):
             email_service.send_subscription_space(
                 acct["email"], acct.get("lang") or "en", used=accounts.format_bytes(acct["archive_bytes"]),
                 space=accounts.format_bytes(acct["archive_quota_bytes"]), pct=int(pct),
-                free_plan=sub is None, offer=offer, model=voxcpm_catalog.MODEL_LABEL)
+                free_plan=sub is None, offer=offer, model=VOUCHER_MODELS)
         except Exception as e:  # noqa: BLE001 - email best-effort
             print(f"[subscriptions] email space per {acct['id']}: {type(e).__name__}: {e}", flush=True)
         _log(f"SUB_SPACE_WARN:{'free' if sub is None else 'sub'}:{'offer' if offer else 'cleanup'}",
@@ -1208,9 +1213,9 @@ def status_for(account, *, for_app=False, now=None):
     out = {"enabled": enabled(), "subscription": None}
     if not for_app:
         out["plans"] = plan_offer()
-        # Il buono copre le voci PREMIUM di un solo modello (VOUCHER_DEFAULT_SERVICES):
-        # i popup lo dicono con l'etichetta del selettore MODELLO.
-        out["voucher_model"] = voxcpm_catalog.MODEL_LABEL
+        # Il buono copre le voci PREMIUM dei modelli di VOUCHER_DEFAULT_SERVICES:
+        # i popup lo dicono con le etichette del selettore MODELLO.
+        out["voucher_model"] = VOUCHER_MODELS
     if not account or not _ready():
         return out
     sub = current(account["id"], now)

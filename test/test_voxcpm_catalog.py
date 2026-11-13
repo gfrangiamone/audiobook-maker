@@ -187,7 +187,7 @@ def test_entry_ha_la_forma_delle_altre_premium():
     assert ivy["id"] == "voxcpm:v2:en-US/Ivy"
     assert ivy["engine"] == "voxcpm"
     assert ivy["model_key"] == "v2"
-    assert ivy["model_label"] == "VoxCPM2"
+    assert ivy["model_label"] == "Audiobook Maker (Fast)"
     assert ivy["locale"] == "en-US"
     assert ivy["gender"] == "Female"
     assert ivy["gender_icon"] == "\U0001f469"

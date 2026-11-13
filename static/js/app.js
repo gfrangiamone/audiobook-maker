@@ -1156,7 +1156,7 @@ function _tOr(k,ripiego){
    prodotto, non di motore. I ripieghi sono in inglese, come ogni stringa che
    l'i18n non copre: se scattano, scattano per tutti. */
 function _modelLabel(m){
-  if(m==='voxcpm')return _tOr('lbl_model_voxcpm','Audiobook Maker (VOXCPM2)');
+  if(m==='voxcpm')return _tOr('lbl_model_voxcpm','Audiobook Maker (Fast)');
   if(m==='pocket')return _tOr('lbl_model_pocket','Audiobook Maker (batch)');
   if(m==='flash31')return _tOr('lbl_model_flash31','Gemini 3.1 TTS');
   if(m==='flash38')return _tOr('lbl_model_flash38','Gemini 3.8 (PREMIUM+)');

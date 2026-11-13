@@ -50,7 +50,7 @@
     "tab_books": "Your audiobooks",
     "tab_voices": "Sampled voices",
     "voices_empty": "No sampled voice is linked to this account.",
-    "voices_premium_note": "A sampled voice works only with the PREMIUM model “Audiobook Maker (VOXCPM2)”: with the other models it does not show up among the available voices.",
+    "voices_premium_note": "A sampled voice works only with the PREMIUM model “Audiobook Maker (Fast)”: with the other models it does not show up among the available voices.",
     "voice_new": "Sample your voice",
     "voice_new_hint": "You record it in the app: about twenty seconds of reading are enough.",
     "voice_manage": "Manage",
@@ -85,7 +85,7 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "model_voxcpm": "Audiobook Maker (Fast)",
     "model_pocket": "Audiobook Maker (batch)",
     "dl_archived": "archived",
     "plan_title": "Cloud library",
@@ -153,7 +153,7 @@
     "sub_resume_title": "Reactivate the {plan}",
     "sub_resume_scheduled": "Reactivation with the {plan} scheduled from {date}.",
     "sub_plan_voucher": "Includes a €{voucher} PREMIUM voucher every month",
-    "sub_voucher_scope": "The PREMIUM voucher includes only: PREMIUM voices of the {model} model (sampled voices too), sampling a voice, AI text optimisation and book translation."
+    "sub_voucher_scope": "The PREMIUM voucher includes only: PREMIUM voices of the {model} models (sampled voices too), sampling a voice, AI text optimisation and book translation."
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -206,7 +206,7 @@
     "tab_books": "I tuoi audiolibri",
     "tab_voices": "Voci campionate",
     "voices_empty": "Nessuna voce campionata collegata a questo account.",
-    "voices_premium_note": "Una voce campionata si usa solo con il modello PREMIUM «Audiobook Maker (VOXCPM2)»: con gli altri modelli non compare fra le voci disponibili.",
+    "voices_premium_note": "Una voce campionata si usa solo con il modello PREMIUM «Audiobook Maker (Fast)»: con gli altri modelli non compare fra le voci disponibili.",
     "voice_new": "Campiona la tua voce",
     "voice_new_hint": "La registrazione si fa nell'app: bastano una ventina di secondi di lettura.",
     "voice_manage": "Gestisci",
@@ -241,7 +241,7 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "model_voxcpm": "Audiobook Maker (Fast)",
     "model_pocket": "Audiobook Maker (batch)",
     "dl_archived": "in archivio",
     "plan_title": "Libreria cloud",
@@ -309,7 +309,7 @@
     "sub_resume_title": "Riattiva il {plan}",
     "sub_resume_scheduled": "Riattivazione con il {plan} programmata dal {date}.",
     "sub_plan_voucher": "Include un buono PREMIUM da {voucher} € ogni mese",
-    "sub_voucher_scope": "Il buono PREMIUM comprende solo: voci PREMIUM del modello {model} (anche le voci campionate), campionamento di una voce, ottimizzazione AI del testo e traduzione dei libri."
+    "sub_voucher_scope": "Il buono PREMIUM comprende solo: voci PREMIUM dei modelli {model} (anche le voci campionate), campionamento di una voce, ottimizzazione AI del testo e traduzione dei libri."
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -362,7 +362,7 @@
     "tab_books": "Vos livres audio",
     "tab_voices": "Voix échantillonnées",
     "voices_empty": "Aucune voix échantillonnée n'est liée à ce compte.",
-    "voices_premium_note": "Une voix échantillonnée ne fonctionne qu'avec le modèle PREMIUM « Audiobook Maker (VOXCPM2) » : avec les autres modèles, elle n'apparaît pas parmi les voix disponibles.",
+    "voices_premium_note": "Une voix échantillonnée ne fonctionne qu'avec le modèle PREMIUM « Audiobook Maker (Fast) » : avec les autres modèles, elle n'apparaît pas parmi les voix disponibles.",
     "voice_new": "Échantillonnez votre voix",
     "voice_new_hint": "L'enregistrement se fait dans l'app : une vingtaine de secondes de lecture suffisent.",
     "voice_manage": "Gérer",
@@ -397,7 +397,7 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "model_voxcpm": "Audiobook Maker (Fast)",
     "model_pocket": "Audiobook Maker (batch)",
     "dl_archived": "archivé",
     "plan_title": "Bibliothèque cloud",
@@ -465,7 +465,7 @@
     "sub_resume_title": "Réactiver la {plan}",
     "sub_resume_scheduled": "Réactivation avec la {plan} prévue à partir du {date}.",
     "sub_plan_voucher": "Inclut un bon PREMIUM de {voucher} € chaque mois",
-    "sub_voucher_scope": "Le bon PREMIUM comprend uniquement : les voix PREMIUM du modèle {model} (y compris les voix échantillonnées), l'échantillonnage d'une voix, l'optimisation IA du texte et la traduction des livres."
+    "sub_voucher_scope": "Le bon PREMIUM comprend uniquement : les voix PREMIUM des modèles {model} (y compris les voix échantillonnées), l'échantillonnage d'une voix, l'optimisation IA du texte et la traduction des livres."
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -518,7 +518,7 @@
     "tab_books": "Tus audiolibros",
     "tab_voices": "Voces muestreadas",
     "voices_empty": "Ninguna voz muestreada está vinculada a esta cuenta.",
-    "voices_premium_note": "Una voz muestreada solo funciona con el modelo PREMIUM «Audiobook Maker (VOXCPM2)»: con los demás modelos no aparece entre las voces disponibles.",
+    "voices_premium_note": "Una voz muestreada solo funciona con el modelo PREMIUM «Audiobook Maker (Fast)»: con los demás modelos no aparece entre las voces disponibles.",
     "voice_new": "Muestrea tu voz",
     "voice_new_hint": "La grabación se hace en la app: bastan unos veinte segundos de lectura.",
     "voice_manage": "Gestionar",
@@ -553,7 +553,7 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "model_voxcpm": "Audiobook Maker (Fast)",
     "model_pocket": "Audiobook Maker (batch)",
     "dl_archived": "archivado",
     "plan_title": "Biblioteca en la nube",
@@ -621,7 +621,7 @@
     "sub_resume_title": "Reactivar el {plan}",
     "sub_resume_scheduled": "Reactivación con el {plan} programada desde el {date}.",
     "sub_plan_voucher": "Incluye un bono PREMIUM de {voucher} € cada mes",
-    "sub_voucher_scope": "El bono PREMIUM incluye solo: voces PREMIUM del modelo {model} (también las voces muestreadas), el muestreo de una voz, la optimización IA del texto y la traducción de libros."
+    "sub_voucher_scope": "El bono PREMIUM incluye solo: voces PREMIUM de los modelos {model} (también las voces muestreadas), el muestreo de una voz, la optimización IA del texto y la traducción de libros."
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -674,7 +674,7 @@
     "tab_books": "Deine Hörbücher",
     "tab_voices": "Gesampelte Stimmen",
     "voices_empty": "Mit diesem Konto ist keine gesampelte Stimme verknüpft.",
-    "voices_premium_note": "Eine gesampelte Stimme funktioniert nur mit dem PREMIUM-Modell „Audiobook Maker (VOXCPM2)“: bei den anderen Modellen erscheint sie nicht unter den verfügbaren Stimmen.",
+    "voices_premium_note": "Eine gesampelte Stimme funktioniert nur mit dem PREMIUM-Modell „Audiobook Maker (Fast)“: bei den anderen Modellen erscheint sie nicht unter den verfügbaren Stimmen.",
     "voice_new": "Deine Stimme sampeln",
     "voice_new_hint": "Aufgenommen wird in der App: rund zwanzig Sekunden Vorlesen genügen.",
     "voice_manage": "Verwalten",
@@ -709,7 +709,7 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "model_voxcpm": "Audiobook Maker (Fast)",
     "model_pocket": "Audiobook Maker (batch)",
     "dl_archived": "archiviert",
     "plan_title": "Cloud-Bibliothek",
@@ -777,7 +777,7 @@
     "sub_resume_title": "{plan} wieder aktivieren",
     "sub_resume_scheduled": "Reaktivierung mit dem {plan} geplant ab {date}.",
     "sub_plan_voucher": "Inklusive PREMIUM-Gutschein über {voucher} € jeden Monat",
-    "sub_voucher_scope": "Der PREMIUM-Gutschein umfasst nur: PREMIUM-Stimmen des Modells {model} (auch eigene Stimmen), das Erstellen einer eigenen Stimme, die KI-Textoptimierung und die Übersetzung von Büchern."
+    "sub_voucher_scope": "Der PREMIUM-Gutschein umfasst nur: PREMIUM-Stimmen der Modelle {model} (auch eigene Stimmen), das Erstellen einer eigenen Stimme, die KI-Textoptimierung und die Übersetzung von Büchern."
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -830,7 +830,7 @@
     "tab_books": "你的有声书",
     "tab_voices": "采样声音",
     "voices_empty": "此账户尚未关联任何采样声音。",
-    "voices_premium_note": "采样声音仅适用于 PREMIUM 模型「Audiobook Maker (VOXCPM2)」：在其他模型下，它不会出现在可用声音中。",
+    "voices_premium_note": "采样声音仅适用于 PREMIUM 模型「Audiobook Maker (Fast)」：在其他模型下，它不会出现在可用声音中。",
     "voice_new": "采样你的声音",
     "voice_new_hint": "录音在应用中完成：朗读约二十秒即可。",
     "voice_manage": "管理",
@@ -865,7 +865,7 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "model_voxcpm": "Audiobook Maker (Fast)",
     "model_pocket": "Audiobook Maker (batch)",
     "dl_archived": "已归档",
     "plan_title": "云端书库",
@@ -986,7 +986,7 @@
     "tab_books": "आपकी ऑडियोबुक",
     "tab_voices": "सैंपल की गई आवाज़ें",
     "voices_empty": "इस खाते से कोई सैंपल की गई आवाज़ जुड़ी नहीं है।",
-    "voices_premium_note": "सैंपल की गई आवाज़ केवल PREMIUM मॉडल «Audiobook Maker (VOXCPM2)» के साथ काम करती है: बाकी मॉडलों में यह उपलब्ध आवाज़ों में नहीं दिखती।",
+    "voices_premium_note": "सैंपल की गई आवाज़ केवल PREMIUM मॉडल «Audiobook Maker (Fast)» के साथ काम करती है: बाकी मॉडलों में यह उपलब्ध आवाज़ों में नहीं दिखती।",
     "voice_new": "अपनी आवाज़ सैंपल करें",
     "voice_new_hint": "रिकॉर्डिंग ऐप में होती है: करीब बीस सेकंड पढ़ना काफ़ी है।",
     "voice_manage": "प्रबंधित करें",
@@ -1021,7 +1021,7 @@
     "model_flash31": "Gemini 3.1 TTS",
     "model_flash38": "Gemini 3.8 (PREMIUM+)",
     "model_simba": "Simba 3.2",
-    "model_voxcpm": "Audiobook Maker (VOXCPM2)",
+    "model_voxcpm": "Audiobook Maker (Fast)",
     "model_pocket": "Audiobook Maker (batch)",
     "dl_archived": "संग्रहीत",
     "plan_title": "क्लाउड लाइब्रेरी",

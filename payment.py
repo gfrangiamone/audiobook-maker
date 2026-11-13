@@ -466,9 +466,12 @@ def _generate_voucher_code():
 # model_key della voce Gemini, "speechify", "voxcpm" e "pocket" il motore. Un
 # voucher valido per un modello TTS paga anche l'ottimizzazione AI addebitata
 # insieme alla sintesi: il consumo combinato passa il solo servizio TTS.
+# I servizi di VOUCHER_ALWAYS_SERVICES li paga ogni voucher, qualunque elenco
+# abbia (anche i voucher ristretti emessi prima che il servizio esistesse).
 VOUCHER_SERVICES = ("llm", "translate", "voxcpm", "pocket", "flash31", "flash38",
                     "speechify", "voice_clone")
-VOUCHER_DEFAULT_SERVICES = ("llm", "translate", "voxcpm", "voice_clone")
+VOUCHER_ALWAYS_SERVICES = ("pocket",)
+VOUCHER_DEFAULT_SERVICES = ("llm", "translate", "voxcpm", "pocket", "voice_clone")
 
 
 def voucher_service_for_voice(voice) -> str:
@@ -499,8 +502,9 @@ def voucher_service_for_purpose(purpose, voice="") -> str:
 
 
 def normalize_voucher_services(raw) -> list:
-    """Elenco servizi dall'input admin, nell'ordine di VOUCHER_SERVICES.
-    Solleva ValueError su chiave ignota o elenco vuoto."""
+    """Elenco servizi dall'input admin, nell'ordine di VOUCHER_SERVICES, con
+    VOUCHER_ALWAYS_SERVICES sempre dentro. Solleva ValueError su chiave ignota
+    o elenco vuoto."""
     if not isinstance(raw, (list, tuple)):
         raise ValueError("services must be a list")
     keys = {str(s).strip().lower() for s in raw}
@@ -509,16 +513,29 @@ def normalize_voucher_services(raw) -> list:
         raise ValueError(f"unknown services: {', '.join(sorted(unknown))}")
     if not keys:
         raise ValueError("at least one service required")
+    keys |= set(VOUCHER_ALWAYS_SERVICES)
     return [s for s in VOUCHER_SERVICES if s in keys]
 
 
 def voucher_covers(v: dict, service) -> bool:
     """True se il voucher puo' pagare `service`. Senza "services" copre tutto;
-    con l'elenco serve un servizio esplicito (fail-closed)."""
+    con l'elenco serve un servizio esplicito (fail-closed), salvo quelli di
+    VOUCHER_ALWAYS_SERVICES che ogni voucher paga."""
     services = v.get("services")
-    if services is None:
+    if services is None or service in VOUCHER_ALWAYS_SERVICES:
         return True
     return bool(service) and service in services
+
+
+def voucher_services(v: dict):
+    """Servizi che il voucher paga, come si mostrano (console, email): None =
+    tutti; altrimenti l'elenco salvato piu' VOUCHER_ALWAYS_SERVICES, che i
+    voucher emessi prima di quei servizi non hanno nel campo."""
+    services = v.get("services")
+    if services is None:
+        return None
+    keys = set(services) | set(VOUCHER_ALWAYS_SERVICES)
+    return [s for s in VOUCHER_SERVICES if s in keys]
 
 
 def subscription_vouchers_to_remind(within_sec, now=None) -> list:

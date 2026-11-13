@@ -28,7 +28,8 @@ def test_bodies_same_structure_in_every_language():
         assert body.count("<h2>") == 8, lang
         assert body.count("<details>") == 5, lang
         assert body.count("<tr>") == 5, lang
-        assert "Audiobook Maker (VoxCPM2)" in body, lang
+        assert "Audiobook Maker (Fast)" in body and "Audiobook Maker (batch)" in body, lang
+        assert "VoxCPM" not in body, lang
         for prefix in ("PROMO-", "GIFT-", "SUB-"):
             assert prefix in body, (lang, prefix)
         assert "180" in body and "30" in body, lang
@@ -40,7 +41,7 @@ def test_bodies_same_structure_in_every_language():
 def test_body_numbers_follow_payment_rules():
     # Le cifre scritte nella guida restano quelle del codice.
     assert payment.VOUCHER_EXPIRY_DAYS == 180
-    assert payment.VOUCHER_DEFAULT_SERVICES == ("llm", "translate", "voxcpm", "voice_clone")
+    assert payment.VOUCHER_DEFAULT_SERVICES == ("llm", "translate", "voxcpm", "pocket", "voice_clone")
     codes = "".join(payment._generate_voucher_code() for _ in range(50))
     assert not set("OI01") & set(codes)
     assert "180 days" in content_store.content_text("guides", GID, "en.html")

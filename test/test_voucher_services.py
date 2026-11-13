@@ -24,6 +24,7 @@ def _voucher(services=None, amount=10.0, email="svc@x.it"):
     ("speechify:simba32:george", "speechify"),
     ("voxcpm:v2:it-IT/Stefano", "voxcpm"),
     ("voxcpm:mine:abc", "voxcpm"),
+    ("pocket:v1:it-IT/Stefano", "pocket"),
     ("it-IT-IsabellaNeural", ""),
     ("", ""),
 ])
@@ -41,7 +42,8 @@ def test_service_for_purpose():
 
 
 def test_normalize_services():
-    assert payment.normalize_voucher_services(["flash38", "LLM"]) == ["llm", "flash38"]
+    # Il modello batch e' in ogni voucher, anche se l'admin non lo spunta.
+    assert payment.normalize_voucher_services(["flash38", "LLM"]) == ["llm", "pocket", "flash38"]
     for bad in ([], ["nope"], "llm", None):
         with pytest.raises(ValueError):
             payment.normalize_voucher_services(bad)
@@ -53,6 +55,20 @@ def test_unrestricted_voucher_covers_everything(store):
     assert "services" not in v
     for s in payment.VOUCHER_SERVICES + ("",):
         assert payment.voucher_covers(v, s)
+
+
+def test_every_voucher_pays_the_batch_model(store):
+    # Anche un voucher ristretto emesso prima del modello batch (senza
+    # "pocket" nel campo) lo paga; console ed email lo elencano.
+    assert "pocket" in payment.VOUCHER_DEFAULT_SERVICES
+    code = _voucher(services=["flash38"])
+    v = payment.voucher_info(code)
+    assert v["services"] == ["flash38"]
+    assert payment.voucher_covers(v, "pocket") and not payment.voucher_covers(v, "voxcpm")
+    assert payment.voucher_services(v) == ["pocket", "flash38"]
+    assert payment.voucher_services(payment.voucher_info(_voucher(services=None))) is None
+    assert payment.best_voucher_for("svc@x.it", "pocket", 1.0)["code"] == code
+    assert payment._voucher_consume(code, 1.0, job_id="jp", service="pocket") == 9.0
 
 
 def test_consume_rejects_uncovered_service(store):
@@ -159,7 +175,7 @@ def test_notification_email_lists_services(monkeypatch):
                                                services=["llm", "voxcpm"])
     assert es._send_voucher_notification_email("V-3", "u@x.it", 5.0, 30, 0)
     assert payment.VOUCHER_SERVICES == tuple(es._VOUCHER_SERVICE_LABELS)
-    assert "<li>Audiobook Maker TTS voices (VoxCPM2)</li>" in sent[0]
+    assert "<li>PREMIUM voices, Audiobook Maker (Fast) model</li>" in sent[0]
     assert "<li>PREMIUM voices, Gemini 3.1 TTS model</li>" in sent[0]
     assert "AI text optimisation of the same book" in sent[0]
     assert "<li>AI text optimisation</li>" in sent[1] and "of the same book" not in sent[1]
@@ -178,7 +194,7 @@ def test_admin_notify_passes_services(client, monkeypatch):
     code = _voucher(services=["speechify"])
     r = client.post(f"/admin/api/vouchers/{code}/notify", headers=h)
     assert r.status_code == 200, r.get_data(as_text=True)
-    assert got["services"] == ["speechify"]
+    assert got["services"] == ["pocket", "speechify"]
 
 
 def _admin(monkeypatch):
@@ -194,10 +210,10 @@ def test_admin_create_with_services(client, monkeypatch):
         "email": "a@x.it", "amount_eur": 3, "services": ["speechify", "llm"]})
     assert r.status_code == 200, r.get_data(as_text=True)
     code = r.get_json()["code"]
-    assert r.get_json()["services"] == ["llm", "speechify"]
-    assert payment.voucher_info(code)["services"] == ["llm", "speechify"]
+    assert r.get_json()["services"] == ["llm", "pocket", "speechify"]
+    assert payment.voucher_info(code)["services"] == ["llm", "pocket", "speechify"]
     listed = {v["code"]: v for v in client.get("/admin/api/vouchers", headers=h).get_json()["vouchers"]}
-    assert listed[code]["services"] == ["llm", "speechify"]
+    assert listed[code]["services"] == ["llm", "pocket", "speechify"]
 
 
 def test_admin_create_defaults_and_errors(client, monkeypatch):

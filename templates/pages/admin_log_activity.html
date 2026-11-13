@@ -623,7 +623,7 @@ function lsRender(d) {
         lsOne('Timeout coda', f.timeouts || 0, '', (f.timeouts || 0) > 0 ? 'crit' : 'ok'),
         lsOne('Slot tutti occupati', (f.slots_full_pct || 0) + '%',
               (d.meta.assembly_slots || 0) + ' slot', lsLevel(f.slots_full_pct || 0, 20, 50)),
-    ]) + lsSec('Worker GPU VoxCPM2', [
+    ]) + lsSec('Worker GPU (Fast)', [
         // >= 90% stabile: conviene tenere un worker sempre attivo
         // (niente avviamento a freddo). 'warn' qui e' un segnale, non un guasto.
         lsOne('Tempo con worker in running',
