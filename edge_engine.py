@@ -12,6 +12,9 @@ una standard su una voce della stessa locale, prima del silenzio
 `edge_health`, che allerta l'admin se il tasso di errore supera la soglia.
 Le voci Multilingual passano frase per frase
 (`tts_split._split_sentences_for_tts`) e i pezzi vengono concatenati.
+`synthesize_preview` (sincrona) e' la stessa sintesi per l'anteprima voce, con
+un tempo totale e un timeout per tentativo piu' corti e l'MP3 scritto solo se
+ha audio.
 
 Dipende da `tts_split` (solo splitting, chiamato qualificato cosi' i test che
 lo sostituiscono continuano a vederlo), `text_reflow` (`_sanitize_tts_text`),
@@ -38,6 +41,7 @@ from slot_gate import SlotGate
 import tts_split
 from audio_utils import _concatenate_mp3, _generate_silence_mp3
 from env_utils import env_float, env_int, env_str
+from fileio import atomic_produce
 from text_reflow import _sanitize_tts_text, uzbek_cyrillic_to_latin
 from voice_utils import rate_speed_factor as _rate_speed_factor_vu
 
@@ -95,6 +99,10 @@ _edge_communicate.WSS_URL = _EdgeWssUrl()
 # thread del job senza errori (incidente 2026-06-11). Il timeout trasforma
 # l'hang in TimeoutError, gestito dal retry/fallback di _edge_tts_call.
 EDGE_TTS_CHUNK_TIMEOUT = env_int("ABM_EDGE_TTS_TIMEOUT", 120)
+
+# Timeout del singolo tentativo quando chi chiama ha un tempo suo piu' corto
+# dei 120 s del job (l'anteprima: vedi `synthesize_preview`). None = quello del job.
+_edge_attempt_timeout_ctx = contextvars.ContextVar("edge_attempt_timeout", default=None)
 
 # Tetto alle chiamate edge-tts in volo su tutto il processo. edge-tts e' un
 # servizio non ufficiale e tutte le richieste partono da un IP: il tetto tiene
@@ -502,7 +510,8 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
         token = _edge_wss_ctx.set(url)
         try:
             await asyncio.wait_for(
-                communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
+                communicate.save(output_path),
+                timeout=_edge_attempt_timeout_ctx.get() or EDGE_TTS_CHUNK_TIMEOUT,
             )
         finally:
             _edge_wss_ctx.reset(token)
@@ -624,3 +633,56 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
     # Percorso standard: chiamata singola con retry
     ok = await _edge_tts_call(clean, voice, rate, output_path, max_retries=max_retries)
     return ok if ok is False else None
+
+
+# --- Anteprima voce (/api/preview_audio) -------------------------------------
+# Fino al 13/11/2026 l'anteprima chiamava edge-tts a mano: un tentativo solo,
+# sull'endpoint di `ABM_EDGE_TTS_ENDPOINT` (in prod il legacy, che risponde
+# NoAudioReceived a centinaia di richieste l'ora), senza alternanza, ripiego ne'
+# controllo del troncamento, e con l'MP3 scritto direttamente nel file della
+# cache. Ogni NoAudioReceived diventava una 500, ogni legacy lento una 504 allo
+# scadere dei 30 s. Ora passa da `generate_chunk_mp3` come i chunk dei job, con
+# un tempo totale e un timeout per tentativo da anteprima.
+def preview_budget_sec():
+    """Tempo massimo di un'anteprima edge (`ABM_EDGE_PREVIEW_TIMEOUT`)."""
+    return env_float("ABM_EDGE_PREVIEW_TIMEOUT", 45.0, floor=5.0)
+
+
+def preview_attempt_timeout_sec():
+    """Timeout di un tentativo dell'anteprima (`ABM_EDGE_PREVIEW_ATTEMPT_TIMEOUT`):
+    abbastanza corto da lasciare tempo a un secondo tentativo sull'altro
+    endpoint quando il primo arriva a velocita' di parlato."""
+    return env_float("ABM_EDGE_PREVIEW_ATTEMPT_TIMEOUT", 15.0, floor=1.0)
+
+
+class EdgePreviewFailed(Exception):
+    """Nessun tentativo (ripiego di voce compreso) ha dato audio."""
+
+
+def synthesize_preview(text, voice, rate, output_path):
+    """MP3 di anteprima in `output_path`, sintetizzato come un chunk di un job
+    (`generate_chunk_mp3`) ma entro `preview_budget_sec()` secondi.
+
+    `output_path` nasce solo se c'e' audio (`atomic_produce`): il secondo di
+    silenzio con cui `_edge_tts_call` chiude i fallimenti, un MP3 a meta' o due
+    richieste uguali in parallelo non finiscono nella cache dell'anteprima.
+    Solleva `TimeoutError` oltre il budget, `EdgePreviewFailed` se edge-tts
+    non ha dato audio. Sincrona: usa un loop asyncio suo."""
+    budget = preview_budget_sec()
+
+    def _produce(tmp):
+        loop = asyncio.new_event_loop()
+        token = _edge_attempt_timeout_ctx.set(preview_attempt_timeout_sec())
+        try:
+            res = loop.run_until_complete(asyncio.wait_for(
+                generate_chunk_mp3(text, voice, rate, tmp), timeout=budget))
+        except asyncio.TimeoutError as e:
+            raise TimeoutError(f"anteprima edge oltre {budget:.0f} s") from e
+        finally:
+            _edge_attempt_timeout_ctx.reset(token)
+            loop.close()
+        if res is False:
+            raise EdgePreviewFailed(f"edge-tts senza audio per {voice}")
+        return True
+
+    atomic_produce(output_path, _produce)

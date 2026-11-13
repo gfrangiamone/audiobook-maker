@@ -180,6 +180,7 @@ import privacy_content
 import support_content
 import payment
 import generation_engine
+import edge_engine
 import translation_core
 import community_store
 import community_translator
@@ -4124,7 +4125,7 @@ def api_preview_audio(job_id):
                          as_attachment=False, download_name="preview.mp3",
                          conditional=True)
 
-    # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
+    # Genera l'MP3 in un thread separato con un timeout reale (`_wrapper_timeout`).
     # retry_util.run_with_timeout interrompe l'attesa indipendentemente
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_gemini_preview = gemini_tts is not None and _is_gemini_voice(voice)
@@ -4305,22 +4306,15 @@ def api_preview_audio(job_id):
                     except OSError:
                         pass
         else:
-            import edge_tts
-            loop = asyncio.new_event_loop()
-            try:
-                async def _run():
-                    communicate = edge_tts.Communicate(
-                        text=preview_text, voice=voice, rate=rate
-                    )
-                    await communicate.save(str(preview_path))
-                loop.run_until_complete(_run())
-            finally:
-                loop.close()
+            edge_engine.synthesize_preview(preview_text, voice, rate, str(preview_path))
 
     # Wrapper timeout per modello dal catalogo (gemini_tts.preview_timeout_sec):
     # deve superare il timeout HTTP del modello, altrimenti strozza anteprime
     # che il provider sta completando (504 spuri). Il client aspetta +5 s.
+    # Edge ha un budget suo (tentativi e ripieghi): il wrapper resta una rete.
     _wrapper_timeout = 30
+    if not (use_gemini_preview or use_speechify_preview):
+        _wrapper_timeout = edge_engine.preview_budget_sec() + 5
     if use_gemini_preview:
         try:
             _mk = voice.split(":")[1] if _is_gemini_voice(voice) else ""
@@ -4334,6 +4328,12 @@ def api_preview_audio(job_id):
         retry_util.run_with_timeout(_generate, _wrapper_timeout)
     except TimeoutError:
         return jsonify({"error": f"Timeout: il servizio TTS non ha risposto in {_wrapper_timeout} secondi."}), 504
+    except edge_engine.EdgePreviewFailed:
+        return jsonify({
+            "error": ("Il servizio voci non ha prodotto audio. Riprova tra "
+                      "qualche secondo o scegli un'altra voce."),
+            "code": "tts_failed",
+        }), 502
     except Exception as e:
         # EMPTY-RESPONSE: Gemini ha risposto senza audio (finish_reason=OTHER
         # o simili). Tipicamente combo voce/rate/lingua poco stabile su un
