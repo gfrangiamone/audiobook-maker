@@ -125,3 +125,42 @@ def test_colophon_di_gutenberg_con_le_sottosezioni_non_si_legge(tmp_path):
     assert full.count("TWEE") == 4
     for tag in ("BESCHIKBAAR", "CODERING", "VERBETERD"):
         assert tag not in full, tag
+
+
+def test_colophon_in_un_file_suo_non_si_ricupera_a_pezzi(tmp_path):
+    # Camera Obscura (catalogo, 13/11/2026): il colophon sta in un file suo,
+    # scartato per il titolo; il ripiego che ricupera le sottosezioni di un
+    # file non narrativo ne faceva due capitoli, Beschikbaarheid e Codering.
+    p = tmp_path / "colofon-file.epub"
+    book = epub.EpubBook()
+    book.set_identifier("colofon-file-test")
+    book.set_title("Camera Obscura")
+    book.set_language("nl")
+    h0 = epub.EpubHtml(title="h0", file_name="h0.xhtml", lang="nl")
+    h0.content = '<html><body><h2 id="c1">De Baker.</h2>' + _p("BAKER") + "</body></html>"
+    h1 = epub.EpubHtml(title="h1", file_name="h1.xhtml", lang="nl")
+    h1.content = ('<html><body><h2 id="col">Colofon</h2>'
+                  + '<h3 id="b">Beschikbaarheid</h3>'
+                  + "<p>Dit eBoek is voor kosteloos gebruik door iedereen overal, met vrijwel "
+                    "geen beperkingen van welke soort dan ook. U mag het kopiëren, weggeven of "
+                    "hergebruiken onder de voorwaarden van de Licentie bij dit eBoek (BESCHIKBAAR).</p>"
+                  + '<h3 id="cod">Codering</h3>'
+                  + "<p>Dit bestand is in een verouderde spelling. Er is geen poging gedaan de "
+                    "tekst te moderniseren. Afgebroken woorden aan het einde van de regel zijn "
+                    "stilzwijgend hersteld. Kennelijke zetfouten zijn gecorrigeerd (CODERING).</p>"
+                  + "</body></html>")
+    for it in (h0, h1):
+        book.add_item(it)
+    book.toc = [epub.Link("h0.xhtml#c1", "De Baker.", "c1"),
+                (epub.Link("h1.xhtml#col", "Colofon", "col"),
+                 [epub.Link("h1.xhtml#b", "Beschikbaarheid", "b"),
+                  epub.Link("h1.xhtml#cod", "Codering", "cod")])]
+    book.spine = [h0, h1]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(p), book)
+    info = E.parse_epub(str(p))
+    assert [c.title for c in info.chapters] == ["De Baker."]
+    full = "\n".join(c.text for c in info.chapters)
+    for tag in ("BESCHIKBAAR", "CODERING"):
+        assert tag not in full, tag

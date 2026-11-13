@@ -203,6 +203,11 @@ NON_CONTENT_TITLE_PHRASES = [
 NON_CONTENT_TITLE_EXACT = {
     "trama", "sinossi", "synopsis", "sinopsis", "resumen", "blurb",
     "inhoud",               # indice olandese; "De inhoud van den brief" e' un capitolo
+    # Note olandesi, anche nella grafia antica: le AANTEEKENINGEN del
+    # traduttore si leggevano in coda a De hut van oom Tom (catalogo,
+    # 13/11/2026). Solo per intero: "Aantekeningen van een gek" e' un racconto,
+    # "noten" sono anche le noci.
+    "aantekeningen", "aanteekeningen", "noten",
 }
 
 # "Note"/"Notes" sono apparato quando chiudono il titolo ("Translator's
