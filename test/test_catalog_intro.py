@@ -56,11 +56,19 @@ def test_sesso_e_accento_della_voce(monkeypatch):
     assert catalog_intro.voice_traits("gemini:flash38:Charon", "pt") == ("m", "br")
     locali = {"voxcpm:v2:pt-PT/A": ("pt-PT", "Female"), "voxcpm:v2:es-AR/B": ("es-AR", "Male"),
               "voxcpm:v2:it-IT/C": ("it-IT", "Male")}
-    monkeypatch.setattr(catalog_intro.voxcpm_catalog, "parse_voice_id",
-                        lambda v: {"locale": locali[v][0], "gender": locali[v][1]})
+    def parse(v):
+        if v not in locali:
+            raise ValueError(f"voce non presente nel catalogo: {v!r}")
+        return {"locale": locali[v][0], "gender": locali[v][1]}
+
+    monkeypatch.setattr(catalog_intro.voxcpm_catalog, "parse_voice_id", parse)
     assert catalog_intro.voice_traits("voxcpm:v2:pt-PT/A", "pt") == ("f", "pt")
     assert catalog_intro.voice_traits("voxcpm:v2:es-AR/B", "es") == ("m", "419")
     assert catalog_intro.voice_traits("voxcpm:v2:it-IT/C", "it") == ("m", None)
+    # Pocket: stessa voce del catalogo VoxCPM, per locale e nome.
+    assert catalog_intro.voice_traits("pocket:v1:it-IT/C", "it") == ("m", None)
+    assert catalog_intro.voice_traits("pocket:v1:pt-PT/A", "pt") == ("f", "pt")
+    assert catalog_intro.voice_traits("pocket:v1:it-IT/Ignota", "it") == (None, None)
     assert catalog_intro.voice_traits("it-IT-ElsaNeural", "it") == (None, None)
 
 

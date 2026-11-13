@@ -23,10 +23,11 @@ import os
 
 import ffmpeg_tools
 import gemini_tts
+import pocket_tts
 import voxcpm_catalog
 from env_utils import env_str, is_public_https_url
 from fileio import file_sha256, load_json
-from voice_utils import engine_for_voice
+from voice_utils import VOXCPM_CATALOG_PREFIX, engine_for_voice
 
 INTRO_RATE = ffmpeg_tools.PCM_SAMPLE_RATE      # i PCM del manifest escono da Gemini
 # Audio del libro su cui si misura la loudness: abbastanza per una misura
@@ -71,8 +72,13 @@ def voice_traits(voice_id, lang, gemini_accent=None):
     if engine == "gemini":
         sesso = gemini_tts.GEMINI_VOICE_GENDER.get(voice_id.split(":")[-1])
         accento = gemini_accent or gemini_tts.default_accent_code(lang)
-    elif engine == "voxcpm":
+    elif engine in ("voxcpm", "pocket"):
+        # Le voci Pocket sono quelle del catalogo VoxCPM (voci_inventate), con
+        # lo stesso locale e lo stesso nome: sesso e accento vengono da li'.
         try:
+            if engine == "pocket":
+                _, locale, name = pocket_tts.parse_voice_id(voice_id)
+                voice_id = f"{VOXCPM_CATALOG_PREFIX}{locale}/{name}"
             rec = voxcpm_catalog.parse_voice_id(voice_id)
         except ValueError:
             rec = {}
