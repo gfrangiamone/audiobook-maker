@@ -612,6 +612,7 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 |-----------|--------|------|------|
 | `CLASSES_TO_SKIP` | Set di 40+ pattern di classi CSS da escludere | `epub_to_tts.py` | 66 |
 | `EPUB_TYPES_TO_SKIP` | Set di 30+ tipi semantici EPUB3 da escludere | `epub_to_tts.py` | 94 |
+| `_NOTE_MARK_RE` / `NOTE_BODY_MAX_CHARS` | Note con ritorno al testo (`_drop_backlinked_notes`, in testa a `html_to_text`): rimando `<a id="Y" href="#X">` in `<sup>` (o fuori se il testo e' `[1]`, `(2)`, `*`) e nota con id X, non heading, fino a `5000` car., che contiene il link a `#Y` o e' seguita da un blocco col solo link di ritorno: via nota, rimando e blocco «[Torna]». Note di Liber Liber (`testo_nota`, `nota_1`) che si leggevano a fine capitolo. `_strip_heading_note_ref` toglie dal titolo d'indice il testo dei `<sup>` con link in coda all'heading («Introduzionenota» → «Introduzione»). Dal 13/11/2026 (v3.192.4) | `epub_to_tts.py` | 657 |
 
 ### 4.3 Filtri filename
 

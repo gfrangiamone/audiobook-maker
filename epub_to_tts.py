@@ -646,10 +646,96 @@ def _apply_uppercase_numerals(soup) -> None:
                 s.replace_with(str(s).upper())
 
 
+# Nota con il ritorno al testo: il rimando (<a id="Y" href="#X">, di solito in
+# <sup>) e la nota (id X) che rimanda a "#Y". Liber Liber mette le note in coda
+# al capitolo con classi e id italiani ("testo_nota", "nota_1") che
+# CLASSES_TO_SKIP non riconosce: si leggevano "nota 1 – dei titoli nobiliari.
+# [Torna]" (Il ritratto di Dorian Gray) e la nota redazionale in coda
+# all'introduzione dell'Idiota (catalogo, 13/11/2026). Il rimando fuori da un
+# <sup> conta solo se e' un numero o un asterisco ("[1]", "(2)", "*"): un
+# indice con i titoli che tornano all'indice resta.
+_NOTE_MARK_RE = re.compile(r"[\[(]?(?:\d{1,4}|\*{1,3})[\])]?")
+NOTE_BODY_MAX_CHARS = 5000
+_NOTE_BLOCK_TAGS = ["p", "div", "li", "aside", "section"]
+
+
+def _fragment(href) -> str:
+    return str(href or "").partition("#")[2]
+
+
+def _within(tag, ancestor) -> bool:
+    return any(p is ancestor for p in tag.parents)
+
+
+def _link_only_block(link):
+    """Il blocco (p/div/li) che contiene solo `link` ("[Torna]"), altrimenti None."""
+    blk = link.find_parent(["p", "div", "li"])
+    if blk is not None and blk.get_text(strip=True) == link.get_text(strip=True):
+        return blk
+    return None
+
+
+def _drop_backlinked_notes(soup) -> None:
+    """Toglie le note che rimandano al proprio rimando nel testo, insieme al
+    rimando e al blocco col solo link di ritorno."""
+    ids, links_to = {}, {}
+    for tag in soup.find_all(id=True):
+        ids.setdefault(tag["id"], tag)
+    for a in soup.find_all("a", href=True):
+        if _fragment(a["href"]):
+            links_to.setdefault(_fragment(a["href"]), []).append(a)
+    for mark in soup.find_all("a", href=True, id=True):
+        note = ids.get(_fragment(mark["href"]))
+        if note is None or mark.decomposed or note.decomposed:
+            continue
+        if mark.find_parent("sup") is None and not _NOTE_MARK_RE.fullmatch(mark.get_text(strip=True)):
+            continue
+        if note.name == "a" and not note.get_text(strip=True):
+            note = note.find_parent(_NOTE_BLOCK_TAGS)  # ancora vuota in testa alla nota
+        if (note is None or note.name in HEADING_TAGS or note.find(list(HEADING_TAGS)) is not None
+                or _within(mark, note) or len(note.get_text()) > NOTE_BODY_MAX_CHARS):
+            continue
+        backs = [b for b in links_to.get(mark["id"], []) if not b.decomposed]
+        inside = [b for b in backs if _within(b, note)]
+        outside = [_link_only_block(b) for b in backs if not _within(b, note)]
+        if not inside and not any(outside):
+            continue
+        for blk in outside:
+            if blk is not None and not blk.decomposed:
+                blk.decompose()
+        note.decompose()
+        mark.decompose()
+
+
+def _strip_heading_note_ref(title, html_content: str):
+    """Titolo d'indice senza il rimando a nota del suo heading: l'NCX di Liber
+    Liber copia il <sup> e scrive "Introduzionenota" per
+    <h1>Introduzione<sup><a href="#nota">nota</a></sup></h1> (L'idiota,
+    catalogo 13/11/2026). Toglie il testo degli apici con un link (i rimandi)
+    in coda al titolo solo se quel che resta e' il testo dell'heading senza di
+    loro: "Terra ignota" e "Chapitre 1<sup>er</sup>" restano."""
+    if not title or "<sup" not in (html_content or ""):
+        return title
+    flat = " ".join(str(title).split())
+    for heading in BeautifulSoup(html_content, "lxml").find_all(list(HEADING_TAGS)):
+        sups = [s for s in heading.find_all("sup") if s.find("a") is not None]
+        tail = " ".join("".join(s.get_text() for s in sups).split())
+        if not tail or not flat.endswith(tail):
+            continue
+        head = flat[:-len(tail)].strip()
+        for s in sups:
+            s.extract()
+        if head and head in {" ".join(heading.get_text(sep).split()) for sep in (" ", "")}:
+            return head
+    return title
+
+
 def html_to_text(html_content: str) -> str:
     """Converte HTML in testo pulito per TTS."""
     soup = BeautifulSoup(html_content, "lxml")
 
+    # Prima di togliere i <sup>, che contengono i rimandi
+    _drop_backlinked_notes(soup)
     # Prima di togliere <sup> e immagini: apici e lettrine fanno parte del testo
     _apply_uppercase_numerals(soup)
     _keep_word_superscripts(soup)
@@ -1744,6 +1830,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
                 # File multi-capitolo: processa ogni sezione
                 for section_title, section_html in merged_sections:
+                    section_title = _strip_heading_note_ref(section_title, section_html)
                     raw_text = html_to_text(section_html)
                     clean = clean_text_for_tts(raw_text, lang=info.language)
 
@@ -1834,7 +1921,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         # ── File singolo capitolo (comportamento originale) ──
         # Titolo: prima dal TOC, poi dall'HTML (heading/<title>, poi marcatore
         # di capitolo nel corpo per gli export senza heading semantici)
-        title = toc_map.get(file_name)
+        title = _strip_heading_note_ref(toc_map.get(file_name), html_content)
         if not title:
             title = _derive_chapter_title(html_content)
         title_is_synthetic = not title
