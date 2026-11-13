@@ -1940,7 +1940,11 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             # Documenti misti (es. back-matter con Epilogo + Note + Indice)
             # possono fallire come blocco unico ma contenere sezioni valide.
             # Principio: meglio preservare in eccesso che perdere contenuto.
-            salvaged_sections = _split_html_by_headings_auto(html_content)
+            # Non per un colophon: le sue sottosezioni sono la licenza e le
+            # note di trascrizione (Beschikbaarheid, Codering di Gutenberg,
+            # lette in coda a Camera Obscura, catalogo 13/11/2026).
+            salvaged_sections = ([] if _title_is_non_content(title, COLOPHON_TITLE_PHRASES)
+                                 else _split_html_by_headings_auto(html_content))
             salvaged_any = False
             if salvaged_sections:
                 for section_title, section_html in salvaged_sections:

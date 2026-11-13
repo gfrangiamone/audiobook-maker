@@ -90,6 +90,16 @@ def test_indice_e_colophon_in_olandese_e_tedesco():
     assert not title_is_non_content("De inhoud van den brief")
 
 
+def test_note_olandesi_solo_come_titolo_intero():
+    # De hut van oom Tom (catalogo, 13/11/2026): le AANTEEKENINGEN del
+    # traduttore si leggevano dopo l'ultimo capitolo.
+    from book_model import title_is_non_content
+    for t in ("AANTEEKENINGEN", "Aantekeningen.", "Noten"):
+        assert title_is_non_content(t), t
+    for t in ("Aantekeningen van een gek", "Noten kraken", "Hoofdstuk III. Noten"):
+        assert not title_is_non_content(t), t
+
+
 def test_epub_tedesco_non_legge_esempio(tmp_path):
     book = epub.EpubBook()
     book.set_identifier("abbr-de")
