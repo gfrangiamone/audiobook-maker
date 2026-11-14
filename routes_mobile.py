@@ -315,7 +315,11 @@ def api_transfer_claim(token):
         for _tok, _rec in list(_tkstore.download_tokens.items()):
             if isinstance(_rec, dict) and _rec.get("job_id") == job_id:
                 any_rec = any_rec or _rec
-                if not _rec.get("admin_copy"):
+                # Preferisci il token audio a quello della traduzione/.abm
+                # (vedi generation_engine._NON_AUDIO_TOKEN_TYPES).
+                if (not _rec.get("admin_copy")
+                        and _rec.get("download_type", "audio")
+                        not in ("translated", "optimized_abm")):
                     non_admin_rec = non_admin_rec or _rec
         base_rec = non_admin_rec or any_rec
         created_temp = None

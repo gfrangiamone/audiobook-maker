@@ -1770,6 +1770,21 @@ def _email_generation_details(job, lang):
         return ""
 
 
+# Token di un job che NON servono l'audiolibro: la consegna della traduzione
+# (/dl/<t>/translated) e quella del solo .abm ottimizzato. Lo stesso job_id
+# puo' averne uno PRIMA della generazione audio (traduzione -> adopt -> TTS,
+# oppure ottimizza -> genera), e il riuso idempotente di _create_download_token
+# non deve restituirli: l'email "Il tuo audiolibro e' pronto" puntava alla
+# pagina della traduzione (segnalazione utente DE, 14/11/2026).
+_NON_AUDIO_TOKEN_TYPES = frozenset({"translated", "optimized_abm"})
+
+
+def _is_audio_token_rec(rec):
+    """True se il record e' un download token utente dell'output audio."""
+    return (isinstance(rec, dict)
+            and rec.get("download_type", "audio") not in _NON_AUDIO_TOKEN_TYPES)
+
+
 def _create_download_token(job_id):
     """Crea (idempotente) un download token per un job completato e lo persiste,
     SENZA inviare email. Ritorna il token, o None se il job non e' valido.
@@ -1778,13 +1793,19 @@ def _create_download_token(job_id):
     job = _jobs.get(job_id)
     if not job:
         return None
-    # Riusa un token gia' esistente per lo stesso job (idempotenza).
+    # Riusa un token audio gia' esistente per lo stesso job (idempotenza).
+    # Esclusi i token di traduzione/.abm e le copie amministrative.
     for tok, rec in _download_tokens.items():
-        if isinstance(rec, dict) and rec.get("job_id") == job_id:
+        if (_is_audio_token_rec(rec) and rec.get("job_id") == job_id
+                and not rec.get("admin_copy")):
             return tok
     info = job.get("info", None)
     book_title = (info.title if info else "") or job.get("original_filename", "") or "Audiobook"
     dl_type = job.get("notify_download_type", "audio")
+    if dl_type in _NON_AUDIO_TOKEN_TYPES:
+        # Residuo di una traduzione/ottimizzazione precedente sullo stesso job:
+        # questo token serve l'audio, mai la pagina della traduzione.
+        dl_type = "podcast" if job.get("output_format") == "zip_rss" else "audio"
     base_url = job.get("notify_base_url", "").rstrip("/")
     lang = job.get("notify_lang", "en")
     token = str(uuid.uuid4())
@@ -1842,7 +1863,8 @@ def _materialize_admin_copies(job_id):
     base_rec = None
     created_temp = None
     for tok, rec in list(_download_tokens.items()):
-        if isinstance(rec, dict) and rec.get("job_id") == job_id and not rec.get("admin_copy"):
+        if (_is_audio_token_rec(rec) and rec.get("job_id") == job_id
+                and not rec.get("admin_copy")):
             base_rec = rec
             break
     if base_rec is None:
