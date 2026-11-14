@@ -71,8 +71,9 @@ _BOOK_ID_RE = re.compile(r"^[a-z]{2}-[a-z0-9]+(?:-[a-z0-9]+)*$")
 _URL_RE = re.compile(r"""^(https?://|/)[^\s"'()<>\\]+$""")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 # Lettere latine accentate comprese: ci sono voci VoxCPM come pt-BR/Patrícia
-# (08/11/2026, il catalogo portoghese non si pubblicava).
-_VOICE_RE = re.compile(r"^(gemini|voxcpm):[A-Za-z0-9À-ÖØ-öø-ſ:_/.-]+$")
+# (08/11/2026, il catalogo portoghese non si pubblicava). Voci pocket dal
+# 14/11/2026 (Moby Dick, pocket:v1:it-IT/Bruno).
+_VOICE_RE = re.compile(r"^(gemini|voxcpm|pocket):[A-Za-z0-9À-ÖØ-öø-ſ:_/.-]+$")
 
 # Licenze del testo come le scrive la produzione del catalogo, in italiano
 # (abm-free-catalog: `catalog_cli.GUTENBERG_LICENSE`,

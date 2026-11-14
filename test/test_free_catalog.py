@@ -524,6 +524,13 @@ def test_voce_con_lettere_accentate_resta_nell_invito(catalog):
     assert 'href="/?voice=voxcpm%3Av2%3Apt-BR%2FPatr%C3%ADcia&amp;utm_source=catalog' in page
 
 
+def test_voce_pocket_resta_nell_invito(catalog):
+    catalog([_book(voice_id="pocket:v1:it-IT/Bruno")])
+    page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
+                                  lambda text: "data:image/png;base64,QR")
+    assert 'href="/?voice=pocket%3Av1%3Ait-IT%2FBruno&amp;utm_source=catalog' in page
+
+
 def test_voce_malformata_l_invito_resta_senza_voce(catalog):
     catalog([_book(voice_id="javascript:alert(1)")])
     page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
