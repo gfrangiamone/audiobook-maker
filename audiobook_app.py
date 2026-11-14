@@ -4714,6 +4714,12 @@ def api_generate():
     if output_format == "zip_rss":
         job["notify_download_type"] = "podcast"
         job["notify_base_url"] = podcast_base_url
+    elif job.get("notify_download_type") == "translated":
+        # Traduzione adottata e poi messa in TTS sullo stesso job: il tipo
+        # "translated" armato da /api/translate non vale piu'. Lasciato li',
+        # token/email dell'audiolibro puntavano alla traduzione e il
+        # descrittore di recovery della generazione non veniva registrato.
+        job["notify_download_type"] = "audio"
 
     # Maintenance suspend check BEFORE payment preflight so we never consume
     # a payment token when the system can't accept the job anyway.
