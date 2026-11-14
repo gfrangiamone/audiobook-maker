@@ -705,16 +705,32 @@ function hideUploadProgress(){
   setTimeout(()=>{progress.style.display='none';fill.style.width='0%'},500);
   if(window._uploadProgressInterval){clearInterval(window._uploadProgressInterval);window._uploadProgressInterval=null}
 }
+// Caricamento fallito: la barra sparisce subito (niente 100% finto), cosi'
+// non resta ferma all'85% come se l'upload fosse ancora in corso.
+function resetUploadProgress(){
+  if(window._uploadProgressInterval){clearInterval(window._uploadProgressInterval);window._uploadProgressInterval=null}
+  const progress=document.getElementById('uploadProgress');
+  const fill=document.getElementById('uploadProgressFill');
+  if(progress)progress.style.display='none';
+  if(fill)fill.style.width='0%';
+  const pct=document.getElementById('uploadPercent');if(pct)pct.textContent='0%';
+}
 
 async function analyzeEpub(file){
   const lo=document.getElementById('alo');lo.classList.add('vis');
   // Sospensione admin: blocca gia` al caricamento, evitando di uploadare il file
   // (fino a 50MB) per poi essere bloccati. Il backend ricontrolla comunque
   // (guardia autoritativa in /api/analyze).
-  try{const sr=await fetch('/api/admin/suspend');if(sr.ok){const sd=await sr.json();if(sd.suspended){showErr('aerr','System under maintenance. Please try again in a few minutes.');lo.classList.remove('vis');return}}}catch(_){}
+  try{const sr=await fetch('/api/admin/suspend');if(sr.ok){const sd=await sr.json();if(sd.suspended){showErr('aerr','System under maintenance. Please try again in a few minutes.');lo.classList.remove('vis');resetUploadProgress();return}}}catch(_){}
   const fd=new FormData();fd.append('epub',file);
   try{
-    const r=await fetch('/api/analyze',{method:'POST',body:fd});
+    let r;
+    // fetch rifiutata = la richiesta non e' mai partita o si e' interrotta.
+    // Caso tipico (ticket 14/11/2026): Chrome Android non riesce a leggere un
+    // file scelto da Drive/«Recenti»/allegati e non invia nulla; prima la barra
+    // restava all'85% con un "Error: Failed to fetch" poco visibile.
+    try{r=await fetch('/api/analyze',{method:'POST',body:fd})}
+    catch(_netErr){showErr('aerr',t('err_upload_unreadable'));lo.classList.remove('vis');resetUploadProgress();return}
     let d;
     // Risposta non-JSON (es. pagina HTML 413/5xx di nginx o Werkzeug): messaggio
     // sensato invece di "JSON.parse: unexpected character".
@@ -772,7 +788,7 @@ async function analyzeEpub(file){
     // Unlock panel 2 and navigate to it
     _unlockStep(2);
     goToStep(2);
-  }catch(e){showErr('aerr','Error: '+e.message);lo.classList.remove('vis')}
+  }catch(e){showErr('aerr','Error: '+e.message);lo.classList.remove('vis');resetUploadProgress()}
 }
 
 // ═══════════════════ VOICES ═══════════════════
