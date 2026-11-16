@@ -148,6 +148,39 @@ def test_la_voce_del_capitolo_stesso_non_e_una_parte():
     assert [c.title for c in ch] == ["Drittes Kapitel", "Drittes Kapitel"]
 
 
+def test_file_con_due_parti_ogni_capitolo_prende_la_sua():
+    # Anna Karenina di Hans Moser (Gutenberg 44956, catalogo 16/11/2026): un
+    # file chiude la seconda parte e apre la terza, e i capitoli 2-4 della
+    # terza si leggevano "Zweiter Teil – 2.".
+    class Book:
+        toc = [(epub.Link("a.xhtml#p2", "Zweiter Teil.", "p2"),
+                [epub.Link("a.xhtml#c1", "1.", "c1"), epub.Link("b.xhtml#c34", "34.", "c34"),
+                 epub.Link("b.xhtml#c35", "35.", "c35")]),
+               (epub.Link("b.xhtml#p3", "Dritter Teil.", "p3"),
+                [epub.Link("b.xhtml#d1", "1.", "d1"), epub.Link("b.xhtml#d2", "2.", "d2"),
+                 epub.Link("c.xhtml#d3", "3.", "d3")])]
+    parents, entries = E._build_toc_parts(Book())
+    assert parents == E._build_toc_parents(Book()) == {"a.xhtml": "Zweiter Teil.", "b.xhtml": "Zweiter Teil.",
+                                                         "c.xhtml": "Dritter Teil."}
+    ch = [E.Chapter(index=1, title="Zweiter Teil. 1.", text="Uno.", source_file="a.xhtml"),
+          E.Chapter(index=2, title="2.", text="Due.", source_file="a.xhtml"),
+          E.Chapter(index=3, title="34.", text="Tre.", source_file="b.xhtml"),
+          E.Chapter(index=4, title="35.", text="Quattro.", source_file="b.xhtml"),
+          E.Chapter(index=5, title="Dritter Teil. 1.", text="Cinque.", source_file="b.xhtml"),
+          E.Chapter(index=6, title="2.", text="Sei.", source_file="b.xhtml"),
+          E.Chapter(index=7, title="3.", text="Sette.", source_file="c.xhtml")]
+    E._name_parts(ch, parents, entries)
+    assert [c.title for c in ch] == ["Zweiter Teil. 1.", "Zweiter Teil. – 2.", "34.", "35.",
+                                     "Dritter Teil. 1.", "Dritter Teil. – 2.", "3."]
+    # La parte e' gia' nel titolo letto: non si ripete in testa al testo.
+    assert ch[4].text == "Cinque."
+    # Senza le voci per file, come prima: la parte della prima voce del file.
+    ch[5].title = "2."
+    ch[1].title = "2."
+    E._name_parts(ch[:6], parents)
+    assert ch[5].title == "Zweiter Teil. – 2."
+
+
 def test_spine_senza_ripetizioni_invariato(tmp_path):
     p = tmp_path / "ok.epub"
     docs = {f"c{i}": (f"Capitolo {i}", [f"{i}. {_PARA}"] * 8) for i in range(1, 4)}

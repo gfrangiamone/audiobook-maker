@@ -2042,7 +2042,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     reflow_broken_paragraphs(info)
 
     # ── Parti del libro (indice annidato: "Parte seconda" > "Capitolo 1") ──
-    _name_parts(info.chapters, _build_toc_parents(book, info.author))
+    _name_parts(info.chapters, *_build_toc_parts(book, info.author))
     _retitle_author_chapters(info)
     _localize_lead_titles(info)
 
@@ -2086,7 +2086,37 @@ def _localize_lead_titles(info) -> None:
 PART_TITLE_SEP = " – "
 
 
-def _name_parts(chapters, parents):
+def _entry_matches(key: str, entry_key: str) -> bool:
+    """Il titolo del capitolo (chiave normalizzata) e' quello della voce
+    d'indice, o la contiene come primo o ultimo pezzo: "Dritter Teil. 1."
+    unisce la voce della parte e quella del capitolo."""
+    return bool(entry_key) and (key == entry_key or key.endswith(" " + entry_key)
+                                or key.startswith(entry_key + " "))
+
+
+def _part_of(ch, parents, entries, cursor):
+    """Parte del capitolo: quella della sua voce d'indice, cercata in ordine
+    fra le voci del suo file (`cursor`: file -> prima voce non ancora usata).
+    Gutenberg spezza i file a misura, non a capitolo: in Anna Karenina di
+    Hans Moser un file chiude la seconda parte e apre la terza, e i capitoli
+    2-4 della terza si leggevano "Zweiter Teil – 2." (catalogo, 16/11/2026).
+    Senza una voce col suo titolo vale la parte del file, come prima."""
+    file_ = ch.source_file or ""
+    todo = entries.get(file_) or []
+    key = _norm_title_key(ch.title)
+    i = cursor.get(file_, 0)
+    while i < len(todo) and not _entry_matches(key, todo[i][0]):
+        i += 1
+    if i == len(todo):
+        return parents.get(file_)
+    # Voci consecutive che il titolo unisce: vale l'ultima ("1." dopo "Dritter Teil.").
+    while i + 1 < len(todo) and _entry_matches(key, todo[i + 1][0]):
+        i += 1
+    cursor[file_] = i + 1
+    return todo[i][1] or parents.get(file_)
+
+
+def _name_parts(chapters, parents, entries=None):
     """Porta la parte del libro dove l'indice annidato la lascerebbe cadere.
 
     `parents`: file -> titolo della voce d'indice che lo contiene. Un titolo
@@ -2095,15 +2125,17 @@ def _name_parts(chapters, parents):
     il TTS legge. Se i titoli sono gia' distinti e la pagina della parte non e'
     rimasta come capitolo (solo titolo e indice: scartata), il nome della
     parte si legge in testa al suo primo capitolo. Senza indice annidato
-    non cambia niente.
+    non cambia niente. `entries` (file -> [(titolo normalizzato, parte)] in
+    ordine d'indice) da' la parte di ogni capitolo nei file con piu' parti.
     """
     if not parents:
         return
     counts = Counter(c.title for c in chapters)
     kept = {_norm_title_key(c.title) for c in chapters}
     prev = None
+    cursor = {}
     for ch in chapters:
-        parent = parents.get(ch.source_file or "")
+        parent = _part_of(ch, parents, entries or {}, cursor)
         # La voce d'indice del capitolo stesso, con le sue sottovoci, non e'
         # una parte: "Drittes Kapitel – Drittes Kapitel".
         if parent and _norm_title_key(parent) == _norm_title_key(ch.title):
@@ -2113,6 +2145,7 @@ def _name_parts(chapters, parents):
             if generic and counts[ch.title] > 1:
                 ch.title = f"{parent}{PART_TITLE_SEP}{ch.title}"
             elif (parent != prev and _norm_title_key(parent) not in kept
+                    and not _entry_matches(_norm_title_key(ch.title), _norm_title_key(parent))
                     and not _title_already_in_text(parent, ch.text)):
                 ch.text = f"{parent}.\n\n{ch.text}"
                 ch.word_count, ch.char_count = len(ch.text.split()), len(ch.text)
@@ -2137,22 +2170,36 @@ def _is_author_byline(title: str, author: str) -> bool:
 def _build_toc_parents(book: epub.EpubBook, author: str = "") -> dict[str, str]:
     """file -> titolo della voce d'indice che lo contiene, per i file annidati.
     La firma dell'autore non fa da parte (`_is_author_byline`)."""
-    parents = {}
+    return _build_toc_parts(book, author)[0]
+
+
+def _build_toc_parts(book: epub.EpubBook, author: str = ""):
+    """(file -> parte della prima voce annidata del file, file -> [(titolo
+    normalizzato, parte)] di tutte le sue voci in ordine d'indice; parte ""
+    per le voci di primo livello). La seconda serve ai file con capitoli di
+    due parti (`_part_of`)."""
+    parents, entries = {}, {}
 
     def walk(items, parent):
         for item in items or []:
             if isinstance(item, tuple) and len(item) == 2:
                 section, children = item
                 href = (getattr(section, "href", "") or "").split("#")[0]
+                title = clean_toc_title(getattr(section, "title", ""))
+                if href:
+                    entries.setdefault(href, []).append((_norm_title_key(title), parent))
                 if parent and href:
                     parents.setdefault(href, parent)
-                title = clean_toc_title(getattr(section, "title", ""))
                 walk(children, parent if _is_author_byline(title, author) else title or parent)
-            elif parent and isinstance(getattr(item, "href", None), str):
-                parents.setdefault(item.href.split("#")[0], parent)
+            elif isinstance(getattr(item, "href", None), str):
+                href = item.href.split("#")[0]
+                entries.setdefault(href, []).append(
+                    (_norm_title_key(clean_toc_title(getattr(item, "title", ""))), parent))
+                if parent:
+                    parents.setdefault(href, parent)
 
     walk(book.toc, "")
-    return parents
+    return parents, entries
 
 
 def _get_metadata(book: epub.EpubBook, field: str) -> Optional[str]:
