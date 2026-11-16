@@ -78,6 +78,45 @@ def test_robots_and_llms_from_files():
     assert "__P" not in r.get_data(as_text=True)
 
 
+def _robots_groups(txt):
+    """[(user-agent, [(allow|disallow, path)])]: righe User-agent consecutive
+    formano un solo gruppo, come per Google (RFC 9309)."""
+    groups, prev = [], None
+    for line in txt.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if ":" not in line:
+            continue
+        key, val = (s.strip() for s in line.split(":", 1))
+        key = key.lower()
+        if key == "user-agent":
+            if prev != "user-agent":
+                groups.append(([], []))
+            groups[-1][0].append(val.lower())
+        elif key in ("allow", "disallow") and groups:
+            groups[-1][1].append((key, val))
+        prev = key
+    return groups
+
+
+def test_robots_ogni_crawler_ammesso_rispetta_i_disallow():
+    """Un crawler segue solo il gruppo piu' specifico che lo nomina: Bingbot e i
+    crawler AI in un gruppo con il solo `Allow: /` ignoravano /api/, /admin/,
+    ?token= (Search Console, 16/11/2026). Googlebot scaricava gli M4B del
+    catalogo da /free-audiobooks/dl/, gonfiando i download contati."""
+    app.app.config["TESTING"] = True
+    groups = _robots_groups(app.app.test_client().get("/robots.txt").get_data(as_text=True))
+    required = {"/api/", "/admin/", "/dl/", "/data/", "/free-audiobooks/dl/", "/*?token=", "/*?job="}
+    seen = set()
+    for agents, rules in groups:
+        disallow = {p for k, p in rules if k == "disallow"}
+        seen.update(agents)
+        if "/" in disallow:                              # scraper bloccati del tutto
+            continue
+        assert required <= disallow, (agents, required - disallow)
+    assert {"*", "bingbot", "gptbot", "claudebot", "perplexitybot", "yandexbot"} <= seen
+    assert len(seen) == sum(len(a) for a, _ in groups)   # nessun crawler in due gruppi
+
+
 def test_no_full_html_document_left_inline():
     src = Path(app.__file__).read_text(encoding="utf-8")
     assert src.count("<!DOCTYPE html") == 0

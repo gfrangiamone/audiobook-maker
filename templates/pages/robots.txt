@@ -1,49 +1,28 @@
+# Search engines and AI/LLM crawlers (citations) share one group: a crawler
+# obeys only the most specific group naming it, so a named crawler in a group
+# of its own would ignore every Disallow below.
 User-agent: *
+User-agent: Bingbot
+User-agent: Baiduspider
+User-agent: YandexBot
+User-agent: GPTBot
+User-agent: ChatGPT-User
+User-agent: OAI-SearchBot
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: ClaudeBot
+User-agent: Claude-Web
+User-agent: Google-Extended
+User-agent: Applebot-Extended
 Allow: /
 Disallow: /api/
 Disallow: /data/
 Disallow: /dl/
 Disallow: /admin/
 Disallow: /community/api/
+Disallow: /free-audiobooks/dl/
 Disallow: /*?job=
 Disallow: /*?token=
-
-# Allow major AI/LLM crawlers to index content for citations
-User-agent: GPTBot
-Allow: /
-
-User-agent: ChatGPT-User
-Allow: /
-
-User-agent: OAI-SearchBot
-Allow: /
-
-User-agent: PerplexityBot
-Allow: /
-
-User-agent: Perplexity-User
-Allow: /
-
-User-agent: ClaudeBot
-Allow: /
-
-User-agent: Claude-Web
-Allow: /
-
-User-agent: Google-Extended
-Allow: /
-
-User-agent: Applebot-Extended
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Baiduspider
-Allow: /
-
-User-agent: YandexBot
-Allow: /
 
 # Block aggressive scrapers / non-search crawlers
 User-agent: AhrefsBot
