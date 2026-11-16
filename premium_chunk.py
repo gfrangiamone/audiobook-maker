@@ -85,7 +85,7 @@ _EDGE_FALLBACK_DEFAULT = "en-US-AriaNeural"
 _EDGE_FALLBACK_ACCENT = {
     ("en", "us"): {"Male": "en-US-GuyNeural",     "Female": "en-US-AriaNeural"},
     ("en", "gb"): {"Male": "en-GB-RyanNeural",    "Female": "en-GB-SoniaNeural"},
-    ("en", "au"): {"Male": "en-AU-WilliamNeural", "Female": "en-AU-NatashaNeural"},
+    ("en", "au"): {"Male": "en-AU-WilliamMultilingualNeural", "Female": "en-AU-NatashaNeural"},
     ("en", "in"): {"Male": "en-IN-PrabhatNeural", "Female": "en-IN-NeerjaNeural"},
     ("es", "es"):  {"Male": "es-ES-AlvaroNeural", "Female": "es-ES-ElviraNeural"},
     ("es", "419"): {"Male": "es-MX-JorgeNeural",  "Female": "es-MX-DaliaNeural"},
