@@ -137,7 +137,7 @@ def test_pick_edge_fallback_unknown_gender_stays_female():
 def test_pick_edge_fallback_accent_falls_back_to_lang_gender():
     # Accento non mappato per la lingua -> almeno il genere resta coerente.
     v = premium_chunk._pick_edge_fallback_voice("de", gender="Male", accent_code="zz")
-    assert v == "de-DE-ConradNeural"
+    assert v == "de-DE-ChristophNeural"
 
 
 def test_pick_edge_fallback_mono_variant_language_gender():
