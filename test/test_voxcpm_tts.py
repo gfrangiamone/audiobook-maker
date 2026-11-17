@@ -418,3 +418,16 @@ def test_annullamento_durante_l_attesa_del_posto(monkeypatch):
     assert not preso.is_set()
     assert len(errori) == 1
     assert isinstance(errori[0], voxcpm_tts.VoxcpmAnnullato)
+
+
+def test_estimate_completion_parte_subito_e_scala_coi_caratteri(monkeypatch):
+    # Fast non ha coda: accensione e montaggio fissi piu' i caratteri al
+    # passo osservato in prod; gli ideogrammi pesano come nel prezzo.
+    for k in ("ABM_VOXCPM_ETA_START_S", "ABM_VOXCPM_ETA_CHARS_PER_S", "ABM_VOXCPM_LANG_FACTOR_ZH"):
+        monkeypatch.delenv(k, raising=False)
+    assert voxcpm_tts.estimate_completion(0, "it") == {"starts_now": True, "eta_s": 240}
+    assert voxcpm_tts.estimate_completion(2_000_000, "en")["eta_s"] == 240 + 6667
+    assert voxcpm_tts.estimate_completion(30_000, "zh")["eta_s"] == 240 + 330
+    monkeypatch.setenv("ABM_VOXCPM_ETA_START_S", "60")
+    monkeypatch.setenv("ABM_VOXCPM_ETA_CHARS_PER_S", "0")        # illeggibile: almeno 1 car/s
+    assert voxcpm_tts.estimate_completion(100, "it")["eta_s"] == 160

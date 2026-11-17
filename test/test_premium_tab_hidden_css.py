@@ -46,3 +46,15 @@ def test_la_regola_hidden_viene_dopo_quella_che_imposta_display():
         "la regola [hidden] deve stare DOPO quella che imposta display, "
         "altrimenti a parita' di specificita' perde."
     )
+
+
+def test_il_tab_premium_conta_anche_le_voci_fast_e_batch():
+    """Istanza con le sole voci Fast e batch (Gemini spento, come in locale
+    senza backend il 17/11/2026): il tab restava nascosto e i due modelli a
+    pagamento non si potevano scegliere."""
+    body = re.search(r"function _applyPremiumAvailability\(\)\{([\s\S]*?)\n\}", APP_JS)
+    assert body, "_applyPremiumAvailability non trovata in app.js"
+    assert "_isCatalogVoiceId(v.id)" in body.group(1), (
+        "_applyPremiumAvailability conta solo le voci gemini:/speechify: come "
+        "premium: senza Gemini il tab sparisce anche con voci voxcpm:/pocket:."
+    )

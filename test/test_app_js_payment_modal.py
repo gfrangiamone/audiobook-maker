@@ -251,7 +251,7 @@ def test_open_payment_modal_computes_min_adjust():
     snippet = APP[start:start + 2000]
     assert "minAdjust: _adjust" in snippet
     # La nota del minimo, seguita dalla consegna stimata del modello batch.
-    assert "minNote: [_payMinNoteText(estimate, _adjust), _pocketDeliveryText(estimate)]" in snippet
+    assert "minNote: [_payMinNoteText(estimate, _adjust), _deliveryText(estimate)]" in snippet
 
 
 def test_min_note_mentions_quota_when_exhausted():

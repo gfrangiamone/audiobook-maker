@@ -127,13 +127,39 @@ def test_voice_language():
 def test_synthesize_writes_pcm_and_sends_worker_voice(worker_env, tmp_path):
     out = tmp_path / "c.pcm"
     sess = _Session(_Resp(200, b"\x01\x00" * 24000))
-    res = pocket_tts.synthesize("Ciao a tutti.", VOICE, str(out), rate="+10%", session=sess)
+    res = pocket_tts.synthesize("Ciao a tutti.", VOICE, str(out), rate="+0%", session=sess)
     assert out.read_bytes() == b"\x01\x00" * 24000
     assert res["success"] and res["sample_rate"] == 24000 and res["bytes_written"] == 48000
     url, payload, headers = sess.calls[0]
     assert url == "https://pocket.example/v1/synthesize"
     assert payload == {"text": "Ciao a tutti.", "voice": "it-IT/Chiara", "lang": "it", "normalize": True}
     assert headers == {"Authorization": "Bearer tok"}
+
+
+def test_synthesize_applica_la_velocita_al_pcm(worker_env, tmp_path):
+    # Il worker legge al ritmo della voce: +30% lo stira ABM con ffmpeg vero,
+    # e i byte scritti (durata dei marker e dell'audit) sono quelli nuovi.
+    out = tmp_path / "c.pcm"
+    sess = _Session(_Resp(200, b"\x00\x00" * 24000))     # 1 s a 24 kHz
+    res = pocket_tts.synthesize("Ciao a tutti.", VOICE, str(out), rate="+30%", session=sess)
+    assert 30000 < out.stat().st_size < 42000              # ~1/1,3 di 48000 byte
+    assert res["bytes_written"] == out.stat().st_size
+    assert sess.calls[0][1]["text"] == "Ciao a tutti."     # niente velocita' al worker
+
+
+def test_synthesize_velocita_fallita_tiene_l_audio(worker_env, tmp_path, monkeypatch):
+    # ffmpeg mancante: il chunk arriva a velocita' normale invece di perdersi.
+    import subprocess
+
+    def fallisce(cmd, **kw):
+        raise FileNotFoundError("ffmpeg non trovato")
+
+    monkeypatch.setattr(subprocess, "run", fallisce)
+    out = tmp_path / "c.pcm"
+    sess = _Session(_Resp(200, b"\x01\x02" * 24000))
+    res = pocket_tts.synthesize("Ciao.", VOICE, str(out), rate="-20%", session=sess)
+    assert res["success"] and out.read_bytes() == b"\x01\x02" * 24000
+    assert res["bytes_written"] == 48000 and not (tmp_path / "c.pcm.rate").exists()
 
 
 def test_synthesize_retries_restart_and_network_then_succeeds(worker_env, tmp_path):

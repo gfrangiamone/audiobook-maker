@@ -1,6 +1,6 @@
 """ffmpeg_tools — l'unico punto che lancia ffmpeg e ffprobe (F2, 2026-10-10).
 
-Modulo foglia (solo stdlib). Prima: flag di subprocess e decodifica leniente
+Modulo foglia (stdlib e la foglia `fileio`). Prima: flag di subprocess e decodifica leniente
 definiti due volte (`audio_utils`, `voice_clone_audio`) e presi in prestito da
 `voice_denoise`; tre lettori di durata via ffprobe; quattro lanci «nudi» di
 ffmpeg senza timeout ne' flag (`tts_split._mp3_to_pcm_24k`,
@@ -22,6 +22,8 @@ ffmpeg senza timeout ne' flag (`tts_split._mp3_to_pcm_24k`,
   filters=None, timeout)`: qualunque ingresso (o PCM grezzo se `in_rate`)
   -> PCM s16le; False se ffmpeg manca, fallisce o scade (log, niente
   eccezione): i chiamanti degradano (silenzio, velocita' normale).
+- `pcm_apply_tempo(pcm_path, tempo, sample_rate)`: velocita' di lettura sul
+  posto con `atempo` (VoxCPM, modello batch); il PCM resta intatto se fallisce.
 - `write_pcm_silence(path, seconds, rate, channels, width)`: zeri, senza
   ffmpeg. Costanti `PCM_SAMPLE_RATE` (24 kHz, il formato dei chunk Gemini),
   `PCM_CHANNELS`, `PCM_SAMPLE_WIDTH`.
@@ -38,6 +40,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+import fileio
 
 SUBPROCESS_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 TEXT_LENIENT = {"text": True, "encoding": "utf-8", "errors": "replace"}
@@ -129,6 +133,27 @@ def pcm_transcode(src, dst, *, out_rate, in_rate=None, channels=PCM_CHANNELS, fi
     except OSError:
         pass
     return False
+
+
+def pcm_apply_tempo(pcm_path, tempo, sample_rate, *, timeout=600, tag="ffmpeg atempo"):
+    """Stira sul posto il PCM s16le mono `pcm_path` a `sample_rate` Hz di un
+    fattore `tempo` (1.10 = 10% piu' veloce) con `atempo`, stretto in 0,5-2,0.
+
+    None se il fattore e' neutro (niente da fare), True se fatto, False se
+    ffmpeg manca, fallisce o scade: il PCM originale resta com'era, cosi' il
+    chiamante consegna a velocita' normale invece di perdere l'audio gia'
+    sintetizzato (VoxCPM, modello batch)."""
+    tempo = max(0.5, min(2.0, float(tempo)))
+    if abs(tempo - 1.0) < 0.005:
+        return None
+    sr = int(sample_rate or PCM_SAMPLE_RATE)
+    try:
+        return fileio.atomic_produce(pcm_path, lambda tmp: pcm_transcode(
+            pcm_path, tmp, in_rate=sr, out_rate=sr, filters=f"atempo={tempo:.4f}",
+            timeout=timeout, tag=tag))
+    except OSError:
+        print(f"[{tag}] sostituzione del PCM fallita, velocita' non applicata")
+        return False
 
 
 def loudness_lufs(src, *, in_rate=None, channels=PCM_CHANNELS, timeout=DEFAULT_TIMEOUT):

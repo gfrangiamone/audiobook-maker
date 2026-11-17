@@ -377,6 +377,22 @@ def estimate_book_cost(chapters, language="it", strip_round=True, strip_square=T
     }
 
 
+def estimate_completion(chars, language=None):
+    """Durata stimata di un libro Fast, dall'avvio alla consegna.
+
+    Il modello Fast parte subito (nessuna coda per libro, a differenza del
+    batch): la stima e' un tempo fisso di accensione e montaggio piu' i
+    caratteri al passo osservato in prod (04/10-12/11/2026: 2 M car in 1,5 h,
+    libri sopra 300 k p50 0,8 h, fino a 50 k p90 8 min). I caratteri pesano
+    per lingua come nel prezzo (`lang_price_factor`): un ideogramma dura piu'
+    di una lettera. Ritorna `{"starts_now": True, "eta_s": secondi}`.
+    """
+    start_s = max(0.0, _f("ABM_VOXCPM_ETA_START_S", 240.0))
+    chars_per_s = max(1.0, _f("ABM_VOXCPM_ETA_CHARS_PER_S", 300.0))
+    weighted = max(0, int(chars or 0)) * lang_price_factor(language)
+    return {"starts_now": True, "eta_s": int(round(start_s + weighted / chars_per_s))}
+
+
 # --------------------------------------------------------------------------
 # Errori
 # --------------------------------------------------------------------------
@@ -2432,30 +2448,13 @@ def apply_rate(pcm_path, rate, sample_rate):
     pct = _parse_rate_pct(rate, default=None)
     if pct is None:
         return False
-    tempo = 1.0 + pct / 100.0
-    if abs(tempo - 1.0) < 0.005:
-        return False
-    tempo = max(0.5, min(2.0, tempo))
-
-    sr = int(sample_rate or 48000)
-    tmp = pcm_path + ".rate"
     # ffmpeg mancante, fallito o scaduto (10 min) non deve buttare via l'audio
     # gia' pagato al worker: il PCM originale resta com'era, si consegna a
     # velocita' normale invece di perdere il capitolo. Niente path ne'
     # credenziali nel log, solo il fatto.
-    if not ffmpeg_tools.pcm_transcode(pcm_path, tmp, in_rate=sr, out_rate=sr,
-                                      filters=f"atempo={tempo:.4f}", timeout=600, tag="voxcpm apply_rate"):
+    done = ffmpeg_tools.pcm_apply_tempo(pcm_path, 1.0 + pct / 100.0, sample_rate or 48000,
+                                        tag="voxcpm apply_rate")
+    if done is False:
         _LOG.warning("apply_rate: ffmpeg non disponibile o fallito, "
                      "velocita' non applicata")
-        return False
-    try:
-        os.replace(tmp, pcm_path)
-        return True
-    except OSError:
-        _LOG.warning("apply_rate: sostituzione del PCM fallita, velocita' non applicata")
-        return False
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+    return bool(done)

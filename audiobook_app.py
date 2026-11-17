@@ -6867,6 +6867,10 @@ def api_combined_estimate():
             _pmod = tts_engines.ENGINES["pocket"].mod()
             multi_breakdown[_multi]["delivery"] = _pmod.estimate_delivery(
                 est_vox["chars_total"], _pmod.voice_language(voice_id))
+        elif _multi == "voxcpm":
+            # Modello Fast: parte subito, durata stimata dell'intera generazione.
+            multi_breakdown[_multi]["delivery"] = tts_engines.ENGINES["voxcpm"].mod().estimate_completion(
+                est_vox["chars_total"], lang)
 
     # Quota ottimizzazione AI: sul ramo STANDALONE (voce standard, nessun
     # PREMIUM) l'importo mostrato DEVE applicare il floor minimo, come fanno

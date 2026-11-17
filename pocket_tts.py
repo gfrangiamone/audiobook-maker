@@ -17,20 +17,24 @@ Due usi, decisi dalla tariffa `ABM_POCKET_RATE_EUR_PER_MCHAR`:
   mai gratuito, con un minimo per libro (`ABM_POCKET_MIN_PRICE_EUR`);
 - 0: solo per il catalogo dei libri gratuiti (istanze locali), prezzo zero.
 Il motore si accende con `ABM_POCKET_URL` + `ABM_POCKET_TOKEN`.
-Velocita' ed emozione non si applicano: Pocket legge sempre al ritmo della voce.
+L'emozione non si applica. La velocita' del pannello la applica ABM, con un
+`atempo` sul PCM di ogni chunk appena arriva: il worker legge sempre al ritmo
+della voce, come le clip d'ascolto (richiesta utente, 17/11/2026).
 """
+import os
 import threading
 import time
 
 import requests
 
 from env_utils import env_float, env_int, env_str
+import ffmpeg_tools
 import pocket_catalog
 import pricing_common as _pricing
 import retry_util as _retry
 from slot_gate import SlotGate
 from text_reflow import spoken_title_prefix
-from voice_utils import POCKET_VOICE_PREFIX, is_pocket_voice
+from voice_utils import POCKET_VOICE_PREFIX, is_pocket_voice, rate_speed_factor
 
 MODEL_ID = pocket_catalog.MODEL_ID
 MODEL_LABEL = pocket_catalog.MODEL_LABEL
@@ -357,8 +361,10 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%", max_attemp
     """Sintetizza `text` sul worker e scrive il PCM in `output_path`.
 
     Ritorna dict success/bytes_written/sample_rate/channels/billable_chars/
-    voice_name. `emotion` e `rate` sono accettati per simmetria con Speechify
-    e ignorati. `book` e' il `BookTicket` del libro: se il libro perde il
+    voice_name. `emotion` e' accettata per simmetria con Speechify e ignorata;
+    `rate` ("+10%") stira il PCM ricevuto (`ffmpeg_tools.pcm_apply_tempo`): se
+    ffmpeg fallisce il chunk resta a velocita' normale, l'audio non si perde.
+    `book` e' il `BookTicket` del libro: se il libro perde il
     turno (423, un libro con priorita' piu' alta) si aspetta il turno e il
     tentativo si rifa'. Raises PocketUnavailable, PocketFatalError,
     ValueError (voce), RuntimeError a tentativi esauriti.
@@ -414,8 +420,13 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%", max_attemp
 
     kw = {} if sleep is None else {"sleep": sleep}
     try:
-        return _retry.retry_call(
+        result = _retry.retry_call(
             _once, attempts=tries, is_retryable=lambda e: isinstance(e, _PocketRetry),
             wait=lambda attempt, _e: _retry.backoff(attempt, base=5.0, cap=60.0), **kw)
     except _PocketRetry as e:
         raise RuntimeError(f"Pocket synthesis failed after {tries} attempts: {e}") from e
+    if ffmpeg_tools.pcm_apply_tempo(output_path, rate_speed_factor(rate), SAMPLE_RATE,
+                                    tag="pocket rate"):
+        # La durata dell'audio (marker, audit) si legge dai byte scritti.
+        result["bytes_written"] = os.path.getsize(output_path)
+    return result

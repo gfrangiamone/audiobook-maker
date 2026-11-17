@@ -110,6 +110,15 @@ def test_il_dettaglio_dice_caratteri_e_modello(client, job_grande):
     assert b["is_free"] is False
 
 
+def test_la_stima_dice_che_parte_subito_e_quanto_dura(client, job_grande, monkeypatch):
+    # Come il batch dice quando consegna: Fast parte subito, e la durata
+    # dell'intera generazione viaggia con la stima (voxcpm_tts.estimate_completion).
+    monkeypatch.delenv("ABM_VOXCPM_ETA_START_S", raising=False)
+    monkeypatch.delenv("ABM_VOXCPM_ETA_CHARS_PER_S", raising=False)
+    d = stima(client, job_grande)["voxcpm_breakdown"]["delivery"]
+    assert d == {"starts_now": True, "eta_s": 240 + round(250_000 / 300)}
+
+
 def test_sotto_soglia_la_stima_dice_gratis(client, job_piccolo):
     d = stima(client, job_piccolo)
     assert d["is_free"] is True

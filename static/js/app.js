@@ -869,7 +869,8 @@ function _applyPremiumAvailability(){
     for(const k in voices){
       const list=(voices[k]&&voices[k].voices)||[];
       for(const v of list){
-        if(v&&typeof v.id==='string'&&(v.id.startsWith('gemini:')||v.id.startsWith('speechify:'))){hasPremium=true;break;}
+        // Anche Fast e batch: senza Gemini (canale spento) restano le loro voci.
+        if(v&&typeof v.id==='string'&&(v.id.startsWith('gemini:')||v.id.startsWith('speechify:')||_isCatalogVoiceId(v.id))){hasPremium=true;break;}
       }
       if(hasPremium)break;
     }
@@ -1458,9 +1459,10 @@ function _onPremiumModelChanged(){
   // solo VoxCPM.
   if(styleRow)styleRow.hidden=simba||vox;
   if(emoRow)emoRow.hidden=!simba;
-  // Il modello batch legge sempre al passo della voce: niente velocita'.
+  // Velocita' su tutti i modelli: il batch la applica ABM al PCM dei chunk
+  // (pocket_tts.synthesize), il worker legge al passo della voce.
   const speedRow=document.getElementById('speedRow');
-  if(speedRow)speedRow.hidden=_isPocketModelSelected();
+  if(speedRow)speedRow.hidden=false;
   /* Il box d'ascolto vive FUORI da #tabPremium (sta nella
      .preview-cost-row, accanto alla stima costo e sotto lo slider della
      velocita' che lo influenza): tabPremium.hidden non lo copre. E questa
@@ -1683,10 +1685,11 @@ function _syncVoxcpmClipIcons(){
 // registrato, non generato — resta un'anteprima onesta dell'effetto.
 // Le voci campionate fanno eccezione: le clip escono al passo nativo del
 // worker, mentre il libro prende anche la velocita' impostata dal
-// proprietario (voice_clone.speed), che va moltiplicata qui.
+// proprietario (voice_clone.speed), che va moltiplicata qui. Il modello batch
+// fa lo stesso: clip al passo della voce, libro con atempo 1+pct/100
+// (pocket_tts.synthesize).
 function _voxcpmListenRate(){
   const vr=document.getElementById('vr');
-  if(_isPocketModelSelected())return 1;
   const pct=parseFloat(String((vr&&vr.value)||'+0%').replace('%','').replace('+',''))||0;
   const v=_voxcpmSelectedVoice();
   const base=(v&&v.mine&&Number(v.speed)>0)?Number(v.speed):1;
@@ -2384,10 +2387,14 @@ function renderEstimate(data){
       }
       if(extra)segs.push(extra);
       if(minsStr)segs.push(minsStr);
-      // Modello batch: quando arriva il libro, non solo quanto costa.
-      const deliv=_pocketDeliveryText(data);
-      if(deliv)segs.push(deliv);
       detailEl.textContent=segs.join(' · ');
+    }
+    // Batch e Fast: quando arriva il libro, non solo quanto costa (anche
+    // gratis: un libro Fast sotto soglia dura comunque minuti).
+    const deliv=_deliveryText(data);
+    if(deliv){
+      if(detailEl.textContent)detailEl.appendChild(document.createTextNode(' · '));
+      _appendBoldText(detailEl,deliv);
     }
   }
   if(costAmount)costAmount.textContent='€'+Number(data.total_eur).toFixed(2);
@@ -2512,7 +2519,8 @@ function _openPayModalCtx(ctx) {
   if (adjAmt && adj > 0) adjAmt.textContent = `€${adj.toFixed(2)}`;
   const noteEl = document.getElementById('payMinNote');
   if (noteEl) {
-    noteEl.textContent = ctx.minNote || '';
+    noteEl.textContent = '';
+    _appendBoldText(noteEl, ctx.minNote || '');
     noteEl.hidden = !ctx.minNote;
   }
   const tot = document.getElementById('payModalTotal');
@@ -2636,15 +2644,31 @@ function _premiumTtsEur(est){
     .reduce((s,k)=>s+(Number(est&&est[k])||0),0);
 }
 
-// Stima di consegna del modello batch per il modale di pagamento: dalla coda
-// del worker quando risponde, altrimenti l'avviso generico. '' per gli altri
-// motori.
-function _pocketDeliveryText(est){
-  if(!(Number(est&&est.pocket_eur)>0))return '';
-  const d=est.pocket_breakdown&&est.pocket_breakdown.delivery;
-  if(d&&typeof d.eta_s==='number'&&d.eta_s>0)
-    return (t('pocket_delivery_eta')||'').replace('{eta}',fmtDur(d.eta_s/60));
-  return t('pocket_delivery_unknown')||'';
+// Testo i18n con <b>...</b> (solo quel tag) aggiunto a `el` come nodi DOM:
+// la stringa porta anche valori calcolati, quindi niente innerHTML.
+function _appendBoldText(el,s){
+  String(s||'').split(/<\/?b>/).forEach((part,i)=>{
+    if(!part)return;
+    if(i%2){const b=document.createElement('b');b.textContent=part;el.appendChild(b);}
+    else el.appendChild(document.createTextNode(part));
+  });
+}
+
+// Stima di consegna per la card del costo e il modale di pagamento. Batch:
+// dalla coda del worker quando risponde, altrimenti l'avviso generico. Fast:
+// parte subito, durata stimata dell'intera generazione
+// (voxcpm_tts.estimate_completion). '' per gli altri motori.
+function _deliveryText(est){
+  if(Number(est&&est.pocket_eur)>0){
+    const d=est.pocket_breakdown&&est.pocket_breakdown.delivery;
+    if(d&&typeof d.eta_s==='number'&&d.eta_s>0)
+      return (t('pocket_delivery_eta')||'').replace('{eta}',fmtDur(d.eta_s/60));
+    return t('pocket_delivery_unknown')||'';
+  }
+  const f=est&&est.voxcpm_breakdown&&est.voxcpm_breakdown.delivery;
+  if(f&&typeof f.eta_s==='number'&&f.eta_s>0)
+    return (t('voxcpm_delivery_eta')||'').replace('{eta}',fmtDur(f.eta_s/60));
+  return '';
 }
 
 // Posto del libro nella coda del modello batch (job["book_queue"] via SSE):
@@ -2671,7 +2695,7 @@ function openPaymentModal(estimate) {
     ],
     total: estimate.total_eur,
     minAdjust: _adjust,
-    minNote: [_payMinNoteText(estimate, _adjust), _pocketDeliveryText(estimate)]
+    minNote: [_payMinNoteText(estimate, _adjust), _deliveryText(estimate)]
       .filter(Boolean).join(' '),
     geminiAmount: _premium,
     voucherPurpose: 'gemini',
