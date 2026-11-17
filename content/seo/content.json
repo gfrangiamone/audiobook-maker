@@ -38,7 +38,7 @@
    ],
    [
     "Cosa sono le Voci PREMIUM?",
-    "Le Voci PREMIUM sono un'opzione a pagamento che utilizza i modelli Gemini 3.1 Flash e 3.8 Flash TTS di ultima generazione per generare audiolibri di qualità superiore, con voci incredibilmente naturali ed espressive. La tecnologia Gemini TTS cattura sfumature, emozioni e intonazioni con una fedeltà nettamente superiore alle voci standard, offrendo un'esperienza di ascolto professionale paragonabile a una narrazione umana di alto livello. La generazione avviene con chunking ottimizzato per preservare l'integrità narrativa, e ogni voce PREMIUM è identificata con il prefisso 'gemini' nel selettore voci. In alternativa puoi scegliere il modello TTS 'ABM TTS (fast)', che oltre alle sue voci PREMIUM ti permette di clonare la tua voce: a partire da un breve campione audio crei una voce personale e ottieni audiolibri letti con la tua voce."
+    "Le Voci PREMIUM sono un'opzione a pagamento che utilizza il modello Gemini 3.8 Flash TTS di ultima generazione per generare audiolibri di qualità superiore, con voci incredibilmente naturali ed espressive. La tecnologia Gemini TTS cattura sfumature, emozioni e intonazioni con una fedeltà nettamente superiore alle voci standard, offrendo un'esperienza di ascolto professionale paragonabile a una narrazione umana di alto livello. La generazione avviene con chunking ottimizzato per preservare l'integrità narrativa, e ogni voce PREMIUM è identificata con il prefisso 'gemini' nel selettore voci. In alternativa puoi scegliere il modello TTS 'ABM TTS (fast)', che oltre alle sue voci PREMIUM ti permette di clonare la tua voce: a partire da un breve campione audio crei una voce personale e ottieni audiolibri letti con la tua voce."
    ],
    [
     "Posso tradurre un libro in un'altra lingua e crearne l'audiolibro?",
@@ -141,7 +141,7 @@
    ],
    [
     "What are PREMIUM Voices?",
-    "PREMIUM Voices are a paid option that leverages cutting-edge Gemini 3.1 Flash and 3.8 Flash TTS models to generate superior-quality audiobooks with incredibly natural and expressive speech. Gemini TTS technology captures nuances, emotions and intonations with fidelity far exceeding standard voices, delivering a professional listening experience comparable to high-end human narration. Generation uses optimized chunking to preserve narrative integrity, and each PREMIUM voice is identified with the 'gemini' prefix in the voice selector. Alternatively, you can choose the 'ABM TTS (fast)' TTS model which, besides its own PREMIUM voices, lets you clone your own voice: from a short audio sample you create a personal voice and get audiobooks read in your own voice."
+    "PREMIUM Voices are a paid option that leverages the cutting-edge Gemini 3.8 Flash TTS model to generate superior-quality audiobooks with incredibly natural and expressive speech. Gemini TTS technology captures nuances, emotions and intonations with fidelity far exceeding standard voices, delivering a professional listening experience comparable to high-end human narration. Generation uses optimized chunking to preserve narrative integrity, and each PREMIUM voice is identified with the 'gemini' prefix in the voice selector. Alternatively, you can choose the 'ABM TTS (fast)' TTS model which, besides its own PREMIUM voices, lets you clone your own voice: from a short audio sample you create a personal voice and get audiobooks read in your own voice."
    ],
    [
     "Can I translate a book into another language and make an audiobook from it?",
@@ -244,7 +244,7 @@
    ],
    [
     "Que sont les Voix PREMIUM ?",
-    "Les Voix PREMIUM sont une option payante qui exploite les modèles de pointe Gemini 3.1 Flash et 3.8 Flash TTS pour générer des livres audio de qualité supérieure, avec des voix incroyablement naturelles et expressives. La technologie Gemini TTS capture les nuances, les émotions et les intonations avec une fidélité nettement supérieure aux voix standard, offrant une expérience d'écoute professionnelle comparable à une narration humaine haut de gamme. La génération utilise un découpage optimisé pour préserver l'intégrité narrative, et chaque voix PREMIUM est identifiée par le préfixe 'gemini' dans le sélecteur de voix. Vous pouvez aussi choisir le modèle TTS 'ABM TTS (fast)' qui, en plus de ses propres voix PREMIUM, vous permet de cloner votre voix : à partir d'un court échantillon audio, vous créez une voix personnelle et obtenez des livres audio lus avec votre propre voix."
+    "Les Voix PREMIUM sont une option payante qui exploite le modèle de pointe Gemini 3.8 Flash TTS pour générer des livres audio de qualité supérieure, avec des voix incroyablement naturelles et expressives. La technologie Gemini TTS capture les nuances, les émotions et les intonations avec une fidélité nettement supérieure aux voix standard, offrant une expérience d'écoute professionnelle comparable à une narration humaine haut de gamme. La génération utilise un découpage optimisé pour préserver l'intégrité narrative, et chaque voix PREMIUM est identifiée par le préfixe 'gemini' dans le sélecteur de voix. Vous pouvez aussi choisir le modèle TTS 'ABM TTS (fast)' qui, en plus de ses propres voix PREMIUM, vous permet de cloner votre voix : à partir d'un court échantillon audio, vous créez une voix personnelle et obtenez des livres audio lus avec votre propre voix."
    ],
    [
     "Puis-je traduire un livre dans une autre langue et en faire un livre audio ?",
@@ -347,7 +347,7 @@
    ],
    [
     "¿Qué son las Voces PREMIUM?",
-    "Las Voces PREMIUM son una opción de pago que utiliza los modelos de vanguardia Gemini 3.1 Flash y 3.8 Flash TTS para generar audiolibros de calidad superior, con voces increíblemente naturales y expresivas. La tecnología Gemini TTS captura matices, emociones y entonaciones con una fidelidad muy superior a las voces estándar, ofreciendo una experiencia de escucha profesional comparable a una narración humana de alto nivel. La generación utiliza fragmentación optimizada para preservar la integridad narrativa, y cada voz PREMIUM se identifica con el prefijo 'gemini' en el selector de voces. Como alternativa, puedes elegir el modelo TTS 'ABM TTS (fast)', que además de sus propias voces PREMIUM te permite clonar tu voz: a partir de una breve muestra de audio creas una voz personal y obtienes audiolibros leídos con tu propia voz."
+    "Las Voces PREMIUM son una opción de pago que utiliza el modelo de vanguardia Gemini 3.8 Flash TTS para generar audiolibros de calidad superior, con voces increíblemente naturales y expresivas. La tecnología Gemini TTS captura matices, emociones y entonaciones con una fidelidad muy superior a las voces estándar, ofreciendo una experiencia de escucha profesional comparable a una narración humana de alto nivel. La generación utiliza fragmentación optimizada para preservar la integridad narrativa, y cada voz PREMIUM se identifica con el prefijo 'gemini' en el selector de voces. Como alternativa, puedes elegir el modelo TTS 'ABM TTS (fast)', que además de sus propias voces PREMIUM te permite clonar tu voz: a partir de una breve muestra de audio creas una voz personal y obtienes audiolibros leídos con tu propia voz."
    ],
    [
     "¿Puedo traducir un libro a otro idioma y crear un audiolibro a partir de él?",
@@ -450,7 +450,7 @@
    ],
    [
     "Was sind PREMIUM-Stimmen?",
-    "PREMIUM-Stimmen sind eine kostenpflichtige Option, die modernste Gemini 3.1 Flash- und 3.8 Flash-TTS-Modelle nutzt, um Hörbücher höchster Qualität mit unglaublich natürlichen und ausdrucksstarken Stimmen zu erzeugen. Die Gemini-TTS-Technologie erfasst Nuancen, Emotionen und Intonationen mit einer Wiedergabetreue, die Standardstimmen deutlich übertrifft, und bietet ein professionelles Hörerlebnis, das einer hochwertigen menschlichen Erzählung vergleichbar ist. Die Generierung verwendet optimiertes Chunking, um die narrative Integrität zu bewahren, und jede PREMIUM-Stimme ist im Stimmenwähler mit dem Präfix 'gemini' gekennzeichnet. Alternativ können Sie das TTS-Modell 'ABM TTS (fast)' wählen, das neben eigenen PREMIUM-Stimmen auch das Klonen Ihrer eigenen Stimme ermöglicht: Aus einer kurzen Audioprobe erstellen Sie eine persönliche Stimme und erhalten Hörbücher, die mit Ihrer eigenen Stimme gelesen werden."
+    "PREMIUM-Stimmen sind eine kostenpflichtige Option, die das modernste Gemini 3.8 Flash-TTS-Modell nutzt, um Hörbücher höchster Qualität mit unglaublich natürlichen und ausdrucksstarken Stimmen zu erzeugen. Die Gemini-TTS-Technologie erfasst Nuancen, Emotionen und Intonationen mit einer Wiedergabetreue, die Standardstimmen deutlich übertrifft, und bietet ein professionelles Hörerlebnis, das einer hochwertigen menschlichen Erzählung vergleichbar ist. Die Generierung verwendet optimiertes Chunking, um die narrative Integrität zu bewahren, und jede PREMIUM-Stimme ist im Stimmenwähler mit dem Präfix 'gemini' gekennzeichnet. Alternativ können Sie das TTS-Modell 'ABM TTS (fast)' wählen, das neben eigenen PREMIUM-Stimmen auch das Klonen Ihrer eigenen Stimme ermöglicht: Aus einer kurzen Audioprobe erstellen Sie eine persönliche Stimme und erhalten Hörbücher, die mit Ihrer eigenen Stimme gelesen werden."
    ],
    [
     "Kann ich ein Buch in eine andere Sprache übersetzen und daraus ein Hörbuch erstellen?",
@@ -553,7 +553,7 @@
    ],
    [
     "什么是 PREMIUM 语音？",
-    "PREMIUM 语音是一项付费选项，利用尖端的 Gemini 3.1 Flash 和 3.8 Flash TTS 模型生成超高品质的有声书，语音极其自然且富有表现力。Gemini TTS 技术能够以远超标准语音的保真度捕捉细微差别、情感和语调，提供可与高端人工朗读相媚美的专业聆听体验。生成过程采用优化的分块技术以保持叙事完整性，每款 PREMIUM 语音在语音选择器中均以 'gemini' 前缀标识。此外，您还可以选择 'ABM TTS (fast)' TTS 模型：除了自带的 PREMIUM 语音外，它还支持克隆您自己的声音——只需一段简短的音频样本即可创建个人专属语音，获得用您自己的声音朗读的有声书。"
+    "PREMIUM 语音是一项付费选项，利用尖端的 Gemini 3.8 Flash TTS 模型生成超高品质的有声书，语音极其自然且富有表现力。Gemini TTS 技术能够以远超标准语音的保真度捕捉细微差别、情感和语调，提供可与高端人工朗读相媚美的专业聆听体验。生成过程采用优化的分块技术以保持叙事完整性，每款 PREMIUM 语音在语音选择器中均以 'gemini' 前缀标识。此外，您还可以选择 'ABM TTS (fast)' TTS 模型：除了自带的 PREMIUM 语音外，它还支持克隆您自己的声音——只需一段简短的音频样本即可创建个人专属语音，获得用您自己的声音朗读的有声书。"
    ],
    [
     "我可以把一本书翻译成另一种语言并据此制作有声书吗？",
@@ -656,7 +656,7 @@
    ],
    [
     "प्रीमियम आवाज़ें क्या हैं?",
-    "प्रीमियम आवाज़ें एक सशुल्क विकल्प हैं जो अत्याधुनिक Gemini 3.1 Flash और 3.8 Flash TTS मॉडल का उपयोग करके उत्कृष्ट गुणवत्ता वाली ऑडियोबुक उत्पन्न करती हैं। Gemini TTS तकनीक मानक आवाज़ों से कहीं अधिक निष्ठा के साथ बारीकियों, भावनाओं और स्वर-शैली को पकड़ती है, जो उच्च-स्तरीय मानव वर्णन के बराबर एक पेशेवर श्रवण अनुभव प्रदान करती है। उत्पादन में कथानक अखंडता बनाए रखने के लिए अनुकूलित चंकिंग का उपयोग किया जाता है, और प्रत्येक प्रीमियम आवाज़ आवाज़ चयनकर्ता में 'gemini' उपसर्ग से चिह्नित हैं।"
+    "प्रीमियम आवाज़ें एक सशुल्क विकल्प हैं जो अत्याधुनिक Gemini 3.8 Flash TTS मॉडल का उपयोग करके उत्कृष्ट गुणवत्ता वाली ऑडियोबुक उत्पन्न करती हैं। Gemini TTS तकनीक मानक आवाज़ों से कहीं अधिक निष्ठा के साथ बारीकियों, भावनाओं और स्वर-शैली को पकड़ती है, जो उच्च-स्तरीय मानव वर्णन के बराबर एक पेशेवर श्रवण अनुभव प्रदान करती है। उत्पादन में कथानक अखंडता बनाए रखने के लिए अनुकूलित चंकिंग का उपयोग किया जाता है, और प्रत्येक प्रीमियम आवाज़ आवाज़ चयनकर्ता में 'gemini' उपसर्ग से चिह्नित हैं।"
    ],
    [
     "क्या मैं किसी पुस्तक का दूसरी भाषा में अनुवाद करके उससे ऑडियोबुक बना सकता हूँ?",
