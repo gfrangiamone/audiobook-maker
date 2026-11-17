@@ -358,6 +358,7 @@ function _confirmCancelGeminiModal(){calls.push('modal');return Promise.resolve(
 ])
 def test_cancel_after_restore_behavior(tmp_path, voice, expected):
     names = ["_isGeminiVoiceId", "_isSpeechifyVoiceId", "_isVoxcpmVoiceId",
+             "_isPocketVoiceId", "_isCatalogVoiceId",
              "_rehydrateJobFromServer", "cancelJob"]
     if "function _activeJobVoiceId(" in APP:
         names.append("_activeJobVoiceId")
