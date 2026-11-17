@@ -6881,8 +6881,9 @@ def api_combined_estimate():
     _has_premium = _is_premium_voice(voice_id)
     llm_eur = 0.0
     llm_breakdown = {}
+    _text_chars = sum(len(getattr(c, "text", "") or "") for c in chs)
     if ai_opt:
-        chars = sum(len(getattr(c, "text", "") or "") for c in chs)
+        chars = _text_chars
         _lp = payment.llm_price_eur(chars, is_combined=_has_premium)
         llm_eur = _lp["due_eur"]
         llm_breakdown = {
@@ -6898,14 +6899,25 @@ def api_combined_estimate():
     # non si consuma nulla.
     _quota_dec = None
     _quota_who = _premium_quota_who(job) if _has_premium else None
+    ai_opt_no_extra_cost = False
     if _has_premium:
-        _quota_dec = _premium_quota_decision(
-            _quota_who, voice_id, round(_premium_list_eur + llm_eur, 2),
-            _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None)),
-            book_chars=_free_quota_book_chars(info),
-            language=lang,
-        )
+        _quota_key = _free_quota_key(job_id, voice_id, chs, getattr(info, "chapters", None))
+
+        def _premium_due(llm_part):
+            return _premium_quota_decision(
+                _quota_who, voice_id, round(_premium_list_eur + llm_part, 2), _quota_key,
+                book_chars=_free_quota_book_chars(info), language=lang)
+
+        _quota_dec = _premium_due(llm_eur)
         total = _quota_dec["due_eur"]
+        # Ottimizzazione AI senza sovrapprezzo: a pagamento, il totale con e
+        # senza la quota LLM combinata e' lo stesso (importo minimo: 0,11 e
+        # 0,13 diventano entrambi 0,50). La UI la preseleziona. Mai sui libri
+        # gratuiti: li' l'AI consuma quota gratuita o li rende a pagamento.
+        _llm_alt = payment.llm_price_eur(_text_chars, is_combined=True)["due_eur"]
+        _due_with = total if ai_opt else _premium_due(_llm_alt)["due_eur"]
+        _due_without = _premium_due(0.0)["due_eur"] if ai_opt else total
+        ai_opt_no_extra_cost = _due_without > 0 and abs(_due_with - _due_without) < 0.005
         # Quote lock (D2): l'importo che l'utente sta per vedere nel modale e'
         # quello con cui verra' creato l'ordine PayPal, anche se nel frattempo
         # il rate empirico si muove (tipicamente per le anteprime audio che
@@ -6973,6 +6985,7 @@ def api_combined_estimate():
         "pocket_eur": multi_eur["pocket"],
         "llm_eur": llm_eur,
         "total_eur": total,
+        "ai_opt_no_extra_cost": ai_opt_no_extra_cost,
         "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
         "quota_exhausted": bool(_quota_dec and _quota_dec["quota_exhausted"]),
         # Libro sopra il cap della gratuita' (solo VoxCPM, vedi

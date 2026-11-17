@@ -320,6 +320,30 @@ def test_la_stima_dichiara_il_cap_superato(client, job_piccolo, monkeypatch):
     assert d["total_eur"] == 0.50
 
 
+@pytest.mark.parametrize("ai_opt", [False, True])
+def test_al_minimo_l_ottimizzazione_non_costa_di_piu(client, job_piccolo, monkeypatch, ai_opt):
+    # 0,10 di voce e 0,03 di AI stanno entrambi sotto l'importo minimo: con o
+    # senza AI si pagano 0,50, la UI preseleziona l'ottimizzazione. Il flag
+    # non dipende dallo stato del toggle.
+    monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "10000")
+    d = stima(client, job_piccolo, ai_opt_enabled=ai_opt)
+    assert d["total_eur"] == 0.50
+    assert d["ai_opt_no_extra_cost"] is True
+
+
+def test_sopra_il_minimo_l_ottimizzazione_alza_il_totale(client, job_grande):
+    # 1,00 di voce, 0,28 di AI: il totale sale, niente preselezione.
+    for ai_opt in (False, True):
+        assert stima(client, job_grande, ai_opt_enabled=ai_opt)["ai_opt_no_extra_cost"] is False
+
+
+def test_libro_gratuito_niente_preselezione(client, job_piccolo):
+    # Gratis senza AI: l'ottimizzazione consumerebbe quota gratuita.
+    d = stima(client, job_piccolo)
+    assert d["is_free"] is True
+    assert d["ai_opt_no_extra_cost"] is False
+
+
 def test_sotto_il_cap_il_flag_resta_falso(client, job_piccolo, monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_FREE_MAX_CHARS", "1000000")
     d = stima(client, job_piccolo)

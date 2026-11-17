@@ -1239,17 +1239,14 @@ __REVIEWS_LD__
         <button type="button" class="modal-close" id="btnPayCancel" aria-label="Chiudi">&times;</button>
       </header>
       <div class="modal-body">
-        <div class="pay-summary">
+        <!-- Totale alzato all'importo minimo fatturabile: le righe di costo si
+             nascondono (classe pay-at-min) e resta il solo totale con la nota
+             payMinNote, invece di addendi che non tornano col totale. -->
+        <div class="pay-summary" id="paySummary">
           <div class="pay-line"><span id="payLineGeminiLabel" data-t="pay_premium_voices">Voci PREMIUM</span>
                <span id="payLineGemini">&mdash;</span></div>
           <div class="pay-line"><span id="payLineLlmLabel" data-t="pay_text_ai_optimization">Ottimizzazione testo AI</span>
                <span id="payLineLlm">&mdash;</span></div>
-          <!-- Scarto fra il costo reale e l'importo minimo fatturabile: senza
-               questa riga il totale non torna con gli addendi e il popup sembra
-               sbagliato (es. "Voci PREMIUM 0,09" e "Totale 0,50"). -->
-          <div class="pay-line" id="payLineMinAdjRow" style="display:none">
-               <span id="payLineMinAdjLabel" data-t="pay_min_adjust">Adeguamento all'importo minimo</span>
-               <span id="payLineMinAdj">&mdash;</span></div>
           <div class="pay-line pay-total">
             <span data-t="pay_total">Totale</span>
             <strong id="payModalTotal">&mdash;</strong>

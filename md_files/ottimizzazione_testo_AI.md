@@ -574,6 +574,8 @@ Implementazione: `_fetchCostEstimate()` (`static/js/app.js:1668`) effettua un ea
 
 In tab **Standard** il flusso resta invariato: il popup voucher LLM-only appare all'attivazione del toggle AI se il costo supera la soglia.
 
+**Preselezione senza sovrapprezzo (v3.196.2).** `/api/combined_estimate` restituisce `ai_opt_no_extra_cost`: true quando il libro PREMIUM e' a pagamento e il totale dovuto (`free_quota.decision`) e' identico con e senza la quota LLM combinata, cioe' entrambi gli importi stanno sotto l'importo minimo (es. voce 0,11 + AI 0,02 → 0,50 in ogni caso). Il flag non dipende dallo stato del toggle. In UI `_syncAiOptPreselect` spunta il toggle AI e la ritira se la condizione cade, ma solo finche' l'utente non l'ha toccato (`_aiOptUserSet`); mai su libri gratuiti, dove l'AI consumerebbe quota. Nello stesso caso il modale di pagamento mostra il solo totale con la nota del minimo, senza righe di costo.
+
 ---
 
 ## 10. Limiti, concorrenza, salvaguardie

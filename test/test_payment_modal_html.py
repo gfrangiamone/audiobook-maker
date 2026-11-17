@@ -200,13 +200,13 @@ def test_paypal_tab_comes_first_and_is_default():
     assert 'hidden' in voucher_panel[:voucher_panel.index('>')]
 
 
-def test_modal_has_min_adjust_row_and_note():
-    """Scarto verso l'importo minimo fatturabile: riga dedicata (nascosta di
-    default) e nota che ne spiega il motivo, cosi' il totale torna sempre con
-    la somma delle righe."""
-    assert 'id="payLineMinAdjRow"' in HTML
-    assert 'id="payLineMinAdj"' in HTML
-    assert 'data-t="pay_min_adjust"' in HTML
+def test_modal_al_minimo_mostra_solo_il_totale_e_la_nota():
+    """Totale all'importo minimo fatturabile: niente riga di adeguamento, il
+    riepilogo (paySummary) nasconde le righe di costo con la classe
+    pay-at-min e la nota payMinNote spiega il minimo."""
+    assert 'id="payLineMinAdjRow"' not in HTML
+    assert 'data-t="pay_min_adjust"' not in HTML
+    assert 'class="pay-summary" id="paySummary"' in HTML
     assert 'id="payMinNote"' in HTML
-    row = HTML.split('id="payLineMinAdjRow"')[1][:120]
-    assert "display:none" in row
+    css = Path("static/css/style.css").read_text(encoding="utf-8")
+    assert ".pay-summary.pay-at-min .pay-line.pay-total" in css

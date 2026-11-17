@@ -2217,7 +2217,7 @@ function requestCombinedEstimate(){
 async function _doCombinedEstimate(){
   if(!jobId){renderEstimate(null);return;}
   const key=getEstimateCacheKey();
-  if(_estimateCache.key===key&&_estimateCache.value){renderEstimate(_estimateCache.value);return;}
+  if(_estimateCache.key===key&&_estimateCache.value){renderEstimate(_estimateCache.value);_syncAiOptPreselect(_estimateCache.value);return;}
   const voiceId=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
   const selected=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
   if(!selected||selected.length===0){renderEstimate(null);return;}
@@ -2255,6 +2255,7 @@ async function _doCombinedEstimate(){
     _estimateCache.key=key;
     _estimateCache.value=data;
     renderEstimate(data);
+    _syncAiOptPreselect(data);
   }catch(e){
     console.warn('combined_estimate error:',e);
     if(getEstimateCacheKey()===key)renderEstimate(null);
@@ -2487,13 +2488,19 @@ function _openPayModalCtx(ctx) {
     noticeEl.setAttribute('data-t', nk);
     noticeEl.textContent = loggedIn ? t(nk, { email: _acctMe.email }) : ((typeof t === 'function') ? t(nk) : nk);
   }
+  // Totale alzato all'importo minimo fatturabile (ctx.minAdjust > 0): niente
+  // dettaglio dei costi, che non tornerebbe col totale (0,11 + 0,02 contro
+  // 0,50): resta il solo totale, spiegato da ctx.minNote.
+  const atMin = (Number(ctx.minAdjust) || 0) > 0;
+  const summaryEl = document.getElementById('paySummary');
+  if (summaryEl) summaryEl.classList.toggle('pay-at-min', atMin);
   // Mappa fissa ctx.lines[i] -> (etichetta, importo) nel markup.
   const rowMap = [
     { labelId: 'payLineGeminiLabel', amountId: 'payLineGemini' },
     { labelId: 'payLineLlmLabel', amountId: 'payLineLlm' },
   ];
   rowMap.forEach((ids, i) => {
-    const line = ctx.lines[i];
+    const line = atMin ? null : ctx.lines[i];
     const amtEl = document.getElementById(ids.amountId);
     const labEl = document.getElementById(ids.labelId);
     const rowEl = amtEl ? amtEl.closest('.pay-line') : null;
@@ -2508,15 +2515,8 @@ function _openPayModalCtx(ctx) {
       if (rowEl) rowEl.style.display = 'none';
     }
   });
-  // Scarto verso l'importo minimo fatturabile (ctx.minAdjust) e sua
-  // spiegazione (ctx.minNote): compaiono solo quando il floor ha davvero
-  // alzato il totale. Senza, il popup mostrava addendi che non sommavano al
-  // totale e nessun motivo (incidente "0,09 -> 0,50").
-  const adjRow = document.getElementById('payLineMinAdjRow');
-  const adjAmt = document.getElementById('payLineMinAdj');
-  const adj = Number(ctx.minAdjust) || 0;
-  if (adjRow) adjRow.style.display = (adj > 0) ? '' : 'none';
-  if (adjAmt && adj > 0) adjAmt.textContent = `€${adj.toFixed(2)}`;
+  // Spiegazione del minimo (ctx.minNote) e consegna stimata: senza, un totale
+  // di 0,50 su un costo di 0,09 non avrebbe motivo (incidente "0,09 -> 0,50").
   const noteEl = document.getElementById('payMinNote');
   if (noteEl) {
     noteEl.textContent = '';
@@ -3957,17 +3957,36 @@ function openAbmGuide(){
 function closeAbmGuide(){document.getElementById('abmGuideModal').classList.remove('open')}
 
 // ═══════════════════ AI TEXT OPTIMIZATION ═══════════════════
+// Preselezione dell'ottimizzazione AI quando non costa nulla in piu'
+// (ai_opt_no_extra_cost di /api/combined_estimate: il totale resta
+// all'importo minimo). Mai contro una scelta dell'utente: dal primo click sul
+// toggle decide lui. Se la condizione cade (piu' capitoli, altra voce) la
+// preselezione fatta qui si ritira.
+let _aiOptAuto=false,_aiOptUserSet=false;
+function _aiOptPreselectReset(){_aiOptAuto=false;_aiOptUserSet=false;}
+function _syncAiOptPreselect(data){
+  const tg=document.getElementById('aiToggle');
+  if(!tg||!data||_aiOptUserSet)return;
+  const want=!!data.ai_opt_no_extra_cost&&llmAvailable&&!tg.disabled&&!_allSelectedOptimized();
+  if(want===tg.checked||(!want&&!_aiOptAuto))return;
+  tg.checked=want;
+  _aiOptAuto=want;
+  toggleAIOptimization();
+  requestCombinedEstimate();
+}
 function _initAiOptToggle(){
   // New wizard toggle switch
   const aiToggle=document.getElementById('aiToggle');
+  _aiOptPreselectReset();
   if(aiToggle){
     aiToggle.checked=false;
-    aiToggle.onchange=function(){toggleAIOptimization()};
+    aiToggle.onchange=function(){_aiOptUserSet=true;_aiOptAuto=false;toggleAIOptimization()};
   }
   // Legacy toggle buttons (backward compat for old accordion UI)
   const btnOff=document.getElementById('optNone');
   const btnOn=document.getElementById('optEnable');
   if(btnOff)btnOff.onclick=function(){
+    _aiOptUserSet=true;_aiOptAuto=false;
     aiOptEnabled=false;
     btnOff.classList.add('on');if(btnOn)btnOn.classList.remove('on');
     const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
@@ -3976,6 +3995,7 @@ function _initAiOptToggle(){
     _updateAiOptCard();
   };
   if(btnOn)btnOn.onclick=function(){
+    _aiOptUserSet=true;_aiOptAuto=false;
     aiOptEnabled=true;
     btnOn.classList.add('on');if(btnOff)btnOff.classList.remove('on');
     const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='';
@@ -6358,7 +6378,7 @@ async function goBackToChapters(){
   // Reset chapter selection — uncheck all
   _getAllCheckboxes().forEach(cb=>{cb.checked=false});
   // Reset AI optimization state (keep optimizedChapters so previously optimized chapters remain tracked)
-  aiOptEnabled=false;
+  aiOptEnabled=false;_aiOptPreselectReset();
   const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=false}
   const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
   const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
@@ -6476,7 +6496,7 @@ function resetAll(){
   const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
   // Reset AI toggle
   const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=false}
-  aiOptEnabled=false;optimizedChapters=[];
+  aiOptEnabled=false;optimizedChapters=[];_aiOptPreselectReset();
   const aiOptCard3=document.getElementById('aiOptCard');if(aiOptCard3){aiOptCard3.classList.remove('enabled');aiOptCard3.style.display='';}
   const summaryBox3=document.getElementById('summaryBox');if(summaryBox3)summaryBox3.style.display='';
   const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
@@ -6659,7 +6679,9 @@ async function submitEmailLate(){
 }
 
 // ═══════════════════ HELPERS ═══════════════════
-function fmtDur(m){if(m<1)return'< 1 min';if(m<60)return Math.round(m)+' min';const h=Math.floor(m/60);const r=Math.round(m%60);return h+'h '+(r>0?r+'min':'')}
+// Ore esatte senza spazio finale ("1h", non "1h "); minuti arrotondati prima di
+// dividere, cosi' 119,6 min fa "2h" e non "1h 60min".
+function fmtDur(m){if(m<1)return'< 1 min';if(m<59.5)return Math.round(m)+' min';const tm=Math.round(m);const h=Math.floor(tm/60);const r=tm%60;return r>0?h+'h '+r+'min':h+'h'}
 function fmtTime(s){if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;if(m<60)return m+'m'+(r>0?' '+r+'s':'');return Math.floor(m/60)+'h '+(m%60>0?(m%60)+'m':'')}
 function fmtBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(0)+' KB';return(b/1048576).toFixed(1)+' MB'}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}

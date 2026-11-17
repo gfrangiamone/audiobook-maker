@@ -233,14 +233,18 @@ def test_switch_pay_tab_syncs_aria_selected():
     assert "aria-selected" in body
 
 
-def test_min_adjust_row_wired_from_context():
-    """Il modale deve mostrare lo scarto verso l'importo minimo e la sua nota:
-    senza, gli addendi non sommano al totale (0,09 di listino, 0,50 dovuti)."""
+def test_totale_al_minimo_nasconde_il_dettaglio_dei_costi():
+    """Totale alzato all'importo minimo (ctx.minAdjust > 0): il modale non
+    mostra le righe di costo (0,11 + 0,02 contro 0,50) ne' una riga di
+    adeguamento, solo il totale con la nota che spiega il minimo."""
     start = APP.find("function _openPayModalCtx")
     assert start >= 0
     snippet = APP[start:APP.find("function openPaymentModal")]
-    assert "payLineMinAdjRow" in snippet and "payLineMinAdj" in snippet
-    assert "ctx.minAdjust" in snippet and "payMinNote" in snippet
+    assert "const atMin = (Number(ctx.minAdjust) || 0) > 0;" in snippet
+    assert "classList.toggle('pay-at-min', atMin)" in snippet
+    assert "const line = atMin ? null : ctx.lines[i];" in snippet
+    assert "payMinNote" in snippet
+    assert "payLineMinAdj" not in snippet
 
 
 def test_open_payment_modal_computes_min_adjust():

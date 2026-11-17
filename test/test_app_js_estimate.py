@@ -79,3 +79,30 @@ def test_free_quota_exhausted_one_text_without_network_hint():
     assert APP.count("_freeQuotaExhaustedText(") == 4
     assert "free_quota_network" not in APP and "quota_scope" not in APP
     assert "free_quota_network" not in I18N
+
+
+def _fn(name):
+    start = APP.index("function " + name + "(")
+    end = APP.index("\nfunction ", start + 1)
+    return APP[start:end]
+
+
+def test_preselezione_ai_dalla_stima_senza_sovrapprezzo():
+    """ai_opt_no_extra_cost spunta l'ottimizzazione AI; la ritira solo se
+    l'aveva spuntata lei, mai dopo una scelta dell'utente."""
+    body = _fn("_syncAiOptPreselect")
+    assert "data.ai_opt_no_extra_cost" in body
+    assert "_aiOptUserSet" in body and "_aiOptAuto" in body
+    assert "!tg.disabled" in body and "_allSelectedOptimized()" in body
+    assert "(!want&&!_aiOptAuto))return" in body
+    assert "requestCombinedEstimate()" in body
+    est = _fn("_doCombinedEstimate")
+    assert est.count("_syncAiOptPreselect(") == 2  # cache e risposta fresca
+
+
+def test_il_click_dell_utente_vince_sulla_preselezione():
+    init = _fn("_initAiOptToggle")
+    assert "aiToggle.onchange=function(){_aiOptUserSet=true;_aiOptAuto=false;" in init
+    assert "_aiOptPreselectReset();" in init
+    # Nuovo libro / reset del wizard: la scelta dell'utente non si eredita.
+    assert APP.count("_aiOptPreselectReset();") >= 3

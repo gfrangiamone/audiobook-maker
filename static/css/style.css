@@ -1221,6 +1221,7 @@ button.donate-btn{cursor:pointer;font-family:inherit;justify-content:center}
 .pay-summary { background:var(--srf2,#f7f4ec); border-radius:6px; padding:10px 14px; margin-bottom:14px; }
 .pay-line { display:flex; justify-content:space-between; padding:3px 0; font-size:.9rem; }
 .pay-line.pay-total { border-top:1px solid var(--brd,#ddd); margin-top:6px; padding-top:8px; font-size:1rem; }
+.pay-summary.pay-at-min .pay-line.pay-total { border-top:0; margin-top:0; padding-top:3px; }
 .pay-tabs { display:flex; gap:4px; border-bottom:1px solid var(--brd,#ddd); margin-bottom:12px; }
 .pay-tab { background:transparent; border:0; padding:8px 14px; cursor:pointer;
            border-bottom:2px solid transparent; margin-bottom:-1px; color:var(--tx,#222); }
