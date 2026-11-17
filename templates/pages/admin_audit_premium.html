@@ -146,6 +146,7 @@
           <option value="flash38">Gemini 3.8 (PREMIUM+)</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
           <option value="v2">ABM TTS (fast)</option>
+          <option value="v1">ABM TTS (batch)</option>
         </select>
       </div>
       <div>
@@ -619,6 +620,14 @@
     const cls = v >= 0 ? "delta-positive" : "delta-negative";
     return `<span class="${cls}">${v.toFixed(2)}%</span>`;
   }
+  // Margine % = margine netto / costo provider x 100. A costo zero non e'
+  // definito (ABM TTS batch: VPS a canone fisso, nessun costo per job):
+  // "0.00%" lo faceva leggere come margine nullo.
+  function fmtMarginPct(net, cost){
+    const c = Number(cost)||0;
+    if (c <= 0) return `<span title="Nessun costo per job: margine % non definito">—</span>`;
+    return fmtPct((Number(net)||0) / c * 100);
+  }
   // Le tabelle audit chiedono al server le prime `limit` righe piu' RECENTI.
   // Se il filtro ne seleziona di piu', dirlo esplicitamente: una tabella
   // troncata in silenzio si legge come "questo e' tutto".
@@ -643,7 +652,8 @@
   // Chiave modello persistita -> etichetta di colonna. "v2" e' la chiave
   // storica del catalogo VoxCPM (resta nel JSONL e nei filtri), ma a video
   // il modello si chiama Fast, sia per le voci di catalogo sia campionate.
-  const MODEL_DISPLAY = {"v2": "Fast"};
+  // "v1" e' la chiave delle voci Pocket (pocket:v1:<ll-CC>/<Nome>): Batch.
+  const MODEL_DISPLAY = {"v2": "Fast", "v1": "Batch"};
   function modelLabel(k){ return MODEL_DISPLAY[k] || k; }
   function esc(s){
     const d = document.createElement('div');
@@ -733,7 +743,7 @@
     $("totalRevenueValue").textContent = fmtEur(sum("revenue"));
     netEl.textContent = fmtEur(netTot);
     netEl.style.color = netTot >= 0 ? "var(--ok)" : "var(--err)";
-    $("totalMarginPctValue").innerHTML = fmtPct(costTot > 0 ? netTot / costTot * 100 : 0);
+    $("totalMarginPctValue").innerHTML = fmtMarginPct(netTot, costTot);
   }
 
   async function ttsFetch(){
@@ -770,10 +780,7 @@
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
     setServiceTotals("tts", agg.revenue_eur, agg.google_cost_eur, netMargin);
-    const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
-      ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
-      : 0;
-    $("tts_aggDelta").innerHTML = fmtPct(_margPctAvg);
+    $("tts_aggDelta").innerHTML = fmtMarginPct(agg.net_margin_eur, agg.google_cost_eur);
   }
   function ttsRenderRecords(recs, total){
     const tbody = $("tts_auditRecordsBody");
@@ -802,7 +809,6 @@
         ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
         : (method === "voucher" ? "Voucher: nessuna fee PayPal"
             : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
-      const margPct = gCost > 0 ? (netMarg / gCost * 100) : 0;
       const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
       const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
       const isLive = !!r._live;
@@ -825,7 +831,7 @@
         <td${cancelTip}>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
-        <td class="${dCls}">${margPct.toFixed(2)}%</td>
+        <td>${fmtMarginPct(netMarg, gCost)}</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
       </tr>`;
     }).join("") + auditTruncNote(recs.length, total, 12);
