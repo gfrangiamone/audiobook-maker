@@ -49,6 +49,7 @@
       "h2": "Il tuo audiolibro &egrave; pronto!",
       "btn_no_m4b": "⬇️ Scarica audiolibro",
       "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo {h} ore dall'invio dell'email verranno cancellati.",
+      "warn_archived": "&#x1F4DA; Questo audiolibro &egrave; salvato nella tua libreria cloud: puoi scaricarlo quando vuoi, finch&eacute; resta nella libreria.",
       "share": "Ti &egrave; piaciuto? Condividi con i tuoi amici!",
       "share_text": "Ho appena trasformato un ebook in audiolibro con Audiobook Maker — gratis e direttamente dal browser!",
       "copied": "Copiato!"
@@ -58,6 +59,7 @@
       "h2": "Your audiobook is ready!",
       "btn_no_m4b": "⬇️ Download audiobook",
       "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted {h} hours after the email was sent.",
+      "warn_archived": "&#x1F4DA; This audiobook is saved in your cloud library: you can download it whenever you like, as long as it stays in the library.",
       "share": "Like it? Share with your friends!",
       "share_text": "I just turned an ebook into an audiobook with Audiobook Maker — free and right in the browser!",
       "copied": "Copied!"
@@ -67,6 +69,7 @@
       "h2": "Votre livre audio est pr&ecirc;t !",
       "btn_no_m4b": "⬇️ T&eacute;l&eacute;charger le livre audio",
       "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s {h} heures apr&egrave;s l'envoi de l'email.",
+      "warn_archived": "&#x1F4DA; Ce livre audio est enregistr&eacute; dans votre biblioth&egrave;que cloud : vous pouvez le t&eacute;l&eacute;charger quand vous voulez, tant qu'il y reste.",
       "share": "Vous avez aim&eacute; ? Partagez avec vos amis !",
       "share_text": "Je viens de transformer un ebook en livre audio avec Audiobook Maker — gratuit et directement depuis le navigateur !",
       "copied": "Copi&eacute; !"
@@ -76,6 +79,7 @@
       "h2": "&iexcl;Tu audiolibro est&aacute; listo!",
       "btn_no_m4b": "⬇️ Descargar audiolibro",
       "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n {h} horas despu&eacute;s del env&iacute;o del email.",
+      "warn_archived": "&#x1F4DA; Este audiolibro est&aacute; guardado en tu biblioteca en la nube: puedes descargarlo cuando quieras, mientras siga en la biblioteca.",
       "share": "&iexcl;Te ha gustado? &iexcl;Comp&aacute;rtelo con tus amigos!",
       "share_text": "Acabo de convertir un ebook en audiolibro con Audiobook Maker — ¡gratis y desde el navegador!",
       "copied": "&iexcl;Copiado!"
@@ -85,6 +89,7 @@
       "h2": "Dein H&ouml;rbuch ist fertig!",
       "btn_no_m4b": "⬇️ H&ouml;rbuch herunterladen",
       "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden {h} Stunden nach dem E-Mail-Versand gel&ouml;scht.",
+      "warn_archived": "&#x1F4DA; Dieses H&ouml;rbuch ist in deiner Cloud-Bibliothek gespeichert: Du kannst es jederzeit herunterladen, solange es in der Bibliothek bleibt.",
       "share": "Hat es dir gefallen? Teile es mit deinen Freunden!",
       "share_text": "Ich habe gerade ein Ebook mit Audiobook Maker in ein Hörbuch umgewandelt — kostenlos und direkt im Browser!",
       "copied": "Kopiert!"
@@ -94,6 +99,7 @@
       "h2": "您的有声读物已准备好！",
       "btn_no_m4b": "⬇️ 下载有声读物",
       "warn": "&#x23F0; 您还有 {r} 的时间下载文件。<br>文件将在邮件发送后{h}小时删除。",
+      "warn_archived": "&#x1F4DA; 此有声读物已保存在你的云端书库中：只要它还在书库里，你随时都可以下载。",
       "share": "觉得不错？分享给你的朋友！",
       "share_text": "我刚用 Audiobook Maker 把一本电子书转成了有声书——免费且在浏览器即可完成！",
       "copied": "已复制！"
@@ -103,6 +109,7 @@
       "h2": "आपकी ऑडियोबुक तैयार है!",
       "btn_no_m4b": "⬇️ ऑडियोबुक डाउनलोड करें",
       "warn": "&#x23F0; फ़ाइलें डाउनलोड करने के लिए आपके पास {r} शेष हैं.<br>ईमेल भेजे जाने के {h} घंटे बाद उन्हें हटा दिया जाएगा.",
+      "warn_archived": "&#x1F4DA; यह ऑडियोबुक आपकी क्लाउड लाइब्रेरी में सहेजी गई है: जब तक यह लाइब्रेरी में है, आप इसे कभी भी डाउनलोड कर सकते हैं.",
       "share": "पसंद आया? अपने दोस्तों के साथ साझा करें!",
       "share_text": "मैंने अभी Audiobook Maker के साथ एक ईबुक को ऑडियोबुक में बदल दिया — मुफ़्त और सीधे ब्राउज़र से!",
       "copied": "कॉपी किया गया!"

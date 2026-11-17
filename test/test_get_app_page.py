@@ -200,3 +200,32 @@ def test_dl_page_mobile_ios_uses_https_not_intent():
     # iOS/altro: https diretto, nessun intent://
     assert 'href="https://example.com/t/abc123"' in html
     assert "intent://" not in html
+
+
+def test_dl_page_libreria_cloud_niente_conto_alla_rovescia():
+    """Job nella libreria cloud (retention accounts.ARCHIVE_RETENTION_SEC):
+    la pagina non racconta "875999h" e "876000 ore", dice che il libro resta
+    nella libreria."""
+    html = routes_dl._render_dl_page(
+        "TOK", "Il caso", "~875999h 52min", "audio", lang="it",
+        retention_hours=876000, archived=True)
+    assert "875999" not in html and "876000" not in html
+    assert "salvato nella tua libreria cloud" in html
+
+
+def test_dl_page_senza_libreria_resta_il_conto_alla_rovescia():
+    html = routes_dl._render_dl_page(
+        "TOK", "Il caso", "~47h", "audio", lang="it", retention_hours=48)
+    assert "Hai ancora ~47h" in html and "Dopo 48 ore" in html
+    assert "libreria cloud" not in html
+
+
+def test_dl_page_archiviato_tradotto_in_ogni_lingua():
+    import json
+    pages = json.load(open("i18n/download_pages.json", encoding="utf-8"))["download"]
+    assert all(v.get("warn_archived") for v in pages.values())
+
+
+def test_la_rotta_passa_archived_dalla_retention():
+    src = open("routes_dl.py", encoding="utf-8").read()
+    assert "archived=_ret >= accounts.ARCHIVE_RETENTION_SEC" in src

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from flask import Blueprint, after_this_request, jsonify, request
 
+import accounts
 import i18n as _i18n
 import token_store as _tkstore
 from page_brand import render_page as _render_page
@@ -346,6 +347,9 @@ def token_download_page(token):
                            m4b_available=m4b_available, has_abm=has_abm,
                            output_format=output_format,
                            retention_hours=round(_ret / 3600),
+                           # Libreria cloud: la retention "infinita" non si
+                           # racconta come conto alla rovescia (875999h).
+                           archived=_ret >= accounts.ARCHIVE_RETENTION_SEC,
                            m4b_kit_available=m4b_kit_available,
                            translated_available=translated_available,
                            transfer_qr=_transfer_qr,
@@ -1022,7 +1026,7 @@ def _render_dl_cooldown_page(lang="en", seconds=60, back_url=None):
     return _render_page("dl_cooldown", {"__P0__": (lang), "__P1__": (FAVICON_B64), "__P2__": (t['title']), "__P3__": (t['h2']), "__P4__": (t['p1']), "__P5__": (p2), "__P6__": (seconds), "__P7__": (t['auto']), "__P8__": (back_url_js), "__P9__": (auto_refresh_ms)})
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr="", transfer_url="", is_mobile=False, is_android=False, is_ios=False):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, archived=False, m4b_kit_available=False, translated_available=False, transfer_qr="", transfer_url="", is_mobile=False, is_android=False, is_ios=False):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -1195,6 +1199,8 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     # standard=18h), non un valore hardcoded. Senza questo, la riga "Dopo X ore"
     # mostrava sempre "24" anche quando il countdown sopra reportava ~48h.
     warn_text = t["warn"].replace("{r}", remaining_str).replace("{h}", str(int(retention_hours)))
+    if archived and t.get("warn_archived"):
+        warn_text = t["warn_archived"]
 
     share_url = _base_url() or "https://audiobook-maker.com"
     share_text_js = t.get("share_text", "").replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
