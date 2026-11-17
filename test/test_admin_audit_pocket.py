@@ -66,7 +66,8 @@ def test_fmt_margin_pct_in_node(tmp_path):
     res = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
     zero_cost, pos, neg, none_cost = json.loads(res.stdout)
-    assert "—" in zero_cost and "%" not in zero_cost
+    # Il tooltip contiene «margine %»: si guarda il valore, mai un numero%.
+    assert ">—</span>" in zero_cost and not re.search(r"\d%", zero_cost)
     assert "50.00%" in pos and "delta-positive" in pos
     assert "-20.00%" in neg and "delta-negative" in neg
-    assert "—" in none_cost
+    assert ">—</span>" in none_cost and not re.search(r"\d%", none_cost)
