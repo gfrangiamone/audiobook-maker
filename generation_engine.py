@@ -1590,7 +1590,6 @@ _email_details_i18n = {
         "voice_type_premium": "Voci PREMIUM",
         "voice_line": "Hai scelto la voce <strong>{voice}</strong> a velocit&agrave; <strong>{speed}</strong>.",
         "speed_normal": "normale",
-        "model_line": "Hai utilizzato il modello <strong>{model}</strong>.",
         "style_line": "Istruzioni di stile: &laquo;{style}&raquo;.",
         "opt_yes": "Il testo &egrave; stato ottimizzato con l'AI prima della generazione audio.",
         "opt_no": "Il testo non &egrave; stato ottimizzato con l'AI.",
@@ -1601,7 +1600,6 @@ _email_details_i18n = {
         "voice_type_premium": "PREMIUM Voices",
         "voice_line": "You chose the voice <strong>{voice}</strong> at <strong>{speed}</strong> speed.",
         "speed_normal": "normal",
-        "model_line": "You used the <strong>{model}</strong> model.",
         "style_line": "Style instructions: &ldquo;{style}&rdquo;.",
         "opt_yes": "The text has been optimized with AI before audio generation.",
         "opt_no": "The text was not optimized with AI.",
@@ -1612,7 +1610,6 @@ _email_details_i18n = {
         "voice_type_premium": "Voix PREMIUM",
         "voice_line": "Vous avez choisi la voix <strong>{voice}</strong> &agrave; vitesse <strong>{speed}</strong>.",
         "speed_normal": "normale",
-        "model_line": "Vous avez utilis&eacute; le mod&egrave;le <strong>{model}</strong>.",
         "style_line": "Instructions de style&nbsp;: &laquo;&nbsp;{style}&nbsp;&raquo;.",
         "opt_yes": "Le texte a &eacute;t&eacute; optimis&eacute; par l'IA avant la g&eacute;n&eacute;ration audio.",
         "opt_no": "Le texte n'a pas &eacute;t&eacute; optimis&eacute; par l'IA.",
@@ -1623,7 +1620,6 @@ _email_details_i18n = {
         "voice_type_premium": "Voces PREMIUM",
         "voice_line": "Has elegido la voz <strong>{voice}</strong> a velocidad <strong>{speed}</strong>.",
         "speed_normal": "normal",
-        "model_line": "Has utilizado el modelo <strong>{model}</strong>.",
         "style_line": "Instrucciones de estilo: &laquo;{style}&raquo;.",
         "opt_yes": "El texto ha sido optimizado con IA antes de la generaci&oacute;n de audio.",
         "opt_no": "El texto no ha sido optimizado con IA.",
@@ -1634,7 +1630,6 @@ _email_details_i18n = {
         "voice_type_premium": "PREMIUM-Stimmen",
         "voice_line": "Sie haben die Stimme <strong>{voice}</strong> mit Geschwindigkeit <strong>{speed}</strong> gew&auml;hlt.",
         "speed_normal": "normal",
-        "model_line": "Sie haben das Modell <strong>{model}</strong> verwendet.",
         "style_line": "Stilanweisungen: &bdquo;{style}&ldquo;.",
         "opt_yes": "Der Text wurde vor der Audioerzeugung mit KI optimiert.",
         "opt_no": "Der Text wurde nicht mit KI optimiert.",
@@ -1645,7 +1640,6 @@ _email_details_i18n = {
         "voice_type_premium": "Vozes PREMIUM",
         "voice_line": "Voc&ecirc; escolheu a voz <strong>{voice}</strong> na velocidade <strong>{speed}</strong>.",
         "speed_normal": "normal",
-        "model_line": "Voc&ecirc; usou o modelo <strong>{model}</strong>.",
         "style_line": "Instru&ccedil;&otilde;es de estilo: &laquo;{style}&raquo;.",
         "opt_yes": "O texto foi otimizado com IA antes da gera&ccedil;&atilde;o do &aacute;udio.",
         "opt_no": "O texto n&atilde;o foi otimizado com IA.",
@@ -1656,7 +1650,6 @@ _email_details_i18n = {
         "voice_type_premium": "PREMIUM 语音",
         "voice_line": "您选择了语音 <strong>{voice}</strong>，语速 <strong>{speed}</strong>。",
         "speed_normal": "正常",
-        "model_line": "您使用了 <strong>{model}</strong> 模型。",
         "style_line": "风格指令：「{style}」。",
         "opt_yes": "文本在音频生成前已经过 AI 优化。",
         "opt_no": "文本未经过 AI 优化。",
@@ -1701,6 +1694,16 @@ def _friendly_voice_name(voice):
     return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", base).strip()
 
 
+def _premium_model_label(voice):
+    """Nome del modello PREMIUM come nel selettore MODELLO ('' se ignoto)."""
+    if _is_pocket_voice(voice):
+        return pocket_tts.MODEL_LABEL
+    if _is_voxcpm_voice(voice):
+        return getattr(voxcpm_tts, "MODEL_LABEL", "") or ""
+    vparts = voice.split(":")
+    return _EMAIL_MODEL_LABELS.get(vparts[1], "") if len(vparts) >= 3 else ""
+
+
 def _generation_details_lines(job, lang):
     """Righe HTML localizzate con i parametri di generazione (lingua+tipo voce,
     voce+velocita', modello e stile per PREMIUM, ottimizzazione AI).
@@ -1725,6 +1728,11 @@ def _generation_details_lines(job, lang):
         parts = voice.split("-")
         lang_code = "-".join(parts[:2]) if len(parts) >= 3 else ""
     voice_type = d["voice_type_premium"] if is_premium else d["voice_type_standard"]
+    model = _premium_model_label(voice) if is_premium else ""
+    if model:
+        # "Voci PREMIUM (ABM TTS batch)": le parentesi dell'etichetta si
+        # sciolgono, niente parentesi dentro parentesi.
+        voice_type += " (" + _htmlesc.escape(re.sub(r"\s*\(([^()]*)\)", r" \1", model).strip()) + ")"
     if lang_code:
         lines.append(d["lang_line"].format(
             lang=_htmlesc.escape(lang_code), voice_type=voice_type))
@@ -1738,12 +1746,7 @@ def _generation_details_lines(job, lang):
             voice=_htmlesc.escape(vname), speed=_htmlesc.escape(speed)))
 
     if is_premium:
-        # 3) Modello TTS reale (stesse label del selettore UI).
-        vparts = voice.split(":")
-        model = _EMAIL_MODEL_LABELS.get(vparts[1]) if len(vparts) >= 3 else None
-        if model:
-            lines.append(d["model_line"].format(model=model))
-        # 4) Istruzioni di stile (input utente: escape obbligatorio).
+        # 3) Istruzioni di stile (input utente: escape obbligatorio).
         style = (job.get("gemini_style_instruction") or "").strip()
         if style:
             lines.append(d["style_line"].format(style=_htmlesc.escape(style)))

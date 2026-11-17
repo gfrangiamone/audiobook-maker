@@ -93,7 +93,21 @@ def test_unknown_premium_model_omits_model_line():
     html = ge._email_generation_details(
         _job(voice="gemini:futurex:Nova", gen_lang="it"), "it")
     assert "Hai utilizzato il modello" not in html
+    assert "<strong>Voci PREMIUM</strong>" in html
     assert "Nova" in html
+
+
+@pytest.mark.parametrize("voice,expected", [
+    ("pocket:v1:it-IT/Bruno", "Voci PREMIUM (ABM TTS batch)"),
+    ("voxcpm:v2:it-IT/Stefano", "Voci PREMIUM (ABM TTS fast)"),
+    ("gemini:flash31:Zephyr", "Voci PREMIUM (Gemini 3.1 Flash TTS)"),
+])
+def test_il_modello_sta_accanto_a_voci_premium(voice, expected):
+    html = ge._email_generation_details(_job(voice=voice, gen_lang="it", rate="+10%"), "it")
+    assert f"utilizzando <strong>{expected}</strong>." in html
+    # Una sola menzione: niente piu' riga separata «Hai utilizzato il modello».
+    assert "Hai utilizzato il modello" not in html
+    assert html.count(expected.split("(")[1].rstrip(")")) == 1
 
 
 def test_all_seven_email_langs_have_all_keys():

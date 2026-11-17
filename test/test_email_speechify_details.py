@@ -27,7 +27,8 @@ def test_email_details_speechify_is_premium_with_friendly_voice_and_model():
     html = ge._email_generation_details(job, "en")
     assert "PREMIUM" in html, "voce Speechify non marcata come PREMIUM"
     assert "Harper" in html, "nome voce amichevole assente"
-    assert "Simba (English)" in html, "label modello assente"
+    # Modello accanto al tipo di voci, parentesi dell'etichetta sciolte.
+    assert "PREMIUM Voices (Simba English)" in html, "label modello assente"
     assert "3.2:harper_32" not in html, "frammento grezzo dell'id ancora presente"
     assert "harper_32" not in html, "id voce grezzo ancora presente"
 
