@@ -53,6 +53,23 @@ test('il predefinito resta voxcpm anche con flash38 disponibile', () => {
   assert.strictEqual(r.premium.model, 'voxcpm');
 });
 
+test('lingua corretta a mano: il predefinito della lingua sbagliata non resta', () => {
+  /* Libro riconosciuto in una lingua senza VoxCPM (qui francese) -> la
+     cascata propone flash31; l'utente corregge in italiano. Il flash31 nel
+     selettore non l'ha scelto nessuno: deve tornare il primo modello. */
+  const fr = resolveAudioSelection({lang: 'fr', catalog: CATALOGO, current: {}});
+  assert.strictEqual(fr.premium.model, 'flash31');
+  const it = resolveAudioSelection({lang: 'it', catalog: CATALOGO,
+    current: {tab: 'standard', model: fr.premium.model, modelDefault: true}});
+  assert.strictEqual(it.premium.model, 'voxcpm');
+});
+
+test('lingua cambiata: il modello scelto dall utente resta', () => {
+  const r = resolveAudioSelection({lang: 'it', catalog: CATALOGO,
+    current: {tab: 'premium', model: 'flash31', modelDefault: false}});
+  assert.strictEqual(r.premium.model, 'flash31');
+});
+
 test('italiano: un modello Gemini spento sul server sparisce dal selettore', () => {
   /* L interruttore ABM_<MODELLO>_ENABLE toglie le voci di quel modello dal
      catalogo: la cascata non deve reinventarlo a partire dall altro. */

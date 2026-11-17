@@ -59,3 +59,19 @@ def test_niente_piu_combo_lingua_premium():
     src = _app_js()
     assert "getElementById('vlPremium')" not in _func_body(src, "applyBookLanguage")
     assert "let bookLangState=" in src
+
+
+def test_modello_predefinito_non_conservato_al_cambio_lingua():
+    """Libro riconosciuto in arabo (niente modello Fast: Gemini 3.1 nel
+    selettore), poi corretto a mano in italiano: il modello resta Gemini.
+
+    Il selettore deve dire alla cascata se il modello l'ha scelto l'utente;
+    altrimenti la cascata lo conserva come se fosse una scelta."""
+    src = _app_js()
+    body = _func_body(src, "applyBookLanguage")
+    assert "modelDefault:!_premiumModelPicked" in body
+    # Solo un gesto dell'utente fissa il modello...
+    i = src.index("vmPrem.addEventListener('change'")
+    assert "_premiumModelPicked=true" in src[i:i + 200]
+    # ...e ogni libro nuovo riparte dal predefinito.
+    assert src.count("_premiumModelPicked=false") >= 3

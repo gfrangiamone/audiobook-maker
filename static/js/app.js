@@ -308,6 +308,11 @@ function detectLang(){
 }
 
 // ═══════════════════ STATE ═══════════════════
+/* Il modello PREMIUM nel selettore l'ha scelto l'utente (o un suo invito:
+   scheda del catalogo, fumetto delle voci campionate)? Finche' e' falso e'
+   il predefinito della cascata, che al cambio di lingua lo ricalcola
+   invece di conservarlo. Si azzera a ogni libro nuovo. */
+let _premiumModelPicked=false;
 let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,_analyzedHbInterval=null,isTxtFile=false,emailRegistered=false;
 let previewListened=false,_langWarnResolve=null;
 let aiOptEnabled=false,llmAvailable=false,optimizedChapters=[];
@@ -491,6 +496,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   // la cascata di applyBookLanguage() ripopola modello/accento/voce.
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
+    _premiumModelPicked=true;
     // Scelta dell'utente: la nota della cascata parlava della voce che il
     // cambio di modello sta per sostituire.
     if(typeof _hideCascadeNote==='function')_hideCascadeNote();
@@ -770,6 +776,7 @@ async function analyzeEpub(file){
       return;
     }
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
+    _premiumModelPicked=false;
     _startAnalyzedHeartbeat();
     isTxtFile=(d.file_type==='txt');
     const isAbmFile=(d.file_type==='abm');
@@ -1041,6 +1048,7 @@ function applyBookLanguage(){
       standardAccent:document.getElementById('stdAccent')?.value||'',
       standardVoice:document.getElementById('vv')?.value||'',
       model:document.getElementById('vmPremium')?.value||'',
+      modelDefault:!_premiumModelPicked,
       premiumAccent:document.getElementById('geminiAccent')?.value||'',
       premiumVoice:vocePrimaPrem
     }
@@ -1433,6 +1441,7 @@ function _applyCatalogVoice(){
     if(loc)_voxcpmAccentSel=loc;
   }
   vm.value=model;
+  _premiumModelPicked=true;
   _onPremiumModelChanged();
 }
 
@@ -6400,7 +6409,7 @@ function resetAll(){
   document.getElementById('fgOut').style.display='';
   const _vOutR=document.getElementById('vOut');if(_vOutR){_vOutR.value='m4b';onOutputChange();}
   previewStop();
-  bookData=null;jobId=null;
+  bookData=null;jobId=null;_premiumModelPicked=false;
   emailRegistered=false;_ttsQuotaAck=false;_langMismatchAck=false;previewListened=false;
   _currentPreviewSig=null;_knownPreviewSigs.clear();
   ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);if(el){el.style.display='none';el.src=''}});

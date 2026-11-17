@@ -248,7 +248,13 @@ function resolveAudioSelection(input) {
   var models = modelliPer(catalog, lang);
   var premiumEnabled = models.length > 0;
 
-  var model = _preserva(current.model, models) || (models.length ? models[0] : '');
+  /* Si conserva solo il modello che l'utente ha scelto. `modelDefault` dice
+     che quello nel selettore l'ha messo la cascata: e' il predefinito di
+     un'altra lingua (libro riconosciuto in arabo -> Gemini 3.1, poi
+     corretto a mano in italiano) e conservarlo toglierebbe il primo
+     modello della lista proprio dove c'e'. */
+  var model = (current.modelDefault ? null : _preserva(current.model, models))
+    || (models.length ? models[0] : '');
   if (current.model && model !== current.model) {
     segna('model', current.model, model,
           premiumEnabled ? 'model_unavailable_in_lang' : 'no_premium_voices');
