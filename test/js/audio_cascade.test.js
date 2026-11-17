@@ -6,7 +6,7 @@ const {resolveAudioSelection, ordinaLocali} = require('../../static/js/audio_cas
    veri (75 lingue, 1.957 voci) non rendono un test piu' vero, solo piu' lento
    da leggere quando fallisce. */
 const CATALOGO = {
-  _voxcpm: {available: true, model_label: 'Audiobook Maker (Fast)', personas: []},
+  _voxcpm: {available: true, model_label: 'ABM TTS (fast)', personas: []},
   _premium_status: {capability_ok: true, admin_disabled: false},
   _translate_available: false,
   it: {name: 'Italian', voices: [
@@ -373,7 +373,7 @@ test('spagnolo: l`accento di ripiego e` il primo per diffusione', () => {
    `pocket:`. Sta subito dopo VOXCPM2 e compare solo col motore acceso. */
 function conBatch(acceso) {
   const c = JSON.parse(JSON.stringify(CATALOGO));
-  c._pocket = {available: acceso, model_label: 'Audiobook Maker (batch)'};
+  c._pocket = {available: acceso, model_label: 'ABM TTS (batch)'};
   c.it.voices.push({id: 'pocket:v1:it-IT/Bianca', name: 'Bianca', gender: 'Female',
                     locale: 'it-IT', engine: 'pocket'});
   return c;

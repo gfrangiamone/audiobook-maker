@@ -106,7 +106,7 @@ def test_il_dettaglio_dice_caratteri_e_modello(client, job_grande):
     b = stima(client, job_grande)["voxcpm_breakdown"]
     assert b["chars"] == 250_000
     assert b["chars_total"] == 250_000
-    assert b["model_label"] == "Audiobook Maker (Fast)"
+    assert b["model_label"] == "ABM TTS (fast)"
     assert b["is_free"] is False
 
 

@@ -548,7 +548,7 @@ def test_status_for_shapes(sub_env):
     assert "plans" not in app and "price" not in str(app)
     assert subscriptions.status_for(None)["subscription"] is None
     import voxcpm_catalog
-    assert st["voucher_model"] == subscriptions.VOUCHER_MODELS == "Audiobook Maker (Fast), Audiobook Maker (batch)" and "voucher_model" not in app
+    assert st["voucher_model"] == subscriptions.VOUCHER_MODELS == "ABM TTS (fast), ABM TTS (batch)" and "voucher_model" not in app
     # il buono copre quel modello e non le altre voci PREMIUM
     assert "voxcpm" in payment.VOUCHER_DEFAULT_SERVICES
     assert not {"flash31", "flash38", "speechify"} & set(payment.VOUCHER_DEFAULT_SERVICES)

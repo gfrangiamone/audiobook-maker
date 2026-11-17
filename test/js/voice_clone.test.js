@@ -5,7 +5,7 @@ const {vociMie} = require('../../static/js/audio_cascade.js');
 
 const CAT = {
   it: {voices: [{id: 'voxcpm:it-IT/Elena', locale: 'it-IT', gender: 'Female'}]},
-  _voxcpm: {available: true, model_label: 'Audiobook Maker (Fast)', personas: {}},
+  _voxcpm: {available: true, model_label: 'ABM TTS (fast)', personas: {}},
   _mine: [
     {id: 'vc_a1', state: 'ready', voice_id: 'voxcpm:mine:TOKA', lang: 'it', locale: 'it-IT',
      gender: 'f', owner: true, pending: false, name: 'Nonna Pina', speed: 1.3,

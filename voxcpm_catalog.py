@@ -217,7 +217,7 @@ def personas():
 
 
 MODEL_ID = CATALOG_SCHEMA          # "v2": la chiave modello nel voice id
-MODEL_LABEL = "Audiobook Maker (Fast)"  # etichetta del selettore MODELLO (mai il nome del motore)
+MODEL_LABEL = "ABM TTS (fast)"  # etichetta del selettore MODELLO (mai il nome del motore)
 
 
 def _display_name(rec):

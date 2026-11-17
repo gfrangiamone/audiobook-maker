@@ -46,7 +46,7 @@ def test_le_voci_voxcpm_entrano_nel_catalogo():
     trovate = voci_voxcpm(audiobook_app.get_voices())
     assert trovate
     assert all(v["id"].startswith("voxcpm:v2:") for v in trovate)
-    assert {v["model_label"] for v in trovate} == {"Audiobook Maker (Fast)"}
+    assert {v["model_label"] for v in trovate} == {"ABM TTS (fast)"}
 
 
 def test_le_voci_finiscono_sotto_la_lingua_giusta():
@@ -86,7 +86,7 @@ def test_un_catalogo_illeggibile_non_rompe_le_altre_voci(monkeypatch, tmp_path):
 def test_stato_del_motore_nella_risposta(client):
     dati = client.get("/api/voices").get_json()
     assert dati["_voxcpm"]["available"] is True
-    assert dati["_voxcpm"]["model_label"] == "Audiobook Maker (Fast)"
+    assert dati["_voxcpm"]["model_label"] == "ABM TTS (fast)"
     # I caratteri arrivano dal catalogo, mai da una costante: la UI ci
     # costruisce il filtro CARATTERE.
     # Nota: la fixture usa "warm-young" (non "warm-pro" come nel brief) —

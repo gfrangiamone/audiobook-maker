@@ -28,7 +28,7 @@ def test_bodies_same_structure_in_every_language():
         assert body.count("<h2>") == 8, lang
         assert body.count("<details>") == 5, lang
         assert body.count("<tr>") == 5, lang
-        assert "Audiobook Maker (Fast)" in body and "Audiobook Maker (batch)" in body, lang
+        assert "ABM TTS (fast)" in body and "ABM TTS (batch)" in body, lang
         assert "VoxCPM" not in body, lang
         for prefix in ("PROMO-", "GIFT-", "SUB-"):
             assert prefix in body, (lang, prefix)

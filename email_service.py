@@ -1115,8 +1115,8 @@ def send_voice_clone_refunded(email, lang, *, amount_eur, method, reason, vouche
 _VOUCHER_SERVICE_LABELS = {
     "llm": "AI text optimisation",
     "translate": "AI book translation",
-    "voxcpm": "PREMIUM voices, Audiobook Maker (Fast) model",
-    "pocket": "PREMIUM voices, Audiobook Maker (batch) model",
+    "voxcpm": "PREMIUM voices, ABM TTS (fast) model",
+    "pocket": "PREMIUM voices, ABM TTS (batch) model",
     "flash31": "PREMIUM voices, Gemini 3.1 TTS model",
     "flash38": "PREMIUM voices, Gemini 3.8 (PREMIUM+) model",
     "speechify": "PREMIUM voices, Simba 3.2 model",

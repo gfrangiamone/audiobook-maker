@@ -1,5 +1,5 @@
 """Nomi dei modelli nei testi per l'utente (13/11/2026): il modello delle voci
-inventate si chiama «Audiobook Maker (Fast)», quello lento «Audiobook Maker
+inventate si chiama «ABM TTS (fast)», quello lento «Audiobook Maker
 (batch)»; il nome del motore (VoxCPM) non compare in nessuna etichetta."""
 import json
 import re
@@ -25,8 +25,8 @@ def _json_strings(node):
 
 
 def test_model_labels():
-    assert voxcpm_catalog.MODEL_LABEL == "Audiobook Maker (Fast)"
-    assert pocket_catalog.MODEL_LABEL == "Audiobook Maker (batch)"
+    assert voxcpm_catalog.MODEL_LABEL == "ABM TTS (fast)"
+    assert pocket_catalog.MODEL_LABEL == "ABM TTS (batch)"
     assert not [v for v in email_service._VOUCHER_SERVICE_LABELS.values() if ENGINE.search(v)]
 
 
@@ -38,7 +38,7 @@ def test_spa_strings_never_name_the_engine():
     bad = [v[:80] for v in values if re.search(r"VoxCPM|VOXCPM", v)]
     assert not bad
     for lang in ("it", "en", "fr", "es", "de", "zh", "hi"):
-        assert f'Object.assign(L.{lang},{{lbl_model_voxcpm:"Audiobook Maker (Fast)"' in src, lang
+        assert f'Object.assign(L.{lang},{{lbl_model_voxcpm:"ABM TTS (fast)"' in src, lang
 
 
 def test_server_texts_never_name_the_engine():

@@ -80,7 +80,7 @@ def test_clip_with_problem_is_not_offered(demo_dir):
 
 def test_ui_entries_have_demo_urls_and_no_sample(demo_dir):
     (entry,) = [e for e in pocket_catalog.get_voices()["it"] if e["id"] == STEFANO]
-    assert entry["engine"] == "pocket" and entry["model_label"] == "Audiobook Maker (batch)"
+    assert entry["engine"] == "pocket" and entry["model_label"] == "ABM TTS (batch)"
     assert entry["name"] == "Stefano (IT)" and "sample_url" not in entry
     assert entry["demos"][0]["url"].startswith("/api/voice_demo?voice=pocket%3Av1%3Ait-IT%2FStefano")
 
@@ -108,7 +108,7 @@ def test_demo_path(demo_dir):
 
 def test_api_voices_offers_batch_model(demo_dir, client):
     data = client.get("/api/voices").get_json()
-    assert data["_pocket"] == {"available": True, "model_label": "Audiobook Maker (batch)",
+    assert data["_pocket"] == {"available": True, "model_label": "ABM TTS (batch)",
                                "rate_eur_per_mchar": 11.0, "min_price_eur": 0.5}
     assert STEFANO in {v["id"] for v in _pocket_voices(data)}
 

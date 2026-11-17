@@ -175,7 +175,7 @@ def test_notification_email_lists_services(monkeypatch):
                                                services=["llm", "voxcpm"])
     assert es._send_voucher_notification_email("V-3", "u@x.it", 5.0, 30, 0)
     assert payment.VOUCHER_SERVICES == tuple(es._VOUCHER_SERVICE_LABELS)
-    assert "<li>PREMIUM voices, Audiobook Maker (Fast) model</li>" in sent[0]
+    assert "<li>PREMIUM voices, ABM TTS (fast) model</li>" in sent[0]
     assert "<li>PREMIUM voices, Gemini 3.1 TTS model</li>" in sent[0]
     assert "AI text optimisation of the same book" in sent[0]
     assert "<li>AI text optimisation</li>" in sent[1] and "of the same book" not in sent[1]

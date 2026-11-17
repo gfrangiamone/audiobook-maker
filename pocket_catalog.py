@@ -1,4 +1,4 @@
-"""Catalogo delle voci del modello batch (Pocket TTS, «Audiobook Maker (batch)»).
+"""Catalogo delle voci del modello batch (Pocket TTS, «ABM TTS (batch)»).
 
 Non e' un catalogo suo: sono le voci inventate del catalogo VoxCPM
 (`voxcpm_catalog`), lette dal worker Pocket con stati calcolati da un taglio
@@ -21,7 +21,7 @@ from env_utils import env_str
 from voice_utils import POCKET_VOICE_PREFIX
 
 MODEL_ID = "v1"                         # la chiave modello nel voice id
-MODEL_LABEL = "Audiobook Maker (batch)"  # etichetta del selettore MODELLO
+MODEL_LABEL = "ABM TTS (batch)"  # etichetta del selettore MODELLO
 _ID_PREFIX = f"{POCKET_VOICE_PREFIX}{MODEL_ID}:"
 # Lingue che il worker sa leggere (un modello Pocket per lingua).
 LANGUAGES = ("it", "en", "es", "fr", "de", "pt", "nl")
