@@ -685,8 +685,13 @@ def _drop_backlinked_notes(soup) -> None:
         if _fragment(a["href"]):
             links_to.setdefault(_fragment(a["href"]), []).append(a)
     for mark in soup.find_all("a", href=True, id=True):
+        # Rimando dentro una nota gia' tolta: un tag distrutto non ha piu'
+        # attributi e mark["href"] alzava TypeError (De Ellendigen, Gutenberg
+        # 37316, note che rimandano ad altre note: catalogo 17/11/2026).
+        if mark.decomposed:
+            continue
         note = ids.get(_fragment(mark["href"]))
-        if note is None or mark.decomposed or note.decomposed:
+        if note is None or note.decomposed:
             continue
         if mark.find_parent("sup") is None and not _NOTE_MARK_RE.fullmatch(mark.get_text(strip=True)):
             continue

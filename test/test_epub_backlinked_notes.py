@@ -42,6 +42,18 @@ def test_rimando_numerico_fuori_dagli_apici_e_ancora_vuota():
     assert "[1]" not in text and "Spiegazione" not in text
 
 
+def test_rimando_dentro_una_nota_gia_tolta():
+    # La prima nota contiene il rimando alla seconda: tolta la prima, il
+    # secondo rimando e' un tag distrutto (De Ellendigen, catalogo 17/11/2026).
+    html = ("<html><body><p>Het verhaal<sup><a id=\"r1\" href=\"#n1\">1</a></sup> gaat door.</p>"
+            "<div id=\"n1\"><p>Eerste noot<sup><a id=\"r2\" href=\"#n2\">2</a></sup>. "
+            "<a href=\"#r1\">Terug</a></p></div>"
+            "<p id=\"n2\">Tweede noot. <a href=\"#r2\">Terug</a></p></body></html>")
+    text = E.html_to_text(html)
+    assert "Het verhaal gaat door." in text
+    assert "Eerste noot" not in text
+
+
 def test_link_che_non_sono_note_restano():
     # Indice con i titoli che tornano all'indice: il rimando non e' una nota,
     # il titolo del capitolo resta (la voce d'indice la toglievano gia' altre regole).
