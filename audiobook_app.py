@@ -5686,6 +5686,12 @@ def api_account_progress():
 # Durata massima (s) di uno stream SSE di avanzamento prima della chiusura
 # (il client riapre). S7, 2026-10-13.
 SSE_MAX_SEC = env_int("ABM_SSE_MAX_SEC", 1800, floor=30)
+# Margine (s) concesso alla riapertura dopo quella chiusura: `last_poll` viene
+# spostato avanti di tanto. Con la scheda in background il browser riapre lo
+# stream con oltre 60 s di ritardo e il cleanup uccideva il job gratuito senza
+# email esattamente a 30, 60, 90... minuti dall'avvio (192 kill in un mese,
+# libro di 459 chunk perso al 42% il 16/11/2026).
+SSE_ROLLOVER_GRACE_SEC = env_int("ABM_SSE_ROLLOVER_GRACE_SEC", 180, floor=0)
 
 
 def _sse_event(payload):
@@ -5720,7 +5726,12 @@ def _sse_stream(job_id, build, *, sleep_sec=2.0):
             job["last_poll"] = time.time()
             payload, terminal = build(job)
             yield _sse_event(payload)
-            if terminal or time.time() >= deadline:
+            if terminal:
+                break
+            if time.time() >= deadline:
+                # Chiusura nostra, non del client: il heartbeat non deve
+                # scadere mentre il browser riapre.
+                job["last_poll"] = time.time() + SSE_ROLLOVER_GRACE_SEC
                 break
             time.sleep(sleep_sec)
     return _sse_response(gen())

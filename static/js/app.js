@@ -5223,6 +5223,9 @@ function listenProgress(){
           // di altri job concorrenti.
           _hideJobRunningModal(false,myJobId);
           _showGeminiOverloadModal(d);
+        }else if(d.error==='Job not found'){
+          // Job sparito a stream aperto: stesso messaggio del 404.
+          _stopProgressJobGone(myJobId);
         }else{
           _hideJobRunningModal(true,myJobId);
           showPErr(d.error||'Errore');
@@ -5419,12 +5422,40 @@ function listenProgress(){
         document.addEventListener('visibilitychange',document._hbVis);
       }
     };
+    // Il server chiude lo stream ogni mezz'ora e qui si riapre. Un 404
+    // invece vuol dire che il job non c'e' piu': la pagina restava ferma
+    // sull'ultima percentuale per ore (job 0u-VCxeB, 16/11/2026).
     es.onerror=()=>{
       es.close();
-      if(retries<maxRetries&&generating){retries++;setTimeout(connect,retries*2000);}
+      if(!generating)return;
+      _progressJobGone(myJobId).then(gone=>{
+        if(!generating||myJobId!==jobId)return;
+        if(gone){_stopProgressJobGone(myJobId);return}
+        if(retries<maxRetries){retries++;setTimeout(connect,retries*2000);return}
+        showPErr(t('sse_lost')||'Connection to the server was lost. Reload the page to see the progress: processing continues anyway.');
+      });
     };
   }
   connect();
+}
+
+// EventSource non espone lo status HTTP: lo chiede una fetch, interrotta
+// appena arrivano gli header perche' su un job vivo la risposta e' uno stream.
+async function _progressJobGone(id){
+  const ctl=(typeof AbortController==='function')?new AbortController():null;
+  try{
+    const r=await fetch('/api/progress/'+id+'?lang='+encodeURIComponent(cl||'en'),{cache:'no-store',signal:ctl?ctl.signal:undefined});
+    if(ctl)ctl.abort();
+    return r.status===404;
+  }catch(e){return false}
+}
+
+function _stopProgressJobGone(id){
+  unlockUI();
+  generating=false;
+  const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
+  _hideJobRunningModal(true,id);
+  showPErr(t('gen_job_gone')||'This conversion was stopped and is no longer on the server. This happens when the page loses contact with the server for more than a minute, for example when the tab is in the background or the computer goes to sleep. Start it again and enter your email: with an email the conversion continues even if you close the page.');
 }
 
 // ═══════════════ RIPRESA DELLA SESSIONE DOPO UN REFRESH ═══════════════
