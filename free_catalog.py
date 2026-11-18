@@ -25,6 +25,7 @@ Non importa `audiobook_app`: il QR arriva come funzione dal chiamante.
 import html
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -63,6 +64,11 @@ FILE_REDIRECT_MAX_AGE = 3600
 # catalog_cli): nient'altro si firma.
 _FILE_KEY_RE = re.compile(r"^(m4b/[a-z]{2}/[a-z0-9-]+\.m4b|preview/[a-z]{2}/[a-z0-9-]+\.m4a"
                           r"|covers/[a-z]{2}/[a-z0-9-]+\.jpg)$")
+
+# Banner fisso in fondo all'indice (richiesta utente 18/11/2026): CityPulse ha
+# una versione per lingua su `/<lang>/`; la radice sceglie da se'.
+CITYPULSE_URL = "https://citypulse.center"
+CITYPULSE_LANGS = ("it", "en", "fr", "de", "es", "pt", "nl", "da")
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _BOOK_ID_RE = re.compile(r"^[a-z]{2}-[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -578,6 +584,58 @@ def _footer(t):
     return f'<p>{_esc(t["footer"])} <a href="/">{_esc(t["footer_link"])}</a></p>'
 
 
+def _promo(href, brand, text, link, label, hreflang="", lang=""):
+    """Banner basso a sviluppo orizzontale verso un altro sito: marchio, una
+    riga di testo e l'invito, tutto dentro un solo link; `label` e' la
+    scritta piccola sulla cornice che lo dichiara pubblicita'. `brand` e'
+    HTML gia' pronto (logo o nome con l'escape fatto dal chiamante); `lang`
+    e' la lingua del testo quando non e' quella della pagina."""
+    return page_brand.render_page("free_catalog_promo.html", {
+        "__LANG__": f' lang="{_esc(lang)}"' if lang else "", "__LABEL__": _esc(label),
+        "__HREF__": _esc(href), "__HREFLANG__": f' hreflang="{_esc(hreflang)}"' if hreflang else "",
+        "__BRAND__": brand, "__TEXT__": _esc(text), "__LINK__": _esc(link),
+    })
+
+
+# Logo di CityPulse come sul suo sito: simbolo e nome a due pesi.
+_CITYPULSE_LOGO = ('<img src="/static/img/citypulse.svg" alt="" width="36" height="36">'
+                   '<span class="fc-cp"><i>city</i><b>pulse</b></span>')
+
+
+def _citypulse_promo(catalog_lang, t):
+    """Invito a CityPulse: testo nella lingua dell'interfaccia (`t`), link alla
+    versione del sito nella lingua del catalogo; senza una versione in quella
+    lingua, la radice."""
+    lang = catalog_lang if catalog_lang in CITYPULSE_LANGS else ""
+    href = f"{CITYPULSE_URL}/{lang}/" if lang else f"{CITYPULSE_URL}/"
+    return _promo(href, _CITYPULSE_LOGO, t["promo_citypulse_text"], t["promo_citypulse_link"],
+                  t["promo_label"], lang)
+
+
+# Banner dei libri italiani (richiesta utente 18/11/2026): prodotti con sito e
+# pubblico solo italiani, quindi testo in italiano qualunque sia la lingua
+# dell'interfaccia (i18n/free_catalog_promos.json); su ogni pagina ne esce uno
+# solo (`_it_promo`). (chiave, sito, logo)
+_IT_PROMOS = (
+    ("babel", "https://babel.nextsw.it/",
+     '<img class="fc-promo-chip" src="/static/img/promo-babel.png" alt="" width="61" height="36">'
+     '<b class="fc-promo-name">BABEL</b>'),
+    ("timewise", "https://www.timewise.it/",
+     '<img class="fc-promo-chip" src="/static/img/promo-timewise.svg" alt="" width="102" height="36">'),
+    ("vigilio", "https://www.vigilio.eu/",
+     '<img class="fc-promo-chip" src="/static/img/promo-vigilio.png" alt="" width="101" height="36">'),
+)
+
+
+def _it_promo():
+    """Il banner di un libro italiano: uno solo dei prodotti, estratto a sorte
+    a ogni visita, cosi' ruotano su tutti i libri (richiesta utente 18/11/2026:
+    mai insieme)."""
+    t = i18n.pick(i18n.load("free_catalog_promos"), "it", fallback="it")
+    key, href, logo = random.choice(_IT_PROMOS)
+    return _promo(href, logo, t[f"{key}_text"], t[f"{key}_link"], t["promo_label"], "it", "it")
+
+
 def _css():
     return page_brand.page_template("free_catalog.css")
 
@@ -596,10 +654,13 @@ def _lang_options(langs, preset, t):
     return "".join(opts)
 
 
-def _catalog_html(ui_lang, base_url, *, preset, canonical_path, path=None):
+def _catalog_html(ui_lang, base_url, *, preset, canonical_path, path=None, promo_lang=""):
     """L'indice del catalogo: tutti i libri di tutte le lingue, con ricerca e
     filtri (stato, lingua). `preset` e' la lingua gia' scelta nel filtro ("" =
-    tutte); senza JS si vede la lista intera. None se il catalogo e' spento."""
+    tutte); senza JS si vede la lista intera. None se il catalogo e' spento.
+    `promo_lang` e' la lingua del catalogo per il link del banner in fondo
+    (la pagina per lingua passa la sua); senza, quella del filtro e poi
+    quella dell'interfaccia."""
     items = all_books()
     if items is None:
         return None
@@ -629,6 +690,7 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path, path=None):
         "__CARDS__": "\n".join(_card(l, b, t) for l, b in items),
         "__CTA_TITLE__": _esc(t["cta_title"]), "__CTA_TEXT__": _esc(t["cta_text"]),
         "__CTA_BTN__": _esc(t["cta_button"]),
+        "__PROMO__": _citypulse_promo(promo_lang or preset or ui_lang, t),
     })
     # Le pagine per lingua sono alternative fra loro; x-default e' l'indice unico.
     alternates = page_brand.hreflang_links(
@@ -660,7 +722,8 @@ def hub_html(lang, base_url, ui=None):
     if lang not in LANGS or books(lang) is None:
         return None
     ui = ui or lang
-    return _catalog_html(ui, base_url, preset=preset_lang([ui]), canonical_path=f"{PATH}/{lang}/")
+    return _catalog_html(ui, base_url, preset=preset_lang([ui]), canonical_path=f"{PATH}/{lang}/",
+                         promo_lang=lang)
 
 
 def _voice_text(b, t, key):
@@ -838,6 +901,10 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
         "__APP_BTN__": _app_button(app_href, t, "fc-btn-primary") if app_href else "",
         "__DL_HINT__": _esc(t["download_hint"]),
         "__SCHEDA_LINK__": _esc(t["scheda_link"]),
+        # Sopra l'anteprima (richiesta utente 18/11/2026): nei libri italiani
+        # il banner di un prodotto italiano, negli altri CityPulse con il
+        # testo nella lingua dell'interfaccia.
+        "__PROMO__": _it_promo() if lang == "it" else _citypulse_promo(lang, t),
         "__PREVIEW__": _preview_html(b, t),
         "__APP_TITLE__": _esc(t["app_title"]), "__APP_TEXT__": _esc(t["app_text"]),
         "__APP_QR__": (f'<div class="fc-app-qr"><img src="{_esc(qr)}" alt="{_esc(t["app_qr_alt"])}" '

@@ -129,6 +129,21 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 .fc-cta h2{font-size:1.3rem}
 .fc-cta p{margin:0 0 14px}
 
+/* banner basso verso un altro sito (free_catalog_promo.html) */
+.fc-promo a{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;padding:10px 18px;border:1px solid var(--brd);border-radius:14px;color:var(--txd);font-size:.8rem;line-height:1.45;text-decoration:none;transition:border-color .15s,background .15s}
+.fc-promo a:hover{border-color:var(--ac);background:var(--srf)}
+.fc-promo{position:relative}
+.fc-promo-label{position:absolute;top:-7px;right:16px;padding:0 6px;background:var(--bg);color:var(--txm);font-size:.6rem;font-weight:600;line-height:14px;letter-spacing:.08em;text-transform:uppercase;pointer-events:none}.fc-promo-brand{display:inline-flex;align-items:center;gap:7px;flex:none;min-width:158px}
+.fc-promo-brand img{height:36px;width:auto}
+.fc-promo-chip{box-sizing:border-box;background:#fff;border-radius:7px;padding:4px 7px}
+.fc-promo-name{font-size:1.25rem;font-weight:800;letter-spacing:.04em;color:var(--tx)}
+.fc-cp{font-size:1.55rem;letter-spacing:-.03em;color:var(--tx)}
+.fc-cp i{font-style:normal;font-weight:500;color:#1e7a5a}
+.fc-cp b{font-weight:800}
+@media (prefers-color-scheme:dark){.fc-cp i{color:#4fb893}}
+.fc-promo-text{flex:1 1 260px}
+.fc-promo em{font-style:normal;font-weight:700;color:var(--ac);white-space:nowrap}
+
 /* pagina del libro */
 .fc-bhero{position:relative;border-radius:24px;overflow:hidden;background:var(--fc-hero);margin-bottom:22px}
 .fc-bhero-bg{position:absolute;inset:-40px;background-image:var(--cover);background-size:cover;background-position:center;filter:blur(38px) saturate(1.2);opacity:.45;transform:scale(1.1)}

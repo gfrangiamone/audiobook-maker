@@ -160,6 +160,30 @@ def test_hub_lists_books_with_status_and_escapes(catalog, client):
     assert "/static/js/free_catalog.js?v=" in page
 
 
+def test_index_promo_citypulse_text_in_ui_lang_link_in_catalog_lang(catalog, client):
+    # Pagina per lingua: link alla versione italiana, testo nella lingua dell'interfaccia.
+    page = client.get("/free-audiobooks/it/").get_data(as_text=True)
+    assert 'class="fc-promo"' in page
+    # Sempre in una nuova scheda.
+    assert 'href="https://citypulse.center/it/" target="_blank" rel="noopener" hreflang="it"' in page
+    assert "Scopri CityPulse" in page
+    assert 'src="/static/img/citypulse.svg"' in page and "<i>city</i><b>pulse</b>" in page
+    assert (Path(free_catalog.__file__).parent / "static" / "img" / "citypulse.svg").is_file()
+    t = free_catalog._t("en")
+    en = free_catalog.hub_html("it", "", ui="en")
+    assert 'href="https://citypulse.center/it/"' in en and t["promo_citypulse_link"] in en
+    # Indice unico: lingua del filtro, poi dell'interfaccia; senza versione, la radice.
+    assert 'href="https://citypulse.center/it/"' in free_catalog.index_html("en", "", preset="it")
+    assert 'href="https://citypulse.center/en/"' in free_catalog.index_html("en", "")
+    zh = free_catalog.index_html("zh", "")
+    assert 'href="https://citypulse.center/" target="_blank" rel="noopener">' in zh
+    assert free_catalog._t("zh")["promo_citypulse_link"] in zh
+    assert '<small class="fc-promo-label">Sponsor</small>' in page   # dichiarato pubblicita'
+    assert f'<small class="fc-promo-label">{free_catalog._t("zh")["promo_label"]}</small>' in zh
+    # Il banner sta sotto l'invito a creare il proprio audiolibro.
+    assert page.index('class="fc-cta"') < page.index('class="fc-promo"')
+
+
 def test_book_page_has_preview_download_and_app(catalog, client, monkeypatch):
     qr_di = []
     monkeypatch.setattr(audiobook_app, "_qr_data_uri",
@@ -378,6 +402,42 @@ def _secondo_catalogo(tmp_path, lang, books):
 def _libro_en(**over):
     return _book(book_id="en-moby", slug="moby-dick", title="Moby Dick",
                  author={"name": "Herman Melville", "died": 1891}, **over)
+
+
+def test_book_promo_citypulse_only_on_non_italian_books(catalog, client, tmp_path, monkeypatch):
+    _secondo_catalogo(tmp_path, "en", [_libro_en()])
+    qr = lambda text: ""
+    # Libri italiani: uno solo dei tre prodotti italiani per pagina, a sorte,
+    # in italiano con qualunque interfaccia.
+    prodotti = (("https://babel.nextsw.it/", "Scopri Babel"),
+                ("https://www.timewise.it/", "Scopri TimeWise"),
+                ("https://www.vigilio.eu/", "Scopri Vigilio"))
+    for n, (href, link) in enumerate(prodotti):
+        with monkeypatch.context() as sorte:
+            sorte.setattr(free_catalog.random, "choice", lambda seq, n=n: seq[n])
+            for ui in ("it", "en"):
+                it = free_catalog.book_html("it", "storia-di-una-capinera", "", qr, ui=ui)
+                assert it.count('<aside class="fc-promo" lang="it">') == 1 and "citypulse.center" not in it
+                assert it.count('<small class="fc-promo-label">Sponsor</small>') == 1   # dichiarato pubblicita'
+                assert f'href="{href}" target="_blank" rel="noopener" hreflang="it"' in it and link in it
+                assert not any(h in it for h, _ in prodotti if h != href)
+                assert it.index('class="fc-promo"') < it.index('class="fc-player"')
+    # Senza pilotare la sorte escono tutti e tre.
+    usciti = {h for _ in range(200) for h, _l in prodotti
+              if f'href="{h}"' in free_catalog._it_promo()}
+    assert len(usciti) == 3
+    static = Path(free_catalog.__file__).parent
+    for src in re.findall(r'src="(/static/img/[^"]+)"', "".join(p[2] for p in free_catalog._IT_PROMOS)):
+        assert (static / src.lstrip("/")).is_file()
+    page = free_catalog.book_html("en", "moby-dick", "", qr)
+    assert 'href="https://citypulse.center/en/" target="_blank" rel="noopener" hreflang="en"' in page
+    assert free_catalog._t("en")["promo_citypulse_link"] in page
+    # Sopra l'anteprima.
+    assert page.index('class="fc-promo"') < page.index('class="fc-player"')
+    # Testo nella lingua scelta per la pagina, link alla lingua del libro.
+    fr = free_catalog.book_html("en", "moby-dick", "", qr, ui="fr")
+    assert free_catalog._t("fr")["promo_citypulse_link"] in fr
+    assert 'href="https://citypulse.center/en/"' in fr
 
 
 def test_l_indice_e_unico_con_tutte_le_lingue(catalog, client, tmp_path):
