@@ -1164,7 +1164,8 @@ Motore a chunk diretto come Speechify: una `POST /v1/synthesize` per chunk verso
 | `ABM_POCKET_TOKEN` | Token Bearer del worker (`POCKET_API_TOKEN` in `/etc/abm-pocket-worker.env` sul VPS). | — | `pocket_tts.py` `api_token()` |
 | `ABM_POCKET_MAX_CONCURRENCY` | Chunk in volo verso il worker su tutto il processo (gate `SlotGate`). Il worker regge fino a 128 attese contemporanee. | `32` | `pocket_tts.py` `max_concurrency()` |
 | `ABM_POCKET_PER_JOB_CONCURRENCY` | Chunk in volo per singolo job: il worker ha un processo per vCPU (16 sul VPS). | `16` | `pocket_tts.py` `per_job_concurrency()` |
-| `ABM_POCKET_ATTEMPTS` | Tentativi per chunk su rete, 429 e 5xx (502 chunk fallito sul worker, 503 riavvio, 504 coda): backoff 5-10-20-40-60 s, copre un deploy del worker. Un 4xx (voce assente sul worker) non si ritenta. | `5` | `pocket_tts.py` `attempts()` |
+| `ABM_POCKET_ATTEMPTS` | Tentativi per gli errori del chunk sul worker: 429, 5xx del worker (502 chunk fallito, 504 chunk non pronto, corpo JSON con `detail`), risposta senza audio. Backoff 5-10-20-40-60 s. Un 4xx (voce assente sul worker) non si ritenta. Il worker irraggiungibile non consuma tentativi (`ABM_POCKET_OUTAGE_WAIT_S`). | `5` | `pocket_tts.py` `attempts()` |
+| `ABM_POCKET_OUTAGE_WAIT_S` | Attesa massima per chunk del worker irraggiungibile (minimo 60 s): errore di rete, 503 (riavvio), 502/504 del proxy Caddy senza corpo JSON. Il chunk ritenta con backoff 5-60 s senza consumare tentativi e controlla l'annullo del job a ogni giro; oltre, `PocketWorkerDown` (sottoclasse di `PocketUnavailable`): job fallito e rimborsato, mai chunk muti. Prima del 18/11/2026 la rete stava nei 5 tentativi (~3 min): un ConnectTimeout piu' lungo lascio' muti 15 chunk di Michael Kohlhaas del catalogo. | `1800` | `pocket_tts.py` `outage_wait_s()` |
 | `ABM_POCKET_CHUNK_CHARS` | Cap caratteri per chunk, clampato a `[80, 1000]` (1000 = `POCKET_MAX_CHUNK_CHARS` del worker). | `280` | `pocket_tts.py` `chunk_max_chars()` |
 | `ABM_POCKET_RATE_EUR_PER_MCHAR` | Tariffa all'utente in EUR per milione di caratteri, uguale in ogni lingua. `0` = modo catalogo (gratis, modello nascosto). | `11` | `pocket_tts.py` `rate_eur_per_mchar()` |
 | `ABM_POCKET_MIN_PRICE_EUR` | Prezzo minimo per libro sul motore a pagamento. | `0.50` | `pocket_tts.py` `min_price_eur()` |
@@ -1173,7 +1174,7 @@ Motore a chunk diretto come Speechify: una `POST /v1/synthesize` per chunk verso
 | `ABM_POCKET_DEMO_DIR` | Cartella delle clip dimostrative Pocket con `demos.json` (`<lingua>-<PAESE>/<Nome>-<clip>.wav`). | `<repo>/pocket_demo` (gitignorata) | `pocket_catalog.py` `demo_dir()` |
 | `ABM_POCKET_LANGUAGES` | Lingue offerte, codici a due lettere separati da virgola, dentro quelle del worker. Vuota = tutte. | — (it,en,es,fr,de,pt,nl) | `pocket_catalog.py` `languages()` |
 
-- Timeout HTTP per chiamata `960` s: il worker tiene il chunk in coda fino a `POCKET_SYNC_TIMEOUT_S` (900).
+- Timeout HTTP per chiamata `960` s di lettura (`_HTTP_TIMEOUT_S`): il worker tiene il chunk in coda fino a `POCKET_SYNC_TIMEOUT_S` (900). Connessione `30` s (`_CONNECT_TIMEOUT_S`, dal 18/11/2026; prima valevano 960 anche per la connessione).
 - Velocita' ed emozione non si applicano: Pocket legge al ritmo della voce.
 - Timeout delle chiamate di coda (`PUT/GET/DELETE /v1/books`) `30` s, della stima `/v1/eta` `5` s.
 - `cost_usd` sempre 0 (canone fisso del VPS); l'audit (`provider: "pocket"`) registra caratteri e secondi di audio. Sul cancel la trattenuta si calcola su `list_price_eur` dei caratteri gia' letti, senza minimo.

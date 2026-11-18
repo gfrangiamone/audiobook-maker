@@ -176,10 +176,69 @@ def test_synthesize_fatal_on_4xx_and_gives_up_after_attempts(worker_env, tmp_pat
     with pytest.raises(pocket_tts.PocketFatalError):
         pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess)
     assert len(sess.calls) == 1
-    sess = _Session(*[_Resp(502, text="chunk fallito")] * 2)
+    # 502 del worker (chunk fallito: JSON con detail, come FastAPI).
+    sess = _Session(*[_Resp(502, text='{"detail":"chunk fallito"}', body={"detail": "chunk fallito"})] * 2)
     with pytest.raises(RuntimeError, match="after 2 attempts"):
         pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess,
                               max_attempts=2, sleep=lambda s: None)
+
+
+def test_synthesize_rete_giu_oltre_i_tentativi_non_ammutolisce_il_chunk(worker_env, tmp_path):
+    # Michael Kohlhaas (catalogo, 18/11/2026): un ConnectTimeout di qualche
+    # minuto esauriva i 5 tentativi e il chunk diventava silenzio. Il worker
+    # irraggiungibile non consuma tentativi: il chunk aspetta che torni.
+    waits = []
+    down = [requests.ConnectTimeout("VPS irraggiungibile")] * 8
+    sess = _Session(*down, _Resp(200, b"\x00\x00"))
+    res = pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess,
+                                sleep=waits.append)
+    assert res["success"] and len(sess.calls) == 9
+    assert waits == [5.0, 10.0, 20.0, 40.0, 60.0, 60.0, 60.0, 60.0]
+
+
+def test_synthesize_worker_giu_troppo_a_lungo_e_motore_spento(worker_env, tmp_path, monkeypatch):
+    # Oltre ABM_POCKET_OUTAGE_WAIT_S il motore e' spento: il job fallisce col
+    # rimborso (PocketUnavailable risale dal wrapper), mai chunk muti.
+    monkeypatch.setenv("ABM_POCKET_OUTAGE_WAIT_S", "60")
+    clock = _Clock()
+    sess = _Session(*[requests.ConnectionError("giu'")] * 5)
+    with pytest.raises(pocket_tts.PocketWorkerDown, match="unreachable for 75 s"):
+        pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess,
+                              sleep=clock.sleep, clock=clock)
+    assert len(sess.calls) == 5 and clock.t == 75          # pause 5+10+20+40
+    assert issubclass(pocket_tts.PocketWorkerDown, pocket_tts.PocketUnavailable)
+
+    def _giu(*a, **k):
+        raise pocket_tts.PocketWorkerDown("unreachable")
+    monkeypatch.setattr(pocket_tts, "synthesize", _giu)
+    out = tmp_path / "w.pcm"
+    with pytest.raises(pocket_tts.PocketWorkerDown):
+        premium_chunk.generate_chunk_pcm_pocket("Un testo.", VOICE, str(out))
+    assert not out.exists()                                 # niente silenzio scritto
+
+
+def test_synthesize_502_del_proxy_e_worker_giu_non_errore_del_chunk(worker_env, tmp_path):
+    # Il proxy davanti al VPS risponde 502/504 senza JSON quando il worker e'
+    # spento o riparte: non consuma l'unico tentativo, il 502 del worker si'.
+    sess = _Session(_Resp(502, text="<html>Bad Gateway</html>"), _Resp(504, text=""),
+                    _Resp(200, b"\x00\x00"))
+    res = pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess,
+                                max_attempts=1, sleep=lambda s: None)
+    assert res["success"] and len(sess.calls) == 3
+    sess = _Session(_Resp(504, text='{"detail":"chunk non pronto"}', body={"detail": "chunk non pronto"}))
+    with pytest.raises(RuntimeError, match="after 1 attempts"):
+        pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess,
+                              max_attempts=1, sleep=lambda s: None)
+
+
+def test_synthesize_annullato_mentre_il_worker_e_giu(worker_env, tmp_path):
+    ticket = pocket_tts.BookTicket("J1", 100, "it", check_cancelled=lambda: True,
+                                   session=_QSession(), sleep=lambda s: None)
+    sess = _Session(requests.ConnectionError("giu'"))
+    with pytest.raises(pocket_tts.PocketFatalError, match="cancelled while worker unreachable"):
+        pocket_tts.synthesize("Testo.", VOICE, str(tmp_path / "c.pcm"), session=sess, book=ticket,
+                              sleep=lambda s: None)
+    assert len(sess.calls) == 1
 
 
 def test_synthesize_unavailable_without_config(monkeypatch, tmp_path):

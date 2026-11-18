@@ -46,8 +46,10 @@ _CHUNK_CEIL_CHARS = 1000            # POCKET_MAX_CHUNK_CHARS del worker
 # per `free_result`.
 FREE_THRESHOLD_EUR = 0.01
 # Il worker tiene il chunk in coda finche' non tocca a lui (POCKET_SYNC_TIMEOUT_S,
-# 900 s): l'attesa HTTP la supera di poco.
+# 900 s): l'attesa HTTP la supera di poco. La connessione invece o c'e' in
+# pochi secondi o il VPS non e' raggiungibile.
 _HTTP_TIMEOUT_S = 960
+_CONNECT_TIMEOUT_S = 30
 _QUEUE_HTTP_TIMEOUT_S = 30
 # La stima di consegna sta dentro la stima di prezzo: un worker lento non
 # deve rallentarla, meglio nessuna data.
@@ -85,8 +87,17 @@ def per_job_concurrency():
 
 
 def attempts():
-    """Tentativi per chunk: coprono un riavvio del worker (deploy, ~60 s)."""
+    """Tentativi per gli errori del chunk sul worker (429, 5xx del worker,
+    risposta senza audio). Il worker irraggiungibile non li consuma:
+    `outage_wait_s()`."""
     return max(1, env_int("ABM_POCKET_ATTEMPTS", 5))
+
+
+def outage_wait_s():
+    """Quanto un chunk aspetta che il worker torni raggiungibile (rete giu',
+    riavvio, proxy senza worker) prima di dare il motore per spento: il job
+    fallisce col rimborso, mai un chunk muto."""
+    return max(60, env_int("ABM_POCKET_OUTAGE_WAIT_S", 1800))
 
 
 def free_slots():
@@ -212,6 +223,11 @@ class PocketQueueTimeout(PocketUnavailable):
     il job fallisce col rimborso, come a motore spento."""
 
 
+class PocketWorkerDown(PocketUnavailable):
+    """Worker irraggiungibile oltre `outage_wait_s()`: motore spento, il job
+    fallisce col rimborso invece di consegnare chunk muti."""
+
+
 def _headers():
     return {"Authorization": f"Bearer {api_token()}"}
 
@@ -241,6 +257,10 @@ class BookTicket:
         self._clock = clock or time.monotonic
         self._wait_lock = threading.Lock()
         self.state = None
+
+    def cancelled(self):
+        """True se il job del libro e' stato annullato."""
+        return bool(self._cancelled())
 
     def _url(self):
         return f"{base_url()}/v1/books/{self.id}"
@@ -305,7 +325,7 @@ class BookTicket:
         deadline = self._clock() + max_queue_wait_s()
         state = self.state
         while True:
-            if self._cancelled():
+            if self.cancelled():
                 return False
             if state and state.get("state") == "active":
                 return True
@@ -316,7 +336,7 @@ class BookTicket:
             pause = min(_TURN_POLL_MAX_S, max(_TURN_POLL_MIN_S, int(wait_s) // 4))
             end = self._clock() + pause
             while self._clock() < end:
-                if self._cancelled():
+                if self.cancelled():
                     return False
                 self._sleep(min(_CANCEL_CHECK_S, max(0.0, end - self._clock())))
             try:
@@ -349,15 +369,30 @@ def estimate_delivery(chars, language):
 
 
 class _PocketRetry(Exception):
-    """Tentativo da rifare: 429/5xx (chunk fallito sul worker, riavvio, coda
-    lunga) o errore di rete."""
+    """Tentativo da rifare: 429/5xx del worker (chunk fallito, non pronto in
+    tempo), risposta senza audio; per la coda dei libri anche lo status HTTP."""
+
+
+class _PocketDown(Exception):
+    """Worker irraggiungibile: errore di rete, 503 (riavvio), 502/504 dati dal
+    proxy davanti al VPS senza il worker dietro."""
 
 
 _NET_ERRORS = (requests.RequestException, TimeoutError, ConnectionError)
 
 
+def _from_proxy(resp):
+    """True se la risposta non e' del worker (FastAPI: corpo JSON con `detail`)
+    ma del proxy che gli sta davanti, col worker spento o in riavvio."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return True
+    return not (isinstance(body, dict) and "detail" in body)
+
+
 def synthesize(text, voice_id, output_path, emotion=None, rate="+0%", max_attempts=None,
-               session=None, sleep=None, book=None):
+               session=None, sleep=None, book=None, clock=None):
     """Sintetizza `text` sul worker e scrive il PCM in `output_path`.
 
     Ritorna dict success/bytes_written/sample_rate/channels/billable_chars/
@@ -366,8 +401,15 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%", max_attemp
     ffmpeg fallisce il chunk resta a velocita' normale, l'audio non si perde.
     `book` e' il `BookTicket` del libro: se il libro perde il
     turno (423, un libro con priorita' piu' alta) si aspetta il turno e il
-    tentativo si rifa'. Raises PocketUnavailable, PocketFatalError,
-    ValueError (voce), RuntimeError a tentativi esauriti.
+    tentativo si rifa'.
+
+    Due limiti diversi: `max_attempts` errori del chunk sul worker, e
+    `outage_wait_s()` di worker irraggiungibile, che non consuma tentativi.
+    Prima i 5 tentativi coprivano anche la rete, circa tre minuti: un
+    ConnectTimeout piu' lungo lascio' muti 15 chunk di Michael Kohlhaas
+    (catalogo, 18/11/2026). Raises PocketUnavailable (PocketWorkerDown oltre
+    l'attesa), PocketFatalError, ValueError (voce), RuntimeError a tentativi
+    esauriti.
     """
     if not is_available():
         raise PocketUnavailable("Pocket TTS not available (check ABM_POCKET_URL / ABM_POCKET_TOKEN)")
@@ -379,15 +421,46 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%", max_attemp
     headers = _headers()
     url = base_url() + "/v1/synthesize"
     tries = max_attempts or attempts()
+    clock = clock or time.monotonic
+    seen = {"errors": 0, "down": 0, "down_since": None}
+
+    def _outage(started, detail):
+        """Eccezione per il worker irraggiungibile: _PocketDown da ritentare
+        senza consumare tentativi, PocketWorkerDown oltre `outage_wait_s()`."""
+        if seen["down_since"] is None:
+            seen["down_since"] = started
+            print(f"[pocket] worker irraggiungibile, il chunk aspetta fino a "
+                  f"{outage_wait_s()} s: {detail}")
+        elapsed = clock() - seen["down_since"]
+        if elapsed > outage_wait_s():
+            return PocketWorkerDown(f"Pocket worker unreachable for {int(elapsed)} s: {detail}")
+        seen["down"] += 1
+        return _PocketDown(detail)
+
+    def _chunk_error(detail):
+        seen["errors"] += 1
+        if seen["errors"] >= tries:
+            return RuntimeError(f"Pocket synthesis failed after {tries} attempts: {detail}")
+        return _PocketRetry(detail)
 
     def _post():
+        started = clock()
         try:
             with slot():
-                return session.post(url, json=payload, headers=headers, timeout=_HTTP_TIMEOUT_S)
+                resp = session.post(url, json=payload, headers=headers,
+                                    timeout=(_CONNECT_TIMEOUT_S, _HTTP_TIMEOUT_S))
         except _NET_ERRORS as e:
-            raise _PocketRetry(f"{type(e).__name__}: {e}") from e
+            raise _outage(started, f"{type(e).__name__}: {e}") from e
+        if resp.status_code == 503 or (resp.status_code in (502, 504) and _from_proxy(resp)):
+            raise _outage(started, f"HTTP {resp.status_code}: {(getattr(resp, 'text', '') or '')[:200]}")
+        if seen["down_since"] is not None:
+            print(f"[pocket] worker di nuovo raggiungibile dopo {int(clock() - seen['down_since'])} s")
+            seen["down"], seen["down_since"] = 0, None
+        return resp
 
     def _once(_attempt):
+        if seen["down_since"] is not None and book is not None and book.cancelled():
+            raise PocketFatalError("Pocket: job cancelled while worker unreachable")
         resp = _post()
         while resp.status_code == 423 and book is not None:
             # Il libro non e' di turno: attesa in coda fuori dallo slot, poi
@@ -402,7 +475,7 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%", max_attemp
         if resp.status_code == 200:
             pcm = resp.content
             if not pcm:
-                raise _PocketRetry("risposta senza audio")
+                raise _chunk_error("risposta senza audio")
             with open(output_path, "wb") as fp:
                 fp.write(pcm)
             return {
@@ -415,14 +488,23 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%", max_attemp
             }
         detail = (getattr(resp, "text", "") or "")[:200]
         if _retry.is_transient_http(resp.status_code, none_is_transient=False):
-            raise _PocketRetry(f"HTTP {resp.status_code}: {detail}")
+            raise _chunk_error(f"HTTP {resp.status_code}: {detail}")
         raise PocketFatalError(f"Pocket HTTP {resp.status_code} (fatal): {detail}")
 
+    def _wait(_attempt, e):
+        n = seen["down"] if isinstance(e, _PocketDown) else seen["errors"]
+        return _retry.backoff(max(0, n - 1), base=5.0, cap=60.0)
+
+    # I limiti veri li tiene `_once` (`tries` errori, `outage_wait_s()` di
+    # worker giu', ogni giro aspetta almeno 5 s): questo e' solo un tetto.
+    calls = tries + outage_wait_s() // 5 + 1
     kw = {} if sleep is None else {"sleep": sleep}
     try:
         result = _retry.retry_call(
-            _once, attempts=tries, is_retryable=lambda e: isinstance(e, _PocketRetry),
-            wait=lambda attempt, _e: _retry.backoff(attempt, base=5.0, cap=60.0), **kw)
+            _once, attempts=calls, is_retryable=lambda e: isinstance(e, (_PocketRetry, _PocketDown)),
+            wait=_wait, **kw)
+    except _PocketDown as e:
+        raise PocketWorkerDown(f"Pocket worker unreachable: {e}") from e
     except _PocketRetry as e:
         raise RuntimeError(f"Pocket synthesis failed after {tries} attempts: {e}") from e
     if ffmpeg_tools.pcm_apply_tempo(output_path, rate_speed_factor(rate), SAMPLE_RATE,
