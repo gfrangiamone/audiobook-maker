@@ -225,7 +225,7 @@ def build_guide_html(
     body = _body_dict.get(guide_id) or _GUIDE_BODY_EN.get(guide_id, "<p>Guide content not available.</p>")
 
     # App home URL for internal links
-    app_home = f"{base_url}/{lang}/" if base_url else "/"
+    app_home = _brand.home_url(base_url, lang) if base_url else "/"
     cta_label = {
         "it": "Prova Audiobook Maker gratis", "en": "Try Audiobook Maker Free",
         "fr": "Essayez Audiobook Maker gratuitement", "es": "Prueba Audiobook Maker gratis",

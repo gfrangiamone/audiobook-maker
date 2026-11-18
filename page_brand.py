@@ -109,6 +109,15 @@ def hreflang_links(path_fn, x_default, *, sep="\n", xhtml=False, langs=None):
     return sep.join(lines)
 
 
+def home_url(base_url, lang):
+    """URL della home in una lingua: l'inglese sta sulla radice, come le guide.
+    `/en/` serve la stessa pagina di `/`, che a Googlebot (senza
+    Accept-Language) risponde in inglese: con canonical, hreflang e sitemap su
+    `/en/` Google la scartava come doppione di `/` (Search Console,
+    18/11/2026). La route `/en/` resta per chi sceglie l'inglese."""
+    return f"{base_url}/" if lang == "en" else f"{base_url}/{lang}/"
+
+
 def query_lang_head(base_url, path, lang, langs, default):
     """canonical e hreflang di una pagina che sceglie la lingua con ?lang=
     (privacy, supporto): `default` sta sull'URL nudo, che e' anche x-default,

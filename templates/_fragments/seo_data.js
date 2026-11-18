@@ -58,7 +58,10 @@ let baseUrl="https://audiobook-maker.com";
 if(_canEl){let m=_canEl.href.match(/^(https?:\/\/[^/]+)\//);if(m)baseUrl=m[1];}
 // La radice / e' una pagina a se' (lingua da Accept-Language, x-default):
 // il suo canonical resta /, non /{lang}/, o punterebbe a un'altra pagina.
-const pageUrl=location.pathname==="/"?baseUrl+"/":baseUrl+"/"+lang+"/";
+// L'inglese sta sulla radice (page_brand.home_url): /en/ e' la stessa pagina
+// di / e Google la scartava come doppione (Search Console, 18/11/2026).
+const homeUrl=function(l){return l==="en"?baseUrl+"/":baseUrl+"/"+l+"/"};
+const pageUrl=location.pathname==="/"?baseUrl+"/":homeUrl(lang);
 document.title=s.title;
 let m=document.querySelector('meta[name="description"]');
 if(!m){m=document.createElement("meta");m.name="description";document.head.appendChild(m)}
@@ -96,7 +99,7 @@ const hreflangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans",hi:"hi"}
 langs.forEach(function(l){
 let hl=document.querySelector('link[hreflang="'+hreflangMap[l]+'"]');
 if(!hl){hl=document.createElement("link");hl.rel="alternate";hl.hreflang=hreflangMap[l];document.head.appendChild(hl)}
-hl.href=baseUrl+"/"+l+"/";
+hl.href=homeUrl(l);
 });
 let hlx=document.querySelector('link[hreflang="x-default"]');
 if(!hlx){hlx=document.createElement("link");hlx.rel="alternate";hlx.hreflang="x-default";document.head.appendChild(hlx)}

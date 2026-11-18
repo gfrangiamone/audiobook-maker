@@ -449,10 +449,10 @@ def sitemap_xml():
     def _alts(path_fn, x_default):
         return page_brand.hreflang_links(path_fn, x_default, xhtml=True)
 
-    alternates = _alts(lambda lc: f"{_base_url()}/{lc}/", f"{_base_url()}/")
+    alternates = _alts(lambda lc: page_brand.home_url(_base_url(), lc), f"{_base_url()}/")
 
     urls = []
-    # Root (x-default)
+    # Root: x-default e home inglese (/en/ non ha una voce sua, page_brand.home_url)
     urls.append(f"""  <url>
     <loc>{_base_url()}/</loc>
     <lastmod>{home_lastmod}</lastmod>
@@ -463,8 +463,10 @@ def sitemap_xml():
 
     # Una URL per lingua
     for lc in page_brand.SITE_LANGS:
+        if lc == "en":
+            continue
         urls.append(f"""  <url>
-    <loc>{_base_url()}/{lc}/</loc>
+    <loc>{page_brand.home_url(_base_url(), lc)}</loc>
     <lastmod>{home_lastmod}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>

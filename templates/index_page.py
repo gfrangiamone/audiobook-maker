@@ -94,9 +94,10 @@ def build_html_template(
         base_url: Base URL for canonical/hreflang (e.g. "https://audiobook-maker.com").
         version: Version string for the badge (e.g. "2.1").
         canonical_url: Override for the canonical URL. If empty, defaults to
-                       "{base_url}/{lang}/". Used by the root route (/) to set
-                       canonical to "{base_url}/" so that hreflang x-default
-                       points to a self-canonicalizing URL.
+                       the language home (page_brand.home_url: "{base_url}/"
+                       for English, "{base_url}/{lang}/" otherwise). Used by
+                       the root route (/) to set canonical to "{base_url}/" so
+                       that hreflang x-default points to a self-canonicalizing URL.
 
     Returns:
         Complete HTML string with all SEO baked in.
@@ -117,9 +118,9 @@ def build_html_template(
     # ── 2. Replace <head> placeholders with server-side SEO data ──
     if seo:
         html_lang = _brand.html_lang(lang)
-        canonical = canonical_url or (f"{base_url}/{lang}/" if base_url else "")
+        canonical = canonical_url or (_brand.home_url(base_url, lang) if base_url else "")
         hreflang_block = _brand.hreflang_links(
-            lambda lc: f"{base_url}/{lc}/" if base_url else f"?lang={lc}",
+            lambda lc: _brand.home_url(base_url, lc) if base_url else f"?lang={lc}",
             f"{base_url}/" if base_url else "/")
         current_locale, og_locale_alt_block = _brand.og_locale_tags(lang)
 

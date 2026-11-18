@@ -138,6 +138,39 @@ def test_public_pages_share_the_shell():
     assert '"@type": "BreadcrumbList"' in guide and '"@type": "Article"' in guide
 
 
+def test_home_inglese_sulla_radice():
+    # /en/ e / sono la stessa pagina inglese: Google scartava /en/ come doppione
+    # (Search Console, 18/11/2026). Canonical, hreflang, sitemap e JSON-LD
+    # mettono l'inglese su /, come le guide; la route /en/ resta servita.
+    import audiobook_app as app
+    import guide_content
+    from templates.index_page import build_html_template
+    assert pb.home_url("https://x", "en") == "https://x/"
+    assert pb.home_url("https://x", "it") == "https://x/it/"
+    en = build_html_template("en", {"title": "t"}, "https://x", "1.0")
+    it = build_html_template("it", {"title": "t"}, "https://x", "1.0")
+    assert '<link rel="canonical" href="https://x/">' in en
+    assert '<link rel="canonical" href="https://x/it/">' in it
+    for html in (en, it):
+        assert '<link rel="alternate" hreflang="en" href="https://x/">' in html
+        assert '<link rel="alternate" hreflang="it" href="https://x/it/">' in html
+        assert f"{seo_ld.SITE_URL}/en/" not in html                # JSON-LD della home
+    assert 'href="https://x/"' in guide_content.build_guide_html("podcast", "en", "https://x", "1.0")
+    # applySEO riscrive canonical e hreflang nel browser (e Google esegue il JS)
+    js = (pathlib.Path(pb.__file__).parent / "templates/_fragments/seo_data.js").read_text(encoding="utf-8")
+    assert 'l==="en"?baseUrl+"/"' in js and "hl.href=homeUrl(l)" in js
+    assert ':homeUrl(lang)' in js
+    app.app.config["TESTING"] = True
+    c = app.app.test_client()
+    assert c.get("/en/").status_code == 200
+    base = app.BASE_URL
+    if base:
+        sitemap = c.get("/sitemap.xml").data.decode("utf-8")
+        assert f"{base}/en/" not in sitemap
+        assert f"<loc>{base}/</loc>" in sitemap and f"<loc>{base}/it/</loc>" in sitemap
+        assert f'hreflang="en" href="{base}/"' in sitemap
+
+
 def test_privacy_e_supporto_hanno_canonical_e_hreflang():
     # /support?lang=it era un doppione senza canonical (Search Console, 12/11/2026):
     # l'italiano sta sull'URL nudo, l'inglese su ?lang=en.

@@ -22,6 +22,7 @@ Il blocco si adatta al tema della pagina usando le CSS custom properties
 
 from content_store import content_json
 from i18n import pick as _i18n_pick
+import page_brand as _brand
 import seo_ld as _seo_ld
 from og_image_data import og_image_url
 from datetime import datetime
@@ -294,7 +295,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "@type": "SoftwareApplication",
         "name": "Audiobook Maker",
         "alternateName": "Audiobook Maker Online",
-        "url": f"{base_url}/{lang}/",
+        "url": _brand.home_url(base_url, lang),
         "description": c["direct_answer"],
         "applicationCategory": "MultimediaApplication",
         "applicationSubCategory": "Text-to-Speech Converter",
@@ -340,7 +341,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "potentialAction": {
             "@type": "UseAction",
             "name": "Convert ebook to audiobook",
-            "target": f"{base_url}/{lang}/",
+            "target": _brand.home_url(base_url, lang),
         },
     }
 
@@ -352,7 +353,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
     webpage_ld = {
         "@context": "https://schema.org",
         "@type": "WebPage",
-        "url": f"{base_url}/{lang}/",
+        "url": _brand.home_url(base_url, lang),
         "name": c.get("heading", "Audiobook Maker"),
         "description": c["direct_answer"],
         "inLanguage": _seo_ld.in_language(lang),
@@ -369,7 +370,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
                 {"@type": "ListItem", "position": 1, "name": "Audiobook Maker", "item": base_url},
                 {"@type": "ListItem", "position": 2,
                  "name": c.get("crumb", "Online Converter"),
-                 "item": f"{base_url}/{lang}/"},
+                 "item": _brand.home_url(base_url, lang)},
             ],
         },
         "speakable": {
