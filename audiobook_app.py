@@ -8586,6 +8586,7 @@ routes_dl.configure(
     favicon=FAVICON_B64, dl_pages_i18n=_DL_PAGES_I18N, engine=generation_engine,
     jobs=lambda: jobs, upload_dir=lambda: UPLOAD_DIR, base_url=lambda: BASE_URL,
     email_file_retention_sec=lambda: EMAIL_FILE_RETENTION_SEC,
+    _get_client_id=lambda *a, **k: _get_client_id(*a, **k),
     _send_file_throttled=lambda *a, **k: _send_file_throttled(*a, **k),
     _log_activity=lambda *a, **k: _log_activity(*a, **k),
     _is_resume_or_probe_request=lambda *a, **k: _is_resume_or_probe_request(*a, **k),

@@ -9,7 +9,7 @@ podcast (RSS, index, cover, ZIP), le pagine di scadenza/cancellazione/
 attesa e il fallback cold storage. Spostato pari pari da `audiobook_app`.
 
 `configure(...)` riceve dalla app, come funzioni risolte a ogni chiamata
-(i test le sostituiscono sulla app), i 25 helper qui sotto piu' `jobs`,
+(i test le sostituiscono sulla app), i 26 helper qui sotto piu' `jobs`,
 `UPLOAD_DIR`, `BASE_URL`, `EMAIL_FILE_RETENTION_SEC`; per riferimento il
 favicon, i testi delle pagine dl e il modulo `generation_engine` (un
 modulo di route non lo importa). Non importa `audiobook_app`.
@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from flask import Blueprint, after_this_request, jsonify, request
+from flask import Blueprint, after_this_request, jsonify, redirect, request
 
 import accounts
 import i18n as _i18n
@@ -36,7 +36,7 @@ FAVICON_B64 = ""
 _DL_PAGES_I18N = {}
 generation_engine = None
 
-FUNCS = ['_send_file_throttled', '_log_activity', '_is_resume_or_probe_request', '_mark_token_downloaded', '_mark_token_redirected', '_safe_filename', '_try_cold_serve', '_cold_op', '_cold_object_available', '_cold_m4b_valid', '_iter_output_dirs', '_find_files_in_outputs', '_check_job_owner', '_effective_retention_for_token_info', '_android_intent_url', '_app_scheme_url', '_extract_cover_for_preview', '_extract_cover_from_epub', '_generate_fallback_cover', '_generate_podcast_rss', '_qr_data_uri', '_transfer_payload_for', '_ua_is_android', '_ua_is_ios', '_ua_is_mobile']
+FUNCS = ['_get_client_id', '_send_file_throttled','_log_activity', '_is_resume_or_probe_request', '_mark_token_downloaded', '_mark_token_redirected', '_safe_filename', '_try_cold_serve', '_cold_op', '_cold_object_available', '_cold_m4b_valid', '_iter_output_dirs', '_find_files_in_outputs', '_check_job_owner', '_effective_retention_for_token_info', '_android_intent_url', '_app_scheme_url', '_extract_cover_for_preview', '_extract_cover_from_epub', '_generate_fallback_cover', '_generate_podcast_rss', '_qr_data_uri', '_transfer_payload_for', '_ua_is_android', '_ua_is_ios', '_ua_is_mobile']
 VALUES = ("jobs", "upload_dir", "base_url", "email_file_retention_sec")
 
 
@@ -109,6 +109,9 @@ def _find_files_in_outputs(*a, **k):
 
 def _check_job_owner(*a, **k):
     return _cfg["_check_job_owner"](*a, **k)
+
+def _get_client_id(*a, **k):
+    return _cfg["_get_client_id"](*a, **k)
 
 def _effective_retention_for_token_info(*a, **k):
     return _cfg["_effective_retention_for_token_info"](*a, **k)
@@ -1286,10 +1289,36 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     return _render_page("dl_page", {"__P0__": (lang), "__P1__": (FAVICON_B64), "__P2__": (t['title']), "__P3__": (t['h2']), "__P4__": (book_title), "__P5__": (type_label), "__P6__": (audio_btn_html), "__P7__": (abm_btn_html), "__P8__": (transfer_html), "__P9__": (warn_text), "__P10__": (t['share']), "__P11__": (t['copied']), "__P12__": (safe_lang), "__P13__": (share_url), "__P14__": (share_text_js)})
 
 
+def _owned_token_redirect(job_id, download_type):
+    """Job non piu' in memoria (restart/deploy): redirect 302 al download token
+    audio del chiamante, se ne ha uno ancora valido. Il token snapshotta i path
+    e serve anche il cold; senza questo ripiego la pagina di completamento
+    rimasta aperta diceva "file non piu' disponibile, riconverti" mentre l'area
+    personale scaricava lo stesso file (job 1h57HgHR, 18/11/2026: restart 80 s
+    dopo il COMPLETE). None se il chiamante non ha un token per il job."""
+    cid = _get_client_id()
+    if not cid:
+        return None
+    for tok, rec in _tkstore.tokens_by_job().get(job_id, []):
+        if (rec.get("client_id") != cid or rec.get("admin_copy")
+                or not generation_engine._is_audio_token_rec(rec)):
+            continue
+        if _check_dl_token(tok)[1] is not None:
+            continue
+        sub = {"m4b": "m4b", "m4bkit": "m4b", "abm": "abm"}.get(download_type, "download")
+        print(f"[{job_id}] download: job non in memoria, redirect al token ({sub})")
+        return redirect(f"/dl/{tok}/{sub}", code=302)
+    return None
+
+
 @bp.route("/api/download/<job_id>")
 def api_download(job_id):
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
+        if sc == 404:
+            resp = _owned_token_redirect(job_id, request.args.get("type", "").lower())
+            if resp is not None:
+                return resp
         return ("Job not found" if sc == 404 else "Forbidden"), sc
     if job.get("status") != "done":
         return "Not ready", 400
