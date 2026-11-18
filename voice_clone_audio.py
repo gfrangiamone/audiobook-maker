@@ -9,6 +9,7 @@ catalogo.
 """
 from __future__ import annotations
 
+import io
 import math
 import ffmpeg_tools
 import os
@@ -711,9 +712,13 @@ def _get_model():
 
 
 def _transcribe(wav_path, language):
+    """(testo sentito, parole con i loro tempi `[(parola, inizio, fine)]`)."""
     model = _get_model()
     segs, _ = model.transcribe(wav_path, language=language, beam_size=1, word_timestamps=True)
-    return " ".join((s.text or "").strip() for s in segs).strip()
+    segs = list(segs)
+    parole = [((w.word or "").strip(), float(w.start), float(w.end))
+              for s in segs for w in (getattr(s, "words", None) or [])]
+    return " ".join((s.text or "").strip() for s in segs).strip(), parole
 
 
 def check_transcript(wav_path, language, expected_text, *, timeout=None):
@@ -733,7 +738,7 @@ def check_transcript(wav_path, language, expected_text, *, timeout=None):
 
         def _run():
             try:
-                esito["heard"] = _transcribe(wav_path, language)
+                esito["heard"], esito["words"] = _transcribe(wav_path, language)
             except BaseException as e:      # noqa: BLE001 - riportato al chiamante
                 esito["error"] = e
         t0 = time.monotonic()
@@ -751,4 +756,149 @@ def check_transcript(wav_path, language, expected_text, *, timeout=None):
         _asr_last_used = time.monotonic()
     _arm_unload_timer()
     heard = esito.get("heard", "")
-    return {"cer": cer(expected_text, heard), "heard": heard, "seconds": seconds}
+    return {"cer": cer(expected_text, heard), "heard": heard, "seconds": seconds,
+            "words": esito.get("words", [])}
+
+
+# ---------------------------------------------------------------------------
+# Prefisso corto: il campione tagliato alla fine di una frase
+# ---------------------------------------------------------------------------
+# VoxCPM2 tende a chiudere il chunk quando campione + audio generato arrivano
+# a una trentina di secondi: con un campione da 23 s lo stop cade a 6-7 s di
+# lettura, a meta' frase. Misurato il 17/11/2026 su un capitolo intero (333
+# letture per condizione): code perse per 2+ parole in 11 chunk col campione
+# intero, in nessuno col campione tagliato alla prima frase (8 s). Il timbro
+# regge (ascolto dell'utente, nove voci, 18/11/2026).
+#
+# Il prefisso vale solo con la sua trascrizione esatta (`clone_block`): per
+# questo il taglio cade su una pausa e il testo di quel che resta si
+# controlla contro quel che whisper sente prima del taglio. Nel dubbio non si
+# taglia: il campione intero e' la resa di sempre.
+PREFIX_MIN_SEC = 5.0         # mai un prefisso piu' corto di cosi'
+PREFIX_KEEP_SEC = 3.0        # un taglio che toglie meno di cosi' non serve
+PREFIX_MIN_PAUSE_SEC = 0.12  # la pausa in cui cade il taglio
+PREFIX_TAIL_SEC = 0.25       # silenzio lasciato dopo l'ultima parola
+PREFIX_CHECK_CHARS = 24      # lettere confrontate per lato del taglio
+PREFIX_MAX_CER = 0.25
+PREFIX_ASR_TIMEOUT_SEC = 30.0
+_PREFIX_FADE_SEC = 0.01
+
+# Fine di frase nella trascrizione: i terminatori latini contano solo se
+# segue uno spazio o la fine (12.5, www.x.it), quelli cinesi e il danda
+# dell'hindi sempre, perche' li' lo spazio non c'e'.
+_FINE_FRASE_RE = re.compile(
+    "[.?!…]+[\"'»”’)\\]]*(?=\\s|$)"
+    "|[。？！।]+[”’」』）]*")
+
+
+def prefix_target_sec():
+    """Durata cercata per il prefisso, in secondi; 0 = campione intero."""
+    return _env_float("ABM_VOXCPM_PREFIX_TARGET_SEC", 8.0, floor=0.0)
+
+
+def _pause(x, sr):
+    """Le pause del campione come `[(inizio, fine)]` in secondi."""
+    db, hop = frame_db(x, sr)
+    m, _, _ = speech_mask(db)
+    out, start = [], None
+    for i, v in enumerate(m):
+        if not v and start is None:
+            start = i
+        elif v and start is not None:
+            out.append((start * hop / sr, i * hop / sr))
+            start = None
+    return out
+
+
+def choose_cut(words, transcript, x, sr, target):
+    """Dove tagliare il campione e che testo gli resta, o None.
+
+    `words` sono le parole di whisper coi loro tempi. Per ogni fine di frase
+    della trascrizione si cerca la pausa del campione che le corrisponde (la
+    piu' lunga intorno alla parola dove whisper e' arrivato a quel punto del
+    testo) e si tiene il taglio piu' vicino a `target`. Un taglio vale solo
+    se quel che whisper ha sentito prima coincide col testo che resta.
+    """
+    transcript = (transcript or "").strip()
+    durata = len(x) / float(sr)
+    piatte = [flatten(w[0]) for w in words]
+    atteso = len(flatten(transcript))
+    sentito = sum(len(p) for p in piatte)
+    if not atteso or not sentito or target <= 0:
+        return None
+    pause = [(a, b) for a, b in _pause(x, sr) if b - a >= PREFIX_MIN_PAUSE_SEC]
+    scelto = None
+    for fine in (m.end() for m in _FINE_FRASE_RE.finditer(transcript)):
+        testo = transcript[:fine].strip()
+        if fine >= len(transcript):
+            continue
+        # la parola dove whisper e' arrivato a questo punto del testo
+        punto, corsa, i = len(flatten(testo)) * sentito / atteso, 0, 0
+        for k, p in enumerate(piatte):
+            corsa += len(p)
+            i = k
+            if corsa >= punto:
+                break
+        da = words[max(0, i - 2)][2]
+        a = words[min(len(words) - 1, i + 3)][1]
+        vicine = [(b - s, s, b) for s, b in pause if da - 0.2 <= (s + b) / 2 <= a + 0.2]
+        if not vicine:
+            continue
+        _, s, b = max(vicine)
+        t = min((s + b) / 2, s + PREFIX_TAIL_SEC)
+        if t < PREFIX_MIN_SEC or t > durata - PREFIX_KEEP_SEC:
+            continue
+        # Il testo e' giusto per costruzione; quel che puo' essere sbagliato
+        # e' il punto. Si confrontano quindi solo i due lati del taglio: sul
+        # campione intero whisper scrive i numeri in cifre e il CER sale
+        # senza che il punto sia sbagliato.
+        prima = "".join(p for p, w in zip(piatte, words) if (w[1] + w[2]) / 2 < t)
+        dopo = "".join(p for p, w in zip(piatte, words) if (w[1] + w[2]) / 2 >= t)
+        n = PREFIX_CHECK_CHARS
+        if (cer(flatten(testo)[-n:], prima[-n:]) > PREFIX_MAX_CER
+                or cer(flatten(transcript[fine:])[:n], dopo[:n]) > PREFIX_MAX_CER):
+            continue
+        if scelto is None or abs(t - target) < abs(scelto["cut_s"] - target):
+            scelto = {"cut_s": round(t, 3), "text": testo}
+    return scelto
+
+
+def short_prefix(wav_path, language, transcript, *, target=None, timeout=None):
+    """Il taglio del campione per `target` secondi: `{"cut_s", "text"}` o
+    None se non c'e' un punto sicuro. `AsrUnavailable` se whisper ora non
+    puo' rispondere: non e' un no, si riprova piu' tardi."""
+    target = prefix_target_sec() if target is None else float(target)
+    if target <= 0:
+        return None
+    if not asr_enabled():
+        raise AsrUnavailable("verifica ASR spenta")
+    try:
+        x, sr = read_wav(wav_path)
+    except (ValueError, wave.Error, OSError):
+        return None
+    if len(x) / float(sr) < PREFIX_MIN_SEC + PREFIX_KEEP_SEC:
+        return None
+    asr = check_transcript(wav_path, language, transcript,
+                           timeout=PREFIX_ASR_TIMEOUT_SEC if timeout is None else timeout)
+    return choose_cut(asr["words"], transcript, x, sr, target)
+
+
+def cut_wav_bytes(wav_path, cut_s):
+    """Il wav s16 mono troncato a `cut_s` secondi, come bytes, con una
+    dissolvenza di 10 ms in coda per non chiudere su un gradino."""
+    with wave.open(wav_path, "rb") as w:
+        if w.getsampwidth() != 2 or w.getnchannels() != 1:
+            raise ValueError(f"atteso wav s16 mono: {wav_path}")
+        sr = w.getframerate()
+        raw = w.readframes(min(w.getnframes(), int(float(cut_s) * sr)))
+    pcm = np.frombuffer(raw, dtype="<i2").astype(np.float32)
+    n = min(len(pcm), int(sr * _PREFIX_FADE_SEC))
+    if n:
+        pcm[-n:] *= np.linspace(1.0, 0.0, n, dtype=np.float32)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm.astype("<i2").tobytes())
+    return buf.getvalue()

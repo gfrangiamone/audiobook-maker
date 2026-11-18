@@ -16,6 +16,7 @@ job invece del rilancio a freddo.
 import base64
 import collections
 import contextlib
+import hashlib
 import json
 import logging
 import retry_util as _retry
@@ -31,6 +32,10 @@ import time
 
 import requests
 
+import fileio
+import monthly_ledger
+import voice_clone_audio
+import wave
 import voxcpm_catalog
 import tts_engines
 from text_reflow import spoken_title_prefix
@@ -1093,6 +1098,60 @@ def invalidate_clone_cache():
         _clone_cache.clear()
 
 
+# Il taglio del campione di ogni voce (`voice_clone_audio.short_prefix`) si
+# calcola una volta e resta su disco: costa una trascrizione. Chiave: l'id
+# di catalogo, o `mine:<id del record>` per le voci campionate (mai il token,
+# che e' un segreto). Una voce senza punto di taglio sicuro resta scritta con
+# `cut_s` nullo, cosi' non si ritrascrive a ogni capitolo. Retention: una
+# voce non ricalcolata da `_PREFISSI_KEEP_DAYS` esce e si rifa' al prossimo uso.
+_PREFISSI_KEEP_DAYS = 180
+_PREFISSI_RETRY_SEC = 600      # dopo un whisper occupato o spento
+_prefissi_riprova = {}
+
+
+def _pota_prefissi(d):
+    soglia = time.time() - _PREFISSI_KEEP_DAYS * 86400
+    for k in [k for k, v in d.items()
+              if not isinstance(v, dict) or (v.get("ts") or 0) < soglia]:
+        del d[k]
+
+
+_prefissi = monthly_ledger.JsonDoc(lambda: fileio.data_path("voxcpm_prefissi.json"),
+                                   prune=_pota_prefissi)
+
+
+def _prefisso_corto(chiave, firma, wav_path, lingua, testo):
+    """Il taglio `{"cut_s", "text"}` per questa voce, o None: campione intero.
+
+    `firma` cambia quando cambia il campione; con la durata cercata e la
+    trascrizione decide se il taglio su disco vale ancora. `wav_path` e' una
+    funzione: il file si tocca solo se c'e' da trascrivere.
+    """
+    target = voice_clone_audio.prefix_target_sec()
+    if target <= 0:
+        return None
+    impronta = hashlib.sha1(testo.encode("utf-8")).hexdigest()[:12]
+    sig = f"{firma}:{target:g}:{impronta}"
+    voce = _prefissi.read().get(chiave)
+    if isinstance(voce, dict) and voce.get("sig") == sig:
+        return voce if voce.get("cut_s") else None
+    if time.monotonic() < _prefissi_riprova.get(chiave, 0.0):
+        return None
+    try:
+        taglio = voice_clone_audio.short_prefix(wav_path(), lingua, testo, target=target)
+    except voice_clone_audio.AsrUnavailable as e:
+        _prefissi_riprova[chiave] = time.monotonic() + _PREFISSI_RETRY_SEC
+        _LOG.warning("prefisso corto di %s rimandato, campione intero: %s", chiave, e)
+        return None
+    with _prefissi.mutate() as d:
+        d[chiave] = {"sig": sig, "ts": int(time.time()),
+                     "cut_s": taglio["cut_s"] if taglio else None,
+                     "text": taglio["text"] if taglio else ""}
+    _LOG.info("prefisso corto di %s: %s", chiave,
+              f"{taglio['cut_s']:.2f} s" if taglio else "nessun taglio sicuro, campione intero")
+    return taglio
+
+
 def voice_clone_token(voice_id):
     """Il token se `voice_id` e' una voce campionata (`voxcpm:mine:<token>`),
     altrimenti None. Non apre lo store: e' solo sintassi."""
@@ -1187,6 +1246,11 @@ def clone_block(voice_id):
     Per gli id `voxcpm:mine:<token>` il campione e la frase vengono da
     `voice_clone.resolve`, a ogni chiamata; la cache e' la stessa, per
     `voice_id`, ma vale finche' il wav ha lo stesso mtime.
+
+    Dal 18/11/2026 campione e frase partono tagliati alla fine di una frase,
+    intorno a `ABM_VOXCPM_PREFIX_TARGET_SEC` secondi (`_prefisso_corto`): un
+    prefisso lungo fa chiudere il chunk a meta' frase. Dove un taglio sicuro
+    non c'e' parte il campione intero, come prima.
     """
     # Il flag si decide a ogni chiamata e non si memorizza: spegnere la
     # pulizia dall'ambiente deve valere dal job dopo, non dal riavvio.
@@ -1210,17 +1274,35 @@ def clone_block(voice_id):
             # stessa famiglia d'errore delle voci di catalogo sparite (§9.4)
             raise ValueError(str(e)) from e
         wav_path, prompt_text = risolta["wav_path"], risolta["prompt_text"]
-        firma = os.stat(wav_path).st_mtime_ns
+        mtime = os.stat(wav_path).st_mtime_ns
+        taglio = _prefisso_corto(f"mine:{risolta['id']}", mtime, lambda: wav_path,
+                                 risolta["lang"], prompt_text)
         if denoise_mine() and not risolta.get("denoised"):
             extra = {"denoise": True}
+    else:
+        rec = voxcpm_catalog.parse_voice_id(voice_id)
+        prompt_text, mtime = rec["transcript"], None
+        taglio = _prefisso_corto(voice_id, rec["duration_s"],
+                                 lambda: voxcpm_catalog.sample_path(voice_id),
+                                 rec["lang"], prompt_text)
+    firma = (mtime, taglio["cut_s"] if taglio else None)
     if pronto is not None and pronto[0] == firma:
         return {**pronto[1], **extra}
 
     if tok is None:
-        rec = voxcpm_catalog.parse_voice_id(voice_id)
-        wav_path, prompt_text = voxcpm_catalog.sample_path(voice_id), rec["transcript"]
-    with open(wav_path, "rb") as f:
-        wav = base64.b64encode(f.read()).decode("ascii")
+        wav_path = voxcpm_catalog.sample_path(voice_id)
+    dati = None
+    if taglio:
+        try:
+            dati = voice_clone_audio.cut_wav_bytes(wav_path, taglio["cut_s"])
+            prompt_text = taglio["text"]
+        except (ValueError, EOFError, wave.Error) as e:
+            _LOG.warning("taglio del campione di %s fallito, campione intero: %s",
+                         "voce campionata" if tok is not None else voice_id, e)
+    if dati is None:
+        with open(wav_path, "rb") as f:
+            dati = f.read()
+    wav = base64.b64encode(dati).decode("ascii")
     blocco = {
         "prompt_wav_b64": wav,
         "prompt_format": "wav",

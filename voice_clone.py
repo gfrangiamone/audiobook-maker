@@ -984,7 +984,7 @@ def resolve(voice_id):
     rec = _record_for_voice_id(voice_id)
     if rec.get("state") not in HAS_SAMPLE:
         raise VoiceGone(f"voce {rec['id']} in stato {rec.get('state')}")
-    return {"wav_path": _ensure_local(rec, "sample.wav"),
+    return {"wav_path": _ensure_local(rec, "sample.wav"), "id": rec["id"],
             "prompt_text": rec["prompt_text"], "lang": rec["lang"], "locale": rec["locale"],
             "denoised": bool(rec.get("denoised_at"))}
 

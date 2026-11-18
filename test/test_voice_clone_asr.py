@@ -17,7 +17,7 @@ pytestmark = pytest.mark.filterwarnings(
 class _Seg:
     def __init__(self, text):
         self.text = text
-        self.words = [1]
+        self.words = []
 
 
 class _Modello:
