@@ -1152,6 +1152,39 @@ def _prefisso_corto(chiave, firma, wav_path, lingua, testo):
     return taglio
 
 
+def stop_min_factor():
+    """Di quanto una lettura puo' correre piu' del campione della sua voce
+    prima che lo stop del modello non valga; 0 = leva spenta."""
+    return _f("ABM_VOXCPM_STOP_MIN_FACTOR", 1.6, floor=0.0)
+
+
+def _passo_minimo(testo, secondi):
+    """`stop_min_cps` per il worker: il ritmo, in caratteri al secondo, oltre
+    il quale un chunk e' troppo corto per essere stato letto tutto.
+
+    Il metro e' la voce stessa: i caratteri della trascrizione del campione
+    intero sui suoi secondi. Un numero fisso non regge, perche' il passo
+    cambia da voce a voce (13 car/s una voce campionata lenta, 22 la piu'
+    svelta del catalogo, 5 il cinese). Sulle prove del 17/11/2026 le letture
+    intere non hanno mai superato 1,42 volte il passo del campione, quelle
+    mozzate di netto partono da 1,7: `ABM_VOXCPM_STOP_MIN_FACTOR` sta in mezzo.
+    Con una soglia a 1,68 volte, su 333 letture la leva e' scattata 34 volte:
+    20 code recuperate, nessuna lettura buona rovinata.
+    """
+    fattore = stop_min_factor()
+    if fattore <= 0 or not secondi or secondi <= 0 or not testo:
+        return None
+    return round(len(testo) / secondi * fattore, 1)
+
+
+def _secondi_wav(path):
+    try:
+        with contextlib.closing(wave.open(path, "rb")) as w:
+            return w.getnframes() / float(w.getframerate())
+    except (wave.Error, EOFError, OSError, ZeroDivisionError):
+        return None
+
+
 def voice_clone_token(voice_id):
     """Il token se `voice_id` e' una voce campionata (`voxcpm:mine:<token>`),
     altrimenti None. Non apre lo store: e' solo sintassi."""
@@ -1247,6 +1280,11 @@ def clone_block(voice_id):
     `voice_clone.resolve`, a ogni chiamata; la cache e' la stessa, per
     `voice_id`, ma vale finche' il wav ha lo stesso mtime.
 
+    Col blocco viaggia `stop_min_cps` (`_passo_minimo`): la durata minima
+    sotto cui il worker non accetta lo stop del modello, misurata sul passo
+    del campione intero. Serve il motore con le leve (abm-voxcpm-worker
+    a5e9a86 o successivo): un worker piu' vecchio rifiuta il job.
+
     Dal 18/11/2026 campione e frase partono tagliati alla fine di una frase,
     intorno a `ABM_VOXCPM_PREFIX_TARGET_SEC` secondi (`_prefisso_corto`): un
     prefisso lungo fa chiudere il chunk a meta' frase. Dove un taglio sicuro
@@ -1277,6 +1315,7 @@ def clone_block(voice_id):
         mtime = os.stat(wav_path).st_mtime_ns
         taglio = _prefisso_corto(f"mine:{risolta['id']}", mtime, lambda: wav_path,
                                  risolta["lang"], prompt_text)
+        passo = _passo_minimo(prompt_text, _secondi_wav(wav_path))
         if denoise_mine() and not risolta.get("denoised"):
             extra = {"denoise": True}
     else:
@@ -1285,7 +1324,8 @@ def clone_block(voice_id):
         taglio = _prefisso_corto(voice_id, rec["duration_s"],
                                  lambda: voxcpm_catalog.sample_path(voice_id),
                                  rec["lang"], prompt_text)
-    firma = (mtime, taglio["cut_s"] if taglio else None)
+        passo = _passo_minimo(prompt_text, rec["duration_s"])
+    firma = (mtime, taglio["cut_s"] if taglio else None, passo)
     if pronto is not None and pronto[0] == firma:
         return {**pronto[1], **extra}
 
@@ -1310,6 +1350,8 @@ def clone_block(voice_id):
         "reference_wav_b64": wav,
         "reference_format": "wav",
     }
+    if passo:
+        blocco["stop_min_cps"] = passo
     with _clone_lock:
         _clone_cache[voice_id] = (firma, blocco, extra)
         if len(_clone_cache) > _CLONE_CACHE_MAX:
@@ -1777,12 +1819,54 @@ def _stats_vuote():
             "runpod": []}
 
 
+_APERTA_RE = re.compile(r"\s*[(\[]\s*")
+_CHIUSA_PAR_RE = re.compile(r"\s*[)\]]")
+_VIRGOLA_PRIMA_RE = re.compile(r"(?:\s*,)+\s*(?=[,.;:!?…])")
+_VIRGOLA_DOPO_RE = re.compile(r"([.;:!?…—–])\s*,\s*")
+_VIRGOLA_AI_BORDI_RE = re.compile(r"^\s*,\s*|\s*,\s*$")
+_SEGNO_E_SPAZIO = r"\1 "
+_INCISO_FRASE_RE = re.compile(
+    r"(^|[.!?…][\"»”’]*)\s*[(\[]([^()\[\]]*)[)\]](?=\s+[A-ZÀ-Ý])")
+
+
+def _inciso_frase(m):
+    dentro = m.group(2).strip().rstrip(",;: ")
+    if not dentro:
+        return m.group(1)
+    chiusa = "" if dentro[-1] in ".!?…" else "."
+    return f"{m.group(1)} {dentro}{chiusa}".lstrip()
+
+
+def sciogli_parentesi(testo):
+    """Le parentesi che arrivano fin qui diventano incisi tra virgole.
+
+    Di norma il testo tra parentesi non arriva al motore (`text_reflow`
+    lo toglie); arriva quando l'utente ha chiesto di leggerlo. VoxCPM pero'
+    una parentesi non la sa leggere: salta l'inciso, lo biascica o ripete le
+    parole intorno. Prova del 18/11/2026 sui 24 chunk con parentesi di una
+    tesi, 72 letture per condizione: 30 letture con parole perse (140 parole)
+    con le parentesi, 10 (19 parole) con lo stesso testo fra virgole.
+    """
+    if not testo or not any(c in testo for c in "()[]"):
+        return testo
+    # Un inciso che segue un punto fermo (o apre il chunk, prima di una
+    # maiuscola) e' una frase sua: si chiude col punto, non con la virgola.
+    sciolto = _INCISO_FRASE_RE.sub(_inciso_frase, testo)
+    sciolto = _APERTA_RE.sub(", ", sciolto)
+    sciolto = _CHIUSA_PAR_RE.sub(", ", sciolto)
+    sciolto = _VIRGOLA_PRIMA_RE.sub("", sciolto)
+    sciolto = _VIRGOLA_DOPO_RE.sub(_SEGNO_E_SPAZIO, sciolto)
+    sciolto = _VIRGOLA_AI_BORDI_RE.sub("", sciolto)
+    sciolto = re.sub(" {2,}", " ", sciolto)
+    return sciolto or testo
+
+
 def _chunk_pronti(chunks, capitolo):
     """I chunk come li legge il modello. `pulisci_coda` e `segno_sospeso`
     partono da qui, cosi' testo e pausa della giunzione restano coerenti."""
     normalizzati = [normalizza_puntini(c) for c in chunks]
-    pronti = [togli_file_di_numeri(c) for c in normalizzati]
-    _tabelle = [i for i, (a, b) in enumerate(zip(normalizzati, pronti)) if a != b]
+    pronti = [sciogli_parentesi(togli_file_di_numeri(c)) for c in normalizzati]
+    _tabelle = [i for i, c in enumerate(normalizzati) if togli_file_di_numeri(c) != c]
     if _tabelle:
         _LOG.warning("capitolo %s: tolte file di numeri (tabelle) dai chunk %s",
                      capitolo, ", ".join(str(i) for i in _tabelle[:20]))
