@@ -1158,6 +1158,20 @@ def stop_min_factor():
     return _f("ABM_VOXCPM_STOP_MIN_FACTOR", 1.6, floor=0.0)
 
 
+def stop_extra_steps():
+    """Quanti passi il worker genera ancora dopo lo stop del modello
+    (`stop_extra_steps`, un passo = 0,16 s di audio); 0 = leva spenta.
+
+    Lo stop arriva spesso un passo prima che l'ultima sillaba sia chiusa:
+    la lettura finisce brusca e la verifica del worker la ricompra. Misure
+    del 18/11/2026 su un capitolo di 111 chunk, tre semi: con un passo i
+    sospetti scendono, con due il modello attacca un suono nuovo che resta
+    tagliato a meta' e i sospetti salgono oltre la partenza. Il tetto a 1
+    sta li' per questo.
+    """
+    return min(1, max(0, _i("ABM_VOXCPM_STOP_EXTRA_STEPS", 1)))
+
+
 def _passo_minimo(testo, secondi):
     """`stop_min_cps` per il worker: il ritmo, in caratteri al secondo, oltre
     il quale un chunk e' troppo corto per essere stato letto tutto.
@@ -1282,7 +1296,8 @@ def clone_block(voice_id):
 
     Col blocco viaggia `stop_min_cps` (`_passo_minimo`): la durata minima
     sotto cui il worker non accetta lo stop del modello, misurata sul passo
-    del campione intero. Serve il motore con le leve (abm-voxcpm-worker
+    del campione intero; e `stop_extra_steps` (`stop_extra_steps()`), il
+    passo in piu' dopo lo stop. Serve il motore con le leve (abm-voxcpm-worker
     a5e9a86 o successivo): un worker piu' vecchio rifiuta il job.
 
     Dal 18/11/2026 campione e frase partono tagliati alla fine di una frase,
@@ -1325,7 +1340,8 @@ def clone_block(voice_id):
                                  lambda: voxcpm_catalog.sample_path(voice_id),
                                  rec["lang"], prompt_text)
         passo = _passo_minimo(prompt_text, rec["duration_s"])
-    firma = (mtime, taglio["cut_s"] if taglio else None, passo)
+    coda = stop_extra_steps()
+    firma = (mtime, taglio["cut_s"] if taglio else None, passo, coda)
     if pronto is not None and pronto[0] == firma:
         return {**pronto[1], **extra}
 
@@ -1352,6 +1368,8 @@ def clone_block(voice_id):
     }
     if passo:
         blocco["stop_min_cps"] = passo
+    if coda:
+        blocco["stop_extra_steps"] = coda
     with _clone_lock:
         _clone_cache[voice_id] = (firma, blocco, extra)
         if len(_clone_cache) > _CLONE_CACHE_MAX:

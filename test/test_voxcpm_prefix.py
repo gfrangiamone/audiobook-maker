@@ -263,6 +263,20 @@ def test_stop_min_cps_resta_quello_del_campione_intero_col_prefisso_corto(ambien
     assert blocco["stop_min_cps"] == round(len(TESTO) / 19.5 * 1.6, 1)
 
 
+def test_stop_extra_steps_un_passo_dopo_lo_stop(ambiente, monkeypatch):
+    rec = voxcpm_catalog.voices()[0]
+    mia = vc.voice_id_of(_voce(ambiente))
+    assert voxcpm_tts.clone_block(rec["id"])["stop_extra_steps"] == 1
+    assert voxcpm_tts.clone_block(mia)["stop_extra_steps"] == 1
+    # si spegne dall'ambiente, e vale dal job dopo senza riavvio
+    monkeypatch.setenv("ABM_VOXCPM_STOP_EXTRA_STEPS", "0")
+    assert "stop_extra_steps" not in voxcpm_tts.clone_block(rec["id"])
+    assert "stop_extra_steps" not in voxcpm_tts.clone_block(mia)
+    # due passi peggiorano la chiusura: il tetto resta a uno
+    monkeypatch.setenv("ABM_VOXCPM_STOP_EXTRA_STEPS", "3")
+    assert voxcpm_tts.clone_block(rec["id"])["stop_extra_steps"] == 1
+
+
 def test_passo_minimo_senza_misura_niente_leva():
     assert voxcpm_tts._passo_minimo("abc", None) is None
     assert voxcpm_tts._passo_minimo("abc", 0) is None
