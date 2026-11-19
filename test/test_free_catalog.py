@@ -160,6 +160,18 @@ def test_hub_lists_books_with_status_and_escapes(catalog, client):
     assert "/static/js/free_catalog.js?v=" in page
 
 
+def test_index_lang_filter_survives_back_navigation():
+    """Tornando dalla pagina di un libro il server rimette la lingua
+    predefinita: la scelta dell'utente resta in sessionStorage e vince,
+    anche "tutte" (richiesta utente 19/11/2026)."""
+    js = (Path(free_catalog.__file__).parent / "static" / "js" / "free_catalog.js").read_text(encoding="utf-8")
+    assert "sessionStorage.getItem(LANG_KEY)" in js
+    assert "sessionStorage.setItem(LANG_KEY, langSel.value)" in js
+    assert "saved !== null" in js                       # "" (tutte) e' una scelta
+    # Ripristino prima del primo apply(), dentro try (storage negato).
+    assert js.index("sessionStorage.getItem(LANG_KEY)") < js.rindex("apply();")
+
+
 def test_index_promo_citypulse_text_in_ui_lang_link_in_catalog_lang(catalog, client):
     # Pagina per lingua: link alla versione italiana, testo nella lingua dell'interfaccia.
     page = client.get("/free-audiobooks/it/").get_data(as_text=True)

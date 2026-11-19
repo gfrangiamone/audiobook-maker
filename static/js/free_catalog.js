@@ -79,7 +79,23 @@
       });
     });
     if (q) q.addEventListener('input', apply);
-    if (langSel) langSel.addEventListener('change', apply);
+    // La lingua scelta resta per la scheda: tornando indietro dalla pagina di
+    // un libro il server rimette la lingua predefinita e il filtro si
+    // perdeva. "" (tutte) e' una scelta anche lei.
+    var LANG_KEY = 'fc-lang';
+    if (langSel) {
+      try {
+        var saved = window.sessionStorage.getItem(LANG_KEY);
+        if (saved !== null && Array.prototype.some.call(langSel.options,
+            function (o) { return o.value === saved; })) {
+          langSel.value = saved;
+        }
+      } catch (e) { /* storage negato: resta la lingua predefinita */ }
+      langSel.addEventListener('change', function () {
+        try { window.sessionStorage.setItem(LANG_KEY, langSel.value); } catch (e) { /* idem */ }
+        apply();
+      });
+    }
     apply();
 
     // --- Lingua: su schermi stretti la sigla (IT) al posto del nome, per
