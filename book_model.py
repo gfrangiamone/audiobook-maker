@@ -236,6 +236,21 @@ _NOTE_FOLLOWERS = (
 _NOTE_TITLE_RE = re.compile(
     r"(?<!\w)notes?(?!\w)(?!\s+(?!(?:" + "|".join(map(re.escape, _NOTE_FOLLOWERS))
     + r"|\d+)(?!\w))\w)")
+# In chiusura di titolo "note" e' apparato solo dopo poche parole ("Translator's
+# note", "Historical and critical notes"). In una frase lunga e' un verbo: il
+# capitolo II XXXIII del Dom Quixote portoghese, "... digna de que se leia e
+# que se note.", spariva dal libro (catalogo gratuito, 19/11/2026).
+_NOTE_TAIL_MAX_WORDS = 4
+
+
+def _is_note_title(tl):
+    """True se `tl` (titolo minuscolo) ha "note"/"notes" da apparato."""
+    for m in _NOTE_TITLE_RE.finditer(tl):
+        if tl[m.end():].strip(" .:;,!?…–—-"):
+            return True             # complemento, numero, aggettivo, ":" e testo
+        if len(re.findall(r"\w+", tl[:m.start()])) <= _NOTE_TAIL_MAX_WORDS:
+            return True
+    return False
 
 # Colophon nelle lingue del catalogo. Nei libri di Project Gutenberg fatti da
 # TEI e' una voce di indice con figlie (Beschikbaarheid, Codering,
@@ -272,8 +287,8 @@ def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     un capitolo, "Capítulo 25 - Trama" si' (Memórias de um Sargento de
     Milícias, catalogo gratuito, 08/11/2026).
 
-    "Note"/"Notes" seguite da un'altra parola non sono apparato (vedi
-    _NOTE_TITLE_RE).
+    "Note"/"Notes" seguite da un'altra parola, o in fondo a un titolo lungo,
+    non sono apparato (vedi _NOTE_TITLE_RE e _is_note_title).
     """
     tl = (title or "").lower()
     # I titoli ambigui valgono solo per intero, non come parola.
@@ -285,7 +300,7 @@ def title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
         return bool(rest) and rest in phrases
     for skip in phrases:
         if skip in _NOTE_WORDS:
-            if _NOTE_TITLE_RE.search(tl):
+            if _is_note_title(tl):
                 return True
         elif re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
             return True
