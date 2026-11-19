@@ -895,6 +895,20 @@ def _serve_podcast_download(token_info, job, job_id):
             return _send_file_throttled(output_zip, as_attachment=True,
                              download_name=os.path.basename(output_zip))
 
+    # ZIP evacuato dall'hot-evict: la copia cold PRIMA della ricostruzione dagli
+    # MP3, che il "ZIP cleanup" ha gia' cancellato. Senza, il link dell'email
+    # rispondeva 410 "File non piu' disponibili" dopo la finestra calda mentre
+    # il bottone della SPA (/api/download_podcast) serviva lo stesso ZIP dal
+    # cold (job I8owhF0k, 19/11/2026).
+    if output_zip and not os.path.exists(output_zip):
+        _cold = _try_cold_serve(output_zip, download_name=os.path.basename(output_zip))
+        if _cold is not None:
+            if not _is_resume_or_probe_request():
+                _log_activity(job_id, token_info.get("original_filename", ""),
+                              _cold_op("DOWNLOAD_EMAIL_PODCAST"), "", "", "", "")
+            _mark_token_redirected(token_info)
+            return _cold
+
     base_url = token_info.get("base_url", "")
 
     # Always source paths from the token snapshot (per-epoch isolation). The
