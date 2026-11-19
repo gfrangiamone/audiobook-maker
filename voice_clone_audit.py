@@ -155,7 +155,7 @@ def aggregate(rows):
         "margin_eur": round(rev - cost, 4),
         "paypal_fees_eur": round(fee, 4),
         "net_margin_eur": round(net, 4),
-        "margin_pct_avg": round(net / cost * 100, 2) if cost > 0 else 0.0,
+        "margin_pct_avg": round(net / rev * 100, 2) if rev > 0 else 0.0,
         "books": sum(r["books"] for r in rows),
         "devices": sum(r["devices"] for r in rows),
     }

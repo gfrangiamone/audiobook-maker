@@ -1371,7 +1371,7 @@ def admin_api_optimization_cost_audit():
         "margin_eur": round(agg_rev - agg_cost, 4),
         "paypal_fees_eur": round(agg_fee, 4),
         "net_margin_eur": round(net, 4),
-        "margin_pct_avg": round((net / agg_cost * 100), 2) if agg_cost > 0 else 0.0,
+        "margin_pct_avg": round((net / agg_rev * 100), 2) if agg_rev > 0 else 0.0,
         "filters": {"language": _norm(language),
                     "date_from": date_from, "date_to": date_to},
     }

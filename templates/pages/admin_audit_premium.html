@@ -70,6 +70,32 @@
   .top-total{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:150px}
   .top-total-label{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
   .top-total-value{font-size:1.5rem;font-weight:700;margin-top:2px}
+  /* Schermi stretti: ogni tabella diventa una pila di schede, una per riga.
+     L'intestazione sparisce e ogni cella porta la sua etichetta (data-label,
+     scritta da labelTables in fondo alla pagina); la prima cella fa da titolo. */
+  @media(max-width:900px){
+    body{padding:12px}
+    .panel{padding:14px}
+    .tab-bar{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+    .tab-btn{flex:0 0 auto}
+    .top-totals{width:100%}
+    .top-total{flex:1 1 140px;min-width:0}
+    .top-total-value{font-size:1.2rem}
+    table,tbody{display:block}
+    thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+    tbody tr{display:block;margin:0 0 10px;padding:8px 12px;border:1px solid #334155;border-radius:8px;background:#0f172a}
+    tbody tr[hidden]{display:none}
+    tbody tr.row-live{border-color:rgba(139,92,246,.55);background:rgba(139,92,246,.10)}
+    tbody tr.row-refund{border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.10)}
+    tbody tr.row-cancelled{border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.10)}
+    tbody td{display:flow-root;padding:4px 0;border:0;border-bottom:1px solid #1e293b;text-align:right;overflow-wrap:anywhere}
+    tbody td:last-child{border-bottom:0}
+    tbody td[data-label]::before{content:attr(data-label);float:left;max-width:45%;margin-right:12px;text-align:left;color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.3px}
+    tbody td:empty{display:none}
+    tbody td[colspan]{display:block;text-align:left}
+    tbody td.empty-msg{text-align:center}
+    tbody td code{word-break:break-all}
+  }
 </style></head>
 <body>
 <div style="margin-bottom:16px">
@@ -87,7 +113,7 @@
         <div class="top-total-label">Margine netto totale</div>
         <div id="totalNetMarginValue" class="top-total-value">-</div>
       </div>
-      <div class="top-total" title="Margine % medio = Margine netto totale / Costo provider totale dei servizi premium x 100, come il Margine % medio delle tab (pesato sul costo, non media delle percentuali delle tab).">
+      <div class="top-total" title="Margine % medio = Margine netto totale / Ricavi totali dei servizi premium x 100, come il Margine % medio delle tab (pesato sui ricavi, non media delle percentuali delle tab).">
         <div class="top-total-label">Margine % medio</div>
         <div id="totalMarginPctValue" class="top-total-value">-</div>
       </div>
@@ -106,9 +132,9 @@
     <div id="ksStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
     <div id="ksReason" style="font-size:.8rem;color:var(--muted);margin-top:4px;display:none"></div>
   </div>
-  <div style="display:flex;gap:8px;align-items:center">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:100%">
     <input type="text" id="ksReasonInput" placeholder="Motivo (facoltativo)"
-           maxlength="200" style="width:240px;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.85rem">
+           maxlength="200" style="flex:1 1 160px;width:240px;max-width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.85rem">
     <button type="button" id="ksToggleBtn" disabled>...</button>
   </div>
 </div>
@@ -195,7 +221,7 @@
       <div class="agg-box"><div class="agg-label">Costo provider TTS</div><div class="agg-value" id="tts_aggCost">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi (somma dei prezzi pagati) - Costo provider TTS. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="tts_aggMargin">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo - fee PayPal totali. Per i job pagati con voucher la fee e zero (PayPal non coinvolto), quindi margine netto = margine lordo.">Margine netto</div><div class="agg-value" id="tts_aggNetMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine % medio = Margine netto totale / Costo provider TTS totale x 100. E il ricarico netto medio pesato sul costo del provider (non la media aritmetica delle percentuali dei singoli job).">Margine % medio</div><div class="agg-value" id="tts_aggDelta">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % medio = Margine netto totale / Ricavi totali x 100, pesato sui ricavi (non la media aritmetica delle percentuali dei singoli job).">Margine % medio</div><div class="agg-value" id="tts_aggDelta">-</div></div>
     </div>
   </div>
 
@@ -205,7 +231,7 @@
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
         <th>Char</th><th>Sec audio</th><th title="Costo del provider TTS per questo job">Costo TTS</th>
-        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine - fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue x % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo provider TTS - markup applicato. Job a costo zero (Batch): Margine netto / Prezzo.">Margine %</th><th>Esito</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine - fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue x % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Prezzo x 100">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="tts_auditRecordsBody">
         <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
@@ -263,7 +289,7 @@
       <div class="agg-box"><div class="agg-label" title="Costo provider LLM (token reali)">Costo LLM</div><div class="agg-value" id="tr_aggCost">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi - Costo LLM (include fee PayPal)">Margine</div><div class="agg-value" id="tr_aggMargin">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Margine netto = Margine - fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="tr_aggNetMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="tr_aggDelta">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % medio = Margine netto totale / Ricavi totali x 100.">Margine % medio</div><div class="agg-value" id="tr_aggDelta">-</div></div>
     </div>
   </div>
 
@@ -276,7 +302,7 @@
         <th title="Costo provider LLM">Costo LLM</th>
         <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo LLM (lordo, include fee PayPal)">Margine &euro;</th>
         <th title="Margine netto = Margine - fee PayPal. Zero per voucher.">Margine netto &euro;</th>
-        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
+        <th title="Margine % = Margine netto / Prezzo x 100">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="tr_auditRecordsBody">
         <tr><td colspan="13" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
@@ -325,7 +351,7 @@
       <div class="agg-box"><div class="agg-label">Costo provider LLM</div><div class="agg-value" id="optAggCost">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi - Costo provider LLM. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="optAggMargin">-</div></div>
       <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo - fee PayPal (fissa ripartita proporzionalmente sui pagamenti combinati; zero per voucher).">Margine netto</div><div class="agg-value" id="optAggNet">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine % = Margine netto / Costo provider LLM x 100.">Margine %</div><div class="agg-value" id="optAggPct">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % = Margine netto / Ricavi x 100.">Margine %</div><div class="agg-value" id="optAggPct">-</div></div>
     </div>
   </div>
   <div class="panel">
@@ -337,7 +363,7 @@
         <th title="Costo del provider LLM per questo job">Costo LLM &euro;</th>
         <th title="Margine = Prezzo - Costo LLM (lordo)">Margine &euro;</th>
         <th title="Margine netto = Margine - fee PayPal">Margine netto &euro;</th>
-        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
+        <th title="Margine % = Margine netto / Prezzo x 100">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="optRecordsBody">
         <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
@@ -628,16 +654,13 @@
     if (q > 0) return ` · in coda #${q}`;
     return r.progress_pct == null ? "" : ` ${Number(r.progress_pct)||0}%`;
   }
-  // Margine % = margine netto / costo provider x 100. A costo zero (ABM TTS
-  // batch: VPS a canone fisso, nessun costo per job) il ricarico non e'
-  // definito: la riga mostra il margine netto sul prezzo, cioe' quanto
-  // dell'incasso resta dopo la fee di pagamento. Senza prezzo resta "—".
-  function fmtMarginPct(net, cost, price){
-    const c = Number(cost)||0;
-    if (c > 0) return fmtPct((Number(net)||0) / c * 100);
+  // Margine % = margine netto / prezzo x 100, una formula sola per ogni tab,
+  // riga e aggregato: quanto dell'incasso resta tolti costo del provider e
+  // fee di pagamento. Senza incasso (job gratuiti) non e' definito: "—".
+  function fmtMarginPct(net, price){
     const p = Number(price)||0;
-    if (p <= 0) return `<span title="Nessun costo per job: margine % non definito">—</span>`;
-    return `<span title="Nessun costo per job: margine netto / prezzo x 100">${fmtPct((Number(net)||0) / p * 100)}</span>`;
+    if (p <= 0) return `<span title="Nessun incasso: margine % non definito">—</span>`;
+    return fmtPct((Number(net)||0) / p * 100);
   }
   // Le tabelle audit chiedono al server le prime `limit` righe piu' RECENTI.
   // Se il filtro ne seleziona di piu', dirlo esplicitamente: una tabella
@@ -742,7 +765,7 @@
   // Ogni tab, dopo il suo fetch, deposita qui ricavi, costo provider e margine
   // netto dei propri aggregati; i box in alto a destra mostrano le somme dei
   // servizi gia' caricati. Il margine % medio segue la regola delle tab:
-  // margine netto / costo provider x 100, pesato sul costo.
+  // margine netto / ricavi x 100.
   // Gli abbonamenti hanno costo zero: i costi dei job pagati coi loro voucher
   // sono nelle tab dei servizi, dove quei job hanno ricavo zero.
   const totalsByService = { tts: null, translations: null, optimization: null, voices: null, subscriptions: null };
@@ -750,11 +773,11 @@
     totalsByService[service] = {revenue: Number(revenue)||0, cost: Number(cost)||0, net: Number(net)||0};
     const loaded = Object.values(totalsByService).filter(v => v != null);
     const sum = (k) => loaded.reduce((s, v) => s + v[k], 0);
-    const netTot = sum("net"), costTot = sum("cost"), netEl = $("totalNetMarginValue");
+    const netTot = sum("net"), netEl = $("totalNetMarginValue");
     $("totalRevenueValue").textContent = fmtEur(sum("revenue"));
     netEl.textContent = fmtEur(netTot);
     netEl.style.color = netTot >= 0 ? "var(--ok)" : "var(--err)";
-    $("totalMarginPctValue").innerHTML = fmtMarginPct(netTot, costTot);
+    $("totalMarginPctValue").innerHTML = fmtMarginPct(netTot, sum("revenue"));
   }
 
   async function ttsFetch(){
@@ -791,7 +814,7 @@
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
     setServiceTotals("tts", agg.revenue_eur, agg.google_cost_eur, netMargin);
-    $("tts_aggDelta").innerHTML = fmtMarginPct(agg.net_margin_eur, agg.google_cost_eur);
+    $("tts_aggDelta").innerHTML = fmtMarginPct(netMargin, agg.revenue_eur);
   }
   function ttsRenderRecords(recs, total){
     const tbody = $("tts_auditRecordsBody");
@@ -842,7 +865,7 @@
         <td${cancelTip}>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
-        <td>${fmtMarginPct(netMarg, gCost, revenue)}</td>
+        <td>${fmtMarginPct(netMarg, revenue)}</td>
         <td><span class="badge ${bcls}">${esc(blab)}${liveProgress(r)}</span>${rerunBadge}</td>
       </tr>`;
     }).join("") + auditTruncNote(recs.length, total, 12);
@@ -1208,10 +1231,7 @@
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
     setServiceTotals("translations", agg.revenue_eur, agg.google_cost_eur, netMargin);
-    const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
-      ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
-      : 0;
-    $("tr_aggDelta").innerHTML = fmtPct(_margPctAvg);
+    $("tr_aggDelta").innerHTML = fmtMarginPct(netMargin, agg.revenue_eur);
   }
   function trRenderRecords(recs, total){
     const tbody = $("tr_auditRecordsBody");
@@ -1239,7 +1259,6 @@
         ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
         : (method === "voucher" ? "Voucher: nessuna fee PayPal"
             : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
-      const margPct = cost > 0 ? (netMarg / cost * 100) : 0;
       const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
       const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
       const rowCls = r._live ? "row-live" : "";
@@ -1263,7 +1282,7 @@
         <td>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
-        <td class="${dCls}">${margPct.toFixed(2)}%</td>
+        <td>${fmtMarginPct(netMarg, revenue)}</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
       </tr>`;
     }).join("") + auditTruncNote(recs.length, total, 13);
@@ -1311,7 +1330,7 @@
     $("optAggCost").textContent = fmtEur(a.provider_cost_eur);
     $("optAggMargin").textContent = fmtEur(a.margin_eur);
     $("optAggNet").textContent = fmtEur(a.net_margin_eur);
-    $("optAggPct").innerHTML = fmtPct(a.margin_pct_avg);
+    $("optAggPct").innerHTML = fmtMarginPct(a.net_margin_eur, a.revenue_eur);
     setServiceTotals("optimization", a.revenue_eur, a.provider_cost_eur, a.net_margin_eur);
     optRender(d.records||[], d.count||0);
   }
@@ -1332,7 +1351,6 @@
       const marg = revenue - cost;
       const fee = Number(r._paypal_fee_eur||0);
       const net = (r._net_margin_eur!=null)?Number(r._net_margin_eur):(marg-fee);
-      const pct = cost>0?(net/cost*100):0;
       const method = (r.payment_method||"").toLowerCase();
       const netTip = method==="paypal"
         ? `PayPal fee: ${fmtEur(fee)} (fissa ripartita per pagamenti combinati)`
@@ -1351,7 +1369,7 @@
         <td>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td><td title="${esc(costTip)}">${fmtEur(cost)}${vat > 0 ? `<br><small>IVA ${fmtEur(vat)}</small>` : ""}</td>
         <td class="${dCls}">${fmtEur(marg)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
-        <td class="${dCls}">${pct.toFixed(2)}%</td>
+        <td>${fmtMarginPct(net, revenue)}</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span></td>
       </tr>`;
     }).join("") + auditTruncNote(recs.length, total, 11);
@@ -2022,6 +2040,35 @@
   else if (_h === "#tab-voices") showTab("voices");
   else if (_h === "#tab-subscriptions") showTab("subscriptions");
   else if (_h === "#tab-accounts") showTab("accounts");
+})();
+</script>
+<script>
+// Etichette delle celle per la vista a schede degli schermi stretti: ogni
+// td prende il testo della sua colonna dal thead della tabella. Le righe
+// arrivano a ogni fetch, quindi si rietichetta a ogni cambio del DOM.
+(function(){
+  function labelTables(){
+    document.querySelectorAll("table").forEach(function(t){
+      var heads = Array.prototype.map.call(t.querySelectorAll(":scope > thead th"),
+                                           function(th){ return th.textContent.trim(); });
+      if (!heads.length) return;
+      t.querySelectorAll(":scope > tbody > tr").forEach(function(tr){
+        var col = 0;
+        Array.prototype.forEach.call(tr.children, function(td){
+          var span = td.colSpan || 1;
+          if (span === 1 && heads[col] && td.dataset.label !== heads[col]) td.dataset.label = heads[col];
+          col += span;
+        });
+      });
+    });
+  }
+  var inCoda = false;
+  new MutationObserver(function(){
+    if (inCoda) return;
+    inCoda = true;
+    requestAnimationFrame(function(){ inCoda = false; labelTables(); });
+  }).observe(document.body, {childList: true, subtree: true});
+  labelTables();
 })();
 </script>
 </body></html>
