@@ -49,7 +49,7 @@ def test_filtro_modello_ha_abm_tts_batch():
 
 def test_righe_e_aggregati_usano_il_margine_non_definito_a_costo_zero():
     html = _html()
-    assert "${fmtMarginPct(netMarg, gCost)}" in html
+    assert "${fmtMarginPct(netMarg, gCost, revenue)}" in html
     assert 'fmtMarginPct(agg.net_margin_eur, agg.google_cost_eur)' in html
     assert "fmtMarginPct(netTot, costTot)" in html
 
@@ -61,13 +61,17 @@ def test_fmt_margin_pct_in_node(tmp_path):
     script.write_text(
         _js_fn(html, "fmtPct") + "\n" + _js_fn(html, "fmtMarginPct") + "\n"
         "console.log(JSON.stringify([fmtMarginPct(0.33, 0), fmtMarginPct(0.5, 1),"
-        " fmtMarginPct(-0.2, 1), fmtMarginPct(0, null)]));\n",
+        " fmtMarginPct(-0.2, 1), fmtMarginPct(0, null),"
+        " fmtMarginPct(8.42, 0, 8.96), fmtMarginPct(0, 0, 0)]));\n",
         encoding="utf-8")
     res = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
-    zero_cost, pos, neg, none_cost = json.loads(res.stdout)
+    zero_cost, pos, neg, none_cost, sul_prezzo, gratis = json.loads(res.stdout)
     # Il tooltip contiene «margine %»: si guarda il valore, mai un numero%.
     assert ">—</span>" in zero_cost and not re.search(r"\d%", zero_cost)
     assert "50.00%" in pos and "delta-positive" in pos
     assert "-20.00%" in neg and "delta-negative" in neg
     assert ">—</span>" in none_cost and not re.search(r"\d%", none_cost)
+    # costo zero ma prezzo pagato: margine netto sul prezzo
+    assert "93.97%" in sul_prezzo and "prezzo" in sul_prezzo
+    assert ">—</span>" in gratis

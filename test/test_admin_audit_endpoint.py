@@ -229,3 +229,27 @@ def test_admin_audit_aggregate_delta_pct_uses_listino_not_real_cost(
     assert agg["delta_pct_avg"] == pytest.approx(6.25, abs=0.01)
     # google_cost_eur (reale) resta usato per margin_eur/net_margin_eur.
     assert agg["google_cost_eur"] == pytest.approx(0.20, abs=0.001)
+
+
+def test_riga_live_porta_avanzamento_e_posto_in_coda():
+    """Le righe live dicono a che punto e' il job con la stessa percentuale di
+    /admin/log-activity; un libro batch non ancora di turno dice il posto in coda."""
+    import audiobook_app
+    base = {"status": "generating", "voice": "gemini:flash31:Puck", "rate": "+0%",
+            "gemini_actual": {"chars": 10, "google_cost_eur": 0.1,
+                              "audio_seconds": 1.0, "model_key": "flash31"}}
+    audiobook_app.jobs["Jlivepct"] = {**base, "progress_current": 37, "progress_total": 100}
+    audiobook_app.jobs["Jlivecoda"] = {**base, "progress_current": 0, "progress_total": 50,
+                                       "book_queue": {"state": "queued", "position": 2}}
+    audiobook_app.jobs["Jliveturno"] = {**base, "progress_current": 5, "progress_total": 50,
+                                        "book_queue": {"state": "active", "position": 1}}
+    try:
+        recs = {r["job_id"]: r for r in routes_admin_audit._synth_running_gemini_audit_records()}
+        assert recs["Jlivepct"]["progress_pct"] == audiobook_app._job_progress(
+            audiobook_app.jobs["Jlivepct"])[3] == 37
+        assert "queue_position" not in recs["Jlivepct"]
+        assert recs["Jlivecoda"]["queue_position"] == 2 and recs["Jlivecoda"]["progress_pct"] == 0
+        assert recs["Jliveturno"]["progress_pct"] == 10 and "queue_position" not in recs["Jliveturno"]
+    finally:
+        for k in ("Jlivepct", "Jlivecoda", "Jliveturno"):
+            audiobook_app.jobs.pop(k, None)

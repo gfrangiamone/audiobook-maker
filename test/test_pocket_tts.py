@@ -284,6 +284,26 @@ def test_presynth_skips_reused_chunks(monkeypatch, tmp_path):
     assert "speechify_sample_rate" not in job
 
 
+def test_presynth_contabilizza_i_chunk_mentre_sintetizza(monkeypatch, tmp_path):
+    # la riga live dell'audit admin legge pocket_actual: deve crescere durante
+    # la pre-sintesi, non comparire tutta insieme all'assemblaggio
+    plan = [{"text": f"chunk {i}"} for i in range(4)]
+    job, visti = {"pocket_actual": ge._new_direct_actual()}, []
+
+    def _fake(text, voice, path, emotion=None, rate="+0%", failure_info=None):
+        visti.append(job["pocket_actual"]["chars"])
+        return {"success": True, "bytes_written": 48000, "sample_rate": 24000,
+                "billable_chars": len(text)}
+
+    monkeypatch.setattr(ge, "generate_chunk_pcm_pocket", _fake)
+    monkeypatch.setattr(pocket_tts, "per_job_concurrency", lambda: 1)
+    ge._direct_presynth(job, "pocket", plan, tmp_path, VOICE, emotion=None, rate="+0%",
+                        check_cancelled=lambda: False, start_time=0.0, skip={0})
+    assert visti == [0, 7, 14]
+    assert job["pocket_actual"] == {"chars": 21, "billable_chars": 21, "audio_seconds": 3.0,
+                                    "model_key": "v1"}
+
+
 def test_actual_and_audit_record(monkeypatch):
     job = {"pocket_actual": ge._new_direct_actual()}
     ge._accumulate_direct_actual(job, "pocket", {"text": "ciao"},

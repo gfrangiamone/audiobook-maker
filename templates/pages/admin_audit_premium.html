@@ -205,7 +205,7 @@
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
         <th>Char</th><th>Sec audio</th><th title="Costo del provider TTS per questo job">Costo TTS</th>
-        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine - fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue x % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo provider TTS - markup applicato">Margine %</th><th>Esito</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine - fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue x % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo provider TTS - markup applicato. Job a costo zero (Batch): Margine netto / Prezzo.">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="tts_auditRecordsBody">
         <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
@@ -620,13 +620,24 @@
     const cls = v >= 0 ? "delta-positive" : "delta-negative";
     return `<span class="${cls}">${v.toFixed(2)}%</span>`;
   }
-  // Margine % = margine netto / costo provider x 100. A costo zero non e'
-  // definito (ABM TTS batch: VPS a canone fisso, nessun costo per job):
-  // "0.00%" lo faceva leggere come margine nullo.
-  function fmtMarginPct(net, cost){
+  // Avanzamento di una riga live, accanto a "In corso": la percentuale di
+  // /admin/log-activity, o il posto in coda di un libro batch non ancora di turno.
+  function liveProgress(r){
+    if (!r || !r._live) return "";
+    const q = Number(r.queue_position)||0;
+    if (q > 0) return ` · in coda #${q}`;
+    return r.progress_pct == null ? "" : ` ${Number(r.progress_pct)||0}%`;
+  }
+  // Margine % = margine netto / costo provider x 100. A costo zero (ABM TTS
+  // batch: VPS a canone fisso, nessun costo per job) il ricarico non e'
+  // definito: la riga mostra il margine netto sul prezzo, cioe' quanto
+  // dell'incasso resta dopo la fee di pagamento. Senza prezzo resta "—".
+  function fmtMarginPct(net, cost, price){
     const c = Number(cost)||0;
-    if (c <= 0) return `<span title="Nessun costo per job: margine % non definito">—</span>`;
-    return fmtPct((Number(net)||0) / c * 100);
+    if (c > 0) return fmtPct((Number(net)||0) / c * 100);
+    const p = Number(price)||0;
+    if (p <= 0) return `<span title="Nessun costo per job: margine % non definito">—</span>`;
+    return `<span title="Nessun costo per job: margine netto / prezzo x 100">${fmtPct((Number(net)||0) / p * 100)}</span>`;
   }
   // Le tabelle audit chiedono al server le prime `limit` righe piu' RECENTI.
   // Se il filtro ne seleziona di piu', dirlo esplicitamente: una tabella
@@ -831,8 +842,8 @@
         <td${cancelTip}>${fmtEur(revenue)}${subMark(r._sub_voucher)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
-        <td>${fmtMarginPct(netMarg, gCost)}</td>
-        <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
+        <td>${fmtMarginPct(netMarg, gCost, revenue)}</td>
+        <td><span class="badge ${bcls}">${esc(blab)}${liveProgress(r)}</span>${rerunBadge}</td>
       </tr>`;
     }).join("") + auditTruncNote(recs.length, total, 12);
   }

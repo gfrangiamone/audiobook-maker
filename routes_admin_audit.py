@@ -54,14 +54,15 @@ generation_engine = None
 
 def configure(*, admin_required, admin_token, admin_auth_ok, admin_auth_from_request,
               render_admin_gate, log_activity, client_ip, invalidate_voices_cache,
-              vc_translate_reject_note, jobs, jobs_lock, engine):
+              vc_translate_reject_note, jobs, jobs_lock, engine, job_progress):
     """Funzioni (risolte a ogni chiamata) e oggetti condivisi dalla app."""
     global generation_engine
     _cfg.update(admin_required=admin_required, admin_token=admin_token, admin_auth_ok=admin_auth_ok,
                 admin_auth_from_request=admin_auth_from_request, render_admin_gate=render_admin_gate,
                 log_activity=log_activity, client_ip=client_ip,
                 invalidate_voices_cache=invalidate_voices_cache,
-                vc_translate_reject_note=vc_translate_reject_note)
+                vc_translate_reject_note=vc_translate_reject_note,
+                job_progress=job_progress)
     _cfg["jobs"] = jobs
     globals()["_jobs_lock"] = jobs_lock
     generation_engine = engine
@@ -105,6 +106,22 @@ def _invalidate_voices_cache():
 
 def _vc_translate_reject_note(clone_id):
     return _cfg["vc_translate_reject_note"](clone_id)
+
+
+def _job_progress(job):
+    """(status, current, total, pct): la stessa aritmetica di
+    /admin/log-activity e di /api/job_status."""
+    return _cfg["job_progress"](job)
+
+
+def _live_progress(job):
+    """Avanzamento di una riga live: percentuale e, per un libro in attesa
+    del turno sul worker a coda (`job["book_queue"]`), il posto in coda."""
+    out = {"progress_pct": int(_job_progress(job)[3] or 0)}
+    coda = job.get("book_queue")
+    if isinstance(coda, dict) and coda.get("state") != "active" and coda.get("position"):
+        out["queue_position"] = coda["position"]
+    return out
 
 
 def admin_required(fn=None, *, as_json=True):
@@ -335,6 +352,7 @@ def _synth_running_gemini_audit_records():
                 "outcome": "running",
                 "_live": True,
                 "_sub_voucher": _live_sub_voucher(job),
+                **_live_progress(job),
             }
             out.append(rec)
         except Exception:

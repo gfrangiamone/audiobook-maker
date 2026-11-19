@@ -5521,6 +5521,10 @@ def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
         with done_lock:
             done += 1
             d = done
+            # Contabilita' qui, non all'assemblaggio: la riga live dell'audit
+            # admin legge `job['<motore>_actual']`, e un libro in coda di
+            # lavorazione restava a 0 caratteri e 0 secondi per ore.
+            _accumulate_direct_actual(job, engine, blk, res)
         job["progress_current"] = 2 + d
         job["progress_message"] = f"Synthesizing audio: chunk {d}/{total}"
         job["elapsed_seconds"] = round(time.time() - start_time)
@@ -7408,8 +7412,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 part_path = str(chunk_reuse.chunk_path(work_dir, i, "pcm"))
                 pre = _direct_pre.get(i)
                 if pre is not None:
+                    # gia' contabilizzato da `_direct_presynth`
                     _note_direct_sample_rate(job, direct, pre)
-                    _accumulate_direct_actual(job, direct, block, pre)
                     return pre, part_path
                 _chunk_fi = {}
                 result = _direct_chunk_fn(direct)(

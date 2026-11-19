@@ -3367,7 +3367,8 @@ routes_admin_audit.configure(
     client_ip=lambda: client_ip(),
     invalidate_voices_cache=lambda: _invalidate_voices_cache(),
     vc_translate_reject_note=lambda clone_id: routes_voice_clone._vc_translate_reject_note(clone_id),
-    jobs=lambda: jobs, jobs_lock=_jobs_lock, engine=generation_engine)
+    jobs=lambda: jobs, jobs_lock=_jobs_lock, engine=generation_engine,
+    job_progress=lambda job: _job_progress(job))
 app.register_blueprint(routes_admin_audit.bp)
 _ACTIVE_JOB_STATUSES = routes_admin_audit._ACTIVE_JOB_STATUSES   # usato da /api/my_jobs
 
