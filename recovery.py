@@ -487,7 +487,14 @@ def _orphan_fallback(job_id, rec):
 
 def _recover_orphan_jobs():
     """Eseguito UNA volta al boot: il dict jobs è vuoto, ogni descrittore non
-    finalizzato è orfano. Incrementa attempts su disco PRIMA di rilanciare."""
+    finalizzato è orfano. Incrementa attempts su disco PRIMA di rilanciare,
+    ma solo se il processo precedente non si e' chiuso in modo pulito: il cap
+    conta i crash (OOM, kill, eccezioni fatali), non deploy e reboot."""
+    try:
+        clean = pending_jobs.consume_clean_shutdown()
+    except Exception as e:
+        print(f"[recover] stato dell'arresto precedente illeggibile: {e}")
+        clean = False
     if not env_bool("ABM_RECOVER_ENABLED", True):
         return
     try:
@@ -498,7 +505,8 @@ def _recover_orphan_jobs():
     if not orphans:
         return
     max_attempts = env_int("ABM_RECOVER_MAX_ATTEMPTS", 2)
-    print(f"[recover] {len(orphans)} job batch orfani da recuperare (cap={max_attempts})")
+    print(f"[recover] {len(orphans)} job batch orfani da recuperare (cap={max_attempts}, "
+          f"arresto precedente {'pulito: i tentativi non salgono' if clean else 'NON pulito: +1 tentativo'})")
     for rec in orphans:
         job_id = rec.get("id")
         # Idempotenza: se il job e' gia' vivo in memoria (thread in esecuzione,
@@ -517,7 +525,9 @@ def _recover_orphan_jobs():
             _orphan_fallback(job_id, rec)
             continue
         try:
-            attempts = pending_jobs.mark_running_bump(job_id)  # persiste PRIMA del run
+            # persiste PRIMA del run
+            attempts = (pending_jobs.mark_running(job_id) if clean
+                        else pending_jobs.mark_running_bump(job_id))
         except Exception as e:
             print(f"[recover] bump fallito {job_id}: {e}")
             continue

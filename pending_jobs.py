@@ -6,9 +6,17 @@ Scritto quando il job diventa batch; rimosso (finalize) quando la mail finale pa
 """
 from __future__ import annotations
 
+import os
+import signal
+import time
+
 from community_store import JsonStore
+from fileio import atomic_write_json
 
 _FILENAME = "_pending_jobs.json"
+# Lasciato dal processo che si chiude su SIGTERM (systemctl restart/stop del
+# deploy, reboot): il boot successivo sa che l'arresto e' stato pulito.
+_CLEAN_SHUTDOWN_FILE = "_clean_shutdown.json"
 _store: JsonStore | None = None
 
 
@@ -58,6 +66,65 @@ def mark_running_bump(job_id: str) -> int:
 
     s.modify(job_id, _bump)
     return out["n"]
+
+
+def mark_running(job_id: str) -> int:
+    """Marca running SENZA contare un tentativo (boot dopo un arresto pulito).
+    Ritorna il valore attuale di attempts."""
+    s = _require()
+    out = {"n": 0}
+
+    def _mark(it):
+        out["n"] = int(it.get("attempts", 0) or 0)
+        it["state"] = "running"
+
+    s.modify(job_id, _mark)
+    return out["n"]
+
+
+# --- arresto pulito -----------------------------------------------------------
+# Il cap del recovery deve contare le morti vere del processo (crash, OOM,
+# kill), non i riavvii voluti: con il contatore a ogni boot, due deploy e un
+# reboot ravvicinati chiudevano con rimborso job sani che sarebbero ripartiti
+# riusando i chunk (reboot kernel del 19/11/2026: 3 job oltre il cap).
+
+def _clean_shutdown_path():
+    return _require().path.parent / _CLEAN_SHUTDOWN_FILE
+
+
+def note_clean_shutdown() -> None:
+    """Scrive il segnale di arresto pulito. Mai bloccante."""
+    try:
+        atomic_write_json(_clean_shutdown_path(), {"at": time.time(), "pid": os.getpid()})
+    except Exception as e:  # noqa: BLE001 - lo spegnimento non si ferma qui
+        print(f"[recover] segnale di arresto pulito non scritto: {e}", flush=True)
+
+
+def consume_clean_shutdown() -> bool:
+    """True se il processo precedente si e' chiuso in modo pulito. Il segnale
+    vale per un solo boot: viene tolto subito, cosi' un crash successivo
+    torna a contare."""
+    p = _clean_shutdown_path()
+    try:
+        p.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        print(f"[recover] segnale di arresto pulito non rimosso: {e}", flush=True)
+        return True
+
+
+def install_clean_shutdown_hook() -> None:
+    """Su SIGTERM scrive il segnale di arresto pulito e poi termina come
+    prima (handler di default ripristinato e segnale rilanciato). Va chiamata
+    dal thread principale."""
+    def _on_term(signum, _frame):
+        note_clean_shutdown()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    signal.signal(signal.SIGTERM, _on_term)
 
 
 def reset_attempts(job_id: str) -> None:

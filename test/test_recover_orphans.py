@@ -54,6 +54,62 @@ def test_under_cap_reenqueues(tmp_path, monkeypatch):
     assert reenq == ["Jok"]
 
 
+def test_clean_shutdown_does_not_count_an_attempt(tmp_path, monkeypatch):
+    """Reboot del 19/11/2026: deploy + reboot ravvicinati portavano oltre il
+    cap job sani. Dopo un arresto pulito (SIGTERM) il tentativo non sale."""
+    _fresh(tmp_path)
+    monkeypatch.setenv("ABM_RECOVER_MAX_ATTEMPTS", "2")
+    reenq = []
+    monkeypatch.setattr(recovery, "_reenqueue_orphan", lambda jid, rec: reenq.append(jid) or True)
+    monkeypatch.setattr(recovery, "_orphan_fallback",
+                        lambda jid, rec: (_ for _ in ()).throw(AssertionError("must not fallback")))
+    monkeypatch.setattr(recovery.time, "sleep", lambda *_: None)
+
+    pending_jobs.register("Jclean", "generate", {"notify_email": "a@x.it"})
+    pending_jobs.mark_running_bump("Jclean")
+    pending_jobs.mark_running_bump("Jclean")          # attempts=2, gia' al cap
+    pending_jobs.note_clean_shutdown()
+
+    recovery._recover_orphan_jobs()
+
+    assert reenq == ["Jclean"]
+    assert pending_jobs._store.get("Jclean")["attempts"] == 2
+    # Il segnale vale un solo boot: un crash dopo torna a contare.
+    assert pending_jobs.consume_clean_shutdown() is False
+
+
+def test_unclean_shutdown_still_counts_and_caps(tmp_path, monkeypatch):
+    _fresh(tmp_path)
+    monkeypatch.setenv("ABM_RECOVER_MAX_ATTEMPTS", "2")
+    fb = []
+    monkeypatch.setattr(recovery, "_orphan_fallback", lambda jid, rec: fb.append(jid))
+    monkeypatch.setattr(recovery, "_reenqueue_orphan",
+                        lambda jid, rec: (_ for _ in ()).throw(AssertionError("must not reenqueue")))
+    pending_jobs.register("Jcrash", "generate", {"notify_email": "a@x.it"})
+    pending_jobs.mark_running_bump("Jcrash")
+    pending_jobs.mark_running_bump("Jcrash")          # nessun segnale: crash
+    recovery._recover_orphan_jobs()
+    assert fb == ["Jcrash"]
+
+
+def test_sigterm_hook_writes_clean_marker_then_terminates(tmp_path, monkeypatch):
+    import signal
+    _fresh(tmp_path)
+    orig = signal.getsignal(signal.SIGTERM)
+    killed = []
+    try:
+        pending_jobs.install_clean_shutdown_hook()
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler)
+        monkeypatch.setattr(pending_jobs.os, "kill", lambda pid, sig: killed.append(sig))
+        handler(signal.SIGTERM, None)
+        assert killed == [signal.SIGTERM]
+        assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
+        assert pending_jobs.consume_clean_shutdown() is True
+    finally:
+        signal.signal(signal.SIGTERM, orig)
+
+
 def test_reenqueue_empty_voice_falls_back_no_generation(tmp_path, monkeypatch):
     # F2: un descrittore 'generate' senza voce (es. job di traduzione orfano
     # mis-registrato) NON deve avviare una generazione muta -> fallback.

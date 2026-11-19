@@ -9124,4 +9124,6 @@ if __name__ == "__main__":
     print(f"  Debug mode: {DEBUG} "
           f"({'env ABM_DEBUG' if 'ABM_DEBUG' in os.environ else 'default off'})")
     print(f"{'='*50}\n")
+    # Deploy e reboot (SIGTERM) non contano come tentativi del recovery.
+    pending_jobs.install_clean_shutdown_hook()
     app.run(host="127.0.0.1", port=PORT, debug=DEBUG)
