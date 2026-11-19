@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# abm-deploy — Comando forzato della chiave "github-deploy" sul server di produzione.
+# Installato a mano in /usr/local/sbin/abm-deploy (fuori dal repo: un git reset
+# non lo tocca mentre gira). In /root/.ssh/authorized_keys la chiave e':
+#     command="/usr/local/sbin/abm-deploy",restrict ssh-ed25519 AAAA... github-deploy
+# Qualunque cosa chieda il client, la chiave puo' solo:
+#   ping        -> risponde pong (prova della chiave senza deploy)
+#   abm-deploy  -> deploy di origin/main con health check e rollback
+# Il resto viene rifiutato e registrato nel journal (journalctl -t abm-deploy).
+# Dopo una modifica a questo file va reinstallato a mano:
+#     install -m 755 /opt/audiobook-maker/deploy/abm-deploy /usr/local/sbin/abm-deploy
+set -euo pipefail
+REQ="${SSH_ORIGINAL_COMMAND:-}"
+FROM="${SSH_CLIENT%% *}"
+log() { logger -t abm-deploy -- "$*"; }
+case "$REQ" in
+  ping) log "ping da $FROM"; echo pong; exit 0 ;;
+  *abm-deploy*) ;;
+  *) log "RIFIUTATO da $FROM: ${REQ:0:200}"; echo "comando non ammesso per questa chiave" >&2; exit 2 ;;
+esac
+exec 9>/run/abm-deploy.lock
+flock -n 9 || { log "deploy gia' in corso, rifiuto $FROM"; echo "deploy gia' in corso" >&2; exit 3; }
+log "deploy avviato da $FROM"
+
+pip_install() {
+  pip install -r requirements.txt --break-system-packages 2>/dev/null || pip install -r requirements.txt
+}
+
+cd /opt/audiobook-maker
+PREV=$(git rev-parse HEAD)
+git fetch origin main
+git reset --hard origin/main
+pip_install
+systemctl daemon-reload 2>/dev/null || true
+systemctl restart audiobook-maker
+# Health check: /healthz risponde 200 solo con app su e cartella dati
+# scrivibile. Fino a 60 s di attesa, poi rollback al commit precedente.
+for _ in $(seq 1 30); do
+  sleep 2
+  if curl -fsS http://127.0.0.1:5601/healthz >/dev/null 2>&1; then
+    echo "Deploy completato: $(git rev-parse --short HEAD) $(date)"
+    log "deploy terminato: $(git rev-parse --short HEAD)"
+    exit 0
+  fi
+done
+echo "healthz non risponde: rollback a $PREV"
+log "healthz non risponde: rollback a $PREV"
+git reset --hard "$PREV"
+pip_install
+systemctl restart audiobook-maker
+exit 1

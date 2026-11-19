@@ -10,16 +10,26 @@ echo " Audiobook Maker - ENV Check"
 echo "=========================================="
 echo ""
 
-# Leggi le variabili dall'override di systemd
-OVERRIDE="/etc/systemd/system/audiobook-maker.service.d/override.conf"
-if [ -f "$OVERRIDE" ]; then
-    echo "[OK] Override file trovato: $OVERRIDE"
+# Leggi le variabili come le vede systemd. Dal 19/11/2026 le ABM_* stanno nei
+# file *.env del drop-in (EnvironmentFile, 600: serve root); in righe
+# Environment= restano solo le non segrete (ABM_DATA_DIR in datadir.conf).
+# I .env vincono sulle Environment=, come in systemd.
+DROPIN_DIR="/etc/systemd/system/audiobook-maker.service.d"
+ENV_FILES=$(ls "$DROPIN_DIR"/*.env 2>/dev/null)
+if [ -n "$ENV_FILES" ]; then
+    echo "[OK] File env trovati: $(echo $ENV_FILES)"
     echo ""
 else
-    echo "[!!] Override file NON trovato: $OVERRIDE"
+    echo "[!!] Nessun file .env in $DROPIN_DIR (serve root per leggerli)"
     echo "     Nessuna variabile d'ambiente configurata!"
     exit 1
 fi
+while IFS= read -r kv; do
+    [ -n "$kv" ] && export "$kv"
+done < <(systemctl show audiobook-maker -p Environment --value | tr ' ' '\n' | grep '=')
+set -a
+for f in $ENV_FILES; do . "$f"; done
+set +a
 
 # Funzione per controllare una variabile
 check_var() {
@@ -29,7 +39,7 @@ check_var() {
     local default="$4"
 
     local value
-    value=$(grep "Environment=\"${name}=" "$OVERRIDE" 2>/dev/null | sed "s/.*Environment=\"${name}=\(.*\)\"/\1/")
+    value="${!name}"
 
     if [ -n "$value" ]; then
         # Maschera i valori sensibili
@@ -92,7 +102,7 @@ echo ""
 echo "--- VERIFICHE FILE ---"
 
 # Controlla file credenziali del backend Vertex (voci PREMIUM)
-VERTEX_CREDS=$(grep 'Environment="ABM_GOOGLE_CREDENTIALS_FILE=' "$OVERRIDE" 2>/dev/null | sed 's/.*Environment="ABM_GOOGLE_CREDENTIALS_FILE=\(.*\)"/\1/')
+VERTEX_CREDS="${ABM_GOOGLE_CREDENTIALS_FILE:-}"
 if [ -n "$VERTEX_CREDS" ]; then
     if [ -f "$VERTEX_CREDS" ]; then
         echo "[OK] File credenziali Vertex esiste: $VERTEX_CREDS"
@@ -104,7 +114,7 @@ else
 fi
 
 # Controlla directory dati
-DATA_DIR=$(grep 'Environment="ABM_DATA_DIR=' "$OVERRIDE" 2>/dev/null | sed 's/.*Environment="ABM_DATA_DIR=\(.*\)"/\1/')
+DATA_DIR="${ABM_DATA_DIR:-}"
 DATA_DIR=${DATA_DIR:-/var/lib/audiobook-maker/data}
 if [ -d "$DATA_DIR" ]; then
     echo "[OK] Directory dati esiste: $DATA_DIR"

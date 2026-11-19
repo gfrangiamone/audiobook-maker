@@ -164,8 +164,8 @@ sudo systemctl restart audiobook-maker
 > da un test in shell) in una sessione SSH normale **non le vede** e porta a
 > concludere — a torto — che non sono state impostate. Per verificare il
 > valore realmente in uso dal processo, leggerlo da dove vive davvero:
-> - `systemctl show audiobook-maker --property=Environment` (o il contenuto
->   dell'`EnvironmentFile`), oppure
+> - il contenuto degli `EnvironmentFile`, `sudo grep ABM_ /etc/systemd/system/audiobook-maker.service.d/*.env`
+>   (dal 19/11/2026 `systemctl show --property=Environment` mostra solo `ABM_DATA_DIR`), oppure
 > - l'ambiente reale del processo in esecuzione:
 >   ```bash
 >   tr '\0' '\n' < /proc/$(pgrep -f audiobook_app.py | head -1)/environ | grep ABM_

@@ -10,6 +10,17 @@ Lettura unica tramite `env_utils` (`env_str/env_int/env_float/env_bool`, dal 202
 
 Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
+**Dove vivono in produzione (dal 19/11/2026).** Nella cartella `/etc/systemd/system/audiobook-maker.service.d/`, tutta a permessi 600 `root:root`:
+- **Valori:** in `override.env` e `pocket.env`, file `EnvironmentFile=` nel formato `NOME='valore'`, richiamati da `override.conf` e `pocket.conf`.
+- **Eccezione:** `ABM_DATA_DIR` resta una riga `Environment=` in `datadir.conf`.
+
+Prima i valori stavano in righe `Environment=` di `override.conf`, ma `systemctl show audiobook-maker` le mostrava a qualunque utente locale; un `EnvironmentFile` invece non viene esposto.
+
+Come lavorarci:
+- **Leggere un valore:** serve root. `sudo grep '^ABM_X=' .../override.env`, oppure `sudo bash -c 'set -a; . .../override.env; ...'` per esportarle tutte in uno script.
+- **Modificare:** si edita `override.env`, poi `systemctl restart audiobook-maker`. Basta il riavvio: il file si rilegge a ogni avvio e `daemon-reload` non serve.
+- **Strumenti aggiornati:** `scripts/check_env.sh`, `restore_ABM.sh` (funzione `abm_env_get`), `server_setup.sh` e `prod_enable_pocket_batch.sh` leggono e scrivono questo formato. Il backup notturno copia l'intera cartella dei drop-in, quindi anche i `.env`.
+
 | Parametro | Valore default | File | Riga |
 |-----------|---------------|------|------|
 | `ABM_DATA_DIR` | `"/var/lib/audiobook-maker/data"`. **In produzione** (`ABM_BASE_URL` https pubblico, `env_utils.is_public_https_url`) dev'essere impostata, esistere e non essere vuota, altrimenti l'avvio si rifiuta con `[startup] FATALE: ...` ed exit 1 (`fileio.data_dir_problem`, incidente 2026-11-02). In prod vive nel drop-in `audiobook-maker.service.d/datadir.conf`, separato da `override.conf` | `audiobook_app.py`, `fileio.py` | `data_dir_problem` |
@@ -801,7 +812,7 @@ Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEM
 
 **Misura su audit reale (giu–ago 2026, 256 job `completed`, all'epoca ancora con `flash25`)**: il rapporto `output_tokens_actual / audio_seconds_actual` valeva **esattamente 25.0** su entrambi i modelli allora offerti — su flash25 con cv 0.0%, su flash31 esattamente 25.0 in 122 job su 168 (l'eccesso residuo viene solo dai chunk ritentati, che pagano token già fatturati). Il valore è quindi una costante del formato audio PCM 24 kHz, non una caratteristica del modello — motivo per cui il `29.0` storico su flash31 era sbagliato. `flash38` restituisce WAV invece di PCM grezzo sull'API key (vedi §7.5.2) e nel test Beren il rapporto era risultato **31.9**; la misura del 12/10/2026 su un libro intero via OpenRouter (1.924 s, 48.073 token fatturati) ha dato **24,98**, cioè la stessa costante 25.0 di flash31: il default è stato riportato a 25.0. Il precedente `29.0` su flash31 (e il `30` impostato in produzione) produceva un **+16–20% sistematico sul costo stimato**, con margine a consuntivo del 36,8% contro un target del 25%.
 
-> **Attenzione operativa**: se in produzione è presente un override `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` diverso da `25`, il default corretto nel codice non ha alcun effetto. Verificare con `systemctl cat audiobook-maker`.
+> **Attenzione operativa**: se in produzione è presente un override `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` diverso da `25`, il default corretto nel codice non ha alcun effetto. Verificare con `sudo grep ABM_GEMINI_AUDIO_TOKENS /etc/systemd/system/audiobook-maker.service.d/*.env` (dal 19/11/2026 i valori non stanno più in `systemctl cat`).
 
 ### 7.5 Limiti e anti-abuso
 

@@ -131,25 +131,34 @@ RestartSec=5
 WantedBy=multi-user.target
 SVCEOF
 
-mkdir -p /etc/systemd/system/audiobook-maker.service.d
-cat > /etc/systemd/system/audiobook-maker.service.d/override.conf << ENVEOF
-[Service]
-Environment="ABM_BASE_URL=https://audiobook-maker.com"
-Environment="ABM_DATA_DIR=/opt/audiobook-maker/data"
-Environment="ABM_ACTIVITY_LOG_DIR=/opt/audiobook-maker/data/logs"
-Environment="ABM_SMTP_HOST=${SMTP_HOST}"
-Environment="ABM_SMTP_PORT=${SMTP_PORT}"
-Environment="ABM_SMTP_USER=${SMTP_USER}"
-Environment="ABM_SMTP_PASS=${SMTP_PASS}"
-Environment="ABM_SMTP_FROM=${SMTP_FROM}"
-Environment="ABM_ADMIN_EMAIL=${ADMIN_EMAIL}"
-Environment="ABM_DEEPSEEK_API_KEY=${DEEPSEEK_KEY}"
-Environment="ABM_GOOGLE_CREDENTIALS_FILE=${GOOGLE_CREDS}"
-Environment="ABM_PAYPAL_CLIENT_ID=${PAYPAL_ID}"
-Environment="ABM_PAYPAL_SECRET=${PAYPAL_SECRET}"
-Environment="ABM_PAYPAL_MODE=${PAYPAL_MODE}"
-Environment="ABM_ADMIN_TOKEN=${ADMIN_TOKEN}"
+DROPIN_DIR=/etc/systemd/system/audiobook-maker.service.d
+mkdir -p "$DROPIN_DIR"
+# Le ABM_* stanno in un EnvironmentFile 600, non in righe Environment=:
+# `systemctl show` mostra le Environment= a qualunque utente locale.
+# Valori fra apici singoli: il file si legge anche con `set -a; . override.env`.
+( umask 077
+cat > "$DROPIN_DIR/override.env" << ENVEOF
+ABM_BASE_URL='https://audiobook-maker.com'
+ABM_DATA_DIR='/opt/audiobook-maker/data'
+ABM_ACTIVITY_LOG_DIR='/opt/audiobook-maker/data/logs'
+ABM_SMTP_HOST='${SMTP_HOST}'
+ABM_SMTP_PORT='${SMTP_PORT}'
+ABM_SMTP_USER='${SMTP_USER}'
+ABM_SMTP_PASS='${SMTP_PASS}'
+ABM_SMTP_FROM='${SMTP_FROM}'
+ABM_ADMIN_EMAIL='${ADMIN_EMAIL}'
+ABM_DEEPSEEK_API_KEY='${DEEPSEEK_KEY}'
+ABM_GOOGLE_CREDENTIALS_FILE='${GOOGLE_CREDS}'
+ABM_PAYPAL_CLIENT_ID='${PAYPAL_ID}'
+ABM_PAYPAL_SECRET='${PAYPAL_SECRET}'
+ABM_PAYPAL_MODE='${PAYPAL_MODE}'
+ABM_ADMIN_TOKEN='${ADMIN_TOKEN}'
 ENVEOF
+cat > "$DROPIN_DIR/override.conf" << ENVEOF
+[Service]
+EnvironmentFile=$DROPIN_DIR/override.env
+ENVEOF
+)
 
 systemctl daemon-reload
 systemctl enable audiobook-maker

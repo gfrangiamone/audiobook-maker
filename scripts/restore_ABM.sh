@@ -17,6 +17,21 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Valore di una ABM_* dai drop-in ripristinati. Dal 19/11/2026 i valori stanno
+# nei file *.env (EnvironmentFile, NOME='valore'); i backup precedenti hanno
+# ancora righe Environment= nei *.conf. Come in systemd, i .env vincono sulle
+# Environment= e, a parita', vince l'ultima riga non commentata.
+DROPIN_DIR=/etc/systemd/system/audiobook-maker.service.d
+abm_env_get() {
+    local name="$1"
+    {
+        grep -hE "^[[:space:]]*Environment=.*${name}=" "$DROPIN_DIR"/*.conf 2>/dev/null \
+            | sed "s/.*${name}=//; s/\"//g; s/[[:space:]].*\$//"
+        grep -hE "^[[:space:]]*${name}=" "$DROPIN_DIR"/*.env 2>/dev/null \
+            | sed "s/^[[:space:]]*${name}=//; s/^'\\(.*\\)'\$/\\1/; s/^\"\\(.*\\)\"\$/\\1/"
+    } | tail -n1
+}
+
 if [ -z "$1" ]; then
     echo "Usage: bash restore_ABM.sh /path/to/backup.tar.gz"
     echo ""
@@ -111,9 +126,11 @@ fi
 if [ -d "$BACKUP_DIR/systemd/audiobook-maker.service.d" ]; then
     mkdir -p /etc/systemd/system/audiobook-maker.service.d
     cp "$BACKUP_DIR/systemd/audiobook-maker.service.d/"* /etc/systemd/system/audiobook-maker.service.d/
+    # Contengono i segreti (*.env): solo root.
+    chmod 600 /etc/systemd/system/audiobook-maker.service.d/*
     echo "  Override con variabili d'ambiente ripristinato."
 else
-    echo "  ATTENZIONE: override.conf non trovato nel backup!"
+    echo "  ATTENZIONE: drop-in (override.conf/override.env) non trovati nel backup!"
     echo "  Dovrai configurare manualmente le variabili d'ambiente."
 fi
 
@@ -129,7 +146,7 @@ fi
 if [ -d "$BACKUP_DIR/logs" ]; then
     # I log vanno dove li cerca l'app: ABM_ACTIVITY_LOG_DIR dell'override
     # appena ripristinato, altrimenti la cartella dell'app (SCRIPT_DIR).
-    ACT_DIR=$(grep -E '^[[:space:]]*Environment=.*ABM_ACTIVITY_LOG_DIR=' /etc/systemd/system/audiobook-maker.service.d/override.conf 2>/dev/null | tail -n1 | sed 's/.*ABM_ACTIVITY_LOG_DIR=//; s/"//g; s/[[:space:]].*$//')
+    ACT_DIR=$(abm_env_get ABM_ACTIVITY_LOG_DIR)
     ACT_DIR=${ACT_DIR:-/opt/audiobook-maker}
     mkdir -p "$ACT_DIR"
     cp "$BACKUP_DIR/logs/activity_"*.log "$ACT_DIR/" 2>/dev/null || true
@@ -238,7 +255,7 @@ TMPEOF
     fi
 
     # Richiedi nuovo certificato
-    ADMIN_EMAIL=$(grep 'ABM_ADMIN_EMAIL' /etc/systemd/system/audiobook-maker.service.d/override.conf 2>/dev/null | sed 's/.*ABM_ADMIN_EMAIL=//' | sed 's/"//' || echo "")
+    ADMIN_EMAIL=$(abm_env_get ABM_ADMIN_EMAIL)
     ADMIN_EMAIL=${ADMIN_EMAIL:-"nextswsrl@gmail.com"}
     certbot --nginx -d audiobook-maker.com -d www.audiobook-maker.com \
         --non-interactive --agree-tos -m "$ADMIN_EMAIL" --redirect
@@ -331,7 +348,7 @@ for f in _download_tokens.json _vouchers.json _payments.json google_tts_usage.js
 done
 
 # Google credentials
-GOOGLE_CREDS=$(grep 'ABM_GOOGLE_CREDENTIALS_FILE' /etc/systemd/system/audiobook-maker.service.d/override.conf 2>/dev/null | sed 's/.*ABM_GOOGLE_CREDENTIALS_FILE=//' | sed 's/"//')
+GOOGLE_CREDS=$(abm_env_get ABM_GOOGLE_CREDENTIALS_FILE)
 if [ -n "$GOOGLE_CREDS" ] && [ -f "$GOOGLE_CREDS" ]; then
     echo "  [OK] Credenziali Google: $GOOGLE_CREDS"
 else

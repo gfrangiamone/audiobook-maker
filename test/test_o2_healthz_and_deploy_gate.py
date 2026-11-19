@@ -36,9 +36,15 @@ def test_deploy_workflow_has_gate_concurrency_healthcheck_and_rollback():
     assert "concurrency:" in wf and "group: deploy-production" in wf
     assert re.search(r"^\s+check:\s*$", wf, flags=re.M) and "needs: check" in wf
     assert "py_compile" in wf and "pytest" in wf
-    assert "curl -fsS http://127.0.0.1:5601/healthz" in wf
-    assert 'git reset --hard "$PREV"' in wf
     assert "actions/checkout@" in wf and "@v4" not in wf          # azioni fissate a SHA
+    assert re.search(r"appleboy/ssh-action@[0-9a-f]{40}\b", wf)
+    # Dal 19/11/2026 la chiave di deploy ha un comando forzato sul server
+    # (deploy/abm-deploy): il workflow lo sceglie, health check e rollback stanno li'.
+    assert re.search(r"^\s+script:\s*abm-deploy\s*$", wf, flags=re.M)
+    remote = (ROOT / "deploy" / "abm-deploy").read_text(encoding="utf-8")
+    assert "curl -fsS http://127.0.0.1:5601/healthz" in remote
+    assert 'git reset --hard "$PREV"' in remote
+    assert "*abm-deploy*)" in remote and "flock -n 9" in remote
 
 
 def test_requirements_declare_every_runtime_package():

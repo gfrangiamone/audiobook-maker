@@ -173,34 +173,44 @@ def test_backup_script_covers_sqlite():
         assert out.returncode == 0, out.stderr
 
 
-def test_restore_script_act_dir_takes_last_uncommented(tmp_path):
-    """ACT_DIR (riga ~133 di restore_ABM.sh) deve leggere solo l'ultima
-    riga Environment= non commentata di override.conf: senza ancoraggio
-    all'inizio riga, una riga commentata o duplicata finisce comunque nel
-    grep e produce un ACT_DIR multi-riga che fa fallire silenziosamente
-    la `cp` successiva (`|| true`), pur stampando 'ripristinati'."""
+def _restore_env_get(tmp_path, files, name):
+    """Lancia `abm_env_get` di restore_ABM.sh su una cartella di drop-in finta."""
     bash = _posix_bash()
     if not bash:
         pytest.skip("bash POSIX non disponibile")
-    src = open("scripts/restore_ABM.sh", encoding="utf-8").read()
-    line = next(
-        l for l in src.splitlines()
-        if l.strip().startswith("ACT_DIR=$(grep")
-    )
-    override = tmp_path / "override.conf"
-    override.write_text(
-        '# Environment="ABM_ACTIVITY_LOG_DIR=/old"\n'
-        'Environment="ABM_ACTIVITY_LOG_DIR=/a"\n'
-        'Environment=ABM_ACTIVITY_LOG_DIR=/b\n',
-        encoding="utf-8", newline="\n",
-    )
-    patched = line.replace(
-        "/etc/systemd/system/audiobook-maker.service.d/override.conf",
-        override.as_posix(),
-    )
-    script = tmp_path / "extract_act_dir.sh"
-    script.write_text(patched + '\necho "$ACT_DIR"\n', encoding="utf-8",
-                      newline="\n")
+    src = open("scripts/restore_ABM.sh", encoding="utf-8").read().splitlines()
+    start = next(i for i, l in enumerate(src) if l.startswith("abm_env_get() {"))
+    end = next(i for i in range(start, len(src)) if src[i] == "}")
+    dropin = tmp_path / "dropin"
+    dropin.mkdir()
+    for fname, text in files.items():
+        (dropin / fname).write_text(text, encoding="utf-8", newline="\n")
+    script = tmp_path / "env_get.sh"
+    script.write_text(
+        f'DROPIN_DIR="{dropin.as_posix()}"\n' + "\n".join(src[start:end + 1])
+        + f'\nabm_env_get {name}\n', encoding="utf-8", newline="\n")
     out = subprocess.run([bash, script.as_posix()], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
-    assert out.stdout.strip() == "/b"
+    return out.stdout.strip()
+
+
+def test_restore_script_act_dir_takes_last_uncommented(tmp_path):
+    """Backup vecchi (Environment= in override.conf): conta solo l'ultima
+    riga non commentata. Senza ancoraggio all'inizio riga, una riga commentata
+    o duplicata finisce nel grep e produce un ACT_DIR multi-riga che fa
+    fallire in silenzio la `cp` successiva (`|| true`), pur stampando
+    'ripristinati'."""
+    assert _restore_env_get(tmp_path, {"override.conf": (
+        '# Environment="ABM_ACTIVITY_LOG_DIR=/old"\n'
+        'Environment="ABM_ACTIVITY_LOG_DIR=/a"\n'
+        'Environment=ABM_ACTIVITY_LOG_DIR=/b\n')}, "ABM_ACTIVITY_LOG_DIR") == "/b"
+
+
+def test_restore_script_env_file_wins_over_environment(tmp_path):
+    """Dal 19/11/2026 i valori stanno in override.env (NOME='valore'), che
+    in systemd vince sulle Environment= dei .conf: restore deve leggere lui."""
+    assert _restore_env_get(tmp_path, {
+        "datadir.conf": 'Environment="ABM_ACTIVITY_LOG_DIR=/vecchio"\n',
+        "override.env": ("# ABM_ACTIVITY_LOG_DIR='/commentato'\n"
+                         "ABM_ACTIVITY_LOG_DIR='/opt/a b/logs'\n"),
+    }, "ABM_ACTIVITY_LOG_DIR") == "/opt/a b/logs"
