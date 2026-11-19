@@ -1,6 +1,7 @@
 """Motore Pocket TTS (worker abm-pocket-worker su VPS): client, chunk diretto,
 pre-sintesi con i chunk riusati, audit, tag, gate di configurazione."""
 import pathlib
+import re
 import types
 
 import pytest
@@ -370,6 +371,30 @@ def test_ticket_join_waits_for_turn(worker_env):
     assert [s["state"] for s in seen] == ["queued", "queued", "active"]
     assert clock.t == 50                    # due pause da wait_s/4 = 25 s
     assert t.chunk_fields() == {"book": "J1", "book_chars": 5000, "priority": 10}
+
+
+# Copia della BOOK_ID_RE del worker (abm-pocket-worker, pocket_worker/jobs.py).
+_WORKER_BOOK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
+
+
+def test_book_queue_id_accepted_by_worker_for_any_job_id():
+    """Job -CmVTEQm (18/11/2026): job_id con "-" iniziale -> 422 "id libro
+    non valido" dal worker e job pagato fallito all'avvio."""
+    for jid in ("-CmVTEQm-IAk8VuYA3S_oQ", "_abcdefghijklmnopqrstu", "1h57HgHRVGF6pzJQCyAlvA"):
+        bid = pocket_tts.book_queue_id(jid)
+        assert _WORKER_BOOK_ID_RE.match(bid), bid
+        assert pocket_tts.book_queue_id(jid) == bid          # stabile fra i riavvii
+    assert pocket_tts.book_queue_id("1h57HgHRVGF6pzJQCyAlvA") == "1h57HgHRVGF6pzJQCyAlvA"
+    assert pocket_tts.book_queue_id("-CmVTEQm-IAk8VuYA3S_oQ") != "-CmVTEQm-IAk8VuYA3S_oQ"
+
+
+def test_ticket_with_dash_job_id_uses_valid_book_id(worker_env):
+    sess, clock = _QSession(put=[_Resp(200, body=ACTIVE)]), _Clock()
+    t = pocket_tts.BookTicket("-CmVTEQm-IAk8VuYA3S_oQ", 100, "de", session=sess,
+                              sleep=clock.sleep, clock=clock)
+    assert t.join() is True
+    assert sess.calls[0][1] == "https://pocket.example/v1/books/j-CmVTEQm-IAk8VuYA3S_oQ"
+    assert t.chunk_fields()["book"] == "j-CmVTEQm-IAk8VuYA3S_oQ"
 
 
 def test_ticket_join_cancelled_while_waiting(worker_env):

@@ -232,6 +232,18 @@ def _headers():
     return {"Authorization": f"Bearer {api_token()}"}
 
 
+def book_queue_id(job_id):
+    """Id del libro nella coda del worker. Il worker vuole un primo carattere
+    alfanumerico (BOOK_ID_RE; il "_" iniziale e' riservato ai libri impliciti
+    "_lingua-xx"), ma un job_id di token_urlsafe comincia con "-" o "_" circa
+    3 volte su 100: il PUT rispondeva 422 "id libro non valido" e il job
+    pagato falliva all'avvio (job -CmVTEQm, 18/11/2026). Deterministico, cosi'
+    lo stesso job ritrova il suo posto dopo un riavvio; il prefisso porta l'id
+    a 23 caratteri e non collide con un job_id (22)."""
+    s = str(job_id)
+    return s if s[:1].isascii() and s[:1].isalnum() else "j" + s
+
+
 class BookTicket:
     """Il posto di un libro (job di ABM) nella coda del worker.
 
@@ -246,7 +258,7 @@ class BookTicket:
 
     def __init__(self, book_id, chars, language, check_cancelled=None, on_state=None,
                  session=None, sleep=None, clock=None):
-        self.id = str(book_id)
+        self.id = book_queue_id(book_id)
         self.chars = max(0, int(chars or 0))
         self.language = (language or "it")[:2].lower()
         self.priority = priority()
