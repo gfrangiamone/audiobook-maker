@@ -177,7 +177,8 @@ def test_index_promo_citypulse_text_in_ui_lang_link_in_catalog_lang(catalog, cli
     page = client.get("/free-audiobooks/it/").get_data(as_text=True)
     assert 'class="fc-promo"' in page
     # Sempre in una nuova scheda.
-    assert 'href="https://citypulse.center/it/" target="_blank" rel="noopener" hreflang="it"' in page
+    # Link pubblicitario: rel="sponsored" per i motori di ricerca.
+    assert 'href="https://citypulse.center/it/" target="_blank" rel="sponsored noopener" hreflang="it"' in page
     assert "Scopri CityPulse" in page
     assert 'src="/static/img/citypulse.svg"' in page and "<i>city</i><b>pulse</b>" in page
     assert (Path(free_catalog.__file__).parent / "static" / "img" / "citypulse.svg").is_file()
@@ -188,7 +189,7 @@ def test_index_promo_citypulse_text_in_ui_lang_link_in_catalog_lang(catalog, cli
     assert 'href="https://citypulse.center/it/"' in free_catalog.index_html("en", "", preset="it")
     assert 'href="https://citypulse.center/en/"' in free_catalog.index_html("en", "")
     zh = free_catalog.index_html("zh", "")
-    assert 'href="https://citypulse.center/" target="_blank" rel="noopener">' in zh
+    assert 'href="https://citypulse.center/" target="_blank" rel="sponsored noopener">' in zh
     assert free_catalog._t("zh")["promo_citypulse_link"] in zh
     assert '<small class="fc-promo-label">Sponsor</small>' in page   # dichiarato pubblicita'
     assert f'<small class="fc-promo-label">{free_catalog._t("zh")["promo_label"]}</small>' in zh
@@ -431,7 +432,7 @@ def test_book_promo_citypulse_only_on_non_italian_books(catalog, client, tmp_pat
                 it = free_catalog.book_html("it", "storia-di-una-capinera", "", qr, ui=ui)
                 assert it.count('<aside class="fc-promo" lang="it">') == 1 and "citypulse.center" not in it
                 assert it.count('<small class="fc-promo-label">Sponsor</small>') == 1   # dichiarato pubblicita'
-                assert f'href="{href}" target="_blank" rel="noopener" hreflang="it"' in it and link in it
+                assert f'href="{href}" target="_blank" rel="sponsored noopener" hreflang="it"' in it and link in it
                 assert not any(h in it for h, _ in prodotti if h != href)
                 assert it.index('class="fc-promo"') < it.index('class="fc-player"')
     # Senza pilotare la sorte escono tutti e tre.
@@ -442,7 +443,7 @@ def test_book_promo_citypulse_only_on_non_italian_books(catalog, client, tmp_pat
     for src in re.findall(r'src="(/static/img/[^"]+)"', "".join(p[2] for p in free_catalog._IT_PROMOS)):
         assert (static / src.lstrip("/")).is_file()
     page = free_catalog.book_html("en", "moby-dick", "", qr)
-    assert 'href="https://citypulse.center/en/" target="_blank" rel="noopener" hreflang="en"' in page
+    assert 'href="https://citypulse.center/en/" target="_blank" rel="sponsored noopener" hreflang="en"' in page
     assert free_catalog._t("en")["promo_citypulse_link"] in page
     # Sopra l'anteprima.
     assert page.index('class="fc-promo"') < page.index('class="fc-player"')
