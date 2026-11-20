@@ -126,7 +126,38 @@ def test_home_inline_solo_la_sua_lingua_e_inglese():
     m = re.search(r"var I18N_SRC=(\{.*?\});", html)
     src = json.loads(m.group(1))
     assert sorted(src) == ["de", "es", "fr", "hi", "zh"]
-    assert all(re.fullmatch(r"/i18n/[a-z]{2}\.js\?v=1\.0\.[0-9a-f]{8}", u) for u in src.values())
+    assert all(re.fullmatch(r"/i18n/[a-z]{2}\.js\?v=[0-9a-f]{8}", u) for u in src.values())
+    # Solo l'impronta del contenuto: un deploy che non tocca le traduzioni non
+    # cambia l'URL (Search Console 16/11/2026: 97 varianti scansionate).
+    altra = build_html_template("it", {"title": "x"}, "https://audiobook-maker.com", "2.0", "", "")
+    assert json.loads(re.search(r"var I18N_SRC=(\{.*?\});", altra).group(1)) == src
+
+
+def test_scaffale_catalogo_a_rotazione():
+    # Con i primi 8 fissi le schede oltre l'ottava non ricevevano link dalle altre.
+    import free_catalog
+    books = [{"slug": f"b{k}"} for k in range(12)]
+    linked = {b["slug"]: 0 for b in books}
+    for b in books:
+        shelf = free_catalog._shelf_after(books, b["slug"])
+        assert len(shelf) == 8 and b["slug"] not in [o["slug"] for o in shelf]
+        for o in shelf:
+            linked[o["slug"]] += 1
+    assert set(linked.values()) == {8}
+    assert [o["slug"] for o in free_catalog._shelf_after(books, "b10")][:3] == ["b11", "b0", "b1"]
+    assert len(free_catalog._shelf_after(books[:3], "b1")) == 2
+    assert len(free_catalog._shelf_after(books, "assente")) == 8
+
+
+def test_guida_ebook_it_titolo_col_numero_dei_siti():
+    # Il titolo promette un numero: deve restare quello dei siti elencati.
+    import content_store as cs
+    import guide_content
+    body = cs.content_text("guides", "free-ebooks", "it.html")
+    n = len(re.findall(r'<li><a href="http[^"]+" target="_blank"', body))
+    meta = guide_content._GUIDE_META["free-ebooks"]["it"]
+    assert f"gli {n} Migliori Siti" in meta["title"] and len(meta["title"]) <= 60
+    assert meta["title"].startswith("Scaricare Ebook Gratis") and f"Gli {n} migliori" in meta["desc"]
 
 
 def test_route_i18n_lingua():
@@ -139,6 +170,7 @@ def test_route_i18n_lingua():
     assert r.status_code == 200 and "javascript" in r.content_type
     assert r.get_data(as_text=True) == seo_i18n.i18n_lang_js("fr")
     assert "immutable" in r.headers["Cache-Control"]
+    assert r.headers["X-Robots-Tag"] == "noindex"
     assert c.get("/i18n/xx.js").status_code == 404
 
 

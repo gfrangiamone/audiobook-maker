@@ -827,6 +827,9 @@ def i18n_lang_js(lang):
     return js, 200, {
         "Content-Type": "application/javascript; charset=utf-8",
         "Cache-Control": "public, max-age=31536000, immutable",
+        # Risorsa della pagina, non una pagina: Google la scarica per il
+        # rendering ma non deve metterla fra le candidate all'indice.
+        "X-Robots-Tag": "noindex",
     }
 
 

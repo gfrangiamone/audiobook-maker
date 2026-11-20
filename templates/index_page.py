@@ -49,9 +49,14 @@ _FRAGMENT_ORDER = [
     "html_tail.html",
 ]
 
-def _i18n_fragment(lang: str, version: str) -> str:
+def _i18n_fragment(lang: str) -> str:
     """i18n della home di `lang` piu' `I18N_SRC`, gli URL delle lingue non
-    incluse. L'impronta del contenuto nell'URL permette la cache di un anno."""
+    incluse. L'impronta del contenuto nell'URL permette la cache di un anno.
+
+    Nell'URL sta solo l'impronta, non la versione dell'app: con la versione
+    ogni deploy creava sei URL nuovi a contenuto identico, che i browser
+    riscaricavano e Google riscansionava (97 delle 129 pagine "scansionate ma
+    non indicizzate" in Search Console, 16/11/2026)."""
     from templates import seo_i18n
     page = seo_i18n.i18n_page_js(lang)
     src = {}
@@ -60,7 +65,7 @@ def _i18n_fragment(lang: str, version: str) -> str:
         if js is None or f"\nL.{lc}={{" in page:
             continue
         digest = hashlib.sha1(js.encode("utf-8")).hexdigest()[:8]
-        src[lc] = f"/i18n/{lc}.js?v={version or '3.3'}.{digest}"
+        src[lc] = f"/i18n/{lc}.js?v={digest}"
     return page + "var I18N_SRC=" + json.dumps(src) + ";\n"
 
 
@@ -109,7 +114,7 @@ def build_html_template(
     parts = []
     for fname in _FRAGMENT_ORDER:
         if fname == "i18n_data.js":
-            parts.append(_i18n_fragment(lang, version))
+            parts.append(_i18n_fragment(lang))
             continue
         fpath = _FRAGMENTS_DIR / fname
         parts.append(fpath.read_text(encoding="utf-8"))

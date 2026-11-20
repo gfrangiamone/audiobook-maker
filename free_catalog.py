@@ -757,6 +757,15 @@ def _app_button(href, t, cls):
             f'{_esc(t["app_library_btn"])}</a>')
 
 
+def _shelf_after(books, slug, n=8):
+    """Gli `n` libri che seguono `slug` nell'elenco, a giro. Con i primi `n`
+    fissi ogni scheda linkava gli stessi titoli e gli altri restavano col solo
+    link dell'indice: 59 schede scoperte ma mai scansionate (Search Console,
+    16/11/2026). A rotazione ogni scheda riceve link da altre `n`."""
+    i = next((k for k, o in enumerate(books) if o["slug"] == slug), -1)
+    return [o for o in books[i + 1:] + books[:max(i, 0)] if o["slug"] != slug][:n]
+
+
 def _related_html(lang, b, t):
     others = [o for o in _published(lang)
               if o["slug"] != b["slug"] and o["author"]["name"] == b["author"]["name"]]
@@ -884,7 +893,7 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
     if b["voice_id"]:
         cta_q = {"voice": b["voice_id"], **cta_q}
     cta = "/?" + urllib.parse.urlencode(cta_q)
-    more = [o for o in _published(lang) if o["slug"] != b["slug"]][:8]
+    more = _shelf_after(_published(lang), b["slug"])
     body = page_brand.render_page("free_catalog_book.html", {
         "__BACKDROP__": (f' style="--cover:url(\'{_esc(b["cover"]["url"])}\')"'
                          if b["cover"]["url"] else ""),
