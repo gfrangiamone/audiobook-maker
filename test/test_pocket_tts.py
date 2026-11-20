@@ -304,6 +304,32 @@ def test_presynth_contabilizza_i_chunk_mentre_sintetizza(monkeypatch, tmp_path):
                                     "model_key": "v1"}
 
 
+def test_presynth_deposita_il_riporto_che_sopravvive_al_riavvio(monkeypatch, tmp_path):
+    # Job 4GyekLee: riavvio a meta' pre-sintesi, l'audit contava 767k caratteri
+    # su 1,66M pagati perche' il riporto si scriveva solo all'assemblaggio.
+    import cost_carry
+    monkeypatch.setenv("ABM_COST_CARRY_EVERY", "3")
+    plan = [{"text": f"chunk {i}"} for i in range(7)]
+    job, riporti = {"pocket_actual": ge._new_direct_actual()}, []
+
+    def _fake(text, voice, path, emotion=None, rate="+0%", failure_info=None):
+        riporti.append(cost_carry.read(tmp_path, "pocket").get("chars", 0))
+        return {"success": True, "bytes_written": 48000, "sample_rate": 24000,
+                "billable_chars": len(text)}
+
+    monkeypatch.setattr(ge, "generate_chunk_pcm_pocket", _fake)
+    monkeypatch.setattr(pocket_tts, "per_job_concurrency", lambda: 1)
+    # interruzione dopo 4 chunk sintetizzati
+    with pytest.raises(ge._CancelledError):
+        ge._direct_presynth(job, "pocket", plan, tmp_path, VOICE, emotion=None, rate="+0%",
+                            check_cancelled=lambda: len(riporti) >= 4, start_time=0.0)
+    assert riporti == [0, 0, 0, 21]                   # depositato ogni 3 chunk
+    # il coda (chunk 3) arriva col finally, poi il tentativo successivo riparte da li'
+    nuovo = cost_carry.resume(tmp_path, "pocket", ge._new_direct_actual())
+    assert nuovo["chars"] == 28 and nuovo["billable_chars"] == 28
+    assert nuovo["audio_seconds"] == 4.0
+
+
 def test_actual_and_audit_record(monkeypatch):
     job = {"pocket_actual": ge._new_direct_actual()}
     ge._accumulate_direct_actual(job, "pocket", {"text": "ciao"},

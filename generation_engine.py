@@ -5502,11 +5502,18 @@ def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
         job["progress_message"] = "In attesa di uno slot disponibile..."
     done = total - len(todo)            # i riusati contano come gia' fatti
     done_lock = threading.Lock()
+    # Riporto del costo su disco anche qui: la pre-sintesi e' TUTTA la sintesi
+    # di un motore diretto, e il `_carry_tick` dell'assemblaggio arriva dopo.
+    # Un riavvio a meta' (Pocket: ore di coda) perdeva i caratteri gia'
+    # sintetizzati e l'audit contava solo l'ultimo tentativo (job 4GyekLee:
+    # 767k su 1,66M pagati).
+    carry_every = cost_carry.flush_every()
+    synth = 0
     ticket = _open_book_ticket(job, engine, job_id, voice, todo, check_cancelled)
     chunk_kw = {"book": ticket} if ticket is not None else {}
 
     def _pre_one(ib):
-        nonlocal done
+        nonlocal done, synth
         idx, blk = ib
         # Cancellazione durante la pre-sintesi: interrompe subito la
         # sottomissione di nuove chiamate API (stop billing). L'eccezione
@@ -5525,6 +5532,9 @@ def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
             # admin legge `job['<motore>_actual']`, e un libro in coda di
             # lavorazione restava a 0 caratteri e 0 secondi per ore.
             _accumulate_direct_actual(job, engine, blk, res)
+            synth += 1
+            if synth % carry_every == 0:
+                cost_carry.write(work_dir, engine, job.get(f"{engine}_actual"))
         job["progress_current"] = 2 + d
         job["progress_message"] = f"Synthesizing audio: chunk {d}/{total}"
         job["elapsed_seconds"] = round(time.time() - start_time)
@@ -5537,6 +5547,10 @@ def _direct_presynth(job, engine, plan, work_dir, voice, emotion, rate,
                 out[idx] = res
                 _note_direct_sample_rate(job, engine, res)
     finally:
+        # Coda fra l'ultimo multiplo e la fine (o l'errore): l'assemblaggio
+        # che segue puo' morire prima del suo primo tick.
+        if synth % carry_every:
+            cost_carry.write(work_dir, engine, job.get(f"{engine}_actual"))
         if ticket is not None:
             ticket.close()
     job["progress_message"] = "Assembling audio..."
