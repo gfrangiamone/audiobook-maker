@@ -86,6 +86,18 @@ def test_segnaposto_delle_illustrazioni_di_ebookmaker_non_si_leggono():
     assert "Abbildung" not in text and "Aufruhr" in text and "Ein Satz" in text
 
 
+def test_segnaposto_ripetuti_con_suffisso_numerico_non_si_leggono():
+    # Don Quixote (catalogo, 20/11/2026): 197 "Full Size" su img_images_enlarge.jpg_N.
+    html = ('<html><body><p><a id="id-1"><span id="img_images_enlarge.jpg">Full Size</span></a></p>'
+            '<p>In a village of La Mancha.</p>'
+            '<p><a id="id-2"><span id="img_images_enlarge.jpg_12">Full Size</span></a></p>'
+            '<p><span id="img_12">Resta qui.</span></p><p>Una frase <span id="pic.jpg_x">anche</span>.</p>'
+            '</body></html>')
+    text = E.html_to_text(html)
+    assert "Full Size" not in text and "La Mancha" in text
+    assert "Resta qui" in text and "Una frase anche" in text
+
+
 _NOVELLA = "„Vierundzwanzig braune Sklaven ruderten die prächtige Galeere“, las die Kleine. " * 4
 
 

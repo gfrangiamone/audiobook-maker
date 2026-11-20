@@ -351,8 +351,11 @@ _PG_END_LINE_MAX_CHARS = 300
 
 # Immagini dell'EPUB "senza immagini" di Project Gutenberg: ebookmaker mette al
 # loro posto <span id="img_images_p53.jpg">Abbildung: Hochzeitsfeier</span>, e
-# Die Judenbuche leggeva 28 didascalie (catalogo gratuito, 08/11/2026).
-_EBOOKMAKER_IMG_ID_RE = re.compile(r"^img_.+\.(?:jpe?g|png|gif|svg|webp)$", re.IGNORECASE)
+# Die Judenbuche leggeva 28 didascalie (catalogo gratuito, 08/11/2026). La
+# stessa immagine ripetuta prende il suffisso _1, _2...: Don Quixote (pg996) ha
+# un link "Full Size" a ogni illustrazione, tutti su img_images_enlarge.jpg_N,
+# e ne leggeva 197 (catalogo gratuito, 20/11/2026).
+_EBOOKMAKER_IMG_ID_RE = re.compile(r"^img_.+\.(?:jpe?g|png|gif|svg|webp)(?:_\d+)?$", re.IGNORECASE)
 
 # Frontespizio dell'edizione trascritta in testa al libro: editore, tiratura,
 # "Alle Rechte vorbehalten / Copyright 1926 by S. Fischer Verlag", tipografo,
