@@ -13,6 +13,9 @@
   .tab-bar{display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #334155}
   .tab-btn{padding:10px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent;margin-bottom:-2px}
   .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+  /* Schermi stretti: le sei schede non stanno in riga, al loro posto una select
+     nativa (16px: sotto questa misura iOS zooma la pagina al focus). */
+  select.tab-select{display:none;margin-bottom:16px;padding:10px 12px;font-size:16px;font-weight:600;border-color:var(--accent)}
   .tab-panel{display:none}
   .tab-panel.active{display:block}
   .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
@@ -76,8 +79,8 @@
   @media(max-width:900px){
     body{padding:12px}
     .panel{padding:14px}
-    .tab-bar{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
-    .tab-btn{flex:0 0 auto}
+    .tab-bar{display:none}
+    select.tab-select{display:block}
     .top-totals{width:100%}
     .top-total{flex:1 1 140px;min-width:0}
     .top-total-value{font-size:1.2rem}
@@ -159,6 +162,15 @@
   <button type="button" class="tab-btn" data-tab="subscriptions">Abbonamenti</button>
   <button type="button" class="tab-btn" data-tab="accounts">Utenti registrati</button>
 </div>
+<!-- Sotto i 900px sostituisce la barra a schede (vedi select.tab-select). -->
+<select id="tabSelect" class="tab-select" aria-label="Sezione">
+  <option value="tts">Audit TTS</option>
+  <option value="translations">Audit Traduzioni</option>
+  <option value="optimization">Audit AI Optimization</option>
+  <option value="voices">Voci campionate</option>
+  <option value="subscriptions">Abbonamenti</option>
+  <option value="accounts">Utenti registrati</option>
+</select>
 
 <div class="tab-panel active" id="tab_tts">
   <div class="panel">
@@ -1945,6 +1957,7 @@
     document.querySelectorAll(".tab-btn").forEach(b => {
       b.classList.toggle("active", b.dataset.tab === name);
     });
+    $("tabSelect").value = name;
     document.querySelectorAll(".tab-panel").forEach(p => {
       p.classList.toggle("active", p.id === "tab_" + name);
     });
@@ -1973,6 +1986,7 @@
   document.querySelectorAll(".tab-btn").forEach(b => {
     b.addEventListener("click", () => showTab(b.dataset.tab));
   });
+  $("tabSelect").addEventListener("change", (e) => showTab(e.target.value));
 
   // Default periodo: il mese arrivato in query string dal pannello Activity
   // Log (`/admin/audit-premium?2026-08`, stessa convenzione dell'export),
