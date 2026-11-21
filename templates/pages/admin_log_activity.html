@@ -172,6 +172,14 @@ __P32__
                 <button class="lst-btn" data-tab="quality" onclick="lsTab('quality',this)">Qualità</button>
                 <button class="lst-btn" data-tab="reliability" onclick="lsTab('reliability',this)">Affidabilità</button>
             </div>
+            <!-- Schermi stretti: la barra a schede va a capo e non si usa bene,
+                 al suo posto una select nativa (vedi @media sotto). -->
+            <select id="lstSelect" class="lst-select" aria-label="Sezione" onchange="lsTab(this.value,null)">
+                <option value="job">Job &amp; code</option>
+                <option value="machine">Macchina</option>
+                <option value="quality">Qualità</option>
+                <option value="reliability">Affidabilità</option>
+            </select>
         </div>
         <div class="ls-body">
             <div id="lsCoverage" class="ls-coverage"></div>
@@ -213,6 +221,16 @@ __P32__
            padding:8px 12px; font-size:.78rem; cursor:pointer; }
 .lst-btn:hover { color:var(--text); }
 .lst-btn.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
+/* 16px: sotto questa misura iOS zooma la pagina al focus della select */
+.lst-select { display:none; width:100%; margin-bottom:12px; padding:9px 12px; font-family:inherit;
+              font-size:16px; font-weight:600; color:var(--text); background:var(--surface2);
+              border:1px solid var(--accent); border-radius:8px; }
+@media(max-width:600px){
+.lst-bar { display:none; }
+.lst-select { display:block; }
+.ls-head { padding:14px 14px 0; }
+.ls-body { padding:12px 14px 18px; }
+}
 .ls-coverage { font-size:.7rem; color:var(--orange); margin-bottom:10px; min-height:1em; }
 .ls-cards { display:flex; flex-direction:column; gap:14px; }
 .ls-sec + .ls-sec { margin-top:4px; }
@@ -748,6 +766,8 @@ function lsTab(name, btn) {
     document.querySelectorAll('.lst-btn[data-tab]').forEach(b => b.classList.remove('active'));
     const target = btn || document.querySelector('.lst-btn[data-tab="' + name + '"]');
     if (target) target.classList.add('active');
+    const sel = document.getElementById('lstSelect');
+    if (sel) sel.value = name;
     document.querySelectorAll('#lsCards .ls-pane').forEach(p => {
         p.style.display = (p.dataset.pane === name) ? '' : 'none';
     });
