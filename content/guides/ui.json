@@ -1,0 +1,30 @@
+{
+ "it": {
+  "footer_tagline": "Convertitore gratuito e open source da EPUB/PDF ad audiolibro. Oltre 400 voci AI, più di 50 lingue.",
+  "footer_cta": "Inizia a convertire"
+ },
+ "en": {
+  "footer_tagline": "Free, open-source EPUB/PDF to audiobook converter. 400+ AI voices, 50+ languages.",
+  "footer_cta": "Start converting"
+ },
+ "fr": {
+  "footer_tagline": "Convertisseur gratuit et open source d'EPUB/PDF en livre audio. Plus de 400 voix IA, plus de 50 langues.",
+  "footer_cta": "Commencer la conversion"
+ },
+ "es": {
+  "footer_tagline": "Conversor gratuito y de código abierto de EPUB/PDF a audiolibro. Más de 400 voces de IA, más de 50 idiomas.",
+  "footer_cta": "Empezar a convertir"
+ },
+ "de": {
+  "footer_tagline": "Kostenloser Open-Source-Konverter von EPUB/PDF zu Hörbuch. Über 400 KI-Stimmen, mehr als 50 Sprachen.",
+  "footer_cta": "Jetzt konvertieren"
+ },
+ "zh": {
+  "footer_tagline": "免费开源的 EPUB/PDF 转有声书工具。400 多种 AI 语音，50 多种语言。",
+  "footer_cta": "开始转换"
+ },
+ "hi": {
+  "footer_tagline": "EPUB/PDF को ऑडियोबुक में बदलने वाला मुफ़्त, ओपन-सोर्स कन्वर्टर। 400+ AI आवाज़ें, 50+ भाषाएँ।",
+  "footer_cta": "कन्वर्ट करना शुरू करें"
+ }
+}

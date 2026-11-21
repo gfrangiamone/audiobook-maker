@@ -31,6 +31,7 @@ svg:not(.store-badge svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-
 /* Su telefono la testata resta col solo titolo: i libri arrivano subito sotto;
    i titoli lunghi lasciano il posto alla loro forma breve (.fc-narrow). */
 .fc-narrow{display:none}
+.fc-narrow::before{content:attr(data-short)}
 @media (max-width:639px){.fc-hero .fc-intro,.fc-hero .fc-chips,.fc-wide{display:none}.fc-narrow{display:inline}}
 
 /* scaffale orizzontale */

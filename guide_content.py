@@ -243,8 +243,9 @@ def build_guide_html(
         ld=[article_ld, breadcrumb_ld, *extra_ld])
     body_html = (f'<article>\n<h1>{meta["h1"]}</h1>\n{article_dates_html}\n{body}\n'
                  f'<a class="cta" href="{app_home}">{cta_label} &rarr;</a>\n</article>')
-    footer = (f'<p><strong>Audiobook Maker</strong> — Free & open-source EPUB/PDF to audiobook converter. '
-              f'400+ AI voices, 50+ languages. <a href="{app_home}">Start converting</a>.</p>')
+    ui = _i18n_pick(content_json("guides", "ui.json"), lang)
+    footer = (f'<p><strong>Audiobook Maker</strong> — {ui["footer_tagline"]} '
+              f'<a href="{app_home}">{ui["footer_cta"]}</a>.</p>')
     return _brand.public_page(lang=lang, title=meta["title"], home=app_home,
                               crumb=f'{crumb_name} &rsaquo; {meta["h1"]}',
                               body=body_html, footer=footer, head=head)

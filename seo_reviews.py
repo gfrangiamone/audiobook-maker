@@ -12,6 +12,7 @@ typically well under 1 ms — safe to run on every page request.
 from __future__ import annotations
 
 import html as _html
+import re
 from datetime import datetime, timezone
 
 import community_store
@@ -256,7 +257,9 @@ def llms_txt_block() -> str:
             if ts else "n/a"
         )
         r = max(1, min(5, int(it.get("rating", 0))))
-        comment = (it.get("comment") or "").strip().replace("\n", " ")
+        # Le recensioni arrivano anche in Markdown (titoli "##", grassetti):
+        # in un file Markdown i segni spezzerebbero l'elenco.
+        comment = " ".join(re.sub(r"[#*`>_]+", " ", it.get("comment") or "").split())
         # Trim very long comments — llms.txt is a summary, not the archive.
         if len(comment) > 200:
             comment = comment[:197].rstrip() + "..."

@@ -382,6 +382,23 @@ def sitemap_entries(base_url):
     return out
 
 
+def llms_section(base_url, sample=6):
+    """Sezione Markdown del catalogo per /llms.txt: una riga per lingua con il
+    numero di audiolibri pubblicati e i primi `sample` titoli. Vuota se non
+    c'e' nessun libro pubblicato."""
+    lines = []
+    for lang in LANGS:
+        pubs = _published(lang)
+        if not pubs:
+            continue
+        titles = "; ".join(f"{b['title']} ({b['author']['name']})" for b in pubs[:sample])
+        lines.append(f"- [{LANG_NAMES.get(lang, lang)} ({lang})]({base_url}{PATH}/{lang}/): "
+                     f"{len(pubs)} audiobooks, e.g. {titles}.")
+    if not lines:
+        return ""
+    return page_brand.render_page("llms_catalog.txt", {"__P0__": base_url, "__P1__": "\n".join(lines)})
+
+
 # --- presentazione -----------------------------------------------------------
 
 def _t(lang):
@@ -561,8 +578,10 @@ def _shelf(items, t, title, short=None):
         return ""
     heading = _esc(title)
     if short:
+        # La forma breve sta in un attributo e la scrive il CSS: nel testo
+        # della pagina i due titoli di fila si leggevano come uno solo.
         heading = (f'<span class="fc-wide">{heading}</span>'
-                   f'<span class="fc-narrow">{_esc(short)}</span>')
+                   f'<span class="fc-narrow" data-short="{_esc(short)}"></span>')
     cards = "\n".join(page_brand.render_page("free_catalog_shelf_item.html", {
         "__HREF__": f"{PATH}/{lang}/{_esc(b['slug'])}/", "__LANG__": _esc(lang),
         "__LANG_PILL__": _lang_pill(lang, t),
@@ -695,12 +714,18 @@ def _catalog_html(ui_lang, base_url, *, preset, canonical_path, path=None, promo
     # Le pagine per lingua sono alternative fra loro; x-default e' l'indice unico.
     alternates = page_brand.hreflang_links(
         lambda l: f"{base_url}{PATH}/{l}/", f"{base_url}{PATH}/", langs={l: l for l in langs})
+    # L'elenco per i motori: i libri pubblicati della lingua della pagina
+    # (tutti nell'indice unico), ognuno con l'URL della sua scheda.
+    listed = [(f"{b['title']} - {b['author']['name']}", f"{base_url}{PATH}/{l}/{b['slug']}/")
+              for l, b in pubs if not promo_lang or l == promo_lang]
+    ld = [seo_ld.breadcrumb_ld([("Audiobook Maker", f"{base_url}/"), (t["crumb"], canonical)])]
+    if listed:
+        ld.append(seo_ld.item_list_ld(listed, name=t["hub_h1"]))
     head = page_brand.seo_head(
         desc=_esc(t["hub_desc"]), canonical=canonical, hreflang=alternates, og_type="website",
         og_title=_esc(t["hub_title"]), og_desc=_esc(t["hub_desc"]), og_url=canonical,
         og_image=og_image_url(base_url), lang=_lang_ok(ui_lang),
-        ld=[seo_ld.ld_json(seo_ld.breadcrumb_ld([
-            ("Audiobook Maker", f"{base_url}/"), (t["crumb"], canonical)]))])
+        ld=[seo_ld.ld_json(x) for x in ld])
     return page_brand.public_page(
         lang=ui_lang, title=_esc(t["hub_title"]), crumb=_esc(t["crumb"]), body=body,
         footer=_footer(t), head=head, css=_css(),
@@ -930,7 +955,9 @@ def book_html(lang, slug, base_url, qr_data_uri, *, app_url=None, stores_html=""
         "__MORE__": _shelf([(lang, x) for x in more], t, t["shelf_more"]),
         "__BACK_HREF__": hub, "__BACK__": _esc(t["back"]),
     })
-    desc = t["book_desc"].format(title=b["title"], author=b["author"]["name"])
+    desc = t["book_desc"].format(title=b["title"], author=b["author"]["name"],
+                                 duration=_duration(f["duration_s"], t),
+                                 chapters=t["chapters_n"].format(n=len(f["chapters"])))
     content_url = base_url + download_path(lang, b)
     ld = [seo_ld.audiobook_ld(
               name=b["title"], author=b["author"]["name"],

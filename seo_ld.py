@@ -95,6 +95,16 @@ def breadcrumb_ld(items):
                                 for i, (name, url) in enumerate(items, 1)]}
 
 
+def item_list_ld(items, *, name=None):
+    """`ItemList` da coppie (nome, url) in ordine: l'elenco di una pagina indice."""
+    ld = {"@context": "https://schema.org", "@type": "ItemList", "numberOfItems": len(items),
+          "itemListElement": [{"@type": "ListItem", "position": i, "name": item_name, "url": url}
+                              for i, (item_name, url) in enumerate(items, 1)]}
+    if name:
+        ld["name"] = name
+    return ld
+
+
 def iso_duration(seconds):
     """Durata ISO 8601 (`PT2H5M`) da secondi; minuti arrotondati, minimo `PT1M`."""
     minutes = max(1, int(float(seconds or 0) / 60.0 + 0.5))

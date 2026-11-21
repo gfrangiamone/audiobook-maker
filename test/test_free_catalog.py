@@ -313,7 +313,7 @@ def test_scaffale_dei_nuovi_solo_per_i_libri_degli_ultimi_tre_giorni(catalog, cl
     assert "Nuovi audiolibri aggiunti al catalogo!" in page and "Disponibili ora" not in page
     # Su telefono il titolo lungo lascia il posto a quello breve (CSS).
     assert ('<h2><span class="fc-wide">Nuovi audiolibri aggiunti al catalogo!</span>'
-            '<span class="fc-narrow">Novità!</span></h2>') in shelf
+            '<span class="fc-narrow" data-short="Novità!"></span></h2>') in shelf
     assert "storia-di-una-capinera" in shelf and "/vecchio/" not in shelf
     # Frecce al posto della barra: nascoste finche' il JS non sa se servono.
     assert re.search(r'<button[^>]*fc-shelf-prev[^>]*aria-label="Libri precedenti" hidden>', shelf)
@@ -831,3 +831,46 @@ def test_una_licenza_sconosciuta_resta_com_e(catalog):
     page = free_catalog.book_html("it", "storia-di-una-capinera", "https://abm.test",
                                   lambda text: "", ui="fr")
     assert "pubblico dominio" in page
+
+def test_hub_ha_l_elenco_itemlist_dei_libri_pubblicati(catalog, client):
+    page = client.get("/free-audiobooks/it/").get_data(as_text=True)
+    lds = [json.loads(x) for x in re.findall(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)]
+    lista = next(x for x in lds if x["@type"] == "ItemList")
+    # Solo i pubblicati: il libro in arrivo non ha scheda.
+    assert lista["numberOfItems"] == 1 and len(lista["itemListElement"]) == 1
+    voce = lista["itemListElement"][0]
+    assert voce["position"] == 1 and voce["name"] == "Storia di una capinera - Giovanni Verga"
+    assert voce["url"].endswith("/free-audiobooks/it/storia-di-una-capinera/")
+
+
+def test_item_list_ld():
+    ld = seo_ld.item_list_ld([("A", "https://x/a/"), ("B", "https://x/b/")], name="Elenco")
+    assert ld["@type"] == "ItemList" and ld["numberOfItems"] == 2 and ld["name"] == "Elenco"
+    assert [e["position"] for e in ld["itemListElement"]] == [1, 2]
+    assert "name" not in seo_ld.item_list_ld([])
+
+
+def test_descrizione_della_scheda_con_durata_e_capitoli(catalog, client):
+    page = client.get("/free-audiobooks/it/storia-di-una-capinera/").get_data(as_text=True)
+    desc = re.search(r'<meta name="description" content="([^"]*)"', page).group(1)
+    assert "(3 h 30 min, 2 capitoli)" in desc and desc.startswith("Audiolibro gratis di")
+
+
+def test_book_desc_ha_i_segnaposto_in_tutte_le_lingue():
+    for lang, t in i18n.load("free_catalog").items():
+        for ph in ("{title}", "{author}", "{duration}", "{chapters}"):
+            assert ph in t["book_desc"], (lang, ph)
+
+
+def test_llms_txt_presenta_il_catalogo(catalog, client):
+    body = client.get("/llms.txt").get_data(as_text=True)
+    assert "## Free audiobook catalog" in body and "__P2__" not in body
+    assert "/free-audiobooks/it/): 1 audiobooks, e.g. Storia di una capinera (Giovanni Verga)." in body
+    assert "UI languages: Italian, English, French, Spanish, German, Chinese, Hindi." in body
+
+
+def test_llms_txt_senza_catalogo_non_ha_la_sezione(monkeypatch, client):
+    monkeypatch.delenv("ABM_FREE_CATALOG_SOURCE", raising=False)
+    free_catalog.invalidate_cache()
+    body = client.get("/llms.txt").get_data(as_text=True)
+    assert "## Free audiobook catalog" not in body and "__P2__" not in body

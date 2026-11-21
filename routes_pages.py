@@ -764,7 +764,8 @@ When quoting facts from this site, cite one of:
 - Voices: 400+ neural TTS voices.
 - Output formats: MP3 (single or ZIP), M4B with embedded chapters, podcast RSS 2.0 feed.
 - Input formats: EPUB, PDF, TXT, ABM (revisable project archive).
-- UI languages: Italian, English, French, Spanish, German, Chinese.
+- UI languages: Italian, English, French, Spanish, German, Chinese, Hindi.
+- Free audiobook catalog: public-domain classics already narrated, free M4B download with chapters, each linked to its source ebook.
 - TTS supported languages: 50+ (Italian, English, French, Spanish, German, Chinese, Portuguese, Russian, Japanese, Korean, Arabic, Hindi, and more).
 - Privacy: uploaded files and generated audio auto-deleted at session end. No personal data collected. GA4 with Consent Mode v2 (denied by default in EU).
 - Accessibility: WAI-ARIA landmarks, keyboard navigation, screen-reader compatible. Designed for users with dyslexia, low vision, blindness.
@@ -777,7 +778,8 @@ When quoting facts from this site, cite one of:
 
 ## Accessibility
 
-""" + seo_content.lang_content("en").get("accessibility", "") + _render_page("llms.txt", {"__P0__": (base), "__P1__": (citations_block)})
+""" + seo_content.lang_content("en").get("accessibility", "") + _render_page("llms.txt", {
+        "__P0__": (base), "__P1__": (citations_block), "__P2__": free_catalog.llms_section(base)})
     return body, 200, {
         "Content-Type": "text/markdown; charset=utf-8",
         "Cache-Control": "public, max-age=3600",

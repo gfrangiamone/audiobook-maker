@@ -9,7 +9,7 @@
 
 ## Languages
 
-- **UI languages**: Italian, English, French, Spanish, German, Chinese (Simplified).
+- **UI languages**: Italian, English, French, Spanish, German, Chinese (Simplified), Hindi.
 - **TTS languages**: 50+ including Italian, English, French, Spanish, German, Chinese, Portuguese, Russian, Japanese, Korean, Arabic, Hindi, Dutch, Polish, Turkish, Swedish, Greek, Hebrew, Thai, Vietnamese, and more.
 
 ## Application (homepage)
@@ -21,7 +21,7 @@
 - [Audiobook Maker — German](__P0__/de/): App auf Deutsch.
 - [Audiobook Maker — Chinese](__P0__/zh/): 中文界面.
 - [Audiobook Maker — Hindi](__P0__/hi/): हिन्दी इंटरफ़ेस.
-
+__P2__
 ## Guides
 
 - [How to Convert EPUB to Audiobook](__P0__/guide/epub-to-audiobook/): Step-by-step EPUB-to-audiobook conversion tutorial, with the best free voices for each language (regional variants included), MP3 vs M4B, Kindle/DRM and PDF notes. Available in English, Italian, French, Spanish, German, Chinese and Hindi.
