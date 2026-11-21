@@ -91,6 +91,10 @@ def job_piccolo(motore):
 def stima(client, job_id, **extra):
     corpo = {"job_id": job_id, "voice_id": VOCE, "ai_opt_enabled": False}
     corpo.update(extra)
+    # La stima controlla il proprietario del job (audit 21/11/2026).
+    _owner = (audiobook_app.jobs.get(job_id) or {}).get("client_id")
+    if _owner:
+        client.set_cookie(audiobook_app._CLIENT_COOKIE_NAME, _owner)
     return client.post("/api/combined_estimate", json=corpo).get_json()
 
 

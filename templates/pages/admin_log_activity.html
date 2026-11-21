@@ -985,11 +985,9 @@ if (document.querySelectorAll('.live-timer').length > 0) {
 }
 
 //  -  -  Admin: sospensione nuovi processi  -  -
-// Token admin per le API: header X-Admin-Token (il server NON accetta più il
-// token in query string). localStorage è persistito 30gg dal gate /admin/login,
-// così l'header è popolato anche in tab/sessioni nuove (sessionStorage vuoto).
-const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
-                    localStorage.getItem('abm_admin_token') || '';
+// Le API admin si autenticano col cookie HttpOnly di /admin/login: il token
+// non sta in sessionStorage/localStorage (lo leggerebbe qualunque script).
+const ADMIN_TOKEN = '';
 
 function updateSuspendButton(suspended) {
     const btn = document.getElementById('btnSuspend');

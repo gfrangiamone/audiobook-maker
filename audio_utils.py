@@ -86,6 +86,10 @@ def _generate_silence_mp3(output_path, duration_sec=3):
     return os.path.exists(output_path)
 
 
+_SQ = chr(39)
+_SQ_ESC = _SQ + chr(92) + _SQ + _SQ
+
+
 def _concatenate_mp3(parts, output, extra_tags=None):
     """Concatena una lista di file MP3 in un singolo file output.
 
@@ -98,7 +102,9 @@ def _concatenate_mp3(parts, output, extra_tags=None):
         list_file = output + ".filelist.txt"
         with open(list_file, "w") as f:
             for p in parts:
-                f.write(f"file '{p}'\n")
+                # Dentro gli apici del formato concat un apostrofo si scrive
+                # chiudendo, mettendo l'apostrofo protetto e riaprendo.
+                f.write("file '" + str(p).replace(_SQ, _SQ_ESC) + "'\n")
         result = ffmpeg_tools.run_ffmpeg(
             ["-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy"]
             + _extra_tag_args(extra_tags) + [output])

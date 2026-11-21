@@ -514,6 +514,25 @@ def api_share_create():
                     "ttl_sec": _share_ttl_sec()})
 
 
+def _looks_like_audio(head):
+    """True se i primi byte sono di un contenitore MP4/M4B (`ftyp`) o di un
+    MP3 (tag ID3 o sync di frame)."""
+    head = bytes(head or b"")
+    return (head[4:8] == b"ftyp" or head[:3] == b"ID3"
+            or (len(head) > 1 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0))
+
+
+def _drop_share_upload(share_id, key, why):
+    """Upload rifiutato in finalize: via l'oggetto da R2 e il record pending."""
+    try:
+        storage_backend.delete_object(key)
+    except Exception as e:
+        print(f"[share] delete {why} failed: {e}")
+    with _tkstore.share_lock:
+        _tkstore.share_tokens.pop(share_id, None)
+    _tkstore.save_share_tokens()
+
+
 @bp.route("/api/share/finalize", methods=["POST"])
 def api_share_finalize():
     """Conferma che l'upload presigned è completo: verifica esistenza e
@@ -541,15 +560,22 @@ def api_share_finalize():
     if size is None:
         return jsonify({"error": "not_uploaded", "error_code": "not_uploaded"}), 400
     if size > _share_max_bytes():
-        try:
-            storage_backend.delete_object(key)
-        except Exception as e:
-            print(f"[share] delete oversize failed: {e}")
-        with _tkstore.share_lock:
-            _tkstore.share_tokens.pop(share_id, None)
-        _tkstore.save_share_tokens()
+        _drop_share_upload(share_id, key, "oversize")
         return jsonify({"error": "too_large", "error_code": "too_large",
                         "max_bytes": _share_max_bytes()}), 413
+    # L'upload e' un PUT diretto su R2, senza vincoli: qui si accetta solo
+    # audio (M4B/MP3), altrimenti il link pubblico /s/<token> distribuirebbe
+    # per conto del sito qualunque file caricato da un cid inventato.
+    head = storage_backend.get_range(key, 0, 15)
+    if not head:
+        # get_range torna vuoto su errore: l'oggetto esiste (size sopra),
+        # quindi e' un guasto di lettura e l'upload non si butta.
+        print(f"[share] get_range empty for {key}")
+        return jsonify({"error": "storage_error", "error_code": "storage_error"}), 502
+    if not _looks_like_audio(head):
+        _drop_share_upload(share_id, key, "not_audio")
+        return jsonify({"error": "unsupported_file",
+                        "error_code": "unsupported_file"}), 415
     stok = secrets.token_urlsafe(24)
     now = time.time()
     with _tkstore.share_lock:

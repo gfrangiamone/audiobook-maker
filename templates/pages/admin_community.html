@@ -126,9 +126,8 @@ tr.archived{opacity:.45}
 
 <script src="/static/js/news_md.js"></script>
 <script>
-const TOKEN=localStorage.getItem('abm_admin_token')||new URLSearchParams(location.search).get('token')||'';
-if(!TOKEN){alert('Admin token mancante');}else{localStorage.setItem('abm_admin_token',TOKEN);}
-const HDR={'X-Admin-Token':TOKEN,'Content-Type':'application/json'};
+// Autenticazione col cookie HttpOnly di /admin/login: niente token in URL o storage.
+const HDR={'Content-Type':'application/json'};
 function esc(s){return (s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
 function fmtDate(ts){return new Date(ts*1000).toLocaleString();}
 

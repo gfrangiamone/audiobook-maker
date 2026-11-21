@@ -109,6 +109,24 @@ def _log_activity(*a, **k):
     return _cfg["_log_activity"](*a, **k)
 
 
+# Codici sbagliati (login e cancellazione account): per rete e per email, su
+# tutti i codici emessi. Le verifiche riuscite non contano.
+VERIFY_RL_IP_PER_MIN, VERIFY_RL_IP_PER_HOUR = 10, 40
+VERIFY_RL_EMAIL_PER_MIN, VERIFY_RL_EMAIL_PER_HOUR = 5, 10
+
+
+def _verify_blocked(email, record=False):
+    """Secondi di attesa se rete o email hanno gia' troppi codici sbagliati,
+    altrimenti None. Con `record=True` conta un tentativo fallito."""
+    for bucket, key, per_min, per_hour in (
+            ("auth_verify", client_ip(), VERIFY_RL_IP_PER_MIN, VERIFY_RL_IP_PER_HOUR),
+            ("auth_verify_email", email, VERIFY_RL_EMAIL_PER_MIN, VERIFY_RL_EMAIL_PER_HOUR)):
+        ok, retry = _ip_rl_check(bucket, key, per_min, per_hour, record=record)
+        if not ok and not record:
+            return max(1, int(retry or 1))
+    return None
+
+
 def _acct_err(code, msg, status, **extra):
     return jsonify({"error": msg, "error_code": code, **extra}), status
 
@@ -371,7 +389,15 @@ def api_auth_verify():
     if token:
         status, acct = accounts.verify(token=token, purpose="login")
     elif email and code:
+        # I 5 tentativi per codice non bastano: chiedendo un codice nuovo se
+        # ne ottengono altri 5. Tetto per rete e per email su tutti i codici.
+        retry = _verify_blocked(email)
+        if retry is not None:
+            return _acct_err("rate_limited", "Too many attempts, try later", 429,
+                             retry_after=retry)
         status, acct = accounts.verify(email=email, code=code, purpose="login")
+        if status != "ok":
+            _verify_blocked(email, record=True)
     else:
         return _acct_err("bad_request", "token or email+code required", 400)
     if status != "ok":
@@ -1132,7 +1158,13 @@ def api_account_delete_confirm():
     if token:
         status, target = accounts.verify(token=token, purpose="delete")
     elif code:
+        retry = _verify_blocked(acct["email"])
+        if retry is not None:
+            return _acct_err("rate_limited", "Too many attempts, try later", 429,
+                             retry_after=retry)
         status, target = accounts.verify(email=acct["email"], code=code, purpose="delete")
+        if status != "ok":
+            _verify_blocked(acct["email"], record=True)
     else:
         return _acct_err("bad_request", "token or code required", 400)
     if status != "ok" or not target or target["id"] != acct["id"]:

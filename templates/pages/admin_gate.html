@@ -13,22 +13,17 @@ input[type=password]{width:100%;padding:.625rem;border:1px solid #d1d5db;border-
 .hint{font-size:.75rem;color:#6b7280;margin-top:1rem;text-align:center}
 </style>
 <script>
-// Sec: il token admin non viaggia più nell'URL. POSTa a /admin/login che imposta
-// un cookie HttpOnly+Secure+SameSite=Strict; per le fetch API la pagina admin usa
-// header X-Admin-Token da sessionStorage (cookie non leggibile da JS).
+// Sec: il token admin non viaggia nell'URL e non resta in sessionStorage o
+// localStorage, dove qualunque script della pagina lo leggerebbe. /admin/login
+// imposta un cookie HttpOnly+Secure+SameSite=Strict, che il browser allega da
+// solo a ogni fetch verso le API admin. Qui si cancellano le copie lasciate
+// dalle versioni precedenti.
 (function(){
-    const tok = sessionStorage.getItem('abm_admin_token') || localStorage.getItem('abm_admin_token');
-    if(tok && !sessionStorage.getItem('abm_admin_gate_retry')){
-        sessionStorage.setItem('abm_admin_gate_retry', '1');
-        fetch('/admin/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({token: tok}),
-            credentials: 'same-origin',
-        }).then(r => {
-            if(r.ok){ window.location.reload(); }
-        }).catch(()=>{});
-    }
+    try {
+        sessionStorage.removeItem('abm_admin_token');
+        localStorage.removeItem('abm_admin_token');
+        localStorage.removeItem('abm_admin_expiry');
+    } catch(e) {}
 })();
 
 function doLogin(){
@@ -42,12 +37,6 @@ function doLogin(){
         credentials: 'same-origin',
     }).then(r => {
         if(!r.ok){ alert('Token non valido'); return; }
-        sessionStorage.setItem('abm_admin_token', tok);
-        if(remember){
-            localStorage.setItem('abm_admin_token', tok);
-            localStorage.setItem('abm_admin_expiry', (Date.now() + 30 * 86400000).toString());
-        }
-        sessionStorage.removeItem('abm_admin_gate_retry');
         window.location.reload();
     }).catch(()=>{ alert('Errore di rete'); });
 }

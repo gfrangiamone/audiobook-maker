@@ -3203,6 +3203,25 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
         print(f"[{job_id}] Failed to send refund notification email: {e}")
 
 
+def _llm_service_delivered(job):
+    """True se il servizio pagato sulla tasca LLM e' gia' in mano al cliente:
+    la traduzione e' un file consegnato, il testo ottimizzato e' stato
+    esportato. Una generazione audio che poi fallisce non lo rimborsa."""
+    return bool(job.get("translated_path") or job.get("abm_exported"))
+
+
+def _refund_llm_unless_delivered(job_id, job, reason):
+    """Rimborso della tasca LLM dopo un fallimento dell'audio (voci standard),
+    saltato se il servizio pagato e' gia' stato consegnato."""
+    if _llm_service_delivered(job):
+        print(f"[{job_id}] LLM refund skipped ({reason}): paid text already delivered")
+        return
+    try:
+        _refund_job_payment(job_id, job, reason)
+    except Exception as _ref_err:
+        print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+
+
 def _refund_job_payment(job_id, job, reason="error"):
     """Rimborsa il pagamento di un job di ottimizzazione fallito o annullato.
     - payment_type == "voucher": ri-accredita l'importo sul voucher originale.
@@ -6375,11 +6394,8 @@ def _all_chunks_failed_exit(job_id, job, voice, info, engine, failed, total):
                       reason_detail=f"all chunks failed ({failed}/{total})",
                       chunks_total=total, chunks_failed=failed)
         return
-    try:
-        # Edge: tasca LLM (payment_amount_eur), non job["payment"].
-        _refund_job_payment(job_id, job, f"all_chunks_failed: {failed}/{total}")
-    except Exception as _ref_err:
-        print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+    # Edge: tasca LLM (payment_amount_eur), non job["payment"].
+    _refund_llm_unless_delivered(job_id, job, f"all_chunks_failed: {failed}/{total}")
     _mark_pending_failed(job_id, "failed_all_chunks_refunded")
 
 
@@ -8430,10 +8446,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                               reason_detail="empty output after assembly (disk full / ffmpeg error)",
                               chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks)
                 return
-            try:
-                _refund_job_payment(job_id, job, "no_output")
-            except Exception as _ref_err:
-                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            _refund_llm_unless_delivered(job_id, job, "no_output")
             _mark_pending_failed(job_id, "failed_no_output_refunded")
             return
 

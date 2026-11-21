@@ -190,6 +190,10 @@ Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()
 
 Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREVIEW_RL_PER_MIN`, `ABM_PREVIEW_RL_PER_HOUR`, `ABM_SUPPORT_RL_PER_MIN`, `ABM_SUPPORT_RL_PER_HOUR`. Oltre soglia risponde `429` con `retry_after` in secondi.
 
+Analisi in parallelo (`audiobook_app.py:3607`, dal 21/11/2026): `ABM_ANALYZE_MAX_PARALLEL` (default 3, minimo 1, costante di avvio) e' il numero di libri in parsing nello stesso momento; una richiesta aspetta uno slot al massimo 20 s (`_ANALYZE_SLOT_WAIT_SEC`), poi riceve `429` con `error_code: server_busy`. Il parsing tiene in RAM l'archivio espanso e il processo e' uno solo.
+
+Limiti introdotti con l'audit di sicurezza del 21/11/2026 (costanti, non env): verifica del codice di accesso `routes_account.VERIFY_RL_IP_*` (10/min, 40/h per rete) e `VERIFY_RL_EMAIL_*` (5/min, 10/h per email); dispositivi delle voci campionate `routes_voice_clone.CLAIM_RL_IP` (5/min, 20/h), `CLAIM_RL_VOICE` (3/min, 6/h), `CONFIRM_RL_IP` (10/min, 30/h), `CONFIRM_RL_VOICE` (10/min, 20/h). `_ip_rl_check` conta un IPv6 per la sua /64. Copertine: `cover_utils.MAX_COVER_PIXELS` (25 MP, Pillow rifiuta oltre il doppio), `ABM_COVER_MAX_SIDE` 1400 px. Valuta delle capture PayPal: `payment.CAPTURE_CURRENCY` (`EUR`).
+
 ### 3.3.1 Sicurezza applicativa (CSRF, HSTS, archivi, MIME)
 
 | Parametro | Valore default | Env var | File | Riga |

@@ -150,6 +150,7 @@ def test_share_finalize_ok(client, monkeypatch):
                  "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
     monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size", lambda key: 1234)
+    monkeypatch.setattr(storage_backend, "get_range", lambda key, a, b: b"\x00\x00\x00\x20ftypM4B ")
     monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
     r = client.post("/api/share/finalize", headers=HDR, json={"share_id": "SID1", "filename": "x.m4b"})
     assert r.status_code == 200
@@ -416,6 +417,7 @@ def test_share_finalize_carries_fingerprint(client, monkeypatch):
     })
     monkeypatch.setattr(token_store, "save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size", lambda k: 1000)
+    monkeypatch.setattr(storage_backend, "get_range", lambda key, a, b: b"\x00\x00\x00\x20ftypM4B ")
     r = client.post("/api/share/finalize", headers=HDR,
                     json={"share_id": "SID", "filename": "x.m4b"})
     assert r.status_code == 200

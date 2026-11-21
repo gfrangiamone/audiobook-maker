@@ -120,6 +120,14 @@ _VC_ID_RE = re.compile(r"^vc_[A-Za-z0-9_\-]{4,64}$")
 RESUME_DEVICES_MAX = 10
 
 
+# Tetti (al minuto, all'ora) su richiesta e conferma di un dispositivo: per
+# rete e per voce, perche' il cid e' un valore del client.
+CLAIM_RL_IP = (5, 20)
+CLAIM_RL_VOICE = (3, 6)
+CONFIRM_RL_IP = (10, 30)
+CONFIRM_RL_VOICE = (10, 20)
+
+
 def _vc_err(code, msg, status, **extra):
     body = {"error": msg, "error_code": code}
     body.update(extra)
@@ -623,11 +631,17 @@ def api_vc_claim():
     if gate:
         return gate
     cid = _get_client_id()
-    ok, retry = _ip_rl_check("vc_claim_cid", cid or client_ip(), 5, 5)
-    if not ok:
-        return _vc_err("rate_limited", "Too many attempts, try later", 429, retry_after=retry)
     data = request.get_json(silent=True) or {}
     code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
+    # Il cid lo sceglie il client: i tetti che contano sono per rete e per
+    # voce (ogni richiesta manda un'email al proprietario).
+    ok, retry = _ip_rl_check("vc_claim_cid", cid or client_ip(), 5, 5)
+    if ok:
+        ok, retry = _ip_rl_check("vc_claim_ip", client_ip(), *CLAIM_RL_IP)
+    if ok and code:
+        ok, retry = _ip_rl_check("vc_claim_voice", code, *CLAIM_RL_VOICE)
+    if not ok:
+        return _vc_err("rate_limited", "Too many attempts, try later", 429, retry_after=retry)
     try:
         esito = voice_clone.claim(code, cid, device_name=str(data.get("device_name") or ""),
                                   identity=str(data.get("identity") or ""))
@@ -669,6 +683,14 @@ def api_vc_confirm():
     cid = _get_client_id()
     data = request.get_json(silent=True) or {}
     code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
+    # I 5 tentativi sono per cid, e un cid nuovo ne riceve altri 5: il codice
+    # a 6 cifre va protetto con un tetto per rete e uno per voce.
+    # Contano solo le conferme sbagliate (registrate piu' sotto).
+    ok, retry = _ip_rl_check("vc_confirm_ip", client_ip(), *CONFIRM_RL_IP, record=False)
+    if ok and code:
+        ok, retry = _ip_rl_check("vc_confirm_voice", code, *CONFIRM_RL_VOICE, record=False)
+    if not ok:
+        return _vc_err("rate_limited", "Too many attempts, try later", 429, retry_after=retry)
     try:
         nome = _vc_device_name(data.get("device_name"))
         esito = voice_clone.confirm(code, cid, str(data.get("confirm_code") or "").strip(),
@@ -684,6 +706,10 @@ def api_vc_confirm():
                                                          devices_url=_vc_urls(rec)["manage_url"],
                                                          device_name=nome or _vc_device_key(cid))
         return jsonify({"status": "ok", "voice": _vc_view(rec)})
+    if esito == "wrong":
+        _ip_rl_check("vc_confirm_ip", client_ip(), *CONFIRM_RL_IP)
+        if code:
+            _ip_rl_check("vc_confirm_voice", code, *CONFIRM_RL_VOICE)
     mappa = {"wrong": ("confirm_wrong", 400), "expired": ("confirm_expired", 410),
              "none": ("confirm_none", 404), "locked": ("code_locked", 423)}
     ec, sc = mappa.get(esito, ("confirm_none", 404))

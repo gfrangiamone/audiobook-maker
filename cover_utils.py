@@ -11,6 +11,38 @@ import io
 import os
 import shutil
 
+# Oltre il doppio di questo numero di pixel Pillow rifiuta l'immagine
+# (DecompressionBombError): pochi KB compressi non devono diventare GB in RAM.
+MAX_COVER_PIXELS = 25_000_000
+ABM_COVER_MAX_SIDE = 1400
+
+try:
+    from PIL import Image as _PilImage
+    _PilImage.MAX_IMAGE_PIXELS = MAX_COVER_PIXELS
+except ImportError:
+    _PilImage = None
+
+
+def save_cover_jpeg(img_data, out_path, max_size):
+    """Decodifica `img_data` con Pillow e lo riscrive come JPEG RGB entro
+    `max_size` (larghezza, altezza). True se il file e' stato scritto.
+
+    E' l'unica porta d'ingresso delle copertine che arrivano dall'utente
+    (EPUB, .abm): quel file finisce in ingresso a ffmpeg, che riconosce il
+    formato dal contenuto. Byte che Pillow non legge come immagine (una
+    playlist, un contenitore malformato) non si salvano."""
+    if _PilImage is None:
+        return False
+    try:
+        img = _PilImage.open(io.BytesIO(img_data))
+        img = img.convert("RGB")
+        img.thumbnail(max_size, _PilImage.LANCZOS)
+        img.save(out_path, "JPEG", quality=88)
+    except Exception as e:
+        print(f"[cover] image rejected: {type(e).__name__}: {e}")
+        return False
+    return True
+
 
 def _zip_safe_read(zf, path):
     """Read a file from a ZipFile, handling path separator mismatches.
@@ -341,30 +373,11 @@ def _extract_cover_for_preview(epub_path, output_dir):
         print(f"[cover] ZIP read error: {e}")
         return None, None
 
-    is_png = img_data[:8] == b'\x89PNG\r\n\x1a\n'
-    mime = "image/png" if is_png else "image/jpeg"
-    ext = ".png" if is_png else ".jpg"
-
-    try:
-        from PIL import Image
-        import io
-        img = Image.open(io.BytesIO(img_data))
-        img = img.convert("RGB")
-        img.thumbnail((400, 600), Image.LANCZOS)
-        out_path = os.path.join(output_dir, "cover_thumb.jpg")
-        img.save(out_path, "JPEG", quality=85)
-        print(f"[cover] Thumbnail saved with Pillow: {os.path.getsize(out_path)} bytes")
-        return out_path, "image/jpeg"
-    except ImportError:
-        print("[cover] Pillow not available, using raw image")
-    except Exception as e:
-        print(f"[cover] Pillow resize failed: {e}, using raw image")
-
-    out_path = os.path.join(output_dir, "cover_thumb" + ext)
-    with open(out_path, "wb") as f:
-        f.write(img_data)
-    print(f"[cover] Raw image saved: {out_path} ({len(img_data)} bytes)")
-    return out_path, mime
+    out_path = os.path.join(output_dir, "cover_thumb.jpg")
+    if not save_cover_jpeg(img_data, out_path, (400, 600)):
+        return None, None
+    print(f"[cover] Thumbnail saved with Pillow: {os.path.getsize(out_path)} bytes")
+    return out_path, "image/jpeg"
 
 
 def _include_cover_in_dir(job, target_dir):

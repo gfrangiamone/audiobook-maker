@@ -85,7 +85,7 @@
 
 <script>
 (function(){
-  const TOKEN = sessionStorage.getItem('abm_admin_token') || localStorage.getItem('abm_admin_token') || '';
+  const TOKEN = '';  // autenticazione col cookie HttpOnly di /admin/login
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const iso = (d) => d.toISOString().slice(0, 10);

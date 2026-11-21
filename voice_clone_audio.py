@@ -447,10 +447,16 @@ class SampleRejected(Exception):
 
 _tool = ffmpeg_tools.tool
 
+# Il campione arriva dall'utente e ffmpeg riconosce il formato dal contenuto:
+# solo contenitori audio e solo file locali (niente playlist, concat, rete).
+UNTRUSTED_INPUT = ["-protocol_whitelist", "file",
+                   "-format_whitelist",
+                   "wav,w64,mp3,mov,mp4,m4a,3gp,matroska,webm,ogg,flac,aac,aiff,caf,asf,amr"]
+
 
 def probe(path):
     """Il primo stream audio del file: durata, codec, sample rate, canali."""
-    cmd = [_tool("ffprobe"), "-v", "error", "-print_format", "json",
+    cmd = [_tool("ffprobe"), "-v", "error", *UNTRUSTED_INPUT, "-print_format", "json",
            "-show_streams", "-show_format", path]
     try:
         r = ffmpeg_tools.run(cmd, timeout=30)
@@ -479,7 +485,7 @@ def probe(path):
 
 
 def _decoded_seconds(path):
-    cmd = [_tool("ffmpeg"), "-v", "error", "-i", path, "-f", "null", "-",
+    cmd = [_tool("ffmpeg"), "-v", "error", *UNTRUSTED_INPUT, "-i", path, "-f", "null", "-",
            "-stats", "-loglevel", "info"]
     try:
         r = ffmpeg_tools.run(cmd, timeout=_FFMPEG_TIMEOUT)
@@ -494,7 +500,7 @@ def _decoded_seconds(path):
 
 def convert(src, dst_wav):
     """Qualunque ingresso -> wav mono 24 kHz s16 con highpass a 60 Hz (§5.1)."""
-    cmd = [_tool("ffmpeg"), "-y", "-v", "error", "-i", src, "-vn", "-ac", "1",
+    cmd = [_tool("ffmpeg"), "-y", "-v", "error", *UNTRUSTED_INPUT, "-i", src, "-vn", "-ac", "1",
            "-ar", str(SAMPLE_RATE), "-af", "highpass=f=60", "-c:a", "pcm_s16le",
            "-f", "wav", dst_wav]
     try:
@@ -504,7 +510,10 @@ def convert(src, dst_wav):
         raise SampleRejected("vc_gate_format", f"ffmpeg: {e}")
     if r.returncode != 0 or not os.path.exists(dst_wav) or os.path.getsize(dst_wav) < 100:
         _rimuovi_parziale(dst_wav)
-        raise SampleRejected("vc_gate_format", (r.stderr or "")[-300:])
+        # Lo stderr di ffmpeg resta nel log: al client diceva percorsi e
+        # dettagli interni del server.
+        print(f"[voice_clone] ffmpeg convert failed: {(r.stderr or '')[-300:]}", flush=True)
+        raise SampleRejected("vc_gate_format", "unreadable audio")
 
 
 def _rimuovi_parziale(path):

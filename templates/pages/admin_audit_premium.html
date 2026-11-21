@@ -631,8 +631,9 @@
 
 <script>
 (function(){
-  const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
-                      localStorage.getItem('abm_admin_token') || '';
+  // Vuoto: le API admin si autenticano col cookie HttpOnly di /admin/login
+  // (un header X-Admin-Token vuoto fa ripiegare il server sul cookie).
+  const ADMIN_TOKEN = '';
   const $ = (id) => document.getElementById(id);
 
   function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }

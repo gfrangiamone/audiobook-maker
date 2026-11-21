@@ -113,6 +113,7 @@ import voice_clone_prompts
 import voice_denoise
 
 from audio_utils import _check_audio_dependencies, pcm_to_mp3, _generate_silence_mp3
+import cover_utils
 from cover_utils import _extract_cover_from_epub, _generate_fallback_cover, _extract_cover_for_preview
 from fileio import safe_filename as _safe_filename
 from podcast_rss import _generate_podcast_rss
@@ -305,7 +306,9 @@ logging.getLogger("werkzeug").addFilter(HeartbeatFilter())
 app = Flask(__name__)
 # Reverse proxy (nginx) sits in front: trust one hop of X-Forwarded-* so request.remote_addr
 # reflects the real client IP instead of 127.0.0.1 (needed for logs, rate limiting, fail2ban).
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+# x_host=0: nginx passa `Host $host` e non imposta X-Forwarded-Host, quindi
+# quell'header, se arriva, l'ha scritto il client.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=0)
 app.config["MAX_CONTENT_LENGTH"] = env_int("ABM_MAX_UPLOAD_MB", 50) * 1024 * 1024
 # Static assets are cache-busted via ?v=__APP_VERSION__ so a 1-year max-age is safe.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # 1 year
@@ -392,7 +395,8 @@ def add_security_headers(response):
         f"img-src 'self' data: https://api.producthunt.com{_r2}; "
         f"media-src 'self' blob:{_r2}; "
         "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://*.google-analytics.com; "
-        "frame-src https://www.paypal.com;"
+        "frame-src https://www.paypal.com; "
+        "base-uri 'self'; object-src 'none';"
     )
     # Cache-Control:
     #  - HTML: 1h cache + 1d stale-while-revalidate (lets CDN serve stale while
@@ -2044,6 +2048,16 @@ def _app_scheme_url(https_url):
     return f"{_APP_SCHEME}://{parts.netloc}{parts.path}"
 
 
+_BASE_URL_RE = re.compile(r"^https?://[^\s<>\"']+$")
+
+
+def _base_url_ok(url):
+    """Indirizzo del podcast scelto dall'utente: finisce nel feed RSS e nei
+    link dell'email. Vuoto, oppure http(s) senza spazi, virgolette o < >,
+    entro 2048 caratteri (S5, 2026-10-12)."""
+    return not url or (len(url) <= 2048 and bool(_BASE_URL_RE.match(url)))
+
+
 def _safe_share_filename(name):
     """Nome file sicuro per la key S3 e il Content-Disposition: solo basename,
     caratteri non sicuri -> '_', max 120 char, default se vuoto."""
@@ -3567,22 +3581,36 @@ _ip_rl_lock = threading.Lock()
 _ip_rl_buckets: dict[str, dict[str, list[float]]] = {}
 
 
-def _ip_rl_check(bucket: str, ip: str, limit_per_min: int, limit_per_hour: int):
+def _ip_rl_check(bucket: str, ip: str, limit_per_min: int, limit_per_hour: int,
+                 record: bool = True):
     """Sliding-window rate limit IP-based. Ritorna (allowed, retry_after_sec).
     bucket: identificativo logico (es. 'analyze', 'preview').
+    `record=False` guarda senza contare: serve a chi conta solo i tentativi
+    falliti (prima si guarda, a esito negativo si richiama con record=True).
     """
     if not ip:
         return True, 0
+    # Un IPv6 conta per la sua /64: il suffisso lo sceglie il client, e
+    # ruotandolo ogni richiesta apriva un contatore nuovo. Le chiavi che non
+    # sono indirizzi (cid, email, codice voce) restano come sono.
+    ip = _network_of(ip) or ip
     with _ip_rl_lock:
         ok, retry, _idx = _sliding_check(
             _ip_rl_buckets.setdefault(bucket, {}), ip,
-            [(60, limit_per_min), (3600, limit_per_hour)], time.time())
+            [(60, limit_per_min), (3600, limit_per_hour)], time.time(),
+            record=record)
     return ok, retry
 
 
 # Default limits (override via env per ops emergency)
 _ANALYZE_RL_PER_MIN = env_int("ABM_ANALYZE_RL_PER_MIN", 5)
 _ANALYZE_RL_PER_HOUR = env_int("ABM_ANALYZE_RL_PER_HOUR", 30)
+# Analisi in parallelo: il parsing di un libro tiene in RAM l'archivio espanso
+# (fino a ABM_ZIP_MAX_TOTAL_MB) e il processo e' uno solo per tutti i job.
+# Costante di avvio.
+_ANALYZE_MAX_PARALLEL = env_int("ABM_ANALYZE_MAX_PARALLEL", 3, floor=1)
+_ANALYZE_SLOT_WAIT_SEC = 20
+_analyze_slots = threading.BoundedSemaphore(_ANALYZE_MAX_PARALLEL)
 _PREVIEW_RL_PER_MIN = env_int("ABM_PREVIEW_RL_PER_MIN", 20)
 _PREVIEW_RL_PER_HOUR = env_int("ABM_PREVIEW_RL_PER_HOUR", 200)
 
@@ -3853,6 +3881,12 @@ def api_analyze():
             })
 
     abm_cover_info = None  # cover data extracted from .abm file
+    if not _analyze_slots.acquire(timeout=_ANALYZE_SLOT_WAIT_SEC):
+        shutil.rmtree(work_dir, ignore_errors=True)
+        load_metrics.incr("rej_busy")
+        return jsonify({"error": "The server is at capacity right now. "
+                                 "Please try again in a few minutes.",
+                        "error_code": "server_busy"}), 429
     try:
         if is_abm:
             info, abm_cover_info = parse_abm(str(file_path))
@@ -3863,6 +3897,8 @@ def api_analyze():
         else:
             info = parse_epub(str(file_path))
     except Exception as e:
+        # Un caricamento rifiutato non resta sul disco in attesa della pulizia.
+        shutil.rmtree(work_dir, ignore_errors=True)
         label = "ABM" if is_abm else ("TXT" if is_txt else ("PDF" if is_pdf else "EPUB"))
         # PDF di sole immagini (scansione, foto convertite): non e' un guasto ma
         # un limite spiegabile. Codice stabile -> il frontend lo traduce nella
@@ -3870,9 +3906,16 @@ def api_analyze():
         # messaggio grezzo dell'eccezione.
         if "pdf_no_text" in str(e):
             return jsonify({"error": "pdf_no_text"}), 400
-        return jsonify({"error": f"{label} parse error: {e}"}), 400
+        # Il testo dell'eccezione (percorsi del server, interni dei parser)
+        # resta nel log.
+        print(f"[analyze] {label} parse error: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"error": f"{label} parse error",
+                        "error_code": "parse_error"}), 400
+    finally:
+        _analyze_slots.release()
 
     if not info.chapters:
+        shutil.rmtree(work_dir, ignore_errors=True)
         return jsonify({"error": "No content found."}), 400
 
     # Lingua assente nei metadati (txt sempre; pdf/epub/abm a volte):
@@ -3908,17 +3951,14 @@ def api_analyze():
     has_cover = False
     if is_abm and abm_cover_info:
         # Cover from .abm archive
-        cover_data = abm_cover_info["data"]
-        cover_filename = abm_cover_info["filename"]
-        is_png = cover_filename.lower().endswith(".png")
-        ext = ".png" if is_png else ".jpg"
-        mime = "image/png" if is_png else "image/jpeg"
-        cover_out = str(work_dir / ("cover_thumb" + ext))
-        with open(cover_out, "wb") as cf:
-            cf.write(cover_data)
-        has_cover = True
-        jobs[job_id]["cover_thumb"] = cover_out
-        jobs[job_id]["cover_mime"] = mime
+        # Mai i byte dell'archivio cosi' come sono: la copertina va in
+        # ingresso a ffmpeg per l'M4B (cover_utils.save_cover_jpeg).
+        cover_out = str(work_dir / "cover_thumb.jpg")
+        _side = cover_utils.ABM_COVER_MAX_SIDE
+        if cover_utils.save_cover_jpeg(abm_cover_info["data"], cover_out, (_side, _side)):
+            has_cover = True
+            jobs[job_id]["cover_thumb"] = cover_out
+            jobs[job_id]["cover_mime"] = "image/jpeg"
     elif is_epub:
         cover_path, cover_mime = _extract_cover_for_preview(str(file_path), str(work_dir))
         if cover_path and os.path.exists(cover_path):
@@ -4467,6 +4507,10 @@ def api_export_abm(job_id):
             "original_filename": job.get("original_filename", ""),
         }
         _spilled = bool(job.get("_texts_spilled"))
+        if job.get("ai_optimized"):
+            # Il testo ottimizzato pagato esce da qui: da ora un fallimento
+            # dell'audio non rimborsa piu' l'ottimizzazione.
+            job["abm_exported"] = True
 
     # Testi capitolo: dalla RAM, o dallo spill su disco se il job e' gia'
     # terminale (contenimento RAM). Mapping temporaneo, non reidrata il job.
@@ -4677,6 +4721,8 @@ def api_generate():
     single_file = data.get("single_file", True)
     output_format = data.get("output_format", "m4b")
     podcast_base_url = (data.get("podcast_base_url") or "").strip()
+    if not _base_url_ok(podcast_base_url):
+        return jsonify({"error": "invalid_base_url"}), 400
     selected_chapters = data.get("selected_chapters")  # list of chapter indices, or None
     # Lettura opzionale del testo tra parentesi (default: rimosso): decide il
     # piano e il prezzo, che si calcola sul testo letto.
@@ -6131,7 +6177,7 @@ def api_register_email():
     base_url = (data.get("base_url") or "").strip()
     # Finisce come link nell'email del podcast: solo http(s), lunghezza
     # limitata; niente `javascript:` o altri schemi (S5, 2026-10-12).
-    if base_url and (len(base_url) > 2048 or not re.match(r"^https?://[^\s<>\"']+$", base_url)):
+    if not _base_url_ok(base_url):
         return jsonify({"error": "invalid_base_url"}), 400
 
     job, err, sc = _check_job_owner(job_id)
@@ -6727,9 +6773,10 @@ def api_gemini_estimate():
     _gate = _premium_model_gate(voice_id)
     if _gate is not None:
         return _gate
-    with _jobs_lock:
-        job = jobs.get(job_id)
-    if not job:
+    job, _own_err, _own_sc = _check_job_owner(job_id)
+    if _own_err is not None and _own_sc != 404:
+        return _own_err, _own_sc
+    if not job or _own_err is not None:
         return jsonify({"error": "job not found"}), 404
     info = job.get("info")
     if info is None or not getattr(info, "chapters", None):
@@ -6794,9 +6841,10 @@ def api_combined_estimate():
     if _gate is not None:
         return _gate
 
-    with _jobs_lock:
-        job = jobs.get(job_id)
-    if not job:
+    job, _own_err, _own_sc = _check_job_owner(job_id)
+    if _own_err is not None and _own_sc != 404:
+        return _own_err, _own_sc
+    if not job or _own_err is not None:
         return jsonify({"error": "job not found", "error_code": "job_not_found"}), 404
     info = job.get("info")
     if info is None or not getattr(info, "chapters", None):
@@ -8803,7 +8851,9 @@ def _set_client_cookie(response):
       email di notifica (/dl/<token>) che possono provenire da altri domini.
     """
     if _CLIENT_COOKIE_NAME not in request.cookies:
-        cid = str(uuid.uuid4())[:12]
+        # 128 bit: il cid e' la sola credenziale di proprieta' di job, token
+        # di download e voci (i 12 caratteri di un uuid ne davano 44).
+        cid = secrets.token_urlsafe(16)
         response.set_cookie(
             _CLIENT_COOKIE_NAME, cid,
             max_age=_CLIENT_COOKIE_MAX_AGE,

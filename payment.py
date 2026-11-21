@@ -739,6 +739,8 @@ def _voucher_consume(code: str, amount: float, job_id: str = "",
         v = _vouchers.get(code)
         if not v:
             raise ValueError("voucher not found")
+        if v.get("revoked"):
+            raise ValueError("voucher revoked")
         if v.get("expires_at", 0) <= time.time():
             raise ValueError("voucher expired")
         if not voucher_covers(v, service):
@@ -827,6 +829,11 @@ def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = ""
         v = _vouchers.get(code)
         if not v:
             raise ValueError("voucher not found")
+        if v.get("revoked"):
+            # Un buono revocato (pagamento stornato) non torna spendibile con
+            # il riaccredito di un job annullato.
+            print(f"[voucher] refund skipped on revoked voucher (job {job_id})")
+            return 0.0
         remaining = _voucher_remaining(v)
         original = float(v.get("amount_eur", 0) or 0)
         new_remaining = round(min(remaining + amount, original), 2)

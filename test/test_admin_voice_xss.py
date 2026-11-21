@@ -119,8 +119,9 @@ def test_admin_audit_page_does_not_inline_token(client):
     body = r.get_data(as_text=True)
     # Il token reale non deve comparire nel sorgente HTML servito.
     assert "test-admin-token" not in body
-    # Deve invece usare il pattern session/localStorage.
-    assert "getItem('abm_admin_token')" in body
+    # Ne' viene letto da session/localStorage: le API usano il cookie HttpOnly
+    # (audit 21/11/2026).
+    assert "getItem('abm_admin_token')" not in body
 
 
 def test_voice_id_regex_accepts_every_voxcpm_catalog_id():

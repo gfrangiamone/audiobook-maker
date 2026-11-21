@@ -15,6 +15,7 @@ favicon, i testi delle pagine dl e il modulo `generation_engine` (un
 modulo di route non lo importa). Non importa `audiobook_app`.
 """
 import html as html_mod
+import json
 import os
 import re
 import shutil
@@ -38,6 +39,8 @@ generation_engine = None
 
 FUNCS = ['_get_client_id', '_send_file_throttled','_log_activity', '_is_resume_or_probe_request', '_mark_token_downloaded', '_mark_token_redirected', '_safe_filename', '_try_cold_serve', '_cold_op', '_cold_object_available', '_cold_m4b_valid', '_iter_output_dirs', '_find_files_in_outputs', '_check_job_owner', '_effective_retention_for_token_info', '_android_intent_url', '_app_scheme_url', '_extract_cover_for_preview', '_extract_cover_from_epub', '_generate_fallback_cover', '_generate_podcast_rss', '_qr_data_uri', '_transfer_payload_for', '_ua_is_android', '_ua_is_ios', '_ua_is_mobile']
 VALUES = ("jobs", "upload_dir", "base_url", "email_file_retention_sec")
+
+_BACK_URL_SAFE_RE = re.compile(r"[A-Za-z0-9_\-./:?=&%~]{1,300}")
 
 
 def configure(*, favicon, dl_pages_i18n, engine, **fns):
@@ -523,7 +526,7 @@ def token_do_download_m4b(token):
         return _cold
 
     # Diagnostica completa: nessun M4B e nessun MP3 disponibile.
-    print(f"[dl/m4b] 404 token={token} job={job_id} "
+    print(f"[dl/m4b] 404 token={token[:8]} job={job_id} "
           f"token_m4b={token_info.get('output_m4b','')!r} "
           f"output_dirs={[d.name for d in _iter_output_dirs(job_dir)]}")
     return "M4B file not available", 404
@@ -594,7 +597,7 @@ def token_do_download(token):
         return _serve_audio_download(token_info, job, job_id)
 
     except Exception as e:
-        print(f"[dl/{token}] ERROR in download: {e}")
+        print(f"[dl/{token[:8]}] ERROR in download: {e}")
         import traceback
         traceback.print_exc()
         return f"Errore durante il download. Riprova tra qualche istante.", 500
@@ -1038,8 +1041,11 @@ def _render_dl_cooldown_page(lang="en", seconds=60, back_url=None):
                 back_url = ref if same_origin else "/"
         except Exception:
             back_url = "/"
-    import json as _json
-    back_url_js = _json.dumps(back_url)
+    # Lo stesso valore entra in un href senza virgolette proprie e in uno
+    # <script>: solo caratteri da URL, altrimenti si torna alla home.
+    if not _BACK_URL_SAFE_RE.fullmatch(back_url or ""):
+        back_url = "/"
+    back_url_js = json.dumps(back_url)
     return _render_page("dl_cooldown", {"__P0__": (lang), "__P1__": (FAVICON_B64), "__P2__": (t['title']), "__P3__": (t['h2']), "__P4__": (t['p1']), "__P5__": (p2), "__P6__": (seconds), "__P7__": (t['auto']), "__P8__": (back_url_js), "__P9__": (auto_refresh_ms)})
 
 
@@ -1148,7 +1154,7 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             audio_btn_html = (
                 '<p style="color:#b00020;font-weight:600;line-height:1.5">'
                 f'&#9888;&#65039; {_msg}</p>')
-            print(f"[dl] translated file NOT available for token {token}", flush=True)
+            print(f"[dl] translated file NOT available for token {token[:8]}", flush=True)
     elif dl_type == "optimized_abm":
         type_label = "Optimized Project (.abm)"
     elif dl_type == "podcast":
