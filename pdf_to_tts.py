@@ -173,7 +173,7 @@ def _detect_body_font_size(doc: fitz.Document, sample_pages: int = 10) -> float:
 
     for page_num in range(pages_to_check):
         page = doc[page_num]
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        blocks = _page_dict_blocks(page)
         for block in blocks:
             if block["type"] != 0:  # solo testo, no immagini
                 continue
@@ -196,9 +196,31 @@ def _running_key(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"\d+", "N", text)).strip()
 
 
+def _page_dict_blocks(page: fitz.Page) -> list:
+    """Blocchi di `get_text("dict")` senza i doppioni sovrastampati.
+
+    I PDF di Liber Liber stampano ogni pagina due volte nello stesso punto
+    (stessi blocchi, stesse coordinate): La guerra e la pace usciva da 5,75
+    milioni di caratteri invece di 2,84, ogni pagina letta e pagata due volte
+    (catalogo gratuito, 21/11/2026). Un blocco uguale per posizione e testo a
+    uno gia' visto nella pagina si scarta."""
+    seen = set()
+    out = []
+    for b in page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]:
+        if b.get("type") == 0:
+            key = (tuple(round(v) for v in b["bbox"]),
+                   tuple("".join(s.get("text", "") for s in ln.get("spans", []))
+                         for ln in b.get("lines", [])))
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(b)
+    return out
+
+
 def _text_blocks(page: fitz.Page) -> list:
     """Blocchi di testo della pagina in ordine di lettura (alto → basso)."""
-    blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+    blocks = _page_dict_blocks(page)
     text_blocks = [b for b in blocks if b["type"] == 0]
     text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
     return text_blocks
@@ -892,7 +914,7 @@ def _detect_page_number_offset(doc: fitz.Document, body_font_size: float) -> int
     """
     for page_idx in range(min(30, len(doc))):
         page = doc[page_idx]
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        blocks = _page_dict_blocks(page)
 
         for block in blocks:
             if block["type"] != 0:
@@ -971,7 +993,7 @@ def _detect_chapters_from_visual_toc(doc: fitz.Document, body_font_size: float,
     toc_lines = []
     for pg_idx in toc_pages:
         page = doc[pg_idx]
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        blocks = _page_dict_blocks(page)
         for block in blocks:
             if block["type"] != 0:
                 continue
