@@ -86,7 +86,7 @@ def test_capture_senza_job_id_eredita_purpose_vc(monkeypatch, tmp_path):
             "purchase_units": [{
                 "payments": {"captures": [{
                     "id": "CAPORDVC1", "status": "COMPLETED",
-                    "amount": {"value": "5.00"},
+                    "amount": {"currency_code": "EUR", "value": "5.00"},
                 }]},
             }],
         }
@@ -108,7 +108,7 @@ def test_capture_senza_job_id_purpose_non_vc_resta_vuoto(monkeypatch, tmp_path):
             "purchase_units": [{
                 "payments": {"captures": [{
                     "id": "CAPORDOPT1", "status": "COMPLETED",
-                    "amount": {"value": "5.00"},
+                    "amount": {"currency_code": "EUR", "value": "5.00"},
                 }]},
             }],
         }

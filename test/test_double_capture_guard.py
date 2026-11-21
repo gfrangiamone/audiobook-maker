@@ -47,7 +47,7 @@ def _fake_captured(order_id, amount):
         "purchase_units": [{
             "payments": {"captures": [{
                 "id": "CAP" + order_id, "status": "COMPLETED",
-                "amount": {"value": f"{amount:.2f}"},
+                "amount": {"currency_code": "EUR", "value": f"{amount:.2f}"},
             }]},
         }],
     }

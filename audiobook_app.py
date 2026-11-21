@@ -1546,15 +1546,26 @@ def _server_busy_response(job_id="", where="", premium=False):
     }), 429
 
 
-def _refund_payment_on_orphan(job_id, job, reason):
+_JOB_POCKET = object()
+
+
+def _refund_payment_on_orphan(job_id, job, reason, own=_JOB_POCKET):
     """Refund Gemini payment if /api/generate rejected after the token was consumed.
+
+    `own`: il pagamento consumato dalla richiesta che viene rifiutata (None se
+    non ne ha consumati: allora non c'e' nulla da rendere). I rifiuti che
+    precedono il claim lo passano sempre: senza, una seconda richiesta senza
+    token sullo stesso job rimborsava il pagamento della prima, che intanto
+    generava (due POST in parallelo = libro PREMIUM gratis). Il default resta
+    la tasca del job, per chi il claim lo detiene (recovery, rifiuti dopo il
+    claim).
 
     Mirrors generation_engine._refund_gemini_payment: voucher → _voucher_refund
     (riaccredito silenzioso sull'originale, ritorna None), paypal → emette voucher
     di rimborso (ritorna il codice, per inserirlo nella mail). Best-effort;
     non-fatal on errors. Clears job['payment'] so a retry doesn't see stale state.
     """
-    payment_meta = job.get("payment") or {}
+    payment_meta = (job.get("payment") if own is _JOB_POCKET else own) or {}
     tok = payment_meta.get("token")
     # total_eur e' la sola quota TTS: nel pagamento combinato la quota AI sta
     # in llm_eur e va resa anch'essa, il testo ottimizzato senza audio non
@@ -1597,7 +1608,10 @@ def _refund_payment_on_orphan(job_id, job, reason):
     except Exception as e:
         print(f"[{job_id}] orphan refund failed ({reason}, non-fatal): {e}")
     finally:
-        job.pop("payment", None)
+        # La tasca si svuota solo se contiene il pagamento appena reso: quella
+        # di un'altra richiesta, che sta generando, resta al suo posto.
+        if own is _JOB_POCKET or job.get("payment") is own:
+            job.pop("payment", None)
     return refund_code
 
 
@@ -4782,6 +4796,9 @@ def api_generate():
     # regolare (il ramo `else` non scrive lo stash e ereditava il vecchio).
     job.pop("_free_quota_charge", None)
     payment_token = (data.get("payment_token") or "").strip()
+    # Il pagamento consumato da QUESTA richiesta: i rifiuti prima del claim
+    # rendono solo questo, mai quello che un'altra richiesta ha lasciato sul job.
+    _own_payment = None
     # Stessa ragione dello snapshot sopra: questi parametri finiscono nel
     # descrittore batch e vanno stashati prima della register post-capture.
     style_instruction, accent_variant, speechify_emotion = _stash_voice_options(job, data)
@@ -5077,6 +5094,7 @@ def api_generate():
                 "gemini_est": est_pre,
                 "llm_eur": llm_eur_pre,
             }
+            _own_payment = job["payment"]
             _note_acquisition(job)
             # Batch implicito per job PAGATO (vedi _register_paid_job_batch).
             _register_paid_job_batch(
@@ -5214,6 +5232,7 @@ def api_generate():
                 "llm_eur": llm_eur_pre,
             }
             job["payment"][f"{_direct_eng.name}_est"] = est_pre
+            _own_payment = job["payment"]
             _note_acquisition(job)
             # Batch implicito per job PAGATO (stessa logica del ramo Gemini):
             # un job pagato non deve morire per heartbeat alla chiusura del
@@ -5262,7 +5281,7 @@ def api_generate():
                             "blocked_until": int(_abuse_until)}), 403
     with _jobs_lock:
         if job["status"] not in ("analyzed", "optimized"):
-            _refund_payment_on_orphan(job_id, job, "status_conflict")
+            _refund_payment_on_orphan(job_id, job, "status_conflict", own=_own_payment)
             try: gemini_tts.release_reservation(job_id)
             except Exception: pass
             return jsonify({"error": "Generation already running or completed."}), 400
@@ -5270,7 +5289,7 @@ def api_generate():
         # premium o pagamento incassato) non viene ne' limitato ne' conteggiato.
         if client_id and MAX_CONCURRENT_PER_CLIENT > 0 and not _premium_req:
             if _active_generating_for_client_unlocked(client_id, job_id) >= MAX_CONCURRENT_PER_CLIENT:
-                _refund_payment_on_orphan(job_id, job, "concurrent_limit")
+                _refund_payment_on_orphan(job_id, job, "concurrent_limit", own=_own_payment)
                 try: gemini_tts.release_reservation(job_id)
                 except Exception: pass
                 return jsonify({
@@ -5291,7 +5310,7 @@ def api_generate():
             _active_total = _active_generating_total_unlocked()
             if _active_total >= MAX_CONCURRENT_GLOBAL:
                 load_metrics.incr("rej_busy")
-                _refund_payment_on_orphan(job_id, job, "server_busy")
+                _refund_payment_on_orphan(job_id, job, "server_busy", own=_own_payment)
                 try: gemini_tts.release_reservation(job_id)
                 except Exception: pass
                 print(f"[{job_id}] /api/generate rifiutata: tetto globale "
@@ -6083,7 +6102,11 @@ def api_reset_to_chapters(job_id):
                     "selected_chapters",
                     "opt_auto_generate", "opt_single_file", "opt_output_format",
                     "opt_podcast_base_url", "opt_voice", "opt_rate", "opt_lang",
-                    "email_token"):
+                    "email_token",
+                    # Pagamenti del giro consegnato: lasciati sul job, un
+                    # rifiuto o un fallimento della generazione successiva li
+                    # rimborsava a servizio gia' reso.
+                    "payment", "payment_token", "payment_amount_eur"):
             job.pop(key, None)
     # Keep: info, epub_path, cover_thumb, cover_mime, original_filename, preview_text,
     #        client_id, client_ip, voice (so preview still works)

@@ -1069,7 +1069,7 @@ def _paypal_create_order(amount_eur, description, custom_id=None, scope=""):
     payload = {
         "intent": "CAPTURE",
         "purchase_units": [{
-            "amount": {"currency_code": "EUR", "value": f"{amount_eur:.2f}"},
+            "amount": {"currency_code": CAPTURE_CURRENCY, "value": f"{amount_eur:.2f}"},
             "description": description[:127],
         }],
         "application_context": {
@@ -1461,6 +1461,9 @@ def _paypal_capture_order(order_id):
     return r.json()
 
 
+CAPTURE_CURRENCY = "EUR"
+
+
 class CaptureAmountMismatchError(ValueError):
     """Capture amount non corrisponde a quanto creato (price tampering)."""
 
@@ -1662,6 +1665,14 @@ def capture_and_store_order(order_id: str, job_id: str = "",
             # in produzione ed eventualmente estendere la lista.
             print(f"[paypal] WARN capture PENDING accettata order={order_id} "
                   f"job={job_id or '-'} reason={pending_reason or '(nessuno)'}")
+        # Gli ordini li crea il server, sempre in EUR. Un ordine creato dal
+        # client con il client ID pubblico puo' essere in un'altra valuta:
+        # senza questo controllo 1000 JPY entrerebbero come 1000 EUR.
+        currency = str((cap.get("amount") or {}).get("currency_code") or "").upper()
+        if currency != CAPTURE_CURRENCY:
+            raise CaptureAmountMismatchError(
+                f"capture currency {currency or '(none)'} != {CAPTURE_CURRENCY} "
+                f"(order {order_id}): captured but NOT credited, refund by hand")
         try:
             amount_eur = float(cap.get("amount", {}).get("value", "0"))
         except (TypeError, ValueError):

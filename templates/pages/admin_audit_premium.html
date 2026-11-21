@@ -704,7 +704,9 @@
   function esc(s){
     const d = document.createElement('div');
     d.textContent = (s == null ? "" : String(s));
-    return d.innerHTML;
+    // innerHTML non codifica le virgolette: senza, un valore dell'utente in
+    // title="${esc(v)}" chiude l'attributo e ne apre uno suo (onmouseover=...).
+    return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   // I timestamp ISO che arrivano dal server sono SEMPRE in UTC
   // (`tts_backend_state._now()`, `gemini_cost_audit`): stamparli grezzi
@@ -1596,7 +1598,7 @@
     "not_found": "Account non trovato (forse e' stato cancellato).",
   };
   // esc() non tocca le virgolette: nei valori di attributo serve questa.
-  function escAttr(s){ return esc(s).replace(/"/g, "&quot;"); }
+  function escAttr(s){ return esc(s); }
   function accGb(b){ return (Number(b||0)/1073741824).toFixed(2)+" GB"; }
   // Il server ragiona in UTC: la prima data valida di un regalo e' l'oggi UTC.
   function accToday(){ return new Date().toISOString().slice(0, 10); }

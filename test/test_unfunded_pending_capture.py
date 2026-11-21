@@ -39,7 +39,7 @@ def _captured(order_id, amount, status="COMPLETED", reason=None):
     cap = {
         "id": "CAP" + order_id,
         "status": status,
-        "amount": {"value": f"{amount:.2f}"},
+        "amount": {"currency_code": "EUR", "value": f"{amount:.2f}"},
     }
     if reason is not None:
         cap["status_details"] = {"reason": reason}
