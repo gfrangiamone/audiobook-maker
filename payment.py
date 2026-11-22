@@ -1875,6 +1875,9 @@ def refund_unused_capture(order_id, reason="", force=False):
             kind="refund",
             note=f"auto-refund capture non consumato ({reason})"[:500],
             created_by="auto_refund",
+            # Pagamento mai usato: si rende l'importo pagato, senza il +10%
+            # (pagare e non avviare il job non deve valere uno sconto).
+            apply_bonus=False,
         )
 
     with _payments_lock:

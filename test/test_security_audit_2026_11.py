@@ -198,3 +198,13 @@ def test_new_client_ids_carry_128_bits():
     src = (ROOT / "audiobook_app.py").read_text(encoding="utf-8")
     assert "cid = secrets.token_urlsafe(16)" in src
     assert "str(uuid.uuid4())[:12]" not in src
+
+
+def test_unused_capture_is_refunded_without_bonus(isolated_store, monkeypatch):
+    monkeypatch.setattr(payment, "AUTO_REFUND_UNUSED_CAPTURES", True)
+    payment._payments["ORDUNUSED"] = {
+        "order_id": "ORDUNUSED", "amount_eur": 10.0, "email": "buyer@x.it",
+        "job_id": "job-unused", "captured_at": time.time() - 99999, "used": False}
+    res = payment.refund_unused_capture("ORDUNUSED", reason="test")
+    code = payment._payments["ORDUNUSED"]["refund_voucher"]
+    assert res and payment._vouchers[code]["amount_eur"] == 10.0
