@@ -153,6 +153,22 @@ def test_head_and_tail_travel_not_the_whole_text(env):
     assert state["source"]["chars"] == len(src)
 
 
+def test_a_long_output_is_cut_where_the_source_is_cut():
+    """Output 1,8x: con finestre fisse uguali la testa dell'output copriva
+    poco piu' di meta' della testa del sorgente e il resto pareva mancare.
+    Ora le finestre dell'output scalano col rapporto di lunghezza."""
+    src = " ".join(f"S{i:03d}" + "x" * 45 + "." for i in range(100))
+    out = " ".join(f"T{i:03d}" + "x" * 85 + "." for i in range(100))
+    state = oj._state(src, out)
+    s_head, s_tail = state["source"]["text"].split("[...]")
+    o_head, o_tail = state["output"]["text"].split("[...]")
+    last = lambda t, p: max(int(x[:3]) for x in t.split(p)[1:])
+    first = lambda t, p: min(int(x[:3]) for x in t.split(p)[1:])
+    assert abs(last(s_head, "S") - last(o_head, "T")) <= 1
+    assert abs(first(s_tail, "S") - first(o_tail, "T")) <= 1
+    assert "[...]" in state["task"]
+
+
 @requires_sdk
 def test_the_ratio_travels_with_the_texts(env):
     with patch.object(sj, "ask", return_value=response(meta=0.1,

@@ -119,19 +119,30 @@ def suspicious(source, output):
 # Domande
 # ---------------------------------------------------------------------------
 
-def _clip(text):
-    return sj.clip(text, _HEAD_CHARS, _TAIL_CHARS)
+def _clips(source, output):
+    """Ritaglio allineato (`sj.clip_pair`): il giudice si chiede solo sui
+    rapporti di lunghezza anomali, dove finestre fisse uguali tagliano i due
+    testi in punti lontani — su un output lungo 1,8x la testa dell'output
+    copre poco piu' di meta' della testa del sorgente, e il resto pare
+    «lasciato fuori». Lo stesso difetto faceva ritentare quasi ogni capitolo
+    al giudice di traduzione (nov 2026)."""
+    return sj.clip_pair(source, output, _HEAD_CHARS, _TAIL_CHARS)
 
 
 def _state(source, output, lang=""):
+    src_text, out_text = _clips(source, output)
     return {
         "task": "The model was asked to rewrite a passage of a book so that a "
                 "text-to-speech engine reads it well: expanding numbers and "
                 "abbreviations, fixing punctuation for the ear. It was not "
-                "asked to summarize, shorten or comment.",
+                "asked to summarize, shorten or comment. Long texts are shown "
+                "as excerpts: the beginning and the end, with the middle "
+                "replaced by [...] at roughly the same point of the passage in "
+                "both. The cut is not missing text, and a sentence next to a "
+                "cut may be visible in one text and not in the other.",
         "language": lang or "",
-        "source": {"chars": len(source or ""), "text": _clip(source)},
-        "output": {"chars": len(output or ""), "text": _clip(output)},
+        "source": {"chars": len(source or ""), "text": src_text},
+        "output": {"chars": len(output or ""), "text": out_text},
         "length_ratio": round(ratio(source, output), 3),
     }
 
@@ -165,7 +176,9 @@ def _questions():
                      "change: numbers and abbreviations spelled out, "
                      "punctuation adapted for the ear, a long sentence split "
                      "in two. The ending of `output` corresponds to the ending "
-                     "of `source`.",
+                     "of `source`. With excerpts, judge only the visible "
+                     "parts, allowing for a sentence lost at the edge of a "
+                     "cut.",
                 false="`output` condenses, summarizes or describes `source` "
                       "instead of rewriting it, drops passages or turns of "
                       "dialogue, or stops before `source` ends — the last "
