@@ -277,6 +277,7 @@ Parametri per la funzionalità di traduzione del testo del libro in un'altra lin
 | `ABM_TRANSLATE_MIN_COST` | `1.5` (floor EUR sul totale dovuto, applicato solo quando si paga; gratis sotto soglia `ABM_LLM_FREE_THRESHOLD_EUR`) | `payment.py` | 56–57 |
 | `ABM_TRANSLATE_COST_IN_EUR_PER_MTOK` | `0.28` (Costo LLM input EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
 | `ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK` | `2.30` (Costo LLM output EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
+| `ABM_TRANSLATE_FALLBACK_COST_IN_EUR_PER_MTOK` / `ABM_TRANSLATE_FALLBACK_COST_OUT_EUR_PER_MTOK` | *(non impostate = tariffa blended `ABM_LLM_COST_USD_PER_MTOK` dell'ottimizzazione)* — costo audit dei chunk tradotti dal ripiego (`_translation_provider_cost_eur(..., role="fallback")`) | `payment.py` | (dopo TRANSLATE_COST_OUT) |
 
 **Formula di pricing** (funzione `_estimate_translation_cost_eur` in `payment.py:187`, chiamata via `translation_estimate_for_job` con la lingua del libro `info.language`):
 
@@ -291,24 +292,34 @@ altrimenti due = max(raw, ABM_TRANSLATE_MIN_COST)
 
 **Backend LLM (web app e CLI — `translation_core.py`)**
 
-I parametri `ABM_TRANSLATE_*` hanno fallback sui corrispettivi `ABM_LLM_*`; se non impostati, usano i default sotto.
+Provider per ruolo (dal 23/11/2026, v3.205.0): primario `ABM_TRANSLATE_<X>`, ripiego `ABM_TRANSLATE_FALLBACK_<X>`, stesso schema. Registro dei backend in `translation_core._BUILDERS`: `llm` (provider dell'ottimizzazione AI: `ABM_LLM_API_KEY`/`ABM_LLM_API_BASE`, client condiviso), `openai` (endpoint OpenAI-compatibile; `apikey` è l'alias storico), `vertex`. **Thinking sempre spento**, nessuna env lo riaccende (opt-out per canale: `llm`/DeepSeek `thinking: disabled`; OpenRouter `reasoning_effort=minimal` per Gemini flash, `reasoning.enabled=false` per gli altri; Vertex `minimal` sui Gemini flash).
 
 | Parametro | Valore default | Env var fallback | File | Riga |
 |-----------|----------------|-----------------|------|------|
-| `ABM_TRANSLATE_API_KEY` | *(vuoto)* | `ABM_LLM_API_KEY` | `translation_core.py` | 54–55 |
-| `ABM_TRANSLATE_API_BASE` | `https://api.deepseek.com` | `ABM_LLM_API_BASE` | `translation_core.py` | 58–60 |
-| `ABM_TRANSLATE_MODEL` | `deepseek-chat` | `ABM_LLM_MODEL` | `translation_core.py` | 63–64 |
-| `ABM_TRANSLATE_BACKEND` | `auto` (`auto`\|`apikey`\|`vertex`) — `auto` preferisce Vertex se `ABM_GCP_PROJECT_ID` + credentials disponibili, altrimenti OpenAI-compat | — | `translation_core.py` | 67–68 |
+| `ABM_TRANSLATE_BACKEND` | `auto` (`auto`\|`llm`\|`openai`\|`apikey`\|`vertex`) — `auto` preferisce Vertex se `ABM_GCP_PROJECT_ID` + credentials disponibili, altrimenti `openai` | — | `translation_core.py` | `backend_choice` |
+| `ABM_TRANSLATE_MODEL` | *(vuoto = traduzione non configurata)*; obbligatorio per ogni backend | — | `translation_core.py` | `model_name` |
+| `ABM_TRANSLATE_API_KEY` | *(vuoto)* — solo backend `openai` | `ABM_LLM_API_KEY` | `translation_core.py` | `api_key` |
+| `ABM_TRANSLATE_API_BASE` | `https://api.deepseek.com` — solo backend `openai` | `ABM_LLM_API_BASE` | `translation_core.py` | `api_base` |
+| `ABM_TRANSLATE_MAX_TOKENS` | `65536` con `llm`, non inviato con `openai`/`vertex` (`0` = non inviato) | — | `translation_core.py` | `_base_request_kwargs` |
+| `ABM_TRANSLATE_OPENROUTER_ORDER` | *(vuoto = routing OpenRouter di default)*; lista di provider OpenRouter separati da virgola → `provider: {order, allow_fallbacks: false, data_collection: deny}` | — | `translation_core.py` | `_openrouter_routing` |
+| `ABM_TRANSLATE_FALLBACK_BACKEND` | `llm` | — | `translation_core.py` | `backend_choice` |
+| `ABM_TRANSLATE_FALLBACK_MODEL` | con backend `llm`: `ABM_LLM_MODEL` (→ `deepseek-chat`); con gli altri obbligatorio; `off` disattiva il ripiego | — | `translation_core.py` | `_role_model` |
+| `ABM_TRANSLATE_FALLBACK_API_KEY` / `_API_BASE` | *(vuoti)* — obbligatori con backend `openai`, nessun fallback | — | `translation_core.py` | `_role_api_key` |
+| `ABM_TRANSLATE_FALLBACK_MAX_TOKENS` | come `ABM_TRANSLATE_MAX_TOKENS` | — | `translation_core.py` | `_base_request_kwargs` |
+| `ABM_TRANSLATE_FALLBACK_OPENROUTER_ORDER` | come `ABM_TRANSLATE_OPENROUTER_ORDER` | — | `translation_core.py` | `_openrouter_routing` |
 
-**Traduzione via OpenRouter (dal 12/10/2026, solo configurazione).** Il backend `apikey` è un client OpenAI-compatibile generico: puntarlo a OpenRouter non richiede codice. Env di prod: `ABM_TRANSLATE_BACKEND=apikey`, `ABM_TRANSLATE_API_BASE=https://openrouter.ai/api/v1`, `ABM_TRANSLATE_API_KEY=<chiave OpenRouter, mai in docs/log>`, `ABM_TRANSLATE_MODEL=google/gemini-3.5-flash-lite`. Verificato il 12/10/2026: `reasoning_effort="minimal"` (inviato da `_thinking_off_kwargs`) è accettato con 0 token di reasoning; `reasoning: {enabled: false}` è invece rifiutato (400 «Reasoning is mandatory») e non va usato. L'usage in risposta porta `cost` esatto. Listino OpenRouter 3.5-flash-lite = Google ($0.30/$2.50 per Mtok, endpoint `flex` a metà prezzo scelti da OpenRouter), senza IVA: `ABM_TRANSLATE_COST_IN_EUR_PER_MTOK` ≈ `0.27`, `ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK` ≈ `2.27` (listino × 1,055 × 0,86) — i default `0.28`/`2.30` restano una buona approssimazione. Il costo traduzione usa tariffe EUR fisse e **non** legge `ABM_OR_CREDIT_TOPUP_FEE` / `ABM_OR_CREDIT_VAT_PERCENT`: con la tassa sulla ricarica dal 16/10/2026 vanno moltiplicate a mano per (1 + tassa/100), es. `0.29`/`2.39` con tassa 5%.
+Il ripiego scatta sui chunk **bloccati per il contenuto** e su quelli **falliti dopo tutti i retry del primario** (errore di trasporto, completion vuota). Se ha lo stesso canale del primario (host + modello) è scartato con un log all'avvio del primo ripiego.
+
+**Traduzione via OpenRouter (dal 12/10/2026 al cambio DeepSeek).** Env storiche di prod: `ABM_TRANSLATE_BACKEND=apikey`, `ABM_TRANSLATE_API_BASE=https://openrouter.ai/api/v1`, `ABM_TRANSLATE_API_KEY=<chiave OpenRouter, mai in docs/log>`, `ABM_TRANSLATE_MODEL=google/gemini-3.5-flash-lite` — restano il **rollback** senza deploy. Verificato il 12/10/2026: `reasoning_effort="minimal"` è accettato da Gemini con 0 token di reasoning; `reasoning: {enabled: false}` è invece rifiutato da Gemini (400 «Reasoning is mandatory»), mentre su DeepSeek V4.1 Flash funziona (22/11/2026, 0 token di reasoning). L'usage in risposta porta `cost` esatto. Listino OpenRouter 3.5-flash-lite = Google ($0.30/$2.50 per Mtok), senza IVA: `ABM_TRANSLATE_COST_IN_EUR_PER_MTOK` ≈ `0.27`, `ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK` ≈ `2.27` (listino × 1,055 × 0,86) — i default `0.28`/`2.30` sono tarati su Gemini. Il costo traduzione usa tariffe EUR fisse e **non** legge `ABM_OR_CREDIT_TOPUP_FEE` / `ABM_OR_CREDIT_VAT_PERCENT`: con la tassa sulla ricarica vanno moltiplicate a mano per (1 + tassa/100).
+
+**Traduzione su DeepSeek diretto (piano 2026-11-22).** Env di destinazione: `ABM_TRANSLATE_BACKEND=llm`, `ABM_TRANSLATE_MODEL=deepseek-flash` (= DeepSeek-V4.1-Flash sull'API diretta), tariffe `ABM_TRANSLATE_COST_IN/OUT_EUR_PER_MTOK` al listino DeepSeek; ripiego `ABM_TRANSLATE_FALLBACK_BACKEND=openai`, `ABM_TRANSLATE_FALLBACK_API_BASE=https://openrouter.ai/api/v1`, `ABM_TRANSLATE_FALLBACK_API_KEY=<chiave OpenRouter>`, `ABM_TRANSLATE_FALLBACK_MODEL=deepseek/deepseek-v4.1-flash`, `ABM_TRANSLATE_FALLBACK_OPENROUTER_ORDER=<provider>`, tariffe `ABM_TRANSLATE_FALLBACK_COST_IN/OUT_EUR_PER_MTOK`.
 | `ABM_TRANSLATE_VERTEX_LOCATION` | `global` | — | `translation_core.py` | 79–80 |
 | `ABM_TRANSLATE_CHUNK_CHARS` | `20000` (caratteri max per chunk di testo inviato all'LLM) | — | `translation_core.py` | 98–99 |
 | `ABM_TRANSLATE_MAX_RETRIES` | `4` (tentativi per chunk con backoff esponenziale) | — | `translation_core.py` | 102–103 |
 | `ABM_TRANSLATE_TEMPERATURE` | `0.3` | — | `translation_core.py` | 106–107 |
 | `ABM_TRANSLATE_REQUEST_TIMEOUT_SEC` | `300` (secondi per chiamata LLM singola) | — | `translation_core.py` | 110–111 |
 | `ABM_TRANSLATE_BLOCK_ATTEMPTS` | `2` (tentativi sullo stesso chunk quando il provider lo blocca per il contenuto, `finish_reason` content_filter/recitation/safety; poi `TranslationContentBlocked`) | — | `translation_core.py` | 129 |
-| `ABM_TRANSLATE_FALLBACK_MODEL` | `deepseek-chat` (modello di ripiego per i chunk bloccati, chiamato con `ABM_LLM_API_KEY`/`ABM_LLM_API_BASE`; `off` disabilita; nessun ripiego se manca `ABM_LLM_API_KEY` o coincide col primario) | `ABM_LLM_MODEL` | `translation_core.py` | 136 |
-| `ABM_TRANSLATE_FALLBACK_STICKY_AFTER` | `2` (chunk bloccati dopo i quali il resto del libro va direttamente al ripiego; `0` = solo chunk per chunk) | — | `translation_core.py` | 143 |
+| `ABM_TRANSLATE_FALLBACK_STICKY_AFTER` | `2` (chunk bloccati o falliti sul primario dopo i quali il resto del libro va direttamente al ripiego; `0` = solo chunk per chunk) | — | `translation_core.py` | 143 |
 
 **Report costi (solo CLI — `scripts/translate_abm.py`)**
 

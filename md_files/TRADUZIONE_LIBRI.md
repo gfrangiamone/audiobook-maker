@@ -27,12 +27,25 @@ Parametri: `PARAMETRI_CONFIGURAZIONE.md` §3.6.2.
 ## translation_core.py — contratti chiave
 
 - Config letta a ogni chiamata via funzioni (`api_key()`, `model_name()`, `chunk_chars()`…):
-  env `ABM_TRANSLATE_*` con fallback `ABM_LLM_*`; numerici robusti (`_env_num`: virgola
+  env `ABM_TRANSLATE_*` (chiave/base del primario `openai` con fallback `ABM_LLM_*`); numerici robusti (`_env_num`: virgola
   decimale ok, malformato → default + warning).
-- Backend: `resolve_backend()` → `"vertex" | "apikey"` (auto: Vertex se `ABM_GCP_PROJECT_ID`
-  + `ABM_GOOGLE_CREDENTIALS_FILE`, stessa auth di Gemini TTS; altrimenti API key DeepSeek).
+- Provider: `resolve_provider(role)` → `TranslationProvider` (backend, model, base_url,
+  `client()`, `request_kwargs`, `thinking_kwargs`, role). Registro `_BUILDERS`:
+  `llm` (provider dell'ottimizzazione AI, client condiviso di `llm_client`), `openai`
+  (endpoint OpenAI-compatibile qualsiasi; alias storico `apikey`), `vertex` (service
+  account, stessa auth di Gemini TTS); `auto` = Vertex se configurato, altrimenti `openai`.
+  Stesso schema di env per i due ruoli: `ABM_TRANSLATE_<X>` (primario) e
+  `ABM_TRANSLATE_FALLBACK_<X>` (ripiego), con `<X>` = BACKEND, MODEL, MAX_TOKENS, API_KEY,
+  API_BASE, OPENROUTER_ORDER. Nuovo provider = un builder + una riga nel registro.
   Solleva `TranslationConfigError`; `is_available()` per gating UI/endpoint.
-- `call_llm(provider, system, user, *, model, usage, label, progress_cb, cancel_cb, log)`:
+- **Thinking sempre spento** (decisione 22/11/2026): ogni builder dichiara l'opt-out del
+  proprio canale (`llm`/DeepSeek → `thinking: disabled`; OpenRouter → `reasoning_effort:
+  minimal` per Gemini flash, `reasoning.enabled: false` per gli altri; Vertex → `minimal`
+  sui Gemini flash). Nessuna env lo riaccende; se il modello rifiuta il parametro
+  `call_llm` lo toglie e riprova (`usage.no_reasoning_effort`).
+- `resolve_fallback(primary, log)`: ripiego o `None` (`ABM_TRANSLATE_FALLBACK_MODEL=off`,
+  config incompleta, o stesso canale host+modello del primario — con log esplicito).
+- `call_llm(provider, system, user, *, usage, label, progress_cb, cancel_cb, log)`:
   streaming, retry esponenziale (`ABM_TRANSLATE_MAX_RETRIES`, default 4), fallback
   `stream_options` senza consumare tentativi, **completion vuota = errore ritentabile**
   (mai successo silenzioso). `cancel_cb()` → `TranslationCancelled` anche mid-stream.
@@ -150,7 +163,8 @@ tenendo in RAM tutti i capitoli tradotti).
 
 ## Test
 
-`test/test_translation_core.py` (25: core, retry, cancel, writer) ·
+`test/test_translation_core.py` (core, retry, cancel, writer) ·
+`test_translation_providers.py` (registro, thinking per canale, ripiego) ·
 `test_translation_pricing.py` (6: soglie/floor/virgola) ·
 `test_run_translation.py` (7: successo/selezione/refund/heartbeat/batch/email-non-fatale) ·
 `test_translate_endpoints.py` (19: estimate/validazioni/pagamento/concorrenza/dl/adopt/paypal).
