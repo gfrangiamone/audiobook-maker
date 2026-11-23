@@ -297,10 +297,8 @@ def test_paypal_create_order_translate_free_book(client, monkeypatch):
 def _mock_title_llm(monkeypatch, replies):
     """Mocka il layer LLM del titolo; ritorna la lista delle chiamate."""
     calls = []
-    monkeypatch.setattr(audiobook_app.translation_core, "resolve_backend",
-                        lambda: "apikey")
-    monkeypatch.setattr(audiobook_app.translation_core, "make_client_provider",
-                        lambda b: ((lambda: None), "m", "http://x"))
+    monkeypatch.setattr(audiobook_app.translation_core, "resolve_provider",
+                        lambda role="primary": object())
     def _tt(provider, titles, s, t, **kw):
         calls.append(list(titles))
         return replies
@@ -356,10 +354,8 @@ def test_translate_title_bad_target_empty(client, monkeypatch):
 
 def test_translate_title_llm_error_silent(client, monkeypatch):
     _seed()
-    monkeypatch.setattr(audiobook_app.translation_core, "resolve_backend",
-                        lambda: "apikey")
-    monkeypatch.setattr(audiobook_app.translation_core, "make_client_provider",
-                        lambda b: ((lambda: None), "m", "http://x"))
+    monkeypatch.setattr(audiobook_app.translation_core, "resolve_provider",
+                        lambda role="primary": object())
     def _boom(*a, **kw):
         raise RuntimeError("LLM down")
     monkeypatch.setattr(audiobook_app.translation_core, "translate_titles", _boom)

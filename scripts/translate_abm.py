@@ -206,14 +206,12 @@ def main():
                  f"Lingue valide: {', '.join(sorted(edge_langs))}")
 
     usage = tc.UsageTracker()
-    client_provider = None
-    model = tc.model_name()
+    provider = None
     if not args.dry_run:
         try:
-            backend = tc.resolve_backend()
+            provider = tc.resolve_provider()
         except tc.TranslationConfigError as e:
             sys.exit(f"Errore: {e}")
-        client_provider, model, base_url = tc.make_client_provider(backend)
 
     manifest, chapters, cover = parse_abm(in_path)
     total_chars = sum(len(ch["text"]) for ch in chapters)
@@ -223,7 +221,8 @@ def main():
           + (" + ottimizzazione TTS" if args.optimize else "")
           + (" [DRY-RUN]" if args.dry_run else ""))
     if not args.dry_run:
-        print(f"Backend: {backend} | Modello: {model} @ {base_url}")
+        print(f"Backend: {provider.backend} | Modello: {provider.model} "
+              f"@ {provider.base_url}")
 
     system_prompt = tc.build_system_prompt(source, target, args.optimize)
 
@@ -240,8 +239,7 @@ def main():
                 translated_parts.append(chunk)
             else:
                 translated_parts.append(tc.call_llm(
-                    client_provider, system_prompt, chunk,
-                    model=model, usage=usage, label=label,
+                    provider, system_prompt, chunk, usage=usage, label=label,
                     progress_cb=lambda n, _l=label: print(
                         f"\r  {_l} ricevuti {n} caratteri...", end="", flush=True)))
                 print()
@@ -254,8 +252,7 @@ def main():
     print("Traduzione titoli capitoli...")
     titles = [ch["title"] for ch in out_chapters]
     translated_titles = tc.translate_titles(
-        client_provider, titles, source, target,
-        model=model, usage=usage, dry_run=args.dry_run)
+        provider, titles, source, target, usage=usage, dry_run=args.dry_run)
     for ch, t in zip(out_chapters, translated_titles):
         ch["title"] = t.strip() or ch["title"]
 

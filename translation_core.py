@@ -18,8 +18,10 @@ import re
 import fileio
 import time
 import zipfile
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parent
 PROMPT_DIR = REPO_ROOT / "prompt_opt_AI"
@@ -80,10 +82,6 @@ def model_name():
     return _env("ABM_TRANSLATE_MODEL")
 
 
-def backend_choice():
-    return (_env("ABM_TRANSLATE_BACKEND") or "auto").lower()
-
-
 def gcp_project():
     return _env("ABM_GCP_PROJECT_ID")
 
@@ -122,13 +120,6 @@ def block_attempts():
     contenuto, prima di arrendersi (TranslationContentBlocked). Il blocco e'
     quasi sempre deterministico: 2 bastano a coprire il caso sporadico."""
     return max(1, _env_num(int, "ABM_TRANSLATE_BLOCK_ATTEMPTS", 2))
-
-
-def fallback_model():
-    """Modello di ripiego per i chunk bloccati per il contenuto: di default
-    quello dell'ottimizzazione AI (ABM_LLM_MODEL). 'off' disabilita."""
-    v = _env("ABM_TRANSLATE_FALLBACK_MODEL", "ABM_LLM_MODEL", "deepseek-chat")
-    return "" if v.lower() in ("off", "none", "0") else v
 
 
 def fallback_sticky_after():
@@ -284,53 +275,182 @@ _strip_fences = llm_client.strip_fences
 
 
 # ---------------------------------------------------------------------------
-# Backend LLM
+# Provider LLM di traduzione (registro dei backend)
 # ---------------------------------------------------------------------------
+#
+# Un provider e' tutto cio' che serve a una chiamata: client, modello e
+# parametri della richiesta. Due ruoli con lo stesso schema di env:
+#   primario  ABM_TRANSLATE_<X>
+#   ripiego   ABM_TRANSLATE_FALLBACK_<X>
+# con <X> = BACKEND, MODEL, MAX_TOKENS, API_KEY, API_BASE, OPENROUTER_ORDER.
+# Aggiungere un provider = scrivere un builder e registrarlo in _BUILDERS.
+
+PRIMARY = "primary"
+FALLBACK = "fallback"
+_ROLE_PREFIX = {PRIMARY: "ABM_TRANSLATE_", FALLBACK: "ABM_TRANSLATE_FALLBACK_"}
+_OFF_VALUES = ("off", "none", "0")
+OPENROUTER_HOST = "openrouter.ai"
+
+
+@dataclass(frozen=True)
+class TranslationProvider:
+    backend: str            # chiave del registro: finisce in tr_backend e nell'audit
+    model: str
+    base_url: str
+    client: Callable        # () -> client OpenAI-compatibile pronto all'uso
+    request_kwargs: dict = field(default_factory=dict)   # max_tokens, timeout, extra_body
+    thinking_kwargs: dict = field(default_factory=dict)  # opt-out del thinking
+    role: str = PRIMARY
+
+    @property
+    def channel(self):
+        """Identita' del canale: due provider con lo stesso canale fanno la
+        stessa chiamata (stesso host, stesso modello)."""
+        return ((self.base_url or "").rstrip("/"), self.model)
+
+
+def _role_env(role, suffix, default=""):
+    return env_str(_ROLE_PREFIX[role] + suffix, default)
+
+
+def backend_choice(role=PRIMARY):
+    default = "auto" if role == PRIMARY else "llm"
+    return (_role_env(role, "BACKEND") or default).lower()
+
+
+def _role_model(role, backend):
+    if role == PRIMARY:
+        return model_name()
+    v = _role_env(FALLBACK, "MODEL")
+    if not v and backend == "llm":
+        # Ripiego storico: il modello dell'ottimizzazione AI.
+        v = env_str("ABM_LLM_MODEL", llm_client.DEFAULT_MODEL)
+    return v
+
+
+def _role_api_key(role):
+    return api_key() if role == PRIMARY else _role_env(FALLBACK, "API_KEY")
+
+
+def _role_api_base(role):
+    return api_base() if role == PRIMARY else _role_env(FALLBACK, "API_BASE")
+
+
+def _merge_kwargs(*kwargs_list):
+    """Unisce i kwargs di richiesta; gli extra_body si fondono di un livello
+    (routing OpenRouter e opt-out del thinking convivono)."""
+    out = {}
+    for kw in kwargs_list:
+        for k, v in (kw or {}).items():
+            if k == "extra_body" and isinstance(out.get(k), dict):
+                body = dict(out[k])
+                for bk, bv in v.items():
+                    if isinstance(bv, dict) and isinstance(body.get(bk), dict):
+                        body[bk] = {**body[bk], **bv}
+                    else:
+                        body[bk] = bv
+                out[k] = body
+            else:
+                out[k] = v
+    return out
+
+
+def _base_request_kwargs(role, max_tokens_default):
+    """Timeout per richiesta e max_tokens del ruolo (0 = non inviato: vale il
+    default del provider)."""
+    kw = {"timeout": request_timeout()}
+    mt = max(0, _env_num(int, _ROLE_PREFIX[role] + "MAX_TOKENS", max_tokens_default))
+    if mt:
+        kw["max_tokens"] = mt
+    return kw
+
+
+# Famiglie Gemini che accettano reasoning_effort='minimal' (Vertex e
+# OpenRouter): 2.5 e 3.x, ramo flash/flash-lite, con o senza prefisso
+# 'google/'. I Pro non scendono sotto 'low'. Vertex rifiuta 'none' (400,
+# incidente 2026-06): 'minimal' e' il minimo e azzera il reasoning su flash.
+_GEMINI_MINIMAL_RE = re.compile(r"gemini-(?:2\.5|3(?:\.\d+)?)-flash")
+
+
+def _gemini_thinking_off(model):
+    if _GEMINI_MINIMAL_RE.search((model or "").lower()):
+        return {"reasoning_effort": "minimal"}
+    return {}
+
+
+def _openai_thinking_off(base_url, model):
+    """Opt-out del thinking su un endpoint OpenAI-compatibile generico.
+    Nella traduzione il thinking non serve mai (confronto 22/11/2026, tutto a
+    thinking spento): si spegne sempre, nessuna env lo riaccende."""
+    gemini = _gemini_thinking_off(model)
+    if gemini:
+        return gemini
+    host = (base_url or "").lower()
+    if OPENROUTER_HOST in host:
+        # Verificato su DeepSeek V4.1 Flash: 0 token di reasoning.
+        return {"extra_body": {"reasoning": {"enabled": False}}}
+    if "deepseek" in host:
+        return {"extra_body": llm_client.THINKING_OFF_BODY}
+    return {}
+
+
+def _openrouter_routing(role, base_url):
+    """Provider OpenRouter fissato (ABM_TRANSLATE[_FALLBACK]_OPENROUTER_ORDER,
+    lista separata da virgole): niente host a caso e niente conservazione dei
+    testi. Vuoto = routing di default di OpenRouter."""
+    order = [p.strip() for p in _role_env(role, "OPENROUTER_ORDER").split(",")
+             if p.strip()]
+    if not order or OPENROUTER_HOST not in (base_url or "").lower():
+        return {}
+    return {"extra_body": {"provider": {
+        "order": order, "allow_fallbacks": False, "data_collection": "deny"}}}
+
+
+def _build_llm(role, model):
+    """Il provider dell'ottimizzazione AI (ABM_LLM_API_KEY/_API_BASE), con lo
+    stesso client condiviso: nessuna seconda connessione allo stesso provider.
+    Il timeout di traduzione viaggia per richiesta."""
+    if not llm_client.api_key():
+        raise TranslationConfigError(
+            "backend llm richiesto ma ABM_LLM_API_KEY non impostata")
+
+    def client():
+        c = llm_client.client()
+        if c is None:
+            raise TranslationConfigError("client LLM non disponibile")
+        return c
+
+    return TranslationProvider(
+        backend="llm", model=model, base_url=llm_client.api_base(), client=client,
+        request_kwargs=_base_request_kwargs(role, 65536),
+        thinking_kwargs={"extra_body": llm_client.THINKING_OFF_BODY}, role=role)
+
+
+def _build_openai(role, model):
+    """Endpoint OpenAI-compatibile qualsiasi (OpenRouter, DeepSeek, ...), con
+    chiave e base proprie del ruolo."""
+    key, base = _role_api_key(role), _role_api_base(role)
+    if not key or not base:
+        p = _ROLE_PREFIX[role]
+        raise TranslationConfigError(
+            f"backend openai richiesto ma servono {p}API_KEY e {p}API_BASE")
+    state = {}
+
+    def client():
+        if "c" not in state:
+            state["c"] = llm_client.build_client(key, base, timeout=request_timeout())
+        return state["c"]
+
+    return TranslationProvider(
+        backend="openai", model=model, base_url=base, client=client,
+        request_kwargs=_merge_kwargs(_base_request_kwargs(role, 0),
+                                     _openrouter_routing(role, base)),
+        thinking_kwargs=_openai_thinking_off(base, model), role=role)
+
 
 def _vertex_ready():
     return bool(gcp_project()) and bool(gcp_creds_file()) \
         and os.path.isfile(gcp_creds_file())
-
-
-def resolve_backend():
-    """Risolve il backend LLM. Ritorna "vertex" | "apikey".
-    Solleva TranslationConfigError se la config richiesta è incompleta."""
-    choice = backend_choice()
-    if choice == "vertex":
-        if not _vertex_ready():
-            raise TranslationConfigError(
-                "backend vertex richiesto ma config incompleta: servono "
-                "ABM_GCP_PROJECT_ID e ABM_GOOGLE_CREDENTIALS_FILE (file leggibile)")
-        return "vertex"
-    if choice == "apikey":
-        if not api_key():
-            raise TranslationConfigError(
-                "backend apikey richiesto ma nessuna API key: imposta "
-                "ABM_TRANSLATE_API_KEY (o ABM_LLM_API_KEY)")
-        return "apikey"
-    if _vertex_ready():
-        return "vertex"
-    if api_key():
-        return "apikey"
-    raise TranslationConfigError(
-        "nessun backend LLM configurato: imposta ABM_GCP_PROJECT_ID + "
-        "ABM_GOOGLE_CREDENTIALS_FILE (Vertex) oppure ABM_TRANSLATE_API_KEY")
-
-
-def is_available():
-    """True se un backend LLM di traduzione è configurato E un modello di
-    traduzione è esplicitamente impostato (ABM_TRANSLATE_MODEL).
-
-    Senza modello la feature è considerata non configurata: la UI nasconde
-    l'opzione traduzione e gli endpoint la rifiutano (evita che la traduzione
-    erediti silenziosamente un modello di un altro backend → 404)."""
-    if not model_name():
-        return False
-    try:
-        resolve_backend()
-        return True
-    except TranslationConfigError:
-        return False
 
 
 def _vertex_base_url():
@@ -341,101 +461,107 @@ def _vertex_base_url():
             f"{loc}/endpoints/openapi")
 
 
-def make_client_provider(backend):
-    """Ritorna (provider, model, base_url). provider() restituisce un client
-    OpenAI pronto; per Vertex rinnova il bearer token prima della scadenza."""
-    from openai import OpenAI
-
-    mdl = model_name()
-    if not mdl:
+def _build_vertex(role, model):
+    """Vertex AI (service account Google), endpoint OpenAI-compatibile."""
+    if not _vertex_ready():
         raise TranslationConfigError(
-            "modello di traduzione non configurato: imposta ABM_TRANSLATE_MODEL")
-
-    if backend == "apikey":
-        client = OpenAI(api_key=api_key(), base_url=api_base(),
-                        timeout=request_timeout())
-        return (lambda: client), mdl, api_base()
-
-    sa = ServiceAccount(gcp_creds_file(),
-                        ["https://www.googleapis.com/auth/cloud-platform"])
+            "backend vertex richiesto ma config incompleta: servono "
+            "ABM_GCP_PROJECT_ID e ABM_GOOGLE_CREDENTIALS_FILE (file leggibile)")
     base_url = _vertex_base_url()
-    model = mdl if "/" in mdl else f"google/{mdl}"
-    state = {"client": None, "token": None}
+    model = model if "/" in model else f"google/{model}"
+    state = {"sa": None, "client": None, "token": None}
 
-    def provider():
+    def client():
         # Il token si rinnova da solo prima della scadenza (gcp_auth); il
         # client OpenAI si ricrea quando il bearer cambia.
-        token = sa.token()
+        if state["sa"] is None:
+            state["sa"] = ServiceAccount(
+                gcp_creds_file(), ["https://www.googleapis.com/auth/cloud-platform"])
+        token = state["sa"].token()
         if state["client"] is None or token != state["token"]:
-            state["client"] = OpenAI(api_key=token, base_url=base_url,
-                                     timeout=request_timeout())
+            state["client"] = llm_client.build_client(token, base_url,
+                                                      timeout=request_timeout())
             state["token"] = token
         return state["client"]
 
-    return provider, model, base_url
+    return TranslationProvider(
+        backend="vertex", model=model, base_url=base_url, client=client,
+        request_kwargs=_base_request_kwargs(role, 0),
+        thinking_kwargs=_gemini_thinking_off(model), role=role)
 
 
-def make_fallback_provider(primary_model=""):
-    """Provider di ripiego per i chunk che il modello primario blocca per il
-    contenuto: l'LLM dell'ottimizzazione AI (ABM_LLM_API_KEY/_API_BASE,
-    modello fallback_model()). Usa le credenziali ABM_LLM_* e non le
-    ABM_TRANSLATE_*: e' il provider dell'ottimizzazione, non un secondo
-    backend di traduzione.
+_BUILDERS = {"llm": _build_llm, "openai": _build_openai, "vertex": _build_vertex}
+# Nomi storici delle env di prod: restano validi.
+_BACKEND_ALIASES = {"apikey": "openai"}
 
-    Ritorna (provider, model, extra_kwargs) oppure None se il ripiego non e'
-    configurato o coincide col primario. extra_kwargs spegne il thinking
-    (default "on" sui DeepSeek v4) e alza max_tokens come fa l'ottimizzazione.
-    """
-    key = llm_client.api_key()
-    mdl = fallback_model()
-    if not key or not mdl or mdl == primary_model:
+
+def _resolve_backend_name(role):
+    choice = backend_choice(role)
+    choice = _BACKEND_ALIASES.get(choice, choice)
+    if choice != "auto":
+        if choice not in _BUILDERS:
+            raise TranslationConfigError(
+                f"backend di traduzione sconosciuto: {choice!r} "
+                f"(validi: auto, apikey, {', '.join(sorted(_BUILDERS))})")
+        return choice
+    if _vertex_ready():
+        return "vertex"
+    if _role_api_key(role) and _role_api_base(role):
+        return "openai"
+    raise TranslationConfigError(
+        "nessun backend LLM configurato: imposta ABM_GCP_PROJECT_ID + "
+        "ABM_GOOGLE_CREDENTIALS_FILE (Vertex) oppure ABM_TRANSLATE_API_KEY")
+
+
+def resolve_provider(role=PRIMARY):
+    """Provider del ruolo dato. Solleva TranslationConfigError se la config
+    e' incompleta. Economico: nessuna connessione finche' non si chiama
+    provider.client()."""
+    backend = _resolve_backend_name(role)
+    model = _role_model(role, backend)
+    if not model:
+        raise TranslationConfigError(
+            f"modello di traduzione non configurato: imposta {_ROLE_PREFIX[role]}MODEL")
+    return _BUILDERS[backend](role, model)
+
+
+def resolve_fallback(primary, log=print):
+    """Provider di ripiego, o None (disattivato con
+    ABM_TRANSLATE_FALLBACK_MODEL=off, config incompleta o stesso canale del
+    primario: ripiegare sulla stessa chiamata non serve)."""
+    if _role_env(FALLBACK, "MODEL").lower() in _OFF_VALUES:
         return None
-    base = llm_client.api_base()
-    state = {"client": None}
+    try:
+        fb = resolve_provider(FALLBACK)
+    except TranslationConfigError as e:
+        log(f"[traduzione] ripiego non disponibile: {e}")
+        return None
+    if primary is not None and fb.channel == primary.channel:
+        log(f"[traduzione] ripiego disattivato: coincide col primario "
+            f"({fb.model} @ {fb.base_url})")
+        return None
+    return fb
 
-    def provider():
-        if state["client"] is None:
-            state["client"] = llm_client.build_client(key, base, timeout=request_timeout())
-        return state["client"]
 
-    extra = {
-        "max_tokens": _env_num(int, "ABM_LLM_MAX_TOKENS", 65536),
-        "extra_body": llm_client.THINKING_OFF_BODY,
-    }
-    return provider, mdl, extra
+def is_available():
+    """True se il provider primario e' configurato, modello compreso
+    (ABM_TRANSLATE_MODEL esplicito).
+
+    Senza modello la feature e' considerata non configurata: la UI nasconde
+    l'opzione traduzione e gli endpoint la rifiutano (evita che la traduzione
+    erediti silenziosamente un modello di un altro backend -> 404)."""
+    if not model_name():
+        return False
+    try:
+        resolve_provider(PRIMARY)
+        return True
+    except TranslationConfigError:
+        return False
 
 
 # ---------------------------------------------------------------------------
 # Chiamate LLM
 # ---------------------------------------------------------------------------
-
-# Famiglie che accettano reasoning_effort='minimal' su Vertex: Gemini 2.5 e
-# Gemini 3.x, ramo flash/flash-lite. Il match tollera il prefisso 'google/' e
-# i suffissi di versione (-lite, -preview, -001). I Pro sono esclusi: non
-# possono scendere sotto 'low'.
-_MINIMAL_THINKING_RE = re.compile(r"gemini-(?:2\.5|3(?:\.\d+)?)-flash")
-
-
-def _thinking_off_kwargs(model):
-    """Per la traduzione il 'thinking' non è mai utile: aggiunge solo latenza e
-    token di reasoning a parità di qualità. Lo minimizziamo in modo hardcoded
-    via OpenAI-compat con reasoning_effort='minimal' (il valore più basso
-    accettato da Vertex per la famiglia Flash).
-
-    NB: Vertex accetta SOLO 'high'/'low'/'medium'/'minimal' — 'none' viene
-    rifiutato con 400 INVALID_ARGUMENT (incidente 2026-06). 'minimal' è il
-    livello minimo disponibile e di fatto azzera il reasoning su flash/flash-lite.
-
-    Gating per nome modello: la famiglia Flash di Gemini 2.5 e 3.x (verificato
-    con chiamate reali su Vertex, 2026-07: 3.1-flash-lite, 3.5-flash-lite e
-    3.6-flash accettano 'minimal' e non emettono token di reasoning). I Pro non
-    possono ridurre il thinking e gli altri provider (es. DeepSeek sul backend
-    apikey) non riconoscono il parametro → no-op altrove. Se un modello futuro
-    lo rifiuta comunque, `call_llm` degrada da solo (no_reasoning_effort)."""
-    if _MINIMAL_THINKING_RE.search((model or "").lower()):
-        return {"reasoning_effort": "minimal"}
-    return {}
-
 
 # finish_reason che indicano una risposta interrotta per il contenuto. Vertex
 # (endpoint OpenAI-compatibile) mappa SAFETY/RECITATION/BLOCKLIST/
@@ -450,16 +576,21 @@ def _is_block_finish(reason):
     return bool(reason) and bool(_BLOCK_FINISH_RE.search(str(reason)))
 
 
-def call_llm(client_provider, system_prompt, user_content, *, model, usage,
-             label="", progress_cb=None, cancel_cb=None, log=print,
-             extra_kwargs=None):
+def _thinking_rejected(exc):
+    """400 di un modello che non accetta l'opt-out del thinking inviato."""
+    msg = str(exc).lower()
+    return any(m in msg for m in ("reasoning", "thinking"))
+
+
+def call_llm(provider, system_prompt, user_content, *, usage,
+             label="", progress_cb=None, cancel_cb=None, log=print):
     """Chiamata LLM streaming con retry esponenziale. Ritorna il testo.
 
+    provider: TranslationProvider (client, modello, parametri di richiesta).
     usage: UsageTracker dell'esecuzione (anche stato no_stream_options).
     progress_cb(received_chars): notificata col cumulativo caratteri ricevuti.
     cancel_cb() -> bool: se True a inizio chiamata o tra gli eventi dello
     stream, solleva TranslationCancelled.
-    extra_kwargs: parametri aggiuntivi per la create() (provider di ripiego).
 
     Una risposta interrotta per il contenuto (finish_reason di blocco) non e'
     mai restituita, nemmeno se parziale: dopo block_attempts() tentativi
@@ -477,19 +608,14 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
         if cancel_cb and cancel_cb():
             raise TranslationCancelled("cancelled before LLM call")
         try:
-            client = client_provider()
-            kwargs = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature(),
-                "stream": True,
-            }
-            if not getattr(usage, "no_reasoning_effort", False):
-                kwargs.update(_thinking_off_kwargs(model))
+            client = provider.client()
+            kwargs = _merge_kwargs(
+                {"model": provider.model, "messages": messages,
+                 "temperature": temperature(), "stream": True},
+                provider.request_kwargs,
+                None if usage.no_reasoning_effort else provider.thinking_kwargs)
             if not usage.no_stream_options:
                 kwargs["stream_options"] = {"include_usage": True}
-            if extra_kwargs:
-                kwargs.update(extra_kwargs)
             stream = client.chat.completions.create(**kwargs)
             parts = []
             received = 0
@@ -547,19 +673,15 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
                 log(f"  {label} [LLM] provider senza stream_options: "
                     f"report costi in modalità stima")
                 continue
-            # Modello che rifiuta reasoning_effort/thinking_level (400
-            # INVALID_ARGUMENT): disabilita il parametro e riprova subito senza
-            # consumare un tentativo. Il thinking resta al default del modello
-            # (costo output più alto, ma la traduzione non si blocca).
-            _emsg = str(e).lower()
-            if (not getattr(usage, "no_reasoning_effort", False)
-                    and _thinking_off_kwargs(model)
-                    and ("reasoning_effort" in _emsg
-                         or "thinking_level" in _emsg
-                         or "thinkinglevel" in _emsg)):
+            # Modello che rifiuta l'opt-out del thinking (400 su
+            # reasoning_effort/thinking): toglie il parametro e riprova subito
+            # senza consumare un tentativo. Il thinking resta al default del
+            # modello (costo output piu' alto, ma la traduzione non si blocca).
+            if (not usage.no_reasoning_effort and provider.thinking_kwargs
+                    and _thinking_rejected(e)):
                 usage.no_reasoning_effort = True
-                log(f"  {label} [LLM] reasoning_effort rifiutato da {model}: "
-                    f"riprovo senza (thinking al default del modello)")
+                log(f"  {label} [LLM] opt-out del thinking rifiutato da "
+                    f"{provider.model}: riprovo senza (thinking al default del modello)")
                 continue
             last_exc = e
             if attempt >= retries - 1:
@@ -575,8 +697,8 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
         f"Chiamata LLM fallita dopo {retries} tentativi: {last_exc}")
 
 
-def translate_titles(client_provider, titles, source, target, *, model,
-                     usage, log=print, dry_run=False, extra_kwargs=None):
+def translate_titles(provider, titles, source, target, *,
+                     usage, log=print, dry_run=False):
     """Traduce i titoli dei capitoli in una singola chiamata batch (JSON).
     Su risposta invalida ritorna i titoli originali (non fatale)."""
     if dry_run:
@@ -589,10 +711,9 @@ def translate_titles(client_provider, titles, source, target, *, model,
         "markdown fences."
     )
     try:
-        raw = call_llm(client_provider, system,
+        raw = call_llm(provider, system,
                        json.dumps(titles, ensure_ascii=False),
-                       model=model, usage=usage, label="[titoli]", log=log,
-                       extra_kwargs=extra_kwargs)
+                       usage=usage, label="[titoli]", log=log)
         out = json.loads(_strip_fences(raw))
         if isinstance(out, list) and len(out) == len(titles) \
                 and all(isinstance(t, str) for t in out):

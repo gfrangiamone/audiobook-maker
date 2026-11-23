@@ -15,8 +15,7 @@ CID = "cid_s9_test"
 @pytest.fixture
 def job(monkeypatch):
     monkeypatch.setattr(translation_core, "is_available", lambda: True)
-    monkeypatch.setattr(translation_core, "resolve_backend", lambda: "fake")
-    monkeypatch.setattr(translation_core, "make_client_provider", lambda b: (object(), "m", ""))
+    monkeypatch.setattr(translation_core, "resolve_provider", lambda role="primary": object())
     j = {"status": "analyzed", "client_id": CID, "original_filename": "x.epub", "created_at": 0, "last_poll": 0,
          "info": types.SimpleNamespace(title="La città perduta", language="it")}
     with audiobook_app._jobs_lock:

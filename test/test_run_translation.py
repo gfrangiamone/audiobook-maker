@@ -53,14 +53,19 @@ def _jobs_dict(monkeypatch):
     yield
 
 
+_PRIMARY = tc.TranslationProvider(backend="openai", model="m",
+                                  base_url="http://x", client=lambda: None)
+_FB = tc.TranslationProvider(backend="llm", model="fb-model", base_url="http://fb",
+                             client=lambda: None, role=tc.FALLBACK)
+
+
 @pytest.fixture
 def fake_llm(monkeypatch, tmp_path):
     """Mock del layer LLM del core: traduzione = upper()."""
     # In generation_engine la dir di upload e' il module-level _upload_dir.
     monkeypatch.setattr(ge, "_upload_dir", tmp_path, raising=True)
-    monkeypatch.setattr(tc, "resolve_backend", lambda: "apikey")
-    monkeypatch.setattr(tc, "make_client_provider",
-                        lambda b: ((lambda: None), "m", "http://x"))
+    monkeypatch.setattr(tc, "resolve_provider", lambda role=tc.PRIMARY: _PRIMARY)
+    monkeypatch.setattr(tc, "resolve_fallback", lambda primary, log=print: None)
     monkeypatch.setattr(
         tc, "call_llm",
         lambda provider, sys_p, user, **kw: user.upper())
@@ -299,10 +304,10 @@ def test_il_giudizio_confronta_sorgente_e_traduzione(fake_llm, tmp_path,
 
 def _blocking_primary(blocked_texts):
     """call_llm finto: il primario blocca i testi in `blocked_texts`, il
-    ripiego (riconosciuto da extra_kwargs) traduce in lower()."""
+    ripiego (ruolo FALLBACK) traduce in lower()."""
     calls = []
     def _call(provider, sys_p, user, **kw):
-        via = "fb" if kw.get("extra_kwargs") else "primary"
+        via = "fb" if provider.role == tc.FALLBACK else "primary"
         calls.append((via, user))
         if via == "primary" and user in blocked_texts:
             raise tc.TranslationContentBlocked("blocked", "content_filter")
@@ -314,8 +319,7 @@ def test_run_translation_blocked_chunk_falls_back(fake_llm, tmp_path, monkeypatc
     job_id, job = _seed_job(tmp_path)
     call, calls = _blocking_primary({"Testo uno."})
     monkeypatch.setattr(tc, "call_llm", call)
-    monkeypatch.setattr(tc, "make_fallback_provider",
-                        lambda m: ((lambda: None), "fb-model", {"max_tokens": 1}))
+    monkeypatch.setattr(tc, "resolve_fallback", lambda primary, log=print: _FB)
     monkeypatch.setattr(tj, "check", lambda *a, **kw: "")
     audits = []
     monkeypatch.setattr(ge.translation_cost_audit, "append_record", audits.append)
@@ -332,8 +336,7 @@ def test_run_translation_sticky_fallback_after_repeated_blocks(fake_llm, tmp_pat
     job_id, job = _seed_job(tmp_path)
     call, calls = _blocking_primary({"Testo uno."})
     monkeypatch.setattr(tc, "call_llm", call)
-    monkeypatch.setattr(tc, "make_fallback_provider",
-                        lambda m: ((lambda: None), "fb-model", {"max_tokens": 1}))
+    monkeypatch.setattr(tc, "resolve_fallback", lambda primary, log=print: _FB)
     monkeypatch.setattr(tj, "check", lambda *a, **kw: "")
     ge.run_translation(job_id)
     assert job["status"] == "translated"
@@ -346,7 +349,6 @@ def test_run_translation_blocked_without_fallback_refunds(fake_llm, tmp_path, mo
     job_id, job = _seed_job(tmp_path)
     call, _ = _blocking_primary({"Testo uno."})
     monkeypatch.setattr(tc, "call_llm", call)
-    monkeypatch.setattr(tc, "make_fallback_provider", lambda m: None)
     refunds = []
     monkeypatch.setattr(ge, "_refund_job_payment",
                         lambda jid, j, reason: refunds.append(reason))
@@ -354,3 +356,4 @@ def test_run_translation_blocked_without_fallback_refunds(fake_llm, tmp_path, mo
     ge.run_translation(job_id)
     assert job["status"] == "error"
     assert refunds == ["error"]
+

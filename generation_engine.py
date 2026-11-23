@@ -3723,8 +3723,8 @@ def run_translation(job_id):
     try:
         if _cancelled():
             raise translation_core.TranslationCancelled("cancelled at start")
-        backend = translation_core.resolve_backend()
-        provider, model, base_url = translation_core.make_client_provider(backend)
+        provider = translation_core.resolve_provider()
+        backend, model = provider.backend, provider.model
         # Letti da /api/admin/audit-translations: prima restavano variabili
         # locali e l'audit admin mostrava backend e modello vuoti (M2).
         job["tr_backend"] = backend
@@ -3749,9 +3749,9 @@ def run_translation(job_id):
             nonlocal fb, fb_tried
             if not fb_tried:
                 fb_tried = True
-                fb = translation_core.make_fallback_provider(model)
+                fb = translation_core.resolve_fallback(provider, log=_log)
                 if fb is not None:
-                    job["tr_fallback_model"] = fb[1]
+                    job["tr_fallback_model"] = fb.model
             return fb
 
         def _sticky():
@@ -3778,13 +3778,10 @@ def run_translation(job_id):
                     job["tr_streamed_chars"] = job["tr_processed_chars"] + _base + n
 
                 def _traduci_fallback(_label):
-                    fprov, fmodel, fextra = fb
                     job["tr_fallback_chunks"] = job.get("tr_fallback_chunks", 0) + 1
                     return translation_core.call_llm(
-                        fprov, system_prompt, chunk,
-                        model=fmodel, usage=fb_usage, label=_label,
-                        progress_cb=_pcb, cancel_cb=_cancelled, log=_log,
-                        extra_kwargs=fextra)
+                        fb, system_prompt, chunk, usage=fb_usage, label=_label,
+                        progress_cb=_pcb, cancel_cb=_cancelled, log=_log)
 
                 def _traduci():
                     label = f"[cap {i + 1}]"
@@ -3792,15 +3789,14 @@ def run_translation(job_id):
                         return _traduci_fallback(label)
                     try:
                         return translation_core.call_llm(
-                            provider, system_prompt, chunk,
-                            model=model, usage=usage, label=label,
+                            provider, system_prompt, chunk, usage=usage, label=label,
                             progress_cb=_pcb, cancel_cb=_cancelled, log=_log)
                     except translation_core.TranslationContentBlocked as e:
                         job["tr_blocked_chunks"] = job.get("tr_blocked_chunks", 0) + 1
                         if _fallback() is None:
                             raise
                         _log(f"{label} bloccato dal modello primario "
-                             f"({e.finish_reason}): ripiego su {fb[1]}"
+                             f"({e.finish_reason}): ripiego su {fb.model}"
                              + (" per il resto del libro" if _sticky() else ""))
                         return _traduci_fallback(label)
 
@@ -3844,14 +3840,9 @@ def run_translation(job_id):
             # capitoli: un elemento in piu', zero chiamate LLM extra
             # (spec 2026-06-06-translated-title-filename).
             titles.append(book_title)
-        if _sticky():
-            translated_titles = translation_core.translate_titles(
-                fb[0], titles, source, target,
-                model=fb[1], usage=fb_usage, log=_log, extra_kwargs=fb[2])
-        else:
-            translated_titles = translation_core.translate_titles(
-                provider, titles, source, target,
-                model=model, usage=usage, log=_log)
+        translated_titles = translation_core.translate_titles(
+            fb if _sticky() else provider, titles, source, target,
+            usage=fb_usage if _sticky() else usage, log=_log)
         translated_title = ""
         if book_title:
             translated_title = (translated_titles[-1] or "").strip() or book_title

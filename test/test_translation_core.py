@@ -100,10 +100,13 @@ class _FakeClient:
         self.chat = type("C", (), {"completions": completions})()
 
 
-def _provider_for(parts, fail_times=0, exc=None):
+def _provider_for(parts, fail_times=0, exc=None, model="m", thinking=None):
     comp = _FakeCompletions(parts, fail_times, exc)
     client = _FakeClient(comp)
-    return (lambda: client), comp
+    prov = tc.TranslationProvider(backend="fake", model=model, base_url="",
+                                  client=lambda: client,
+                                  thinking_kwargs=thinking or {})
+    return prov, comp
 
 
 def test_call_llm_streams_and_tracks(monkeypatch):
@@ -111,7 +114,7 @@ def test_call_llm_streams_and_tracks(monkeypatch):
     provider, comp = _provider_for([_FakeEvent("ciao "), _FakeEvent("mondo")])
     usage = tc.UsageTracker()
     received = []
-    out = tc.call_llm(provider, "sys", "user", model="m", usage=usage,
+    out = tc.call_llm(provider, "sys", "user", usage=usage,
                       progress_cb=lambda n: received.append(n))
     assert out == "ciao mondo"
     assert usage.report()["calls"] == 1
@@ -122,7 +125,7 @@ def test_call_llm_retries_then_succeeds(monkeypatch):
     monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "3")
     monkeypatch.setattr(tc.time, "sleep", lambda s: None)
     provider, comp = _provider_for([_FakeEvent("ok")], fail_times=2)
-    out = tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+    out = tc.call_llm(provider, "s", "u", usage=tc.UsageTracker())
     assert out == "ok"
     assert comp.calls == 3
 
@@ -132,14 +135,14 @@ def test_call_llm_raises_after_max_retries(monkeypatch):
     monkeypatch.setattr(tc.time, "sleep", lambda s: None)
     provider, comp = _provider_for([_FakeEvent("ok")], fail_times=99)
     with pytest.raises(tc.TranslationError):
-        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+        tc.call_llm(provider, "s", "u", usage=tc.UsageTracker())
     assert comp.calls == 2
 
 
 def test_call_llm_cancel_cb_aborts_mid_stream():
     provider, comp = _provider_for([_FakeEvent("a"), _FakeEvent("b")])
     with pytest.raises(tc.TranslationCancelled):
-        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker(),
+        tc.call_llm(provider, "s", "u", usage=tc.UsageTracker(),
                     cancel_cb=lambda: True)
 
 
@@ -149,7 +152,7 @@ def test_call_llm_stream_options_fallback(monkeypatch):
                                    fail_times=1,
                                    exc=RuntimeError("stream_options not supported"))
     usage = tc.UsageTracker()
-    out = tc.call_llm(provider, "s", "u", model="m", usage=usage)
+    out = tc.call_llm(provider, "s", "u", usage=usage)
     assert out == "ok"
     assert usage.no_stream_options is True
     assert comp.calls == 2  # il fallback non consuma un retry
@@ -165,7 +168,7 @@ def test_call_llm_stream_options_fallback(monkeypatch):
     "gemini-3-flash-preview",
 ])
 def test_thinking_off_applies_to_gemini_flash_family(model):
-    assert tc._thinking_off_kwargs(model) == {"reasoning_effort": "minimal"}
+    assert tc._gemini_thinking_off(model) == {"reasoning_effort": "minimal"}
 
 
 @pytest.mark.parametrize("model", [
@@ -177,26 +180,29 @@ def test_thinking_off_applies_to_gemini_flash_family(model):
     None,
 ])
 def test_thinking_off_noop_outside_gemini_flash(model):
-    assert tc._thinking_off_kwargs(model) == {}
+    assert tc._gemini_thinking_off(model) == {}
 
 
 def test_call_llm_sends_reasoning_effort_for_gemini_3(monkeypatch):
     monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
-    provider, comp = _provider_for([_FakeEvent("ok")])
+    model = "google/gemini-3.1-flash-lite"
+    provider, comp = _provider_for([_FakeEvent("ok")], model=model,
+                                   thinking=tc._gemini_thinking_off(model))
     seen = {}
     orig = comp.create
     comp.create = lambda **kw: (seen.update(kw), orig(**kw))[1]
-    tc.call_llm(provider, "s", "u", model="google/gemini-3.1-flash-lite",
-                usage=tc.UsageTracker())
+    tc.call_llm(provider, "s", "u", usage=tc.UsageTracker())
     assert seen["reasoning_effort"] == "minimal"
+    assert seen["model"] == model
 
 
 def test_call_llm_reasoning_effort_fallback(monkeypatch):
     monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
     exc = RuntimeError("400 INVALID_ARGUMENT: reasoning_effort is not supported")
-    provider, comp = _provider_for([_FakeEvent("ok")], fail_times=1, exc=exc)
+    provider, comp = _provider_for([_FakeEvent("ok")], fail_times=1, exc=exc,
+                                   thinking={"reasoning_effort": "minimal"})
     usage = tc.UsageTracker()
-    out = tc.call_llm(provider, "s", "u", model="gemini-3.6-flash", usage=usage)
+    out = tc.call_llm(provider, "s", "u", usage=usage)
     assert out == "ok"
     assert usage.no_reasoning_effort is True
     assert comp.calls == 2  # il fallback non consuma un retry
@@ -206,10 +212,11 @@ def test_call_llm_reasoning_fallback_not_triggered_for_other_errors(monkeypatch)
     monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
     monkeypatch.setattr(tc.time, "sleep", lambda s: None)
     provider, comp = _provider_for([_FakeEvent("ok")], fail_times=1,
-                                   exc=RuntimeError("503 backend unavailable"))
+                                   exc=RuntimeError("503 backend unavailable"),
+                                   thinking={"reasoning_effort": "minimal"})
     usage = tc.UsageTracker()
     with pytest.raises(tc.TranslationError):
-        tc.call_llm(provider, "s", "u", model="gemini-3.6-flash", usage=usage)
+        tc.call_llm(provider, "s", "u", usage=usage)
     assert usage.no_reasoning_effort is False
     assert comp.calls == 1  # errore generico: consuma il tentativo
 
@@ -217,32 +224,15 @@ def test_call_llm_reasoning_fallback_not_triggered_for_other_errors(monkeypatch)
 def test_translate_titles_valid_json():
     provider, _ = _provider_for([_FakeEvent('["Uno", "Due"]')])
     out = tc.translate_titles(provider, ["One", "Two"], "en", "it",
-                              model="m", usage=tc.UsageTracker())
+                              usage=tc.UsageTracker())
     assert out == ["Uno", "Due"]
 
 
 def test_translate_titles_invalid_json_keeps_originals():
     provider, _ = _provider_for([_FakeEvent("non-json")])
     out = tc.translate_titles(provider, ["One", "Two"], "en", "it",
-                              model="m", usage=tc.UsageTracker())
+                              usage=tc.UsageTracker())
     assert out == ["One", "Two"]
-
-
-def test_resolve_backend_no_config_raises(monkeypatch):
-    for k in ("ABM_TRANSLATE_API_KEY", "ABM_LLM_API_KEY",
-              "ABM_GCP_PROJECT_ID", "ABM_GOOGLE_CREDENTIALS_FILE",
-              "ABM_TRANSLATE_BACKEND"):
-        monkeypatch.delenv(k, raising=False)
-    with pytest.raises(tc.TranslationConfigError):
-        tc.resolve_backend()
-
-
-def test_resolve_backend_apikey(monkeypatch):
-    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
-    monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
-    monkeypatch.delenv("ABM_TRANSLATE_BACKEND", raising=False)
-    monkeypatch.setenv("ABM_TRANSLATE_API_KEY", "k")
-    assert tc.resolve_backend() == "apikey"
 
 
 def test_is_available(monkeypatch):
@@ -318,7 +308,7 @@ def test_call_llm_empty_stream_retries_then_raises(monkeypatch):
     monkeypatch.setattr(tc.time, "sleep", lambda s: None)
     provider, comp = _provider_for([_FakeEvent("")])  # stream con solo delta vuoti
     with pytest.raises(tc.TranslationError):
-        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+        tc.call_llm(provider, "s", "u", usage=tc.UsageTracker())
     assert comp.calls == 2  # ha ritentato, poi errore definitivo
 
 
@@ -351,7 +341,7 @@ class _FinishEvent:
 def test_call_llm_choice_without_delta_does_not_crash(monkeypatch):
     monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
     provider, comp = _provider_for([_FakeEvent("ciao"), _FinishEvent("stop")])
-    out = tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+    out = tc.call_llm(provider, "s", "u", usage=tc.UsageTracker())
     assert out == "ciao"
 
 
@@ -363,7 +353,7 @@ def test_call_llm_content_filter_raises_blocked_after_block_attempts(monkeypatch
         [_FakeEvent("testo parziale"), _FinishEvent("content_filter")])
     usage = tc.UsageTracker()
     with pytest.raises(tc.TranslationContentBlocked) as ei:
-        tc.call_llm(provider, "s", "u", model="m", usage=usage)
+        tc.call_llm(provider, "s", "u", usage=usage)
     assert ei.value.finish_reason == "content_filter"
     assert comp.calls == 2          # block_attempts di default, non 4
     assert usage.report()["calls"] == 2  # il consumo resta tracciato
@@ -373,31 +363,4 @@ def test_call_llm_blocked_with_single_retry_still_raises_blocked(monkeypatch):
     monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
     provider, comp = _provider_for([_FinishEvent("RECITATION")])
     with pytest.raises(tc.TranslationContentBlocked):
-        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
-
-
-def test_call_llm_extra_kwargs_reach_create(monkeypatch):
-    seen = {}
-    class _C(_FakeCompletions):
-        def create(self, **kw):
-            seen.update(kw)
-            return super().create(**kw)
-    comp = _C([_FakeEvent("ok")])
-    client = _FakeClient(comp)
-    tc.call_llm(lambda: client, "s", "u", model="m", usage=tc.UsageTracker(),
-                extra_kwargs={"max_tokens": 7})
-    assert seen["max_tokens"] == 7
-
-
-def test_make_fallback_provider(monkeypatch):
-    monkeypatch.delenv("ABM_TRANSLATE_FALLBACK_MODEL", raising=False)
-    monkeypatch.delenv("ABM_LLM_API_KEY", raising=False)
-    assert tc.make_fallback_provider("google/x") is None
-    monkeypatch.setenv("ABM_LLM_API_KEY", "k")
-    monkeypatch.setenv("ABM_LLM_MODEL", "deepseek-v4-flash")
-    prov, mdl, extra = tc.make_fallback_provider("google/x")
-    assert mdl == "deepseek-v4-flash"
-    assert extra["extra_body"] == {"thinking": {"type": "disabled"}}
-    assert tc.make_fallback_provider("deepseek-v4-flash") is None  # = primario
-    monkeypatch.setenv("ABM_TRANSLATE_FALLBACK_MODEL", "off")
-    assert tc.make_fallback_provider("google/x") is None
+        tc.call_llm(provider, "s", "u", usage=tc.UsageTracker())

@@ -8259,11 +8259,9 @@ def api_translate_title(job_id):
     if not translation_core.is_available():
         return jsonify({"title": ""})
     try:
-        backend = translation_core.resolve_backend()
-        provider, model, _base = translation_core.make_client_provider(backend)
         out = translation_core.translate_titles(
-            provider, [title], source, target,
-            model=model, usage=translation_core.UsageTracker())
+            translation_core.resolve_provider(), [title], source, target,
+            usage=translation_core.UsageTracker())
         translated = (out[0] or "").strip() or title
     except Exception as e:
         print(f"[tr-title] {job_id}: traduzione titolo fallita (non-fatal): {e}")
