@@ -169,6 +169,50 @@ def test_both_languages_travel_with_the_texts(env):
     assert state["source"]["chars"] == 800
 
 
+def _sentences(prefix, n, width):
+    return " ".join(f"{prefix}{i:03d}" + "x" * (width - 6) + "." for i in range(n))
+
+
+def test_the_excerpts_cut_both_texts_at_the_same_point():
+    """Finestre fisse uguali su una traduzione piu' lunga del 20%: la testa
+    della traduzione si fermava prima di quella del sorgente e il giudice
+    leggeva le frasi oltre il taglio come mancanti (prod nov 2026)."""
+    src = _sentences("S", 100, 50)          # frase i a ~50 caratteri
+    out = _sentences("T", 100, 60)          # stessa frase, 20% piu' lunga
+    state = tj._state(src, out, "en", "de")
+    s_head = state["source"]["text"].split("[...]")[0]
+    o_head = state["output"]["text"].split("[...]")[0]
+    s_tail = state["source"]["text"].split("[...]")[1]
+    o_tail = state["output"]["text"].split("[...]")[1]
+    last = lambda t, p: max(int(x[:3]) for x in t.split(p)[1:])
+    first = lambda t, p: min(int(x[:3]) for x in t.split(p)[1:])
+    assert abs(last(s_head, "S") - last(o_head, "T")) <= 1
+    assert abs(first(s_tail, "S") - first(o_tail, "T")) <= 1
+    assert state["source"]["chars"] == len(src)
+    assert state["output"]["chars"] == len(out)
+
+
+def test_a_short_source_shows_the_whole_output():
+    """Sorgente sotto la soglia del ritaglio: si vedono entrambi interi, anche
+    se la traduzione da sola la supera."""
+    src, out = "a" * 1100, "b" * 1300
+    state = tj._state(src, out, "en", "de")
+    assert "[...]" not in state["source"]["text"]
+    assert "[...]" not in state["output"]["text"]
+
+
+def test_an_abnormal_length_ratio_is_capped():
+    """Un output dieci volte piu' lungo (allucinazione) non si mostra quasi
+    tutto: la scala si ferma a 4x."""
+    src, out = "a" * 3000, "b" * 30000
+    _, o = tj._clips(src, out)
+    assert len(o) <= 4 * 1200 + 10
+
+
+def test_the_judge_is_told_about_the_cut():
+    assert "[...]" in tj._state("a", "b", "en", "de")["task"]
+
+
 # --------------------------------------------------------------------------
 # soglie
 # --------------------------------------------------------------------------

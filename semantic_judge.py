@@ -262,6 +262,21 @@ def clip(text, head, tail=0, marker=None):
     return t[:head].rstrip() + (" [...]" if marker is None else marker)
 
 
+def clip_pair(source, output, head, tail, ratio_min=0.25, ratio_max=4.0):
+    """Testa e coda di sorgente e output, tagliate negli stessi punti del
+    testo. Con finestre fisse uguali, un output piu' lungo (una traduzione)
+    copre meno sorgente e il giudice vede frasi «sparite» che stanno solo
+    oltre il taglio. Le finestre dell'output si scalano col rapporto di
+    lunghezza (limitato a [ratio_min, ratio_max]: oltre, l'output e' gia'
+    anomalo) e l'output si ritaglia solo se si ritaglia il sorgente."""
+    src, out = (source or "").strip(), (output or "").strip()
+    if len(src) <= head + tail:
+        return src, out
+    ratio = max(ratio_min, min(ratio_max, len(out) / len(src)))
+    return (clip(src, head, tail),
+            clip(out, round(head * ratio), round(tail * ratio)))
+
+
 def _audit_keep():
     """Retention dei judge (ABM_AUDIT_KEEP_MONTHS); senza ABM_DATA_DIR non si
     purga niente (la cartella risolverebbe alla cwd)."""

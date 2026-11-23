@@ -113,7 +113,8 @@ def test_judges_share_the_skeleton():
         src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
         assert "_audit_path" not in src and 'open(path, "a"' not in src, mod.__name__
         assert "sj.mode_from_env(" in src and "sj.append_monthly_audit(" in src, mod.__name__
-    assert translation_judge._clip("x" * 2000).count("[...]") == 1
+    assert all(t.count("[...]") == 1
+               for t in translation_judge._clips("x" * 2000, "y" * 2400))
     assert transcript_judge._clip("y" * 5000).endswith(" [...]")
     assert section_judge._excerpt("z" * 1000).endswith("…")
 

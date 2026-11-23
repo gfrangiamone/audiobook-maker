@@ -109,21 +109,30 @@ def looks_copied(source, output):
 # Domande
 # ---------------------------------------------------------------------------
 
-def _clip(text):
-    return sj.clip(text, _HEAD_CHARS, _TAIL_CHARS)
+def _clips(source, output):
+    """Ritaglio allineato (`sj.clip_pair`). Con finestre fisse uguali la
+    traduzione, di solito piu' lunga, copriva meno sorgente e il giudice
+    rispondeva «incomplete» su quasi ogni capitolo (prod, nov 2026: complete
+    0,05-0,38 sui chunk ritagliati, 0,96-0,98 su quelli interi)."""
+    return sj.clip_pair(source, output, _HEAD_CHARS, _TAIL_CHARS)
 
 
 def _state(source, output, src_lang, dst_lang):
+    src_text, out_text = _clips(source, output)
     return {
         "task": "A passage of a book was given to a model to translate. It "
                 "was asked for the translation and nothing else: no preamble, "
                 "no notes, no summary. Proper names, book titles and "
                 "quotations in a third language may legitimately stay as they "
-                "are.",
+                "are. Long texts are shown as excerpts: the beginning and the "
+                "end, with the middle replaced by [...] at roughly the same "
+                "point in both. The cut is not missing text, and a sentence "
+                "next to a cut may be visible in one text and not in the "
+                "other.",
         "source_language": src_lang or "",
         "target_language": dst_lang or "",
-        "source": {"chars": len(source or ""), "text": _clip(source)},
-        "output": {"chars": len(output or ""), "text": _clip(output)},
+        "source": {"chars": len(source or ""), "text": src_text},
+        "output": {"chars": len(output or ""), "text": out_text},
     }
 
 
@@ -152,7 +161,9 @@ def _questions():
                      "counterpart in `output`, in the same order, and the end "
                      "of `source` has an end in `output`. Sentences may be "
                      "merged or split and word order may change: that is what "
-                     "translating is.",
+                     "translating is. With excerpts, judge only the visible "
+                     "parts, allowing for a sentence lost at the edge of a "
+                     "cut.",
                 false="`output` condenses or summarizes `source`, drops "
                       "paragraphs, stops before `source` ends, or adds a "
                       "preamble, a note or a comment about the translation "
