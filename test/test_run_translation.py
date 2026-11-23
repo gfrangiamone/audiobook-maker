@@ -357,3 +357,74 @@ def test_run_translation_blocked_without_fallback_refunds(fake_llm, tmp_path, mo
     assert job["status"] == "error"
     assert refunds == ["error"]
 
+
+# ── Ripiego su errore del primario dopo i retry (piano 2026-11-22) ────
+
+def _failing_primary(failing_texts):
+    """call_llm finto: il primario fallisce (TranslationError, cioe' retry
+    esauriti) sui testi in `failing_texts`, il ripiego traduce in lower()."""
+    calls = []
+    def _call(provider, sys_p, user, **kw):
+        via = "fb" if provider.role == tc.FALLBACK else "primary"
+        calls.append((via, user))
+        if via == "primary" and user in failing_texts:
+            raise tc.TranslationError("Chiamata LLM fallita dopo 4 tentativi: 503")
+        return user.lower() if via == "fb" else user.upper()
+    return _call, calls
+
+
+def test_run_translation_primary_error_falls_back(fake_llm, tmp_path, monkeypatch):
+    job_id, job = _seed_job(tmp_path)
+    call, calls = _failing_primary({"Testo uno."})
+    monkeypatch.setattr(tc, "call_llm", call)
+    monkeypatch.setattr(tc, "resolve_fallback", lambda primary, log=print: _FB)
+    monkeypatch.setattr(tj, "check", lambda *a, **kw: "")
+    audits = []
+    monkeypatch.setattr(ge.translation_cost_audit, "append_record", audits.append)
+    ge.run_translation(job_id)
+    assert job["status"] == "translated"
+    assert [c["text"] for c in job["translated_chapters"]] == ["testo uno.", "TESTO DUE."]
+    assert job["tr_primary_failed_chunks"] == 1 and job["tr_fallback_chunks"] == 1
+    assert not job.get("tr_blocked_chunks")
+    assert audits[-1]["primary_failed_chunks"] == 1
+    assert audits[-1]["fallback_model"] == "fb-model"
+
+
+def test_run_translation_sticky_after_primary_errors(fake_llm, tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_FALLBACK_STICKY_AFTER", "1")
+    job_id, job = _seed_job(tmp_path)
+    call, calls = _failing_primary({"Testo uno."})
+    monkeypatch.setattr(tc, "call_llm", call)
+    monkeypatch.setattr(tc, "resolve_fallback", lambda primary, log=print: _FB)
+    monkeypatch.setattr(tj, "check", lambda *a, **kw: "")
+    ge.run_translation(job_id)
+    assert job["status"] == "translated"
+    assert ("primary", "Testo due.") not in calls
+
+
+def test_run_translation_primary_error_without_fallback_refunds(fake_llm, tmp_path, monkeypatch):
+    job_id, job = _seed_job(tmp_path)
+    call, _ = _failing_primary({"Testo uno."})
+    monkeypatch.setattr(tc, "call_llm", call)
+    refunds = []
+    monkeypatch.setattr(ge, "_refund_job_payment",
+                        lambda jid, j, reason: refunds.append(reason))
+    monkeypatch.setattr(ge.pending_jobs, "mark_failed", lambda j: None)
+    ge.run_translation(job_id)
+    assert job["status"] == "error"
+    assert "503" in job["error"]
+    assert refunds == ["error"]
+
+
+def test_run_translation_cancel_never_falls_back(fake_llm, tmp_path, monkeypatch):
+    job_id, job = _seed_job(tmp_path)
+    def _call(provider, sys_p, user, **kw):
+        if provider.role == tc.FALLBACK:
+            raise AssertionError("ripiego dopo un annullamento")
+        raise tc.TranslationCancelled("cancelled mid-stream")
+    monkeypatch.setattr(tc, "call_llm", _call)
+    monkeypatch.setattr(tc, "resolve_fallback", lambda primary, log=print: _FB)
+    monkeypatch.setattr(ge, "_refund_job_payment", lambda jid, j, reason: None)
+    monkeypatch.setattr(ge.pending_jobs, "mark_failed", lambda j: None)
+    ge.run_translation(job_id)
+    assert job.get("tr_cancelled") is True

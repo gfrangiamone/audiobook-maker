@@ -92,6 +92,13 @@ TRANSLATE_MIN_COST_EUR = env_float("ABM_TRANSLATE_MIN_COST", 1.5)
 # Accettano virgola decimale.
 TRANSLATE_COST_IN_EUR_PER_MTOK = env_float("ABM_TRANSLATE_COST_IN_EUR_PER_MTOK", 0.28)
 TRANSLATE_COST_OUT_EUR_PER_MTOK = env_float("ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK", 2.30)
+# Stessa coppia per il provider di ripiego della traduzione
+# (ABM_TRANSLATE_FALLBACK_*). Non impostate (-1) = tariffa blended
+# dell'ottimizzazione AI, il ripiego storico.
+TRANSLATE_FALLBACK_COST_IN_EUR_PER_MTOK = env_float(
+    "ABM_TRANSLATE_FALLBACK_COST_IN_EUR_PER_MTOK", -1)
+TRANSLATE_FALLBACK_COST_OUT_EUR_PER_MTOK = env_float(
+    "ABM_TRANSLATE_FALLBACK_COST_OUT_EUR_PER_MTOK", -1)
 VOUCHER_EXPIRY_DAYS = env_int("ABM_VOUCHER_EXPIRY_DAYS", 180)
 VOUCHER_BONUS_PERCENT = env_int("ABM_VOUCHER_BONUS_PERCENT", 10)
 PAYMENT_RETENTION_DAYS = env_int("ABM_PAYMENT_RETENTION_DAYS", 730)  # 24 mesi GDPR
@@ -228,14 +235,21 @@ def translation_estimate_for_job(job, char_count, optimize=False):
         source_lang=getattr(info, "language", "") or "")
 
 
-def _translation_provider_cost_eur(prompt_tokens, completion_tokens):
+def _translation_provider_cost_eur(prompt_tokens, completion_tokens, role="primary"):
     """Costo LLM stimato (EUR) dai token reali di una traduzione.
 
-    costo = in/1M × RATE_IN + out/1M × RATE_OUT. Coppia unica in/out; il
-    backend effettivo (vertex/apikey) e' registrato a parte nel record audit.
+    costo = in/1M × RATE_IN + out/1M × RATE_OUT, con la coppia del ruolo
+    (`primary` = ABM_TRANSLATE_COST_*, `fallback` = ABM_TRANSLATE_FALLBACK_COST_*).
+    Ripiego senza tariffe proprie = tariffa blended dell'ottimizzazione AI.
     """
-    ci = (prompt_tokens or 0) / 1_000_000.0 * TRANSLATE_COST_IN_EUR_PER_MTOK
-    co = (completion_tokens or 0) / 1_000_000.0 * TRANSLATE_COST_OUT_EUR_PER_MTOK
+    rate_in, rate_out = TRANSLATE_COST_IN_EUR_PER_MTOK, TRANSLATE_COST_OUT_EUR_PER_MTOK
+    if role == "fallback":
+        rate_in = TRANSLATE_FALLBACK_COST_IN_EUR_PER_MTOK
+        rate_out = TRANSLATE_FALLBACK_COST_OUT_EUR_PER_MTOK
+        if rate_in < 0 or rate_out < 0:
+            return _optimization_provider_cost_eur(prompt_tokens, completion_tokens)
+    ci = (prompt_tokens or 0) / 1_000_000.0 * rate_in
+    co = (completion_tokens or 0) / 1_000_000.0 * rate_out
     return round(ci + co, 6)
 
 

@@ -62,3 +62,28 @@ def test_write_is_non_fatal(tmp_path, fresh_app):
         "JOB3", {"payment": {}}, backend="", model="", source_lang="it",
         target_lang="en", optimize=False, chars_total=0,
         usage_report=None, outcome="completed")
+
+
+def test_write_record_prices_fallback_with_its_rates(tmp_path, fresh_app):
+    import translation_cost_audit, generation_engine
+    fresh_app(env={"ABM_DATA_DIR": str(tmp_path),
+                   "ABM_TRANSLATE_COST_IN_EUR_PER_MTOK": "1.0",
+                   "ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK": "1.0",
+                   "ABM_TRANSLATE_FALLBACK_COST_IN_EUR_PER_MTOK": "3.0",
+                   "ABM_TRANSLATE_FALLBACK_COST_OUT_EUR_PER_MTOK": "3.0"},
+              leaves=("translation_cost_audit", "payment"))
+    job = {"payment": {"total_eur": 5.0, "method": "paypal", "token": "PP1"},
+           "tr_primary_failed_chunks": 1, "tr_fallback_model": "deepseek/x",
+           "tr_fallback_chunks": 1}
+    generation_engine._write_translation_audit(
+        "JOB4", job, backend="llm", model="deepseek-flash",
+        source_lang="en", target_lang="it", optimize=False, chars_total=10_000,
+        usage_report={"prompt_tokens": 1_000_000, "completion_tokens": 0,
+                      "estimated": False},
+        fallback_usage_report={"calls": 1, "prompt_tokens": 1_000_000,
+                               "completion_tokens": 0, "estimated": False},
+        outcome="completed")
+    r = list(translation_cost_audit.iter_records())[0]
+    assert r["fallback_cost_eur"] == 3.0
+    assert r["google_cost_eur_actual"] == 4.0
+    assert r["primary_failed_chunks"] == 1

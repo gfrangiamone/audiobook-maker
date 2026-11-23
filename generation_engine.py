@@ -3735,12 +3735,13 @@ def run_translation(job_id):
         system_prompt = translation_core.build_system_prompt(
             source, target, optimize)
 
-        # Ripiego sull'LLM dell'ottimizzazione AI per i chunk che il modello
-        # primario blocca per il contenuto (filtro recitation/safety di
-        # Vertex su libri editi famosi: incidente 2026-10-05, job pagati
-        # rimborsati dopo pochi capitoli). Dopo `sticky_after` chunk bloccati
-        # il resto del libro va diretto al ripiego: il blocco si ripete sullo
-        # stesso testo e ogni tentativo sul primario e' tempo perso.
+        # Ripiego (ABM_TRANSLATE_FALLBACK_*) per i chunk che il primario
+        # blocca per il contenuto (filtro recitation/safety di Vertex su libri
+        # editi famosi: incidente 2026-10-05, job pagati rimborsati dopo pochi
+        # capitoli) o che fallisce dopo tutti i retry (provider giu', 429/5xx
+        # persistenti). Dopo `sticky_after` chunk persi dal primario il resto
+        # del libro va diretto al ripiego: ogni nuovo tentativo sul primario
+        # e' tempo perso.
         fb = None
         fb_tried = False
         sticky_after = translation_core.fallback_sticky_after()
@@ -3755,8 +3756,9 @@ def run_translation(job_id):
             return fb
 
         def _sticky():
-            return (sticky_after > 0 and fb is not None
-                    and job.get("tr_blocked_chunks", 0) >= sticky_after)
+            persi = (job.get("tr_blocked_chunks", 0)
+                     + job.get("tr_primary_failed_chunks", 0))
+            return sticky_after > 0 and fb is not None and persi >= sticky_after
 
         out_chapters = []
         for i, ch in enumerate(chapters):
@@ -3791,14 +3793,22 @@ def run_translation(job_id):
                         return translation_core.call_llm(
                             provider, system_prompt, chunk, usage=usage, label=label,
                             progress_cb=_pcb, cancel_cb=_cancelled, log=_log)
+                    except translation_core.TranslationCancelled:
+                        raise
                     except translation_core.TranslationContentBlocked as e:
                         job["tr_blocked_chunks"] = job.get("tr_blocked_chunks", 0) + 1
-                        if _fallback() is None:
-                            raise
-                        _log(f"{label} bloccato dal modello primario "
-                             f"({e.finish_reason}): ripiego su {fb.model}"
-                             + (" per il resto del libro" if _sticky() else ""))
-                        return _traduci_fallback(label)
+                        motivo = f"bloccato dal modello primario ({e.finish_reason})"
+                        errore = e
+                    except translation_core.TranslationError as e:
+                        job["tr_primary_failed_chunks"] = (
+                            job.get("tr_primary_failed_chunks", 0) + 1)
+                        motivo = f"fallito sul modello primario ({e})"
+                        errore = e
+                    if _fallback() is None:
+                        raise errore
+                    _log(f"{label} {motivo}: ripiego su {fb.model}"
+                         + (" per il resto del libro" if _sticky() else ""))
+                    return _traduci_fallback(label)
 
                 out = _traduci()
                 # Campione: solo il primo chunk del capitolo. Un modello che
@@ -6017,14 +6027,14 @@ def _write_translation_audit(job_id, job, *, backend, model, source_lang,
         tokens_estimated = bool(ur.get("estimated", False))
         cost_eur = payment._translation_provider_cost_eur(
             prompt_tokens, completion_tokens)
-        # Chunk ripiegati sull'LLM dell'ottimizzazione: tariffa di quel
-        # provider, sommata nel costo totale (chiave provider-agnostica).
+        # Chunk ripiegati: tariffa del provider di ripiego, sommata nel
+        # costo totale (chiave provider-agnostica).
         fr = fallback_usage_report or {}
         fb_cost_eur = 0.0
         if fr.get("calls"):
-            fb_cost_eur = payment._optimization_provider_cost_eur(
+            fb_cost_eur = payment._translation_provider_cost_eur(
                 int(fr.get("prompt_tokens", 0) or 0),
-                int(fr.get("completion_tokens", 0) or 0))
+                int(fr.get("completion_tokens", 0) or 0), role="fallback")
             cost_eur += fb_cost_eur
 
         # --- Pagamento (stessa tasca job["payment"], fallback legacy) ---
@@ -6074,9 +6084,11 @@ def _write_translation_audit(job_id, job, *, backend, model, source_lang,
             "payment_source": payment_source,
             "outcome": outcome,
         }
-        if job.get("tr_blocked_chunks") or fr.get("calls"):
+        if (job.get("tr_blocked_chunks") or job.get("tr_primary_failed_chunks")
+                or fr.get("calls")):
             rec.update({
                 "blocked_chunks": int(job.get("tr_blocked_chunks", 0) or 0),
+                "primary_failed_chunks": int(job.get("tr_primary_failed_chunks", 0) or 0),
                 "fallback_model": job.get("tr_fallback_model", "") or "",
                 "fallback_chunks": int(job.get("tr_fallback_chunks", 0) or 0),
                 "fallback_prompt_tokens": int(fr.get("prompt_tokens", 0) or 0),
