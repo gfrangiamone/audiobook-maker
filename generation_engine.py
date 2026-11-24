@@ -5647,7 +5647,7 @@ def _write_direct_audit(engine, job_id, job, voice_id, language, outcome):
         provider_cost_eur = 0.0
         should_have_been = 0.0
         try:
-            price = mod.compute_user_price_eur(metered_chars)
+            price = mod.compute_user_price_eur(_tts_engines.listino_chars(job, metered_chars))
             provider_cost_eur = float(price.get("cost_usd", 0.0) or 0.0) * float(
                 pricing_common.usd_eur_rate())
             should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
@@ -5842,8 +5842,12 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         try:
             price = voxcpm_tts.compute_user_price_eur(chars, language)
             cost_usd_mchar = voxcpm_tts.cost_usd_per_mchar()
+            # Costo sul lavoro fatto (anche i capitoli rifatti), dovuto sul
+            # libro: vedi `tts_engines.listino_chars`.
             cost_usd = float(price.get("cost_usd", 0.0) or 0.0)
-            should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
+            should_have_been = float(voxcpm_tts.compute_user_price_eur(
+                _tts_engines.listino_chars(job, chars), language).get(
+                    "user_price_eur", 0.0) or 0.0)
         except Exception:
             cost_usd = 0.0
             should_have_been = 0.0

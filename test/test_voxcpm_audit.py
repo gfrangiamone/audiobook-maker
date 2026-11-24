@@ -490,3 +490,19 @@ def test_combinato_legacy_scorpora_la_quota_ai(audit_isolato):
     r = leggi(audit_isolato)[-1]
     assert r["user_price_eur_charged"] == pytest.approx(0.48)
     assert r["combined_total_eur"] == pytest.approx(0.50)
+
+
+def test_il_dovuto_non_supera_il_piano_del_libro(audit_isolato):
+    # ZsosHChm (05/11): capitoli risintetizzati dopo un riavvio contati due
+    # volte, 137% del piano e un falso sottopagamento. Il costo resta sul
+    # lavoro fatto, il dovuto sul libro.
+    rifatto = job_finito()
+    rifatto["text_coverage"] = {"chars_billed": 200_000, "plan_chars": 200_000,
+                                "pct": 100.0, "drop": False}
+    generation_engine._write_voxcpm_audit("job-1", rifatto, VOCE, "it", "completed")
+    generation_engine._write_voxcpm_audit("job-2", job_finito(), VOCE, "it", "completed")
+    r, senza_piano = leggi(audit_isolato)
+    assert r["chars_total"] == 250_000
+    assert r["user_price_eur_should_have_been"] == 0.80          # 200k x 4 EUR/M
+    assert senza_piano["user_price_eur_should_have_been"] == 1.00
+    assert r["google_cost_eur_actual"] == senza_piano["google_cost_eur_actual"]

@@ -25,6 +25,24 @@ from voice_utils import (engine_for_voice, is_gemini_voice, is_pocket_voice, is_
 CHUNK_MAX_CHARS = 2000
 
 
+def listino_chars(job, chars):
+    """Caratteri su cui calcolare il listino dovuto: quelli sintetizzati, mai
+    oltre il piano del libro (`job["text_coverage"]["plan_chars"]`).
+
+    I contatori `<motore>_actual` misurano il LAVORO, ed e' giusto per il
+    costo: un capitolo risintetizzato (piano cambiato fra due riavvii, chunk
+    scartati, capitolo risottomesso) si paga due volte al provider. Il
+    listino invece e' il prezzo del libro: contarlo due volte dava un falso
+    sottopagamento in audit (ZsosHChm, 05/11: 137% del piano, +5,35 EUR) e
+    una trattenuta gonfiata su un cancel. Senza piano registrato: invariato."""
+    try:
+        chars = max(0, int(chars or 0))
+        plan = int(((job or {}).get("text_coverage") or {}).get("plan_chars") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return chars if isinstance(chars, int) else 0
+    return min(chars, plan) if plan > 0 else chars
+
+
 @dataclass(frozen=True)
 class Engine:
     name: str
@@ -121,12 +139,12 @@ class Engine:
                 price = m.compute_user_price_eur(
                     float(actual.get("audio_seconds", 0.0) or 0.0), model_key)
             elif self.name == "speechify":
-                price = m.compute_user_price_eur(
-                    int(actual.get("billable_chars", 0) or 0)
-                    or int(actual.get("chars", 0) or 0))
+                price = m.compute_user_price_eur(listino_chars(
+                    job, int(actual.get("billable_chars", 0) or 0)
+                    or int(actual.get("chars", 0) or 0)))
             else:
                 price = m.compute_user_price_eur(
-                    int(actual.get("chars", 0) or 0), language)
+                    listino_chars(job, int(actual.get("chars", 0) or 0)), language)
             return float(price.get("list_price_eur", 0.0) or 0.0)
         except Exception:
             return 0.0

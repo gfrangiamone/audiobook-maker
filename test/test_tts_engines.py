@@ -112,3 +112,15 @@ def test_availability_is_read_from_the_module(monkeypatch):
     monkeypatch.setattr(speechify_tts, "is_available", lambda: (_ for _ in ()).throw(RuntimeError("x")))
     assert tts_engines.ENGINES["voxcpm"].is_available() is True
     assert tts_engines.ENGINES["speechify"].is_available() is False
+
+
+def test_listino_chars_tetto_al_piano_del_libro():
+    from tts_engines import ENGINES, listino_chars
+    piano = {"text_coverage": {"plan_chars": 1000}}
+    assert listino_chars(piano, 1370) == 1000
+    assert listino_chars(piano, 400) == 400               # cancel a meta': invariato
+    assert listino_chars({}, 1370) == 1370                # nessun piano registrato
+    assert listino_chars({"text_coverage": None}, 5) == 5
+    job = {"pocket_actual": {"chars": 2_000_000}, "text_coverage": {"plan_chars": 1_000_000}}
+    assert ENGINES["pocket"].consumed_list_price_eur(job) == ENGINES["pocket"].mod(
+        ).compute_user_price_eur(1_000_000)["list_price_eur"]
