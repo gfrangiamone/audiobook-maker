@@ -28,6 +28,7 @@ import re
 import tempfile
 import threading
 import time
+import unicodedata
 
 import edge_tts
 import edge_tts.communicate as _edge_communicate
@@ -169,6 +170,45 @@ _EDGE_SANITY_MIN_CHARS = 40
 # di 219 caratteri "Nooo..." dava ~2,2 s, scartato come troncato a ogni tentativo
 # e consegnato come silenzio.
 _EDGE_REPEAT_RUN = re.compile(r"(.)\1{2,}", re.I | re.S)
+# Lingue delle voci edge che non leggono in alfabeto latino: per queste il
+# minimo atteso resta su tutto il testo (comportamento di sempre). Le altre
+# voci saltano in silenzio le lettere di un'altra scrittura, e contarle nel
+# minimo scartava come troncato un audio completo. 23/11/2026, job
+# qXWq4GrabV2rqXgjrSozBQ: slide in amarico (ge'ez) + inglese lette da
+# en-US-GuyNeural, 1702 caratteri -> 40,4 s di inglese, sotto il minimo di
+# 42,5 s: silenzio consegnato a ogni tentativo e in due job, con l'email che
+# parlava di un problema temporaneo del servizio.
+_EDGE_NON_LATIN_LANGS = frozenset({
+    "am", "ar", "as", "be", "bg", "bn", "el", "fa", "gu", "he", "hi", "hy", "iu",
+    "ja", "ka", "kk", "km", "kn", "ko", "ky", "lo", "mk", "ml", "mn", "mr", "my",
+    "ne", "or", "pa", "ps", "ru", "sd", "si", "sr", "ta", "te", "tg", "th", "ti",
+    "uk", "ur", "wuu", "yue", "zh",
+})
+_EDGE_WS_RUN = re.compile(r"\s+")
+
+
+def _edge_readable_char(c):
+    """True se una voce in alfabeto latino pronuncia (o tace legittimamente
+    come pausa) il carattere: lettere e segni latini, e ogni non-lettera."""
+    cat = unicodedata.category(c)
+    if cat[0] not in "LM":
+        return True
+    name = unicodedata.name(c, "")
+    return name.startswith(("LATIN", "COMBINING"))
+
+
+def _edge_spoken_text(text, voice):
+    """Il testo che la voce leggera' davvero, per il minimo anti-troncamento.
+
+    Voci latine (non Multilingual): tolte le lettere delle altre scritture,
+    che la voce salta senza audio, e compattati gli spazi rimasti fra le
+    parole tolte. Voci in altre scritture, Multilingual o voce ignota: il
+    testo intero, come prima."""
+    v = voice or ""
+    lang = v.split("-", 1)[0].lower()
+    if not lang or lang in _EDGE_NON_LATIN_LANGS or "multilingual" in v.lower():
+        return text
+    return _EDGE_WS_RUN.sub(" ", "".join(c for c in text if _edge_readable_char(c)))
 
 
 def _rate_speed_factor(rate):
@@ -181,16 +221,18 @@ def _rate_speed_factor(rate):
     return _rate_speed_factor_vu(rate, floor=0.25)
 
 
-def _edge_output_looks_truncated(output_path, text, rate="+0%"):
+def _edge_output_looks_truncated(output_path, text, rate="+0%", voice=None):
     """True se l'MP3 edge-tts e' troppo corto per contenere `text` completo.
 
     Confronta la durata stimata dal file (CBR 48 kbps -> bytes/6000) con il
     minimo fisico per quel numero di caratteri alla massima velocita' plausibile
     (scalata per il rate). Conservativo: rifiuta solo file palesemente
     incompleti. File assente/illeggibile => considerato troncato. Le ripetizioni
-    di un carattere contano una volta sola.
+    di un carattere contano una volta sola; con `voice` latina, le lettere di
+    altre scritture non contano (vedi `_edge_spoken_text`).
     """
-    n = len(_EDGE_REPEAT_RUN.sub(r"\1", (text or "").strip()))
+    spoken = _edge_spoken_text((text or "").strip(), voice).strip()
+    n = len(_EDGE_REPEAT_RUN.sub(r"\1", spoken))
     if n < _EDGE_SANITY_MIN_CHARS:
         return False
     try:
@@ -516,7 +558,7 @@ async def _edge_tts_attempts(text, voice, rate, output_path, max_retries=3):
         finally:
             _edge_wss_ctx.reset(token)
             _edge_slot_release()
-        if _edge_output_looks_truncated(output_path, text, rate):
+        if _edge_output_looks_truncated(output_path, text, rate, voice):
             try:
                 size = os.path.getsize(output_path)
             except OSError:

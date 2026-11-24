@@ -52,3 +52,39 @@ def test_audio_completo_non_e_troncato(tmp_path):
 def test_ellissi_e_spazi_ripetuti_non_alzano_il_minimo(tmp_path):
     testo = "Wait" + "." * 60 + " " * 60 + "what?"
     assert not edge_engine._edge_output_looks_truncated(_mp3(tmp_path, 1.0), testo)
+
+
+# 23/11/2026, job qXWq4GrabV2rqXgjrSozBQ: slide in amarico + inglese lette da
+# en-US-GuyNeural. La voce salta il ge'ez: 1702 caratteri -> 40,4 s di audio
+# completo, scartato come troncato a ogni tentativo (silenzio consegnato).
+AMARICO = "የስላይድ ጽሑፍ ስለ ወታደር ራስን መግዛት "
+
+
+def _slide_mista():
+    return (AMARICO * 30 + FRASE * 12)
+
+
+def test_voce_latina_ignora_le_lettere_di_altre_scritture(tmp_path):
+    testo = _slide_mista()
+    assert len(testo) / edge_engine._EDGE_MAX_CHARS_PER_SEC > 25.0   # minimo vecchio
+    mp3 = _mp3(tmp_path, 22.0)                                          # l'inglese c'e' tutto
+    assert edge_engine._edge_output_looks_truncated(mp3, testo)                 # senza voce: come prima
+    assert not edge_engine._edge_output_looks_truncated(mp3, testo, voice="en-US-GuyNeural")
+
+
+def test_voce_latina_vede_ancora_il_troncamento_vero(tmp_path):
+    assert edge_engine._edge_output_looks_truncated(
+        _mp3(tmp_path, 5.0), _slide_mista(), voice="en-US-GuyNeural")
+
+
+def test_voci_di_altre_scritture_e_multilingual_contano_tutto(tmp_path):
+    mp3 = _mp3(tmp_path, 22.0)
+    for voce in ("am-ET-AmehaNeural", "ru-RU-DmitryNeural",
+                 "en-US-AndrewMultilingualNeural"):
+        assert edge_engine._edge_output_looks_truncated(mp3, _slide_mista(), voice=voce), voce
+
+
+def test_accenti_e_punteggiatura_latina_restano_nel_conto():
+    t = "Ça a été déjà vu — «très» naïve, Œuvre; ẞtraße!"
+    assert edge_engine._edge_spoken_text(t, "fr-FR-DeniseNeural") == t
+    assert edge_engine._edge_spoken_text("ab ጽሑፍ ጽሑፍ cd", "en-US-GuyNeural") == "ab cd"
