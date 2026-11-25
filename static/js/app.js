@@ -314,7 +314,7 @@ function detectLang(){
    invece di conservarlo. Si azzera a ogni libro nuovo. */
 let _premiumModelPicked=false;
 let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,_analyzedHbInterval=null,isTxtFile=false,emailRegistered=false;
-let previewListened=false,_langWarnResolve=null;
+let previewListened=false,_langWarnResolve=null,_langAssumedAck=false;
 let aiOptEnabled=false,llmAvailable=false,optimizedChapters=[];
 let wizMode='audio'; // 'audio' | 'translate'
 let trPaymentToken=null,trEstimate=null,trEmailRegistered=false,trAutoOutName='';
@@ -1012,6 +1012,7 @@ function initBookLanguage(){
   // 'forced' arriva dai job la cui lingua l'utente ha gia' deciso lui
   // (adozione di una traduzione): riproporgli il modale di conferma
   // significherebbe chiedergli di confermare la propria scelta.
+  _langAssumedAck=false;  // conferma data a un altro libro: non vale qui
   const raw=(bookData&&bookData.language_source)||'unknown';
   const src=(raw==='metadata'||raw==='detected'||raw==='forced')?raw:'unknown';
   let code=((bookData&&bookData.language)||'').split('-')[0].toLowerCase();
@@ -2431,6 +2432,9 @@ async function onGenerateClick() {
     // pagamento: la guardia dentro /api/optimize risponderebbe 409 a cattura
     // PayPal gia' avvenuta, e all'utente resterebbe la scelta fra procedere
     // comunque e una cattura orfana. Qui non c'e' ancora niente da rimborsare.
+    // Stessa ragione per la lingua ipotizzata: il modale di conferma va
+    // mostrato qui, non dentro startCombinedGeneration a cattura avvenuta.
+    if(!(await _validateLanguage()))return;
     if(!(await _precheckLanguage()))return;
     await _doCombinedEstimate();
     const est = _estimateCache && _estimateCache.value;
@@ -4202,8 +4206,14 @@ async function _validateLanguage() {
   if(!bookData) return true;
   // La lingua e' ipotizzata (il server non l'ha trovata e nessuno l'ha
   // corretta): chiedi conferma prima di spendere una generazione.
-  if(bookLangState.source==='assumed' && !previewListened) {
-    return await _showLangWarning();
+  // onGenerateClick() la chiama PRIMA del pagamento; startCombinedGeneration()
+  // la richiama dopo, e la conferma gia' data non deve riaprire il modale:
+  // un Annulla li', a pagamento incassato, lasciava una cattura orfana
+  // (job d-A3rrGjLJZ7MKXky_sVTg, 24/11/2026).
+  if(bookLangState.source==='assumed' && !previewListened && !_langAssumedAck) {
+    const ok=await _showLangWarning();
+    if(ok)_langAssumedAck=true;
+    return ok;
   }
   return true;
 }
@@ -6454,7 +6464,7 @@ function resetAll(){
   const _vOutR=document.getElementById('vOut');if(_vOutR){_vOutR.value='m4b';onOutputChange();}
   previewStop();
   bookData=null;jobId=null;_premiumModelPicked=false;
-  emailRegistered=false;_ttsQuotaAck=false;_langMismatchAck=false;previewListened=false;
+  emailRegistered=false;_ttsQuotaAck=false;_langMismatchAck=false;_langAssumedAck=false;previewListened=false;
   _currentPreviewSig=null;_knownPreviewSigs.clear();
   ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);if(el){el.style.display='none';el.src=''}});
   const coverPlaceholder=document.getElementById('coverPlaceholder');if(coverPlaceholder)coverPlaceholder.style.display='';
