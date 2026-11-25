@@ -1211,9 +1211,11 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
                                   audit_outcome, reason_detail="",
                                   voucher_code=None, chars_total=None,
                                   chunks_total=None, chunks_failed=None,
-                                  forensic_until=None, work_dir_path=""):
-    """Notifica IMMEDIATA all'admin di un fallimento job Gemini TTS che ha
-    comportato rimborso (o di un blocco preventivo).
+                                  forensic_until=None, work_dir_path="",
+                                  engine_label="Gemini TTS"):
+    """Notifica IMMEDIATA all'admin di un fallimento job PREMIUM che ha
+    comportato rimborso (o di un blocco preventivo). Il nome storico resta;
+    `engine_label` e' il motore del job nel titolo (tts_engines.admin_label).
 
     kind:    "quota" | "budget" | "quality" | "preflight" | "generic"
     audit_outcome: stringa di outcome dell'audit (es. "failed_quota_refunded").
@@ -1270,7 +1272,8 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
     title_safe = _esc_html(_sanitize_header(book_title or "(senza titolo)", max_len=120))
     email_safe = _esc_html(_sanitize_header(email or "(sconosciuta)", max_len=200))
     reason_safe = _esc_html(_sanitize_header(reason_detail or "", max_len=300))
-    subject = (f"[ABM-ADMIN] Gemini TTS — {kind_label} "
+    engine_label = _sanitize_header(engine_label or "TTS", max_len=40)
+    subject = (f"[ABM-ADMIN] {engine_label} — {kind_label} "
                f"— job {job_id[:8]}")
 
     # Forensic retention block: dir preservata + link download ZIP
@@ -1308,7 +1311,7 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
         _layout.row("Dettaglio", reason_safe or "—", last=True, mono=True),
     ])
     html_body = _layout.admin_alert(
-        f"Gemini TTS — {kind_label}", color,
+        f"{_esc_html(engine_label)} — {kind_label}", color,
         subtitle_html=(f'Job <code style="background:rgba(255,255,255,.18);padding:2px 6px;'
                        f'border-radius:3px">{job_id}</code>'),
         rows_html=rows, after_html=forensic_block,

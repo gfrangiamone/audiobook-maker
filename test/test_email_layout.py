@@ -2,6 +2,7 @@
 import ast
 import os
 import pathlib
+import pytest
 
 os.environ.setdefault("ABM_BASE_URL", "http://localhost:5601")
 
@@ -118,6 +119,36 @@ def test_admin_alerts_use_layout(monkeypatch):
     assert "passaggio automatico a Vertex" in switch and "Credito residuo (stima)</strong></td><td>1.50 USD" in switch
     assert "Modello TTS non disponibile" in unavail and "<code>gemini-x</code>" in unavail
     assert switch.count("border-radius:8px 8px 0 0") == 1 and unavail.count("border-radius:8px 8px 0 0") == 1
+
+
+def test_allerta_di_fallimento_nomina_il_motore_del_job(monkeypatch):
+    # MO-YBYqLqmjA7sopBfmUuA (25/11/2026): un job VoxCPM arrivava come
+    # "Gemini TTS — ERRORE generico".
+    sent = []
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, **k: sent.append((subj, html)) or True)
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "ADMIN_EMAIL", "admin@x.it")
+    monkeypatch.setattr(es, "_admin_failure_last", {})
+    es._admin_notify_gemini_failure("job-vox", "generic", 0, "", "Libro", "failed_refunded",
+                                    engine_label="VoxCPM")
+    subj, html = sent[0]
+    assert subj.startswith("[ABM-ADMIN] VoxCPM — ERRORE generico")
+    assert "VoxCPM — ERRORE generico" in html and "Gemini TTS" not in html
+
+
+@pytest.mark.parametrize("voce, atteso", [
+    ("voxcpm:v2:en-GB/Giles", "VoxCPM"),
+    ("en-US-GuyNeural", "Edge TTS"),
+    ("", "Edge TTS"),
+])
+def test_admin_label_per_voce(voce, atteso):
+    import tts_engines
+    assert tts_engines.admin_label(voce) == atteso
+
+
+def test_ogni_motore_del_registro_ha_un_nome_admin():
+    import tts_engines
+    assert all(e.admin_label for e in tts_engines.ENGINES.values())
 
 
 def test_vc_and_acct_senders_share_i18n_send(monkeypatch):

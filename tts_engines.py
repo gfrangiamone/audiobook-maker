@@ -65,6 +65,9 @@ class Engine:
     # Worker con coda per libro (Pocket): la pre-sintesi dichiara il libro con
     # `mod.BookTicket`, aspetta il turno e passa il biglietto a ogni chunk.
     book_queue: bool = False
+    # Nome del motore nei testi per l'admin (allerte email). Mai nei testi
+    # per l'utente, che non nominano i provider.
+    admin_label: str = ""
 
     def mod(self):
         return importlib.import_module(self.module)
@@ -152,23 +155,25 @@ class Engine:
 
 ENGINES = {
     "gemini": Engine("gemini", "gemini_tts", is_gemini_voice, "gemini_estimate", "_write_gemini_audit",
-                     "GeminiUnavailable", chunk_fallback=700, sample_rate_default=24000),
+                     "GeminiUnavailable", chunk_fallback=700, sample_rate_default=24000,
+                     admin_label="Gemini TTS"),
     "speechify": Engine("speechify", "speechify_tts", is_speechify_voice, "speechify_estimate",
                         "_write_speechify_audit", "SpeechifyUnavailable", chunk_fallback=1800,
                         sample_rate_default=48000, sample_rate_job_key="speechify_sample_rate",
                         only_language="en", direct=True,
-                        chunk_fn="generate_chunk_pcm_speechify", fatal_exc="SpeechifyFatalError"),
+                        chunk_fn="generate_chunk_pcm_speechify", fatal_exc="SpeechifyFatalError",
+                        admin_label="Speechify"),
     # Il cap VoxCPM e' di qualita' (il timbro deriva sui chunk lunghi) e il
     # tetto vero e' allargato dallo sforamento di frase (280 x 1,15 = 322):
     # vedi il commento in tts_split._pick_sentence_slack.
     "voxcpm": Engine("voxcpm", "voxcpm_tts", is_voxcpm_voice, "voxcpm_estimate", "_write_voxcpm_audit",
                      "VoxcpmUnavailable", chunk_fallback=300, sample_rate_default=48000,
-                     sentence_slack=0.15),
+                     sentence_slack=0.15, admin_label="VoxCPM"),
     # Worker su VPS a canone fisso, un libro alla volta: vedi pocket_tts.
     "pocket": Engine("pocket", "pocket_tts", is_pocket_voice, "pocket_estimate", "_write_pocket_audit",
                      "PocketUnavailable", chunk_fallback=280, sample_rate_default=24000,
                      direct=True, chunk_fn="generate_chunk_pcm_pocket", fatal_exc="PocketFatalError",
-                     book_queue=True),
+                     book_queue=True, admin_label="Pocket TTS"),
 }
 PREMIUM = tuple(ENGINES)
 DIRECT = tuple(name for name, eng in ENGINES.items() if eng.direct)
@@ -185,6 +190,12 @@ MULTILINGUAL_CHAR_PRICED = ("voxcpm", "pocket")
 def premium_for_voice(voice):
     """L'`Engine` premium della voce, None per Edge."""
     return ENGINES.get(engine_for_voice(voice))
+
+
+def admin_label(voice):
+    """Nome del motore della voce per i testi admin; Edge non e' nel registro."""
+    eng = premium_for_voice(voice)
+    return (eng.admin_label if eng else "") or "Edge TTS"
 
 
 def estimate(engine, chapters, voice=None, language=None, rate_pct=0, strip_round=True, strip_square=True):

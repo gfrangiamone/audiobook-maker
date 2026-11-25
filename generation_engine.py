@@ -2712,6 +2712,7 @@ def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
             chunks_failed=chunks_failed,
             forensic_until=forensic_until,
             work_dir_path=str(_upload_dir / job_id) if _upload_dir else "",
+            engine_label=_tts_engines.admin_label(job.get("voice") or job.get("opt_voice") or ""),
         )
     except Exception as e:
         print(f"[{job_id}] admin alert send failed (non-fatal): {e}")
