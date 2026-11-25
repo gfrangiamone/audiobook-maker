@@ -497,6 +497,49 @@ def test_status_503_sul_polling_continua_a_sondare():
     assert out == {"ok": 3}
 
 
+_PAGINA_PROXY = ('<!doctype html>\n<!--[if lt IE 7]> <html class="no-js ie6 oldie" '
+                 'lang="en-US"> <![endif]-->')
+
+
+def test_status_409_html_del_proxy_continua_a_sondare():
+    # MO-YBYqLqmjA7sopBfmUuA (25/11/2026): un 409 con la pagina HTML del
+    # proxy davanti all'API faceva fallire il libro come errore definitivo.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-14"})],
+        get=[FintaRisposta(status_code=409, text=_PAGINA_PROXY),
+             FintaRisposta(status_code=409, text=_PAGINA_PROXY),
+             FintaRisposta(body={"status": "COMPLETED", "output": {"ok": 4}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert out == {"ok": 4}
+
+
+def test_pagina_del_proxy_che_non_passa_resta_un_errore(monkeypatch):
+    monkeypatch.setattr(voxcpm_tts, "_BORDO_HTML_MAX", 3)
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-15"})],
+        get=[FintaRisposta(status_code=403, text=_PAGINA_PROXY) for _ in range(4)],
+    )
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert "403" in str(e.value)
+    assert len(ses.get_fatte) == 4
+
+
+def test_il_conto_delle_pagine_del_proxy_riparte_dopo_un_json(monkeypatch):
+    monkeypatch.setattr(voxcpm_tts, "_BORDO_HTML_MAX", 2)
+    html = lambda: FintaRisposta(status_code=409, text=_PAGINA_PROXY)
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-16"})],
+        get=[html(), html(), FintaRisposta(body={"status": "IN_QUEUE"}),
+             html(), html(),
+             FintaRisposta(body={"status": "COMPLETED", "output": {"ok": 5}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert out == {"ok": 5}
+
+
 def test_on_queue_che_esplode_cancella_il_job_e_rilancia_l_originale():
     # Qualunque eccezione che non sia il successo lascia un job in volo, e va
     # cancellato prima di rilanciare: farlo dopo (o non farlo) lascerebbe una

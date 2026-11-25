@@ -995,6 +995,21 @@ def _esito_terminale(st, job_id, on_billing=None):
     raise _errore_del_job(out, testo, job_id, completo=dettaglio)
 
 
+# Sondaggi di fila tollerati quando /status risponde con la pagina HTML del
+# proxy invece che col JSON dell'API (a 2 s di polling, circa un minuto).
+_BORDO_HTML_MAX = 30
+
+
+def _pagina_del_bordo(r):
+    """True se la risposta e' una pagina HTML, cioe' viene dal proxy davanti
+    all'API e non dall'API, che risponde sempre in JSON."""
+    ct = str((getattr(r, "headers", None) or {}).get("Content-Type") or "").lower()
+    if "text/html" in ct:
+        return True
+    testa = (getattr(r, "text", "") or "").lstrip()[:15].lower()
+    return testa.startswith(("<!doctype html", "<html"))
+
+
 def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
                     on_queue, cancelled=None, on_billing=None,
                     on_progress=None):
@@ -1002,6 +1017,7 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
     `try/except` che cancella il job su qualunque uscita non riuscita."""
     t0 = clock()
     t_run = None
+    bordo = 0   # pagine d'errore del proxy di fila (vedi _pagina_del_bordo)
     while True:
         if cancelled is not None and cancelled():
             cancel_job(job_id, session=ses)
@@ -1035,6 +1051,15 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
                 # respira, non del job. Si riprova a sondare.
                 _dormi_annullabile(sleep, attesa, cancelled, job_id, ses)
                 continue
+            if _pagina_del_bordo(r) and bordo < _BORDO_HTML_MAX:
+                # La pagina d'errore del proxy davanti all'API, non una
+                # risposta dell'API: il job non c'entra (409 HTML su un job
+                # di 43 chunk, MO-YBYqLqmjA7sopBfmUuA 25/11/2026). Si
+                # risonda, ma solo per un tratto: un blocco del proxy che
+                # dura resta un errore, non un'attesa fino al tetto di coda.
+                bordo += 1
+                _dormi_annullabile(sleep, attesa, cancelled, job_id, ses)
+                continue
             # Un 401/403/404 non migliora aspettando: la chiave revocata resta
             # revocata. Non e' ritentabile, e Task 7 non deve riscoprirlo
             # dopo aver aspettato fino al tetto di coda o di esecuzione.
@@ -1042,6 +1067,7 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
                 f"job {job_id}: HTTP {r.status_code} su /status: "
                 f"{r.text[:200]}", job_id)
         st = r.json()
+        bordo = 0
 
         stato = st.get("status")
         if t_run is None and stato == "IN_PROGRESS":
