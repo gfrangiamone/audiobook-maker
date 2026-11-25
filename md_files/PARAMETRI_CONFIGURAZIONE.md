@@ -274,7 +274,8 @@ Parametri per la funzionalità di traduzione del testo del libro in un'altra lin
 | Parametro | Valore default | File | Riga |
 |-----------|----------------|------|------|
 | `ABM_TRANSLATE_COST` | `3.0` (EUR per 1M caratteri input traduzione; accetta virgola decimale) | `payment.py` | 82–83 |
-| `ABM_TRANSLATE_MIN_COST` | `1.5` (floor EUR sul totale dovuto, applicato solo quando si paga; gratis sotto soglia `ABM_LLM_FREE_THRESHOLD_EUR`) | `payment.py` | 56–57 |
+| `ABM_TRANSLATE_MIN_COST` | `0.5` (dal 25/11/2026, prima `1.5`; floor EUR sul totale dovuto, applicato quando si paga) | `payment.py` | (sezione traduzione) |
+| `ABM_TRANSLATE_FREE_THRESHOLD_EUR` | `0.0` (dal 25/11/2026: nessuna traduzione e' gratis, ogni job paga almeno `ABM_TRANSLATE_MIN_COST`; > 0 = gratis fino a quella stima. Prima la soglia era `ABM_LLM_FREE_THRESHOLD_EUR`, condivisa con l'ottimizzazione) | `payment.py` | (sezione traduzione) |
 | `ABM_TRANSLATE_COST_IN_EUR_PER_MTOK` | `0.28` (Costo LLM input EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
 | `ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK` | `2.30` (Costo LLM output EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
 | `ABM_TRANSLATE_FALLBACK_COST_IN_EUR_PER_MTOK` / `ABM_TRANSLATE_FALLBACK_COST_OUT_EUR_PER_MTOK` | *(non impostate = tariffa blended `ABM_LLM_COST_USD_PER_MTOK` dell'ottimizzazione)* — costo audit dei chunk tradotti dal ripiego (`_translation_provider_cost_eur(..., role="fallback")`) | `payment.py` | (dopo TRANSLATE_COST_OUT) |
@@ -286,8 +287,9 @@ billable = chars × pricing_common.token_weight(lingua libro)
            (pricing_common.TRANSLATION_TOKEN_WEIGHT: ja/zh/ko 2.67, th 2.0 (tabella token TTS), ar 1.95, hi 1.65, ru/uk 1.3 (misurati sull'audit prod), latine e sconosciute 1.0; accetta anche i codici a tre lettere (jpn, zho, rus, hin, ara, tha, …) e zh_CN)
 raw = billable / 1M × ABM_TRANSLATE_COST
       (+ billable / 1M × ABM_LLM_RATE_EUR_PER_MCHAR  se ottimizzazione AI attiva)
-se raw ≤ ABM_LLM_FREE_THRESHOLD_EUR → gratis (due = 0)
-altrimenti due = max(raw, ABM_TRANSLATE_MIN_COST)
+se ABM_TRANSLATE_FREE_THRESHOLD_EUR = 0 (default) → si paga sempre (chars > 0)
+se ABM_TRANSLATE_FREE_THRESHOLD_EUR > 0 e raw ≤ soglia → gratis (due = 0)
+quando si paga: due = max(raw, ABM_TRANSLATE_MIN_COST)
 ```
 
 **Backend LLM (web app e CLI — `translation_core.py`)**

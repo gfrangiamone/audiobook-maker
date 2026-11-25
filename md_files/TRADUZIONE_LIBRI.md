@@ -19,7 +19,7 @@ Parametri: `PARAMETRI_CONFIGURAZIONE.md` §3.6.2.
 | Thread di traduzione | `generation_engine.py` → `run_translation(job_id)` | Pattern speculare a `run_optimization`: progress `tr_*`, heartbeat, refund, email batch, offload cold |
 | Email batch | `generation_engine.py` → `_send_translation_email` + `_tr_email_texts` (7 lingue) | Token `download_type: "translated"`, link `/dl/{token}` |
 | Endpoint API | `audiobook_app.py` (sezione "TRADUZIONE LIBRO") | estimate / translate / progress SSE / cancel / download / adopt / paypal order |
-| Pricing | `payment.py` → `_estimate_translation_cost_eur(chars, optimize)` | + costanti `TRANSLATE_RATE_EUR_PER_MCHAR`, `TRANSLATE_MIN_COST_EUR` |
+| Pricing | `payment.py` → `_estimate_translation_cost_eur(chars, optimize)` | + costanti `TRANSLATE_RATE_EUR_PER_MCHAR`, `TRANSLATE_MIN_COST_EUR`, `TRANSLATE_FREE_THRESHOLD_EUR` |
 | Frontend | `static/js/app.js` (funzioni `tr*`/`_tr*`, `wizMode`) + `templates/_fragments/html_head.html` (`panelT3`, `panelT4`, `btnTranslate`, `btnTrAdopt`) | Wizard mode-aware |
 | i18n | `templates/_fragments/i18n_data.js` (chiavi `tr_*`, 7 lingue) + `i18n/download_pages.json` (blocco `translated`) | |
 | Storage | `storage_tiering.py` | `.epub`/`.txt` offloadabili; esclusi per suffisso `.filelist.txt`, `.metadata.txt` |
@@ -69,7 +69,7 @@ Parametri: `PARAMETRI_CONFIGURAZIONE.md` §3.6.2.
    ```
    billable = chars × pricing_common.token_weight(info.language)   # vedi TRANSLATION_TOKEN_WEIGHT: ja/zh/ko 2.67, th 2.0 (tabella token TTS), ar 1.95, hi 1.65, ru/uk 1.3 (misurati sull'audit prod), latine e sconosciute 1.0; accetta anche i codici a tre lettere (jpn, zho, rus, hin, ara, tha, …) e zh_CN
    raw = billable/1M × ABM_TRANSLATE_COST (+ billable/1M × ABM_LLM_RATE_EUR_PER_MCHAR se optimize)
-   raw ≤ ABM_LLM_FREE_THRESHOLD_EUR → gratis ; altrimenti dovuto = max(raw, ABM_TRANSLATE_MIN_COST)
+   ABM_TRANSLATE_FREE_THRESHOLD_EUR = 0 (default) → si paga sempre; > 0 e raw ≤ soglia → gratis ; quando si paga dovuto = max(raw, ABM_TRANSLATE_MIN_COST) (default 0,50)
    ```
    Il peso usa la lingua del **libro** (metadati o rilevata all'upload), non la sorgente
    scelta nel wizard: stima, ordine PayPal, `/api/translate` e audit chiamano tutti

@@ -100,7 +100,23 @@ def test_translate_requires_payment_above_threshold(client):
     assert r.status_code == 402
 
 
+def test_translate_small_book_is_not_free_by_default(client, monkeypatch):
+    """Senza soglia gratuita (default) anche 10k caratteri pagano il minimo."""
+    monkeypatch.setattr(audiobook_app.payment, "TRANSLATE_FREE_THRESHOLD_EUR", 0.0)
+    job = _seed()
+    job["info"].chapters = [_Ch(1, "Uno", "x" * 10_000)]
+    with _own():
+        r = client.post("/api/translate", json={
+            "job_id": "TJ1", "source_lang": "it", "target_lang": "en",
+            "output_format": "txt", "output_name": "libro"})
+    assert r.status_code == 402
+    assert r.get_json()["due_eur"] == audiobook_app.payment.TRANSLATE_MIN_COST_EUR
+    assert job["status"] == "analyzed"
+
+
 def test_translate_free_book_starts_thread(client, monkeypatch):
+    # Con una soglia gratuita configurata il libro piccolo resta gratis.
+    monkeypatch.setattr(audiobook_app.payment, "TRANSLATE_FREE_THRESHOLD_EUR", 0.5)
     job = _seed()
     job["info"].chapters = [_Ch(1, "Uno", "x" * 10_000)]  # sotto soglia
     started = []
@@ -248,9 +264,11 @@ def test_paypal_create_order_translate_amount(client, monkeypatch):
         r = client.post("/api/paypal_create_order_translate", json={
             "job_id": "TJP", "target_lang": "en", "optimize": False,
             "selected_chapters": [1, 2]})
-    # 400.000 chars × 3.0/M = 1.20 → floor 1.50
+    # 400.000 chars × tariffa, mai sotto il minimo
     assert r.status_code == 200
-    assert captured.get("amount") == 1.5
+    assert captured.get("amount") == max(
+        round(0.4 * audiobook_app.payment.TRANSLATE_RATE_EUR_PER_MCHAR, 2),
+        audiobook_app.payment.TRANSLATE_MIN_COST_EUR)
     assert r.get_json()["order_id"] == "OID1"
 
 
@@ -283,6 +301,7 @@ def test_translate_adopt_requires_translated_status(client):
 
 
 def test_paypal_create_order_translate_free_book(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app.payment, "TRANSLATE_FREE_THRESHOLD_EUR", 0.5)
     job = _seed("TJF")
     job["info"].chapters = [_Ch(1, "Uno", "x" * 10_000)]  # sotto soglia free
     monkeypatch.setattr(audiobook_app, "_paypal_available", lambda: True)
@@ -423,3 +442,20 @@ def test_adopt_marca_la_lingua_come_scelta_dall_utente(client):
         "language_detected e' un booleano: sulla lingua adottata non e' stato "
         "rilevato niente, l'ha decisa l'utente"
     )
+
+
+def test_paypal_create_order_translate_small_book_pays_the_floor(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app.payment, "TRANSLATE_FREE_THRESHOLD_EUR", 0.0)
+    monkeypatch.setattr(audiobook_app.payment, "TRANSLATE_MIN_COST_EUR", 0.5)
+    job = _seed("TJS")
+    job["info"].chapters = [_Ch(1, "Uno", "x" * 10_000)]
+    captured = {}
+    monkeypatch.setattr(audiobook_app, "_paypal_available", lambda: True)
+    monkeypatch.setattr(audiobook_app, "_paypal_create_order",
+                        lambda amount_eur, *a, **kw: captured.update(amount=amount_eur)
+                        or {"id": "OID2", "status": "CREATED"}, raising=False)
+    with _own("TJS"):
+        r = client.post("/api/paypal_create_order_translate", json={
+            "job_id": "TJS", "target_lang": "en", "optimize": False})
+    assert r.status_code == 200
+    assert captured.get("amount") == 0.5

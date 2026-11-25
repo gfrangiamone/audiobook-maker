@@ -10,10 +10,55 @@ def pay(monkeypatch):
     monkeypatch.setenv("ABM_TRANSLATE_MIN_COST", "1.5")
     monkeypatch.setenv("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10")
     monkeypatch.setenv("ABM_LLM_FREE_THRESHOLD_EUR", "0.50")
+    monkeypatch.setenv("ABM_TRANSLATE_FREE_THRESHOLD_EUR", "0.50")
     import payment
     importlib.reload(payment)
     yield payment
     importlib.reload(payment)  # ripristina (env tornano com'erano)
+
+
+@pytest.fixture
+def pay_default(monkeypatch):
+    """payment con i default del codice per la traduzione."""
+    for k in ("ABM_TRANSLATE_COST", "ABM_TRANSLATE_MIN_COST",
+              "ABM_TRANSLATE_FREE_THRESHOLD_EUR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ABM_LLM_FREE_THRESHOLD_EUR", "0.50")
+    import payment
+    importlib.reload(payment)
+    yield payment
+    monkeypatch.undo()
+    importlib.reload(payment)
+
+
+def test_by_default_no_translation_is_free(pay_default):
+    """Nessuna soglia gratuita: anche un testo minimo paga il minimo, 0,50."""
+    for chars in (1, 1_495, 100_000):
+        est = pay_default._estimate_translation_cost_eur(chars)
+        assert est["requires_payment"] is True, chars
+        assert est["due_eur"] == 0.5, chars
+    assert pay_default._estimate_translation_cost_eur(100_000)["free_threshold_eur"] == 0.0
+
+
+def test_by_default_above_the_floor_pays_the_rate(pay_default):
+    est = pay_default._estimate_translation_cost_eur(617_239)
+    assert est["due_eur"] == 1.85
+
+
+def test_the_optimization_free_threshold_no_longer_frees_translations(pay_default):
+    """La soglia gratuita dell'ottimizzazione resta all'ottimizzazione."""
+    assert pay_default.LLM_FREE_THRESHOLD_EUR == 0.5
+    assert pay_default._estimate_translation_cost_eur(100_000)["requires_payment"] is True
+
+
+def test_zero_chars_cost_nothing(pay_default):
+    assert pay_default._estimate_translation_cost_eur(0)["due_eur"] == 0.0
+
+
+def test_the_floor_comes_from_env(monkeypatch, pay_default):
+    monkeypatch.setenv("ABM_TRANSLATE_MIN_COST", "0,8")
+    importlib.reload(pay_default)
+    assert pay_default._estimate_translation_cost_eur(1_000)["due_eur"] == 0.8
 
 
 def test_small_book_is_free(pay):

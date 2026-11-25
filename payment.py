@@ -82,9 +82,13 @@ EUR_CLONED_VOICE = env_float("ABM_EUR_CLONED_VOICE", 5.00)
 LLM_COST_USD_PER_MTOK = env_float("ABM_LLM_COST_USD_PER_MTOK", 0.18)
 USD_EUR_RATE = pricing_common.usd_eur_rate()
 # Traduzione libro: €/M caratteri input e costo minimo (floor sul totale,
-# applicato solo quando si paga). Accettano virgola decimale.
+# applicato solo quando si paga). Soglia gratuita propria della traduzione:
+# 0 (default) = nessuna traduzione e' gratis, ogni job paga almeno il minimo;
+# > 0 = gratis fino a quella stima (com'era con ABM_LLM_FREE_THRESHOLD_EUR).
+# Accettano virgola decimale.
 TRANSLATE_RATE_EUR_PER_MCHAR = env_float("ABM_TRANSLATE_COST", 3.0)
-TRANSLATE_MIN_COST_EUR = env_float("ABM_TRANSLATE_MIN_COST", 1.5)
+TRANSLATE_MIN_COST_EUR = env_float("ABM_TRANSLATE_MIN_COST", 0.5)
+TRANSLATE_FREE_THRESHOLD_EUR = max(0.0, env_float("ABM_TRANSLATE_FREE_THRESHOLD_EUR", 0.0))
 # Costo provider LLM per la traduzione (base costo audit /admin/audit-translations).
 # Coppia unica input/output EUR per 1M token, valida a prescindere dal backend
 # (Vertex/DeepSeek). Default = listino Gemini 2.5 Flash (backend Vertex di
@@ -198,8 +202,9 @@ def _estimate_translation_cost_eur(char_count, optimize=False, source_lang=None)
     piu' token di quelli latini su cui sono tarate le tariffe (pesi misurati
     sull'audit di prod, CJK e thai dalla tabella token del TTS Gemini).
     raw = billable/1M × TRANSLATE_RATE (+ billable/1M × LLM_RATE se optimize).
-    Se raw ≤ LLM_FREE_THRESHOLD_EUR → gratis (due=0).
-    Altrimenti due = max(raw, TRANSLATE_MIN_COST_EUR) — floor sul totale.
+    Con TRANSLATE_FREE_THRESHOLD_EUR = 0 (default) si paga sempre, anche un
+    testo la cui stima arrotonda a 0,00; con soglia > 0, raw ≤ soglia → gratis.
+    Quando si paga, due = max(raw, TRANSLATE_MIN_COST_EUR) — floor sul totale.
     """
     weight = pricing_common.token_weight(
         _norm_lang(str(source_lang or "").replace("_", "-")))
@@ -208,7 +213,10 @@ def _estimate_translation_cost_eur(char_count, optimize=False, source_lang=None)
     if optimize:
         raw += (billable / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR
     raw = round(raw, 2)
-    requires = raw > LLM_FREE_THRESHOLD_EUR
+    if TRANSLATE_FREE_THRESHOLD_EUR > 0:
+        requires = raw > TRANSLATE_FREE_THRESHOLD_EUR
+    else:
+        requires = billable > 0
     due = round(max(raw, TRANSLATE_MIN_COST_EUR), 2) if requires else 0.0
     return {
         "chars": char_count,
@@ -219,7 +227,7 @@ def _estimate_translation_cost_eur(char_count, optimize=False, source_lang=None)
         "requires_payment": requires,
         "rate_eur_per_mchar": TRANSLATE_RATE_EUR_PER_MCHAR,
         "min_cost_eur": TRANSLATE_MIN_COST_EUR,
-        "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
+        "free_threshold_eur": TRANSLATE_FREE_THRESHOLD_EUR,
         "optimize": bool(optimize),
     }
 
