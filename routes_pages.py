@@ -255,7 +255,7 @@ def seo_content_page(lang):
 
 
 #  -  -  SEO Guide Pages  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts", "free-ebooks", "voice-cloning-audiobook", "pdf-to-audiobook", "vouchers"}
+_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts", "free-ebooks", "voice-cloning-audiobook", "pdf-to-audiobook", "vouchers", "how-text-to-speech-works"}
 _GUIDE_LANGS = _i18n.LANGS
 
 @bp.route("/guide/<guide_id>/")

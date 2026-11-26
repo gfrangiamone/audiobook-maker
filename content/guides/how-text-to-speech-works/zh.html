@@ -1,0 +1,319 @@
+<div class="guide-deck" data-prev="上一页" data-next="下一页" data-all="在一页中显示全部" data-deck="按幻灯片浏览" data-nav-label="指南幻灯片">
+<section>
+<h2>30 秒了解文字转语音</h2>
+<p><strong>简单来说：</strong><strong>语音合成</strong>系统（英文 <em>text to speech</em>，简称 TTS）把书面文字变成声音。它先把文字改写成“怎么读”的形式，再确定每个字的读音和整句的语调，最后由神经网络生成声波。</p>
+<p>这组幻灯片带你看看从文字到扬声器之间发生了什么，附有一些技术细节，以及用 <a href="/zh/">Audiobook Maker</a> 的语音生成的<strong>音频示例</strong>。最后还会介绍：要朗读的是一整本书时，情况有什么不同。</p>
+<p class="deck-hint">点击下方按钮、使用键盘方向键或用手指滑动，即可翻到下一页。</p>
+</section>
+
+<section>
+<h2>合成语音的四代演变</h2>
+<figure class="tts-diagram">
+<svg viewBox="0 0 640 190" role="img" aria-labelledby="ttsGenTitle" font-family="inherit" font-size="14">
+<title id="ttsGenTitle">语音合成的四代技术：拼接合成、参数合成、神经网络合成、语言模型</title>
+<line x1="40" y1="120" x2="600" y2="120" stroke="currentColor" stroke-opacity=".25" stroke-width="2"/>
+<g fill="#c47a2a"><circle cx="80" cy="120" r="6"/><circle cx="240" cy="120" r="6"/><circle cx="400" cy="120" r="6"/><circle cx="560" cy="120" r="6"/></g>
+<g fill="none" stroke="currentColor" stroke-width="1.6">
+<path d="M38 70h14l4-12 4 22 4-16 4 10h4"/><path d="M76 70l3-18 3 30 3-22 3 14 3-8h6" stroke="#c47a2a"/><path d="M100 70l4 9 4-15 4 12 4-6h6"/>
+<line x1="72" y1="50" x2="72" y2="90" stroke-dasharray="3 3" stroke-opacity=".5"/><line x1="98" y1="50" x2="98" y2="90" stroke-dasharray="3 3" stroke-opacity=".5"/>
+<path d="M196 72c10-22 20-22 30 0s20 22 30 0 20-22 30 0"/>
+<circle cx="216" cy="96" r="6"/><path d="M216 96l3-4"/><circle cx="240" cy="96" r="6"/><path d="M240 96l-4-3"/><circle cx="264" cy="96" r="6"/><path d="M264 96l1 5"/>
+<g stroke-opacity=".55"><path d="M372 56l28 14M372 56l28 34M372 84l28-14M372 84l28 6M400 70l28 10M400 90l28-10"/></g>
+<circle cx="372" cy="56" r="5"/><circle cx="372" cy="84" r="5"/><circle cx="400" cy="70" r="5" stroke="#c47a2a"/><circle cx="400" cy="90" r="5"/><circle cx="428" cy="80" r="5"/>
+</g>
+<g fill="#c47a2a"><rect x="518" y="62" width="14" height="14" rx="3" fill-opacity=".35"/><rect x="536" y="62" width="14" height="14" rx="3" fill-opacity=".55"/><rect x="554" y="62" width="14" height="14" rx="3" fill-opacity=".75"/><rect x="572" y="62" width="14" height="14" rx="3"/></g>
+<path d="M520 92h70" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2 4"/>
+<g fill="currentColor" text-anchor="middle">
+<text x="80" y="148" font-weight="600">拼接合成</text><text x="80" y="168" font-size="12" fill-opacity=".7">1990 年代</text>
+<text x="240" y="148" font-weight="600">参数合成</text><text x="240" y="168" font-size="12" fill-opacity=".7">2000 年代</text>
+<text x="400" y="148" font-weight="600">神经网络合成</text><text x="400" y="168" font-size="12" fill-opacity=".7">约 2016 年起</text>
+<text x="560" y="148" font-weight="600">语言模型</text><text x="560" y="168" font-size="12" fill-opacity=".7">如今</text>
+</g>
+</svg>
+</figure>
+<ul>
+<li><strong>拼接合成：</strong>把录好的真人语音切成小片段，再拼接起来。声音是真人的，但接缝听得出来，语调也很生硬。</li>
+<li><strong>参数合成：</strong>用统计模型以一组参数描述声音，再重建出来。灵活，但声音发闷，有“机器味”。</li>
+<li><strong>神经网络合成：</strong>用数千小时语音训练的神经网络，几乎逐个采样点地生成声音。如今已是标配，免费语音也不例外。</li>
+<li><strong>语言模型：</strong>架构与大型文本模型类似，能<strong>理解所读内容的意思</strong>，并直接生成音频。它会低声耳语，在对话中切换语气，还能听从风格指令。</li>
+</ul>
+<h3>听听区别</h3>
+<p>一段带有耳语和情绪突变的简短对话，是最严苛的考验：字都不难读，难的是演绎。</p>
+<figure class="tts-sample">
+<figcaption><em>“你回来了。”她低声说，没有回头。接着，她的声音哽住了：“三年。整整三年，你连门都没敲过一次？”</em></figcaption>
+<ul>
+<li><span>标准语音</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/confronto-standard.mp3?v=__APP_VERSION__"></audio></li>
+<li><span>ABM TTS (fast)</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/confronto-fast.mp3?v=__APP_VERSION__"></audio></li>
+<li><span>PREMIUM+</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/confronto-premium-plus.mp3?v=__APP_VERSION__"></audio></li>
+</ul>
+</figure>
+<p>注意开头的耳语和后面哽咽的声音：最新的模型正是在这些地方拉开差距。</p>
+</section>
+
+<section>
+<h2>从文字到声音，一步一步</h2>
+<p>传统的语音合成系统是一条由多个环节组成的流水线。最新的模型会把其中几个环节合而为一，但要解决的问题不变：接下来几页逐一介绍。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 300" role="img" aria-labelledby="ttsPipeTitle" font-family="inherit" font-size="16">
+<title id="ttsPipeTitle">语音合成流水线：文本、规范化、拼音与韵律、声学模型、声码器、音频</title>
+<g fill="none" stroke="currentColor" stroke-width="1.5">
+<rect x="20" y="20" width="200" height="56" rx="10"/><rect x="260" y="20" width="200" height="56" rx="10"/>
+<rect x="20" y="122" width="200" height="56" rx="10"/><rect x="260" y="122" width="200" height="56" rx="10" stroke="#c47a2a"/>
+<rect x="20" y="224" width="200" height="56" rx="10" stroke="#c47a2a"/><rect x="260" y="224" width="200" height="56" rx="10"/>
+<path d="M220 48h34M248 42l6 6-6 6M360 76v18c0 8-4 12-12 12H132c-8 0-12 4-12 12v0M114 110l6 6 6-6M220 150h34M248 144l6 6-6 6M360 178v18c0 8-4 12-12 12H132c-8 0-12 4-12 12M114 212l6 6 6-6M220 252h34M248 246l6 6-6 6"/>
+</g>
+<g fill="currentColor" text-anchor="middle">
+<text x="120" y="54" font-weight="600">文本</text>
+<text x="360" y="45" font-weight="600">1. 文本规范化</text><text x="360" y="65" font-size="13" fill-opacity=".7">数字、缩写、日期</text>
+<text x="120" y="147" font-weight="600">2. 字音转换</text><text x="120" y="167" font-size="13" fill-opacity=".7">汉字转带调拼音</text>
+<text x="360" y="147" font-weight="600">3. 韵律</text><text x="360" y="167" font-size="13" fill-opacity=".7">语调、停顿</text>
+<text x="120" y="249" font-weight="600">4. 声学模型</text><text x="120" y="269" font-size="13" fill-opacity=".7">频谱图</text>
+<text x="360" y="249" font-weight="600">5. 声码器 → 音频</text><text x="360" y="269" font-size="13" fill-opacity=".7">声波</text>
+</g>
+</svg>
+<figcaption>传统流水线。在最新的模型中，高亮的环节已融合为一个神经网络。</figcaption>
+</figure>
+
+<h3>1. 文本规范化：把文字写成怎么读</h3>
+<p>数字、日期、时间、缩写和符号都不能照字面读。系统要先把它们改写成文字，而正确的读法取决于上下文：“110”跟在“拨打”后面读作“幺幺零”，后面跟着“元”就读作“一百一十”；“1/2”可能是“二分之一”，也可能是“一月二日”。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 230" role="img" aria-labelledby="ttsNormTitle" font-family="inherit" font-size="16">
+<title id="ttsNormTitle">文本规范化示例：从书面形式到实际读法</title>
+<g fill="currentColor" font-size="13" font-weight="600" fill-opacity=".6"><text x="20" y="22">书面形式</text><text x="250" y="22">实际读法</text></g>
+<g fill="none" stroke="currentColor" stroke-opacity=".3"><rect x="14" y="34" width="170" height="40" rx="8"/><rect x="14" y="94" width="170" height="40" rx="8"/><rect x="14" y="154" width="170" height="40" rx="8"/></g>
+<g fill="#c47a2a" fill-opacity=".12" stroke="#c47a2a"><rect x="244" y="34" width="222" height="40" rx="8"/><rect x="244" y="94" width="222" height="40" rx="8"/><rect x="244" y="154" width="222" height="40" rx="8"/></g>
+<path d="M192 54h44M230 48l6 6-6 6M192 114h44M230 108l6 6-6 6M192 174h44M230 168l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<g fill="currentColor" font-family="ui-monospace,Menlo,Consolas,monospace"><text x="26" y="60">2024年3月5日</text><text x="26" y="120">拨打110；110元</text><text x="26" y="180">20 km，15:30</text></g>
+<g fill="currentColor" font-size="14"><text x="254" y="60">二〇二四年三月五日</text><text x="254" y="112">拨打幺幺零；</text><text x="254" y="128">一百一十元</text><text x="254" y="172">二十公里，</text><text x="254" y="188">十五点三十分</text></g>
+<text x="20" y="220" fill="currentColor" fill-opacity=".6" font-size="12">同样的“1/2”，可以读作“二分之一”，也可以是“一月二日”。</text>
+</svg>
+</figure>
+<figure class="tts-sample">
+<figcaption><em>“2024年3月5日15:30，老李在离家20 km的高速上抛锚，拨通了110；拖车费380元，几乎是他周薪的1/2。”</em></figcaption>
+<ul><li><span>PREMIUM+</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/normalizzazione.mp3?v=__APP_VERSION__"></audio></li></ul>
+</figure>
+<p>在把文字交给语音之前，Audiobook Maker 还会去掉不该朗读的内容：页码、脚注、重复的页眉，以及西文中行末被连字符断开的单词。</p>
+
+<h3>2. 从汉字到拼音：每个字怎么读</h3>
+<p>接下来要确定<strong>每个字怎么读</strong>，也就是把文字转换成基本的语音单位（音素）。对中文来说，就是把汉字转成<strong>带声调的拼音</strong>。难点在于多音字：读音不同，写出来却一模一样，比如“银行”的<strong>行</strong>（háng）和“行走”的<strong>行</strong>（xíng），“长大”的<strong>长</strong>（zhǎng）和“长短”的<strong>长</strong>（cháng），“重要”的<strong>重</strong>（zhòng）和“重新”的<strong>重</strong>（chóng），“还有”的<strong>还</strong>（hái）和“还书”的<strong>还</strong>（huán）。再加上变调：“不”在“不是”里要读第二声。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 200" role="img" aria-labelledby="ttsHomTitle" font-family="inherit" font-size="16">
+<title id="ttsHomTitle">同一个字“行”有两种读音：háng（银行）和 xíng（行走）</title>
+<rect x="170" y="14" width="140" height="44" rx="10" fill="none" stroke="currentColor"/>
+<text x="240" y="45" text-anchor="middle" fill="currentColor" font-size="24">行</text>
+<path d="M240 58v20M240 78H110v22M240 78h130v22" fill="none" stroke="currentColor" stroke-opacity=".5"/>
+<g fill="#c47a2a" fill-opacity=".12" stroke="#c47a2a"><rect x="30" y="102" width="160" height="80" rx="10"/><rect x="290" y="102" width="160" height="80" rx="10"/></g>
+<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M52 132l18-12 18 12zM58 136v16M70 136v16M82 136v16M50 158h40"/><circle cx="338" cy="124" r="4"/><path d="M337 129l-3 13M334 142l-7 13M334 142l8 12M336 133l-9 6M336 133l9 4"/></g>
+<g fill="currentColor" text-anchor="middle"><text x="130" y="136" font-weight="600">háng</text><text x="130" y="158" font-size="13" fill-opacity=".7">银行</text><text x="390" y="136" font-weight="600">xíng</text><text x="390" y="158" font-size="13" fill-opacity=".7">行走</text></g>
+</svg>
+<figcaption>模型会结合整个句子来选择读音：即使是最好的语音，多音字也是最常见的出错点之一。</figcaption>
+</figure>
+<figure class="tts-sample">
+<figcaption><em>“他走出银行，心想：这么下去可不行，还是先把借来的钱还了吧。”</em>文本里没有任何注音：模型要靠上下文判断读音。</figcaption>
+<ul><li><span>PREMIUM+</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/omografi.mp3?v=__APP_VERSION__"></audio></li></ul>
+</figure>
+
+<h3>3. 韵律：语调、节奏和停顿</h3>
+<p>同样的字，可以表达不同的意思。区别在于<strong>韵律</strong>：疑问时语调上扬，陈述时语调下降，还有节奏、停顿，以及重音落在哪个词上。中文还多一层：每个字都有自己的声调，句子的语调要叠加在声调之上，又不能把声调读错。合成语音听起来自然还是机械，关键往往在这里，而不在音色。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 190" role="img" aria-labelledby="ttsProsTitle" font-family="inherit" font-size="15">
+<title id="ttsProsTitle">语调曲线：“你回来了。”句尾下降，“你回来了？”句尾上扬</title>
+<g fill="none" stroke-width="3" stroke-linecap="round"><path d="M30 70c40-14 80-18 110-12s50 20 70 32" stroke="currentColor" stroke-opacity=".55"/><path d="M270 80c40-6 80-8 110-4s40-16 70-46" stroke="#c47a2a"/></g>
+<g fill="none" stroke="currentColor" stroke-opacity=".2"><line x1="20" y1="120" x2="225" y2="120"/><line x1="255" y1="120" x2="460" y2="120"/></g>
+<g fill="currentColor" text-anchor="middle"><text x="120" y="148" font-weight="600">“你回来了。”</text><text x="120" y="170" font-size="13" fill-opacity=".7">语调下降：陈述事实</text><text x="360" y="148" font-weight="600">“你回来了？”</text><text x="360" y="170" font-size="13" fill-opacity=".7">语调上扬：提出疑问</text></g>
+<text x="20" y="24" fill="currentColor" fill-opacity=".6" font-size="12">音高 ↑</text>
+</svg>
+</figure>
+<p>最新的模型还能接受<strong>风格指令</strong>（“小声一点”“带点讽刺”“慢一点”），具体写法见 <a href="/guide/gemini-tts/zh/">PREMIUM 语音指南</a>。听听这句口是心非的话：只有语调能透露其中的讽刺。</p>
+<figure class="tts-sample">
+<figcaption><em>“哦，太好了。正合我意：又是一个下雨的星期一。”</em></figcaption>
+<ul>
+<li><span>ABM TTS (fast)</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/ironia-fast.mp3?v=__APP_VERSION__"></audio></li>
+<li><span>PREMIUM+</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/ironia-premium-plus.mp3?v=__APP_VERSION__"></audio></li>
+<li><span>PREMIUM+（风格指令：“疲惫的冷嘲，压着嗓子，像一声叹气”）</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/ironia-premium-plus-stile.mp3?v=__APP_VERSION__"></audio></li>
+</ul>
+</figure>
+
+<h3>4. 声学模型：把声音“画”出来</h3>
+<p>声学模型接收音素和韵律信息，生成即将发出的声音的一种表示，通常是<strong>频谱图</strong>：有点像一张乐谱，逐个时刻标出每个频段有多少能量。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 650 190" role="img" aria-labelledby="ttsSpecTitle" font-family="inherit" font-size="13">
+<title id="ttsSpecTitle">从拼音音素到梅尔频谱图，再从频谱图到声波</title>
+<g fill="currentColor" font-size="15" text-anchor="middle">
+<text x="62" y="58">shēng</text><text x="62" y="86">yīn</text><text x="62" y="114">měi</text>
+</g>
+<rect x="18" y="34" width="88" height="96" rx="8" fill="none" stroke="currentColor" stroke-opacity=".4"/>
+<path d="M112 82h30M136 76l6 6-6 6M478 82h30M502 76l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+<rect x="150" y="20" width="320" height="128" fill="currentColor" fill-opacity=".04" stroke="currentColor" stroke-opacity=".3"/>
+<g fill="#c47a2a"><rect x="166" y="132" width="8" height="8" fill-opacity="0.22"/><rect x="166" y="124" width="8" height="8" fill-opacity="0.68"/><rect x="166" y="116" width="8" height="8" fill-opacity="0.39"/><rect x="166" y="92" width="8" height="8" fill-opacity="0.18"/><rect x="166" y="84" width="8" height="8" fill-opacity="0.49"/><rect x="166" y="76" width="8" height="8" fill-opacity="0.36"/><rect x="166" y="44" width="8" height="8" fill-opacity="0.25"/><rect x="166" y="36" width="8" height="8" fill-opacity="0.16"/><rect x="174" y="132" width="8" height="8" fill-opacity="0.23"/><rect x="174" y="124" width="8" height="8" fill-opacity="0.79"/><rect x="174" y="116" width="8" height="8" fill-opacity="0.56"/><rect x="174" y="108" width="8" height="8" fill-opacity="0.12"/><rect x="174" y="92" width="8" height="8" fill-opacity="0.16"/><rect x="174" y="84" width="8" height="8" fill-opacity="0.52"/><rect x="174" y="76" width="8" height="8" fill-opacity="0.55"/><rect x="174" y="68" width="8" height="8" fill-opacity="0.16"/><rect x="174" y="44" width="8" height="8" fill-opacity="0.32"/><rect x="174" y="36" width="8" height="8" fill-opacity="0.19"/><rect x="182" y="140" width="8" height="8" fill-opacity="0.13"/><rect x="182" y="132" width="8" height="8" fill-opacity="0.22"/><rect x="182" y="124" width="8" height="8" fill-opacity="0.84"/><rect x="182" y="116" width="8" height="8" fill-opacity="0.72"/><rect x="182" y="108" width="8" height="8" fill-opacity="0.16"/><rect x="182" y="92" width="8" height="8" fill-opacity="0.13"/><rect x="182" y="84" width="8" height="8" fill-opacity="0.47"/><rect x="182" y="76" width="8" height="8" fill-opacity="0.71"/><rect x="182" y="68" width="8" height="8" fill-opacity="0.27"/><rect x="182" y="44" width="8" height="8" fill-opacity="0.37"/><rect x="182" y="36" width="8" height="8" fill-opacity="0.21"/><rect x="190" y="140" width="8" height="8" fill-opacity="0.14"/><rect x="190" y="132" width="8" height="8" fill-opacity="0.22"/><rect x="190" y="124" width="8" height="8" fill-opacity="0.85"/><rect x="190" y="116" width="8" height="8" fill-opacity="0.84"/><rect x="190" y="108" width="8" height="8" fill-opacity="0.19"/><rect x="190" y="84" width="8" height="8" fill-opacity="0.39"/><rect x="190" y="76" width="8" height="8" fill-opacity="0.79"/><rect x="190" y="68" width="8" height="8" fill-opacity="0.40"/><rect x="190" y="52" width="8" height="8" fill-opacity="0.13"/><rect x="190" y="44" width="8" height="8" fill-opacity="0.41"/><rect x="190" y="36" width="8" height="8" fill-opacity="0.21"/><rect x="198" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="198" y="132" width="8" height="8" fill-opacity="0.21"/><rect x="198" y="124" width="8" height="8" fill-opacity="0.85"/><rect x="198" y="116" width="8" height="8" fill-opacity="0.91"/><rect x="198" y="108" width="8" height="8" fill-opacity="0.21"/><rect x="198" y="84" width="8" height="8" fill-opacity="0.31"/><rect x="198" y="76" width="8" height="8" fill-opacity="0.79"/><rect x="198" y="68" width="8" height="8" fill-opacity="0.53"/><rect x="198" y="52" width="8" height="8" fill-opacity="0.15"/><rect x="198" y="44" width="8" height="8" fill-opacity="0.43"/><rect x="198" y="36" width="8" height="8" fill-opacity="0.19"/><rect x="206" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="206" y="132" width="8" height="8" fill-opacity="0.21"/><rect x="206" y="124" width="8" height="8" fill-opacity="0.84"/><rect x="206" y="116" width="8" height="8" fill-opacity="0.93"/><rect x="206" y="108" width="8" height="8" fill-opacity="0.22"/><rect x="206" y="84" width="8" height="8" fill-opacity="0.25"/><rect x="206" y="76" width="8" height="8" fill-opacity="0.74"/><rect x="206" y="68" width="8" height="8" fill-opacity="0.62"/><rect x="206" y="60" width="8" height="8" fill-opacity="0.15"/><rect x="206" y="52" width="8" height="8" fill-opacity="0.18"/><rect x="206" y="44" width="8" height="8" fill-opacity="0.44"/><rect x="206" y="36" width="8" height="8" fill-opacity="0.17"/><rect x="214" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="214" y="132" width="8" height="8" fill-opacity="0.21"/><rect x="214" y="124" width="8" height="8" fill-opacity="0.83"/><rect x="214" y="116" width="8" height="8" fill-opacity="0.89"/><rect x="214" y="108" width="8" height="8" fill-opacity="0.21"/><rect x="214" y="84" width="8" height="8" fill-opacity="0.20"/><rect x="214" y="76" width="8" height="8" fill-opacity="0.66"/><rect x="214" y="68" width="8" height="8" fill-opacity="0.66"/><rect x="214" y="60" width="8" height="8" fill-opacity="0.18"/><rect x="214" y="52" width="8" height="8" fill-opacity="0.20"/><rect x="214" y="44" width="8" height="8" fill-opacity="0.42"/><rect x="214" y="36" width="8" height="8" fill-opacity="0.15"/><rect x="222" y="140" width="8" height="8" fill-opacity="0.14"/><rect x="222" y="132" width="8" height="8" fill-opacity="0.21"/><rect x="222" y="124" width="8" height="8" fill-opacity="0.82"/><rect x="222" y="116" width="8" height="8" fill-opacity="0.80"/><rect x="222" y="108" width="8" height="8" fill-opacity="0.18"/><rect x="222" y="84" width="8" height="8" fill-opacity="0.17"/><rect x="222" y="76" width="8" height="8" fill-opacity="0.58"/><rect x="222" y="68" width="8" height="8" fill-opacity="0.66"/><rect x="222" y="60" width="8" height="8" fill-opacity="0.20"/><rect x="222" y="52" width="8" height="8" fill-opacity="0.21"/><rect x="222" y="44" width="8" height="8" fill-opacity="0.39"/><rect x="230" y="140" width="8" height="8" fill-opacity="0.12"/><rect x="230" y="132" width="8" height="8" fill-opacity="0.21"/><rect x="230" y="124" width="8" height="8" fill-opacity="0.78"/><rect x="230" y="116" width="8" height="8" fill-opacity="0.66"/><rect x="230" y="108" width="8" height="8" fill-opacity="0.15"/><rect x="230" y="84" width="8" height="8" fill-opacity="0.14"/><rect x="230" y="76" width="8" height="8" fill-opacity="0.50"/><rect x="230" y="68" width="8" height="8" fill-opacity="0.60"/><rect x="230" y="60" width="8" height="8" fill-opacity="0.19"/><rect x="230" y="52" width="8" height="8" fill-opacity="0.22"/><rect x="230" y="44" width="8" height="8" fill-opacity="0.34"/><rect x="238" y="132" width="8" height="8" fill-opacity="0.20"/><rect x="238" y="124" width="8" height="8" fill-opacity="0.70"/><rect x="238" y="116" width="8" height="8" fill-opacity="0.49"/><rect x="238" y="76" width="8" height="8" fill-opacity="0.42"/><rect x="238" y="68" width="8" height="8" fill-opacity="0.50"/><rect x="238" y="60" width="8" height="8" fill-opacity="0.17"/><rect x="238" y="52" width="8" height="8" fill-opacity="0.20"/><rect x="238" y="44" width="8" height="8" fill-opacity="0.27"/><rect x="246" y="132" width="8" height="8" fill-opacity="0.17"/><rect x="246" y="124" width="8" height="8" fill-opacity="0.54"/><rect x="246" y="116" width="8" height="8" fill-opacity="0.30"/><rect x="246" y="76" width="8" height="8" fill-opacity="0.32"/><rect x="246" y="68" width="8" height="8" fill-opacity="0.36"/><rect x="246" y="52" width="8" height="8" fill-opacity="0.16"/><rect x="246" y="44" width="8" height="8" fill-opacity="0.18"/><rect x="254" y="124" width="8" height="8" fill-opacity="0.24"/><rect x="254" y="76" width="8" height="8" fill-opacity="0.15"/><rect x="254" y="68" width="8" height="8" fill-opacity="0.15"/><rect x="270" y="124" width="8" height="8" fill-opacity="0.47"/><rect x="270" y="116" width="8" height="8" fill-opacity="0.53"/><rect x="270" y="108" width="8" height="8" fill-opacity="0.13"/><rect x="270" y="100" width="8" height="8" fill-opacity="0.13"/><rect x="270" y="92" width="8" height="8" fill-opacity="0.39"/><rect x="270" y="84" width="8" height="8" fill-opacity="0.40"/><rect x="270" y="52" width="8" height="8" fill-opacity="0.23"/><rect x="270" y="44" width="8" height="8" fill-opacity="0.15"/><rect x="278" y="132" width="8" height="8" fill-opacity="0.18"/><rect x="278" y="124" width="8" height="8" fill-opacity="0.69"/><rect x="278" y="116" width="8" height="8" fill-opacity="0.60"/><rect x="278" y="108" width="8" height="8" fill-opacity="0.14"/><rect x="278" y="100" width="8" height="8" fill-opacity="0.24"/><rect x="278" y="92" width="8" height="8" fill-opacity="0.59"/><rect x="278" y="84" width="8" height="8" fill-opacity="0.40"/><rect x="278" y="52" width="8" height="8" fill-opacity="0.31"/><rect x="278" y="44" width="8" height="8" fill-opacity="0.17"/><rect x="286" y="140" width="8" height="8" fill-opacity="0.13"/><rect x="286" y="132" width="8" height="8" fill-opacity="0.25"/><rect x="286" y="124" width="8" height="8" fill-opacity="0.87"/><rect x="286" y="116" width="8" height="8" fill-opacity="0.61"/><rect x="286" y="108" width="8" height="8" fill-opacity="0.16"/><rect x="286" y="100" width="8" height="8" fill-opacity="0.39"/><rect x="286" y="92" width="8" height="8" fill-opacity="0.71"/><rect x="286" y="84" width="8" height="8" fill-opacity="0.34"/><rect x="286" y="60" width="8" height="8" fill-opacity="0.14"/><rect x="286" y="52" width="8" height="8" fill-opacity="0.38"/><rect x="286" y="44" width="8" height="8" fill-opacity="0.17"/><rect x="294" y="140" width="8" height="8" fill-opacity="0.14"/><rect x="294" y="132" width="8" height="8" fill-opacity="0.32"/><rect x="294" y="124" width="8" height="8" fill-opacity="1.00"/><rect x="294" y="116" width="8" height="8" fill-opacity="0.59"/><rect x="294" y="108" width="8" height="8" fill-opacity="0.20"/><rect x="294" y="100" width="8" height="8" fill-opacity="0.57"/><rect x="294" y="92" width="8" height="8" fill-opacity="0.74"/><rect x="294" y="84" width="8" height="8" fill-opacity="0.26"/><rect x="294" y="60" width="8" height="8" fill-opacity="0.17"/><rect x="294" y="52" width="8" height="8" fill-opacity="0.42"/><rect x="294" y="44" width="8" height="8" fill-opacity="0.17"/><rect x="302" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="302" y="132" width="8" height="8" fill-opacity="0.38"/><rect x="302" y="124" width="8" height="8" fill-opacity="1.00"/><rect x="302" y="116" width="8" height="8" fill-opacity="0.57"/><rect x="302" y="108" width="8" height="8" fill-opacity="0.27"/><rect x="302" y="100" width="8" height="8" fill-opacity="0.72"/><rect x="302" y="92" width="8" height="8" fill-opacity="0.68"/><rect x="302" y="84" width="8" height="8" fill-opacity="0.20"/><rect x="302" y="60" width="8" height="8" fill-opacity="0.20"/><rect x="302" y="52" width="8" height="8" fill-opacity="0.44"/><rect x="302" y="44" width="8" height="8" fill-opacity="0.15"/><rect x="310" y="140" width="8" height="8" fill-opacity="0.16"/><rect x="310" y="132" width="8" height="8" fill-opacity="0.41"/><rect x="310" y="124" width="8" height="8" fill-opacity="1.00"/><rect x="310" y="116" width="8" height="8" fill-opacity="0.55"/><rect x="310" y="108" width="8" height="8" fill-opacity="0.34"/><rect x="310" y="100" width="8" height="8" fill-opacity="0.81"/><rect x="310" y="92" width="8" height="8" fill-opacity="0.58"/><rect x="310" y="84" width="8" height="8" fill-opacity="0.15"/><rect x="310" y="60" width="8" height="8" fill-opacity="0.23"/><rect x="310" y="52" width="8" height="8" fill-opacity="0.44"/><rect x="310" y="44" width="8" height="8" fill-opacity="0.14"/><rect x="318" y="140" width="8" height="8" fill-opacity="0.16"/><rect x="318" y="132" width="8" height="8" fill-opacity="0.42"/><rect x="318" y="124" width="8" height="8" fill-opacity="1.00"/><rect x="318" y="116" width="8" height="8" fill-opacity="0.53"/><rect x="318" y="108" width="8" height="8" fill-opacity="0.41"/><rect x="318" y="100" width="8" height="8" fill-opacity="0.83"/><rect x="318" y="92" width="8" height="8" fill-opacity="0.48"/><rect x="318" y="84" width="8" height="8" fill-opacity="0.12"/><rect x="318" y="60" width="8" height="8" fill-opacity="0.24"/><rect x="318" y="52" width="8" height="8" fill-opacity="0.43"/><rect x="318" y="44" width="8" height="8" fill-opacity="0.12"/><rect x="326" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="326" y="132" width="8" height="8" fill-opacity="0.38"/><rect x="326" y="124" width="8" height="8" fill-opacity="1.00"/><rect x="326" y="116" width="8" height="8" fill-opacity="0.53"/><rect x="326" y="108" width="8" height="8" fill-opacity="0.46"/><rect x="326" y="100" width="8" height="8" fill-opacity="0.80"/><rect x="326" y="92" width="8" height="8" fill-opacity="0.38"/><rect x="326" y="60" width="8" height="8" fill-opacity="0.25"/><rect x="326" y="52" width="8" height="8" fill-opacity="0.40"/><rect x="334" y="140" width="8" height="8" fill-opacity="0.13"/><rect x="334" y="132" width="8" height="8" fill-opacity="0.32"/><rect x="334" y="124" width="8" height="8" fill-opacity="0.94"/><rect x="334" y="116" width="8" height="8" fill-opacity="0.53"/><rect x="334" y="108" width="8" height="8" fill-opacity="0.47"/><rect x="334" y="100" width="8" height="8" fill-opacity="0.71"/><rect x="334" y="92" width="8" height="8" fill-opacity="0.31"/><rect x="334" y="60" width="8" height="8" fill-opacity="0.23"/><rect x="334" y="52" width="8" height="8" fill-opacity="0.36"/><rect x="342" y="132" width="8" height="8" fill-opacity="0.24"/><rect x="342" y="124" width="8" height="8" fill-opacity="0.78"/><rect x="342" y="116" width="8" height="8" fill-opacity="0.51"/><rect x="342" y="108" width="8" height="8" fill-opacity="0.43"/><rect x="342" y="100" width="8" height="8" fill-opacity="0.61"/><rect x="342" y="92" width="8" height="8" fill-opacity="0.25"/><rect x="342" y="60" width="8" height="8" fill-opacity="0.20"/><rect x="342" y="52" width="8" height="8" fill-opacity="0.30"/><rect x="350" y="132" width="8" height="8" fill-opacity="0.16"/><rect x="350" y="124" width="8" height="8" fill-opacity="0.57"/><rect x="350" y="116" width="8" height="8" fill-opacity="0.44"/><rect x="350" y="108" width="8" height="8" fill-opacity="0.34"/><rect x="350" y="100" width="8" height="8" fill-opacity="0.47"/><rect x="350" y="92" width="8" height="8" fill-opacity="0.19"/><rect x="350" y="60" width="8" height="8" fill-opacity="0.16"/><rect x="350" y="52" width="8" height="8" fill-opacity="0.23"/><rect x="358" y="124" width="8" height="8" fill-opacity="0.31"/><rect x="358" y="116" width="8" height="8" fill-opacity="0.29"/><rect x="358" y="108" width="8" height="8" fill-opacity="0.20"/><rect x="358" y="100" width="8" height="8" fill-opacity="0.28"/><rect x="358" y="52" width="8" height="8" fill-opacity="0.14"/><rect x="374" y="116" width="8" height="8" fill-opacity="0.42"/><rect x="374" y="108" width="8" height="8" fill-opacity="0.45"/><rect x="374" y="100" width="8" height="8" fill-opacity="0.15"/><rect x="374" y="92" width="8" height="8" fill-opacity="0.34"/><rect x="374" y="84" width="8" height="8" fill-opacity="0.36"/><rect x="374" y="60" width="8" height="8" fill-opacity="0.13"/><rect x="374" y="52" width="8" height="8" fill-opacity="0.21"/><rect x="382" y="124" width="8" height="8" fill-opacity="0.12"/><rect x="382" y="116" width="8" height="8" fill-opacity="0.50"/><rect x="382" y="108" width="8" height="8" fill-opacity="0.68"/><rect x="382" y="100" width="8" height="8" fill-opacity="0.20"/><rect x="382" y="92" width="8" height="8" fill-opacity="0.35"/><rect x="382" y="84" width="8" height="8" fill-opacity="0.56"/><rect x="382" y="76" width="8" height="8" fill-opacity="0.23"/><rect x="382" y="60" width="8" height="8" fill-opacity="0.17"/><rect x="382" y="52" width="8" height="8" fill-opacity="0.29"/><rect x="390" y="140" width="8" height="8" fill-opacity="0.12"/><rect x="390" y="124" width="8" height="8" fill-opacity="0.13"/><rect x="390" y="116" width="8" height="8" fill-opacity="0.50"/><rect x="390" y="108" width="8" height="8" fill-opacity="0.87"/><rect x="390" y="100" width="8" height="8" fill-opacity="0.27"/><rect x="390" y="92" width="8" height="8" fill-opacity="0.30"/><rect x="390" y="84" width="8" height="8" fill-opacity="0.67"/><rect x="390" y="76" width="8" height="8" fill-opacity="0.40"/><rect x="390" y="60" width="8" height="8" fill-opacity="0.19"/><rect x="390" y="52" width="8" height="8" fill-opacity="0.36"/><rect x="398" y="140" width="8" height="8" fill-opacity="0.14"/><rect x="398" y="132" width="8" height="8" fill-opacity="0.13"/><rect x="398" y="124" width="8" height="8" fill-opacity="0.14"/><rect x="398" y="116" width="8" height="8" fill-opacity="0.47"/><rect x="398" y="108" width="8" height="8" fill-opacity="1.00"/><rect x="398" y="100" width="8" height="8" fill-opacity="0.36"/><rect x="398" y="92" width="8" height="8" fill-opacity="0.23"/><rect x="398" y="84" width="8" height="8" fill-opacity="0.67"/><rect x="398" y="76" width="8" height="8" fill-opacity="0.58"/><rect x="398" y="68" width="8" height="8" fill-opacity="0.16"/><rect x="398" y="60" width="8" height="8" fill-opacity="0.20"/><rect x="398" y="52" width="8" height="8" fill-opacity="0.40"/><rect x="398" y="44" width="8" height="8" fill-opacity="0.14"/><rect x="406" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="406" y="132" width="8" height="8" fill-opacity="0.14"/><rect x="406" y="124" width="8" height="8" fill-opacity="0.14"/><rect x="406" y="116" width="8" height="8" fill-opacity="0.43"/><rect x="406" y="108" width="8" height="8" fill-opacity="1.00"/><rect x="406" y="100" width="8" height="8" fill-opacity="0.45"/><rect x="406" y="92" width="8" height="8" fill-opacity="0.18"/><rect x="406" y="84" width="8" height="8" fill-opacity="0.59"/><rect x="406" y="76" width="8" height="8" fill-opacity="0.74"/><rect x="406" y="68" width="8" height="8" fill-opacity="0.25"/><rect x="406" y="60" width="8" height="8" fill-opacity="0.20"/><rect x="406" y="52" width="8" height="8" fill-opacity="0.43"/><rect x="406" y="44" width="8" height="8" fill-opacity="0.17"/><rect x="414" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="414" y="132" width="8" height="8" fill-opacity="0.14"/><rect x="414" y="124" width="8" height="8" fill-opacity="0.14"/><rect x="414" y="116" width="8" height="8" fill-opacity="0.39"/><rect x="414" y="108" width="8" height="8" fill-opacity="1.00"/><rect x="414" y="100" width="8" height="8" fill-opacity="0.52"/><rect x="414" y="92" width="8" height="8" fill-opacity="0.15"/><rect x="414" y="84" width="8" height="8" fill-opacity="0.47"/><rect x="414" y="76" width="8" height="8" fill-opacity="0.82"/><rect x="414" y="68" width="8" height="8" fill-opacity="0.36"/><rect x="414" y="60" width="8" height="8" fill-opacity="0.19"/><rect x="414" y="52" width="8" height="8" fill-opacity="0.44"/><rect x="414" y="44" width="8" height="8" fill-opacity="0.20"/><rect x="422" y="140" width="8" height="8" fill-opacity="0.15"/><rect x="422" y="132" width="8" height="8" fill-opacity="0.14"/><rect x="422" y="124" width="8" height="8" fill-opacity="0.14"/><rect x="422" y="116" width="8" height="8" fill-opacity="0.36"/><rect x="422" y="108" width="8" height="8" fill-opacity="1.00"/><rect x="422" y="100" width="8" height="8" fill-opacity="0.55"/><rect x="422" y="92" width="8" height="8" fill-opacity="0.14"/><rect x="422" y="84" width="8" height="8" fill-opacity="0.36"/><rect x="422" y="76" width="8" height="8" fill-opacity="0.81"/><rect x="422" y="68" width="8" height="8" fill-opacity="0.47"/><rect x="422" y="60" width="8" height="8" fill-opacity="0.19"/><rect x="422" y="52" width="8" height="8" fill-opacity="0.43"/><rect x="422" y="44" width="8" height="8" fill-opacity="0.22"/><rect x="430" y="140" width="8" height="8" fill-opacity="0.14"/><rect x="430" y="132" width="8" height="8" fill-opacity="0.13"/><rect x="430" y="124" width="8" height="8" fill-opacity="0.13"/><rect x="430" y="116" width="8" height="8" fill-opacity="0.34"/><rect x="430" y="108" width="8" height="8" fill-opacity="1.00"/><rect x="430" y="100" width="8" height="8" fill-opacity="0.54"/><rect x="430" y="92" width="8" height="8" fill-opacity="0.12"/><rect x="430" y="84" width="8" height="8" fill-opacity="0.27"/><rect x="430" y="76" width="8" height="8" fill-opacity="0.74"/><rect x="430" y="68" width="8" height="8" fill-opacity="0.55"/><rect x="430" y="60" width="8" height="8" fill-opacity="0.19"/><rect x="430" y="52" width="8" height="8" fill-opacity="0.40"/><rect x="430" y="44" width="8" height="8" fill-opacity="0.24"/><rect x="438" y="140" width="8" height="8" fill-opacity="0.13"/><rect x="438" y="132" width="8" height="8" fill-opacity="0.12"/><rect x="438" y="124" width="8" height="8" fill-opacity="0.12"/><rect x="438" y="116" width="8" height="8" fill-opacity="0.32"/><rect x="438" y="108" width="8" height="8" fill-opacity="0.96"/><rect x="438" y="100" width="8" height="8" fill-opacity="0.49"/><rect x="438" y="84" width="8" height="8" fill-opacity="0.20"/><rect x="438" y="76" width="8" height="8" fill-opacity="0.63"/><rect x="438" y="68" width="8" height="8" fill-opacity="0.58"/><rect x="438" y="60" width="8" height="8" fill-opacity="0.19"/><rect x="438" y="52" width="8" height="8" fill-opacity="0.35"/><rect x="438" y="44" width="8" height="8" fill-opacity="0.26"/><rect x="446" y="116" width="8" height="8" fill-opacity="0.31"/><rect x="446" y="108" width="8" height="8" fill-opacity="0.85"/><rect x="446" y="100" width="8" height="8" fill-opacity="0.39"/><rect x="446" y="84" width="8" height="8" fill-opacity="0.15"/><rect x="446" y="76" width="8" height="8" fill-opacity="0.51"/><rect x="446" y="68" width="8" height="8" fill-opacity="0.54"/><rect x="446" y="60" width="8" height="8" fill-opacity="0.18"/><rect x="446" y="52" width="8" height="8" fill-opacity="0.29"/><rect x="446" y="44" width="8" height="8" fill-opacity="0.25"/><rect x="454" y="116" width="8" height="8" fill-opacity="0.28"/><rect x="454" y="108" width="8" height="8" fill-opacity="0.69"/><rect x="454" y="100" width="8" height="8" fill-opacity="0.28"/><rect x="454" y="76" width="8" height="8" fill-opacity="0.39"/><rect x="454" y="68" width="8" height="8" fill-opacity="0.46"/><rect x="454" y="60" width="8" height="8" fill-opacity="0.16"/><rect x="454" y="52" width="8" height="8" fill-opacity="0.21"/><rect x="454" y="44" width="8" height="8" fill-opacity="0.22"/><rect x="462" y="116" width="8" height="8" fill-opacity="0.22"/><rect x="462" y="108" width="8" height="8" fill-opacity="0.46"/><rect x="462" y="100" width="8" height="8" fill-opacity="0.16"/><rect x="462" y="76" width="8" height="8" fill-opacity="0.26"/><rect x="462" y="68" width="8" height="8" fill-opacity="0.31"/><rect x="462" y="52" width="8" height="8" fill-opacity="0.13"/><rect x="462" y="44" width="8" height="8" fill-opacity="0.16"/></g>
+<path d="M520,84.0 L521,78.1 L522,80.3 L523,80.6 L524,77.6 L525,94.5 L526,103.4 L527,85.5 L528,81.5 L529,82.6 L530,61.5 L531,65.8 L532,96.9 L533,96.8 L534,91.7 L535,106.2 L536,86.5 L537,55.0 L538,69.0 L539,81.2 L540,74.2 L541,99.3 L542,116.9 L543,87.6 L544,74.4 L545,81.1 L546,62.5 L547,63.0 L548,96.9 L549,101.0 L550,89.3 L551,97.8 L552,87.4 L553,63.7 L554,72.0 L555,84.8 L556,81.5 L557,89.0 L558,95.0 L559,85.3 L560,84.0 L561,82.8 L562,78.1 L563,74.3 L564,90.6 L565,98.3 L566,87.9 L567,91.9 L568,88.2 L569,61.8 L570,64.9 L571,87.7 L572,84.7 L573,92.1 L574,113.7 L575,92.6 L576,64.8 L577,74.6 L578,71.3 L579,62.3 L580,95.0 L581,113.7 L582,91.4 L583,89.0 L584,89.3 L585,59.2 L586,58.8 L587,89.2 L588,90.4 L589,89.9 L590,107.1 L591,93.1 L592,67.6 L593,74.2 L594,78.9 L595,73.6 L596,88.0 L597,97.6 L598,87.2 L599,83.7 L600,84.0 L601,79.2 L602,74.4 L603,86.3 L604,90.8 L605,87.5 L606,98.8 L607,93.4 L608,66.9 L609,68.9 L610,80.2 L611,72.3 L612,88.7 L613,114.5 L614,96.0 L615,77.5 L616,84.2 L617,66.3 L618,54.3 L619,88.2 L620,103.8 L621,90.9 L622,102.0 L623,98.5 L624,61.9 L625,60.5 L626,81.7 L627,76.9 L628,86.8 L629,111.8 L630,97.3 L631,75.5 L632,80.8 L633,74.7 L634,66.0 L635,85.1 L636,96.2 L637,87.8 L638,88.0 L639,87.1 L640,84.0" fill="none" stroke="#c47a2a" stroke-width="1.3"/>
+<g fill="currentColor" text-anchor="middle" font-weight="600">
+<text x="62" y="170">音素</text><text x="310" y="170">梅尔频谱图</text><text x="580" y="170">声波</text>
+</g>
+<g fill="currentColor" fill-opacity=".65" font-size="11">
+<text x="144" y="30" text-anchor="end">高频</text><text x="144" y="148" text-anchor="end">低频</text>
+<text x="470" y="162" text-anchor="end">时间 →</text>
+</g>
+</svg>
+<figcaption>声学模型把声音“画”出来：每一列是一个时刻，每一行是一个频段，颜色代表能量。声码器再把它转换成扬声器播放的声波。</figcaption>
+</figure>
+<aside class="tech-box">
+<p><strong>技术细节：</strong><em>梅尔频谱图</em>把频率划分成若干频段（通常是 80 个），间隔方式模仿人耳的感知：低频密，高频疏。时间被切成约十毫秒一帧，每秒大约一百帧。于是一秒钟的语音就变成一张约 80 × 100 的数字表格，比真实声波每秒数以万计的数值容易预测得多。模型还要决定给每个音素分配多少帧，也就是它的时长：节奏由此而来。</p>
+</aside>
+
+<h3>5. 声码器与音频 token</h3>
+<p>频谱图本身是听不见的。<strong>声码器</strong>把它转换成声波，也就是扬声器播放的那串数字：在 24 kHz 下，每秒语音有 24,000 个数值。正是神经声码器，让今天的语音摆脱了过去那种金属般的音色。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 210" role="img" aria-labelledby="ttsTokTitle" font-family="inherit" font-size="15">
+<title id="ttsTokTitle">音频 token：模型预测下一个 token，就像语言模型预测下一个词</title>
+<g fill="#c47a2a"><rect x="20" y="40" width="44" height="44" rx="8" fill-opacity=".3"/><rect x="72" y="40" width="44" height="44" rx="8" fill-opacity=".45"/><rect x="124" y="40" width="44" height="44" rx="8" fill-opacity=".6"/><rect x="176" y="40" width="44" height="44" rx="8" fill-opacity=".75"/><rect x="228" y="40" width="44" height="44" rx="8" fill-opacity=".9"/></g>
+<rect x="280" y="40" width="44" height="44" rx="8" fill="none" stroke="#c47a2a" stroke-width="2" stroke-dasharray="5 4"/>
+<g fill="#fff" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13"><text x="42" y="67">412</text><text x="94" y="67">87</text><text x="146" y="67">903</text><text x="198" y="67">55</text><text x="250" y="67">618</text></g>
+<text x="302" y="68" text-anchor="middle" fill="#c47a2a" font-size="20" font-weight="700">?</text>
+<path d="M340 62h40M374 56l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<path d="M392 62l4-14 4 26 4-20 4 14 4-10 4 18 4-22 4 12 4-6 4 8 4-4" fill="none" stroke="#c47a2a" stroke-width="1.6"/>
+<g fill="currentColor"><text x="20" y="118" font-weight="600">已生成的音频 token</text><text x="276" y="118" font-weight="600">下一个</text><text x="470" y="118" font-weight="600" text-anchor="end">音频</text></g>
+<g fill="currentColor" fill-opacity=".7" font-size="13"><text x="20" y="150">神经编解码器把音频压缩成离散符号，</text><text x="20" y="170">每秒几十到几百个。模型逐个预测这些符号，</text><text x="20" y="190">就像预测句子里的下一个词。</text></g>
+</svg>
+</figure>
+<aside class="tech-box">
+<p><strong>技术细节：</strong>许多新模型跳过了频谱图，直接预测神经编解码器的<em>音频 token</em>，再由解码器还原成声波。这就是它们会笑、会迟疑、会呼吸的原因：这些声音没有对应的拼音或音标，却有对应的 token。</p>
+</aside>
+</section>
+
+<section>
+<h2>声音克隆：几秒钟复刻一个声音</h2>
+<p>神经网络模型能把“说<strong>什么</strong>”和“<strong>谁</strong>在说”分开。一个人的音色可以概括成一种数字“声纹”，从一小段语音样本中提取出来；之后，模型就能用这个声纹朗读任何文本。几年前还需要在录音棚录上好几个小时，如今用手机录几十秒就够了。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 200" role="img" aria-labelledby="ttsCloneTitle" font-family="inherit" font-size="15">
+<title id="ttsCloneTitle">声音克隆：一段约 25 秒的样本被提取为声纹，再与新文本一起生成朗读</title>
+<path d="M20 60l4-12 4 24 4-18 4 10 4-22 4 30 4-16 4 8 4-14 4 20 4-12 4 6 4-10 4 16 4-8 4 4 4-12 4 18 4-10 4 6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+<text x="20" y="104" fill="currentColor" font-weight="600">语音样本</text><text x="20" y="124" fill="currentColor" fill-opacity=".7" font-size="13">约 25 秒</text>
+<path d="M120 60h36M150 54l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<g fill="#c47a2a"><rect x="168" y="44" width="8" height="32" rx="2" fill-opacity=".9"/><rect x="180" y="52" width="8" height="24" rx="2" fill-opacity=".5"/><rect x="192" y="36" width="8" height="40" rx="2" fill-opacity=".7"/><rect x="204" y="58" width="8" height="18" rx="2" fill-opacity=".4"/><rect x="216" y="46" width="8" height="30" rx="2" fill-opacity=".8"/><rect x="228" y="54" width="8" height="22" rx="2" fill-opacity=".55"/></g>
+<text x="168" y="104" fill="currentColor" font-weight="600">声纹</text><text x="168" y="124" fill="currentColor" fill-opacity=".7" font-size="13">音色</text>
+<rect x="168" y="146" width="120" height="36" rx="8" fill="none" stroke="currentColor" stroke-opacity=".5"/><text x="228" y="169" text-anchor="middle" fill="currentColor" font-size="13">新文本</text>
+<path d="M250 60h40M284 54l6 6-6 6M272 146V62" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<path d="M310 60l4-14 4 26 4-20 4 14 4-10 4 18 4-22 4 12 4-6 4 8 4-14 4 20 4-12 4 6 4-10 4 16 4-8" fill="none" stroke="#c47a2a" stroke-width="1.8"/>
+<text x="310" y="104" fill="currentColor" font-weight="600">同一个声音</text><text x="310" y="124" fill="currentColor" fill-opacity=".7" font-size="13">朗读新文本</text>
+</svg>
+</figure>
+<p>在 Audiobook Maker 上，样本时长约 25 秒，录音时朗读网站给出的一句话：系统会先确认你确实读了这句话，再创建语音。完整步骤见<a href="/guide/voice-cloning-audiobook/zh/">用自己的声音制作有声书</a>指南。</p>
+</section>
+
+<section>
+<h2>为什么一本有声书比一句话难得多</h2>
+<p>几乎所有语音合成演示都只放短句。一部小说有 30 万到 100 多万字，时长 5 到 20 小时：到了这个规模，会出现一句话里看不到的问题。</p>
+<h3>分段与衔接</h3>
+<p>没有哪个模型能一口气读完一整本书。文本会被切成若干<strong>片段</strong>，每段几百到一两千字不等（视模型而定），切分点都在句末，绝不会切在对话中间。各个片段分别生成，再拼接起来。</p>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 190" role="img" aria-labelledby="ttsChunkTitle" font-family="inherit" font-size="15">
+<title id="ttsChunkTitle">整本书被切成片段，分别生成后再拼接；有问题的片段会重新生成</title>
+<g fill="none" stroke="currentColor" stroke-opacity=".5"><rect x="20" y="30" width="80" height="40" rx="6"/><rect x="110" y="30" width="80" height="40" rx="6"/><rect x="290" y="30" width="80" height="40" rx="6"/><rect x="380" y="30" width="80" height="40" rx="6"/></g>
+<rect x="200" y="30" width="80" height="40" rx="6" fill="#c44040" fill-opacity=".1" stroke="#c44040"/>
+<g fill="currentColor" text-anchor="middle" font-size="13"><text x="60" y="55">片段 1</text><text x="150" y="55">片段 2</text><text x="240" y="55">片段 3</text><text x="330" y="55">片段 4</text><text x="420" y="55">片段 5</text></g>
+<path d="M240 76v22c0 10 8 14 18 14h18M270 106l6 6-6 6" fill="none" stroke="#c44040" stroke-width="1.5"/>
+<text x="284" y="117" fill="#c44040" font-size="13">无声或被截断：重新生成</text>
+<path d="M20 152h440" stroke="#c47a2a" stroke-width="10" stroke-linecap="round" stroke-opacity=".35"/>
+<g stroke="#c47a2a" stroke-width="2"><line x1="108" y1="142" x2="108" y2="162"/><line x1="196" y1="142" x2="196" y2="162"/><line x1="284" y1="142" x2="284" y2="162"/><line x1="372" y1="142" x2="372" y2="162"/></g>
+<text x="20" y="184" fill="currentColor" fill-opacity=".7" font-size="13">完整章节：衔接处经过平滑处理，听起来不留痕迹</text>
+</svg>
+</figure>
+<p>每个片段生成时都“记不住”上一段的语气：在衔接处，音量、语速或语调可能略有变化，停顿也可能过长或过短。经过校准的停顿和平滑的衔接，就是为了让这些痕迹消失。</p>
+<h3>常见错误及其排查</h3>
+<p>正因为神经网络模型是“生成”声音而不是“拼接”声音，它们会犯一些老系统从未有过的错误：</p>
+<ul>
+<li><strong>重复</strong>某个词，或<strong>漏读</strong>一段；</li>
+<li>把片段结尾<strong>截断</strong>，或只返回一段<strong>静音</strong>；</li>
+<li>遇到数字表格之类不适合朗读的内容时<strong>陷入循环</strong>；</li>
+<li>碰到外文单词时，句子读到一半<strong>换了语言</strong>。</li>
+</ul>
+<p>一本书有上千个片段，再罕见的错误也很可能出现。所以每个片段都要检查：时长要与文本相符，音频不能是静音或被截断，一旦有问题就重新生成。另一种方法是把音频自动转写成文字，再与原文对比。</p>
+<h3>章节与最终格式</h3>
+<p>最后，片段被合并成章节，生成 MP3 或带章节和封面的 <a href="/guide/m4b-format/zh/">M4B 文件</a>，方便从上次停下的地方继续收听。在<a href="/free-audiobooks/">免费有声书目录</a>里，可以收听用多种欧洲语言制作的整本有声书，亲耳感受完整效果。</p>
+</section>
+
+<section>
+<h2>如何衡量合成语音的质量</h2>
+<ul>
+<li><strong>MOS</strong>（<em>Mean Opinion Score</em>，平均意见分）：由真人听众按 1 到 5 分为自然度打分。至今仍是最重要的参考标准。</li>
+<li><strong>字错误率</strong>：用语音识别把音频转写成文字，统计读错、漏读或多读的字词。它衡量的是清晰度，而不是好不好听。</li>
+<li><strong>音色相似度</strong>：对于克隆语音，衡量生成语音的声纹与样本有多接近。</li>
+<li><strong>采样率</strong>：每秒用多少个数值来描述声波。</li>
+</ul>
+<h3>采样率：16、24 还是 48 kHz</h3>
+<figure class="tts-diagram">
+<svg viewBox="0 0 480 220" role="img" aria-labelledby="ttsSrTitle" font-family="inherit" font-size="15">
+<title id="ttsSrTitle">同一条声波，分别用较少、较多和很多的采样点来描述</title>
+<text x="20" y="45" fill="currentColor" font-weight="600">16 kHz</text><path d="M110.0,40.0 L111.8,38.3 L113.5,36.6 L115.2,35.1 L117.0,33.7 L118.8,32.6 L120.5,31.7 L122.2,31.0 L124.0,30.7 L125.8,30.5 L127.5,30.6 L129.2,31.0 L131.0,31.4 L132.8,32.0 L134.5,32.6 L136.2,33.1 L138.0,33.6 L139.8,34.0 L141.5,34.2 L143.2,34.1 L145.0,33.9 L146.8,33.4 L148.5,32.7 L150.2,31.8 L152.0,30.7 L153.8,29.5 L155.5,28.2 L157.2,26.9 L159.0,25.6 L160.8,24.5 L162.5,23.5 L164.2,22.8 L166.0,22.3 L167.8,22.0 L169.5,22.1 L171.2,22.4 L173.0,23.0 L174.8,23.8 L176.5,24.9 L178.2,26.0 L180.0,27.3 L181.8,28.6 L183.5,29.9 L185.2,31.1 L187.0,32.1 L188.8,32.9 L190.5,33.6 L192.2,34.0 L194.0,34.2 L195.8,34.1 L197.5,33.9 L199.2,33.5 L201.0,32.9 L202.8,32.4 L204.5,31.8 L206.2,31.2 L208.0,30.8 L209.8,30.6 L211.5,30.5 L213.2,30.7 L215.0,31.2 L216.8,31.9 L218.5,32.9 L220.2,34.2 L222.0,35.6 L223.8,37.2 L225.5,38.9 L227.2,40.6 L229.0,42.3 L230.8,43.9 L232.5,45.4 L234.2,46.7 L236.0,47.8 L237.8,48.6 L239.5,49.1 L241.2,49.4 L243.0,49.5 L244.8,49.3 L246.5,48.9 L248.2,48.4 L250.0,47.8 L251.8,47.2 L253.5,46.7 L255.2,46.2 L257.0,45.9 L258.8,45.8 L260.5,45.9 L262.2,46.3 L264.0,46.8 L265.8,47.6 L267.5,48.6 L269.2,49.7 L271.0,51.0 L272.8,52.2 L274.5,53.5 L276.2,54.8 L278.0,55.8 L279.8,56.7 L281.5,57.4 L283.2,57.9 L285.0,58.0 L286.8,57.9 L288.5,57.4 L290.2,56.7 L292.0,55.8 L293.8,54.8 L295.5,53.5 L297.2,52.2 L299.0,51.0 L300.8,49.7 L302.5,48.6 L304.2,47.6 L306.0,46.8 L307.8,46.3 L309.5,45.9 L311.2,45.8 L313.0,45.9 L314.8,46.2 L316.5,46.7 L318.2,47.2 L320.0,47.8 L321.8,48.4 L323.5,48.9 L325.2,49.3 L327.0,49.5 L328.8,49.4 L330.5,49.1 L332.2,48.6 L334.0,47.8 L335.8,46.7 L337.5,45.4 L339.2,43.9 L341.0,42.3 L342.8,40.6 L344.5,38.9 L346.2,37.2 L348.0,35.6 L349.8,34.2 L351.5,32.9 L353.2,31.9 L355.0,31.2 L356.8,30.7 L358.5,30.5 L360.2,30.6 L362.0,30.8 L363.8,31.2 L365.5,31.8 L367.2,32.4 L369.0,32.9 L370.8,33.5 L372.5,33.9 L374.2,34.1 L376.0,34.2 L377.8,34.0 L379.5,33.6 L381.2,32.9 L383.0,32.1 L384.8,31.1 L386.5,29.9 L388.2,28.6 L390.0,27.3 L391.8,26.0 L393.5,24.9 L395.2,23.8 L397.0,23.0 L398.8,22.4 L400.5,22.1 L402.2,22.0 L404.0,22.3 L405.8,22.8 L407.5,23.5 L409.2,24.5 L411.0,25.6 L412.8,26.9 L414.5,28.2 L416.2,29.5 L418.0,30.7 L419.8,31.8 L421.5,32.7 L423.2,33.4 L425.0,33.9 L426.8,34.1 L428.5,34.2 L430.2,34.0 L432.0,33.6 L433.8,33.1 L435.5,32.6 L437.2,32.0 L439.0,31.4 L440.8,31.0 L442.5,30.6 L444.2,30.5 L446.0,30.7 L447.8,31.0 L449.5,31.7 L451.2,32.6 L453.0,33.7 L454.8,35.1 L456.5,36.6 L458.2,38.3 L460.0,40.0" fill="none" stroke="currentColor" stroke-opacity=".2" stroke-width="1.2"/><path d="M110.0,40.0 L180.0,27.3 L250.0,47.8 L320.0,47.8 L390.0,27.3 L460.0,40.0" fill="none" stroke="#c47a2a" stroke-width="1.8"/><g fill="#c47a2a"><circle cx="110.0" cy="40.0" r="3"/><circle cx="180.0" cy="27.3" r="3"/><circle cx="250.0" cy="47.8" r="3"/><circle cx="320.0" cy="47.8" r="3"/><circle cx="390.0" cy="27.3" r="3"/><circle cx="460.0" cy="40.0" r="3"/></g>
+<text x="20" y="113" fill="currentColor" font-weight="600">24 kHz</text><path d="M110.0,108.0 L111.8,106.3 L113.5,104.6 L115.2,103.1 L117.0,101.7 L118.8,100.6 L120.5,99.7 L122.2,99.0 L124.0,98.7 L125.8,98.5 L127.5,98.6 L129.2,99.0 L131.0,99.4 L132.8,100.0 L134.5,100.6 L136.2,101.1 L138.0,101.6 L139.8,102.0 L141.5,102.2 L143.2,102.1 L145.0,101.9 L146.8,101.4 L148.5,100.7 L150.2,99.8 L152.0,98.7 L153.8,97.5 L155.5,96.2 L157.2,94.9 L159.0,93.6 L160.8,92.5 L162.5,91.5 L164.2,90.8 L166.0,90.3 L167.8,90.0 L169.5,90.1 L171.2,90.4 L173.0,91.0 L174.8,91.8 L176.5,92.9 L178.2,94.0 L180.0,95.3 L181.8,96.6 L183.5,97.9 L185.2,99.1 L187.0,100.1 L188.8,100.9 L190.5,101.6 L192.2,102.0 L194.0,102.2 L195.8,102.1 L197.5,101.9 L199.2,101.5 L201.0,100.9 L202.8,100.4 L204.5,99.8 L206.2,99.2 L208.0,98.8 L209.8,98.6 L211.5,98.5 L213.2,98.7 L215.0,99.2 L216.8,99.9 L218.5,100.9 L220.2,102.2 L222.0,103.6 L223.8,105.2 L225.5,106.9 L227.2,108.6 L229.0,110.3 L230.8,111.9 L232.5,113.4 L234.2,114.7 L236.0,115.8 L237.8,116.6 L239.5,117.1 L241.2,117.4 L243.0,117.5 L244.8,117.3 L246.5,116.9 L248.2,116.4 L250.0,115.8 L251.8,115.2 L253.5,114.7 L255.2,114.2 L257.0,113.9 L258.8,113.8 L260.5,113.9 L262.2,114.3 L264.0,114.8 L265.8,115.6 L267.5,116.6 L269.2,117.7 L271.0,119.0 L272.8,120.2 L274.5,121.5 L276.2,122.8 L278.0,123.8 L279.8,124.7 L281.5,125.4 L283.2,125.9 L285.0,126.0 L286.8,125.9 L288.5,125.4 L290.2,124.7 L292.0,123.8 L293.8,122.8 L295.5,121.5 L297.2,120.2 L299.0,119.0 L300.8,117.7 L302.5,116.6 L304.2,115.6 L306.0,114.8 L307.8,114.3 L309.5,113.9 L311.2,113.8 L313.0,113.9 L314.8,114.2 L316.5,114.7 L318.2,115.2 L320.0,115.8 L321.8,116.4 L323.5,116.9 L325.2,117.3 L327.0,117.5 L328.8,117.4 L330.5,117.1 L332.2,116.6 L334.0,115.8 L335.8,114.7 L337.5,113.4 L339.2,111.9 L341.0,110.3 L342.8,108.6 L344.5,106.9 L346.2,105.2 L348.0,103.6 L349.8,102.2 L351.5,100.9 L353.2,99.9 L355.0,99.2 L356.8,98.7 L358.5,98.5 L360.2,98.6 L362.0,98.8 L363.8,99.2 L365.5,99.8 L367.2,100.4 L369.0,100.9 L370.8,101.5 L372.5,101.9 L374.2,102.1 L376.0,102.2 L377.8,102.0 L379.5,101.6 L381.2,100.9 L383.0,100.1 L384.8,99.1 L386.5,97.9 L388.2,96.6 L390.0,95.3 L391.8,94.0 L393.5,92.9 L395.2,91.8 L397.0,91.0 L398.8,90.4 L400.5,90.1 L402.2,90.0 L404.0,90.3 L405.8,90.8 L407.5,91.5 L409.2,92.5 L411.0,93.6 L412.8,94.9 L414.5,96.2 L416.2,97.5 L418.0,98.7 L419.8,99.8 L421.5,100.7 L423.2,101.4 L425.0,101.9 L426.8,102.1 L428.5,102.2 L430.2,102.0 L432.0,101.6 L433.8,101.1 L435.5,100.6 L437.2,100.0 L439.0,99.4 L440.8,99.0 L442.5,98.6 L444.2,98.5 L446.0,98.7 L447.8,99.0 L449.5,99.7 L451.2,100.6 L453.0,101.7 L454.8,103.1 L456.5,104.6 L458.2,106.3 L460.0,108.0" fill="none" stroke="currentColor" stroke-opacity=".2" stroke-width="1.2"/><path d="M110.0,108.0 L148.9,100.5 L187.8,100.5 L226.7,108.0 L265.6,115.5 L304.4,115.5 L343.3,108.0 L382.2,100.5 L421.1,100.5 L460.0,108.0" fill="none" stroke="#c47a2a" stroke-width="1.8"/><g fill="#c47a2a"><circle cx="110.0" cy="108.0" r="3"/><circle cx="148.9" cy="100.5" r="3"/><circle cx="187.8" cy="100.5" r="3"/><circle cx="226.7" cy="108.0" r="3"/><circle cx="265.6" cy="115.5" r="3"/><circle cx="304.4" cy="115.5" r="3"/><circle cx="343.3" cy="108.0" r="3"/><circle cx="382.2" cy="100.5" r="3"/><circle cx="421.1" cy="100.5" r="3"/><circle cx="460.0" cy="108.0" r="3"/></g>
+<text x="20" y="181" fill="currentColor" font-weight="600">48 kHz</text><path d="M110.0,176.0 L111.8,174.3 L113.5,172.6 L115.2,171.1 L117.0,169.7 L118.8,168.6 L120.5,167.7 L122.2,167.0 L124.0,166.7 L125.8,166.5 L127.5,166.6 L129.2,167.0 L131.0,167.4 L132.8,168.0 L134.5,168.6 L136.2,169.1 L138.0,169.6 L139.8,170.0 L141.5,170.2 L143.2,170.1 L145.0,169.9 L146.8,169.4 L148.5,168.7 L150.2,167.8 L152.0,166.7 L153.8,165.5 L155.5,164.2 L157.2,162.9 L159.0,161.6 L160.8,160.5 L162.5,159.5 L164.2,158.8 L166.0,158.3 L167.8,158.0 L169.5,158.1 L171.2,158.4 L173.0,159.0 L174.8,159.8 L176.5,160.9 L178.2,162.0 L180.0,163.3 L181.8,164.6 L183.5,165.9 L185.2,167.1 L187.0,168.1 L188.8,168.9 L190.5,169.6 L192.2,170.0 L194.0,170.2 L195.8,170.1 L197.5,169.9 L199.2,169.5 L201.0,168.9 L202.8,168.4 L204.5,167.8 L206.2,167.2 L208.0,166.8 L209.8,166.6 L211.5,166.5 L213.2,166.7 L215.0,167.2 L216.8,167.9 L218.5,168.9 L220.2,170.2 L222.0,171.6 L223.8,173.2 L225.5,174.9 L227.2,176.6 L229.0,178.3 L230.8,179.9 L232.5,181.4 L234.2,182.7 L236.0,183.8 L237.8,184.6 L239.5,185.1 L241.2,185.4 L243.0,185.5 L244.8,185.3 L246.5,184.9 L248.2,184.4 L250.0,183.8 L251.8,183.2 L253.5,182.7 L255.2,182.2 L257.0,181.9 L258.8,181.8 L260.5,181.9 L262.2,182.3 L264.0,182.8 L265.8,183.6 L267.5,184.6 L269.2,185.7 L271.0,187.0 L272.8,188.2 L274.5,189.5 L276.2,190.8 L278.0,191.8 L279.8,192.7 L281.5,193.4 L283.2,193.9 L285.0,194.0 L286.8,193.9 L288.5,193.4 L290.2,192.7 L292.0,191.8 L293.8,190.8 L295.5,189.5 L297.2,188.2 L299.0,187.0 L300.8,185.7 L302.5,184.6 L304.2,183.6 L306.0,182.8 L307.8,182.3 L309.5,181.9 L311.2,181.8 L313.0,181.9 L314.8,182.2 L316.5,182.7 L318.2,183.2 L320.0,183.8 L321.8,184.4 L323.5,184.9 L325.2,185.3 L327.0,185.5 L328.8,185.4 L330.5,185.1 L332.2,184.6 L334.0,183.8 L335.8,182.7 L337.5,181.4 L339.2,179.9 L341.0,178.3 L342.8,176.6 L344.5,174.9 L346.2,173.2 L348.0,171.6 L349.8,170.2 L351.5,168.9 L353.2,167.9 L355.0,167.2 L356.8,166.7 L358.5,166.5 L360.2,166.6 L362.0,166.8 L363.8,167.2 L365.5,167.8 L367.2,168.4 L369.0,168.9 L370.8,169.5 L372.5,169.9 L374.2,170.1 L376.0,170.2 L377.8,170.0 L379.5,169.6 L381.2,168.9 L383.0,168.1 L384.8,167.1 L386.5,165.9 L388.2,164.6 L390.0,163.3 L391.8,162.0 L393.5,160.9 L395.2,159.8 L397.0,159.0 L398.8,158.4 L400.5,158.1 L402.2,158.0 L404.0,158.3 L405.8,158.8 L407.5,159.5 L409.2,160.5 L411.0,161.6 L412.8,162.9 L414.5,164.2 L416.2,165.5 L418.0,166.7 L419.8,167.8 L421.5,168.7 L423.2,169.4 L425.0,169.9 L426.8,170.1 L428.5,170.2 L430.2,170.0 L432.0,169.6 L433.8,169.1 L435.5,168.6 L437.2,168.0 L439.0,167.4 L440.8,167.0 L442.5,166.6 L444.2,166.5 L446.0,166.7 L447.8,167.0 L449.5,167.7 L451.2,168.6 L453.0,169.7 L454.8,171.1 L456.5,172.6 L458.2,174.3 L460.0,176.0" fill="none" stroke="currentColor" stroke-opacity=".2" stroke-width="1.2"/><path d="M110.0,176.0 L125.9,166.5 L141.8,170.2 L157.7,162.5 L173.6,159.3 L189.5,169.3 L205.5,167.5 L221.4,171.0 L237.3,184.4 L253.2,182.8 L269.1,185.6 L285.0,194.0 L300.9,185.6 L316.8,182.8 L332.7,184.4 L348.6,171.0 L364.5,167.5 L380.5,169.3 L396.4,159.3 L412.3,162.5 L428.2,170.2 L444.1,166.5 L460.0,176.0" fill="none" stroke="#c47a2a" stroke-width="1.8"/><g fill="#c47a2a"><circle cx="110.0" cy="176.0" r="3"/><circle cx="125.9" cy="166.5" r="3"/><circle cx="141.8" cy="170.2" r="3"/><circle cx="157.7" cy="162.5" r="3"/><circle cx="173.6" cy="159.3" r="3"/><circle cx="189.5" cy="169.3" r="3"/><circle cx="205.5" cy="167.5" r="3"/><circle cx="221.4" cy="171.0" r="3"/><circle cx="237.3" cy="184.4" r="3"/><circle cx="253.2" cy="182.8" r="3"/><circle cx="269.1" cy="185.6" r="3"/><circle cx="285.0" cy="194.0" r="3"/><circle cx="300.9" cy="185.6" r="3"/><circle cx="316.8" cy="182.8" r="3"/><circle cx="332.7" cy="184.4" r="3"/><circle cx="348.6" cy="171.0" r="3"/><circle cx="364.5" cy="167.5" r="3"/><circle cx="380.5" cy="169.3" r="3"/><circle cx="396.4" cy="159.3" r="3"/><circle cx="412.3" cy="162.5" r="3"/><circle cx="428.2" cy="170.2" r="3"/><circle cx="444.1" cy="166.5" r="3"/><circle cx="460.0" cy="176.0" r="3"/></g>
+</svg>
+<figcaption>每秒采样点越多，声波细节越丰富：16 kHz 足以听清字词（相当于电话音质），24 kHz 是神经网络语音的常用标准，48 kHz 连齿擦音和呼吸声都能保留。</figcaption>
+</figure>
+<figure class="tts-sample">
+<figcaption><em>“细雨丝丝，松树沙沙，风从窗缝吹进来，纱帘发出嘶嘶的细响。”</em>戴上耳机，差别主要体现在 s、sh、x、f 这类声音上。</figcaption>
+<ul>
+<li><span>16 kHz</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/campionamento-16k.mp3?v=__APP_VERSION__"></audio></li>
+<li><span>24 kHz</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/campionamento-24k.mp3?v=__APP_VERSION__"></audio></li>
+<li><span>48 kHz</span><audio controls preload="none" src="/static/guide-audio/how-text-to-speech-works/zh/campionamento-48k.mp3?v=__APP_VERSION__"></audio></li>
+</ul>
+</figure>
+</section>
+
+<section>
+<h2>局限与伦理</h2>
+<p>如今，高质量的合成语音已很难与真人录音区分开来。这带来两个问题。</p>
+<ul>
+<li><strong>知情同意。</strong>未经本人许可克隆他人的声音是不道德的，在许多国家也是违法的。克隆语音只能使用自己的声音，或在声音提供者同意的前提下使用。</li>
+<li><strong>透明度。</strong>听众有权知道声音是合成的。我们目录中的有声书都会注明这一点，主流发行平台也有同样的要求。</li>
+</ul>
+<p>还有一个现实的局限：合成语音只能把写得好的文字读好。表格、公式、注释和复杂的排版，对任何模型来说都仍是难题。</p>
+</section>
+
+<section>
+<h2>用你自己的书试一试</h2>
+<p>想真正了解语音合成，最好的办法就是用一本你熟悉的书来听。在 <a href="/zh/">Audiobook Maker</a> 上传 EPUB、PDF 或 TXT，从 50 多种语言的 400 多种语音中选一个，就能得到带章节的 MP3 或 M4B 有声书。使用标准语音完全免费，无需注册。</p>
+<ul>
+<li><a href="/guide/epub-to-audiobook/zh/">如何把 EPUB 转成有声书</a></li>
+<li><a href="/guide/pdf-to-audiobook/zh/">如何把 PDF 转成有声书</a></li>
+<li><a href="/guide/text-to-speech-audiobook/zh/">最适合有声书的 TTS 语音</a></li>
+</ul>
+</section>
+
+<section>
+<h2>常见问题</h2>
+<details><summary>文字转语音和语音识别有什么区别？</summary>
+<p>两者方向正好相反。文字转语音（TTS）把文字变成声音；语音识别（<em>speech to text</em>，STT）把声音变成文字，比如手机上的语音输入。两者经常配合使用：要检查一段合成音频，可以先把它转写成文字，再与原文对比。</p>
+</details>
+<details><summary>为什么数字有时会读错？</summary>
+<p>因为正确的读法取决于上下文：年份、价格、时间、电话号码和页码的读法各不相同。如果规范化环节理解错了，语音就会把错误的内容读得字正腔圆。罗马数字、缩写和多音字是最容易出错的地方。</p>
+</details>
+<details><summary>合成语音能理解自己读的内容吗？</summary>
+<p>不是人类意义上的理解，但新模型会考虑句子的意思：正是靠这一点，它们才能选对多音字的读音，读出疑问句的语调。模型越大，这种“理解”就越可靠。</p>
+</details>
+<details><summary>生成一本有声书需要多长时间？</summary>
+<p>远远短于收听时长，因为各个片段是并行生成的。一本 300 页的书通常不到一小时就能完成，即使关闭页面，服务器也会继续处理。</p>
+</details>
+<details><summary>可以用自己的声音朗读有声书吗？</summary>
+<p>可以，借助声音克隆：录制约 25 秒的语音，试听两段样音，然后生成整本书。完整步骤见<a href="/guide/voice-cloning-audiobook/zh/">用自己的声音制作有声书</a>指南。</p>
+</details>
+<details><summary>有可以离线使用的语音合成吗？</summary>
+<p>有：手机和电脑自带的系统语音无需联网即可使用，也有可以安装在自己电脑上的开源模型。不过，最自然的语音需要大量算力，通常运行在配备专用显卡的服务器上。</p>
+</details>
+</section>
+
+<section>
+<h2>术语表</h2>
+<dl>
+<dt>音素</dt><dd>能区分两个词的最小语音单位，比如“爸”（bà）和“怕”（pà）中的 b 和 p。</dd>
+<dt>文本规范化</dt><dd>在合成之前，把数字、日期、缩写和符号改写成可以朗读的文字。</dd>
+<dt>韵律</dt><dd>口语中句子的语调、节奏、停顿和重音。</dd>
+<dt>频谱图</dt><dd>以“频率 × 时间”上的能量来表示声音；“梅尔”频谱图模仿人耳的感知方式。</dd>
+<dt>声码器</dt><dd>把频谱图或音频 token 转换成声波的组件。</dd>
+<dt>音频 token</dt><dd>神经编解码器压缩音频后得到的离散符号，模型可以像预测词语一样预测它们。</dd>
+<dt>采样率</dt><dd>每秒用来描述声波的数值个数：16、24 或 48 kHz。</dd>
+<dt>声音克隆</dt><dd>根据一小段真人语音样本，创建出相应的合成语音。</dd>
+</dl>
+</section>
+</div>

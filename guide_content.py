@@ -86,6 +86,17 @@ _GUIDE_BODY = {"it": _GUIDE_BODY_IT, "fr": _GUIDE_BODY_FR, "es": _GUIDE_BODY_ES,
 # JSON-LD aggiuntivi per guida (HowTo, FAQPage): fn(lang, canonical, meta) -> [json, ...]
 _GUIDE_EXTRA_LD = {_gvc.GUIDE_ID: _gvc.extra_ld}
 
+# Guide impaginate a slide: il corpo sta in un <div class="guide-deck"> e lo
+# sfogliano static/css/guide_slides.css + static/js/guide_slides.js.
+_SLIDE_GUIDES = {"how-text-to-speech-works"}
+_SLIDES_CSS = "/static/css/guide_slides.css"
+_SLIDES_JS = "/static/js/guide_slides.js"
+
+
+def _slides_head():
+    return (f'<link rel="stylesheet" href="{_SLIDES_CSS}?v={_brand.static_fingerprint(_SLIDES_CSS)}">\n'
+            f'<script src="{_SLIDES_JS}?v={_brand.static_fingerprint(_SLIDES_JS)}" defer></script>')
+
 
 
 
@@ -98,6 +109,7 @@ _GUIDE_PUBLISHED = {
     "gemini-tts": "2026-06-09",
     "pdf-to-audiobook": "2026-10-18",
     "vouchers": "2026-11-10",
+    "how-text-to-speech-works": "2026-11-26",
     _gvc.GUIDE_ID: _gvc.PUBLISHED,
 }
 
@@ -109,6 +121,7 @@ _GUIDE_SECTION = {
     "gemini-tts": "Text-to-Speech",
     "pdf-to-audiobook": "Tutorials",
     "vouchers": "Help",
+    "how-text-to-speech-works": "Text-to-Speech",
     _gvc.GUIDE_ID: _gvc.SECTION,
 }
 
@@ -223,6 +236,8 @@ def build_guide_html(
     # Body content — select by language, fall back to EN
     _body_dict = _GUIDE_BODY.get(lang, _GUIDE_BODY_EN)
     body = _body_dict.get(guide_id) or _GUIDE_BODY_EN.get(guide_id, "<p>Guide content not available.</p>")
+    # campioni audio e altri asset in /static/...?v=__APP_VERSION__ (cache di un anno)
+    body = _brand.bust_static_refs(body)
 
     # App home URL for internal links
     app_home = _brand.home_url(base_url, lang) if base_url else "/"
@@ -241,6 +256,8 @@ def build_guide_html(
         og_type="article", og_title=meta["title"], og_desc=meta["desc"], og_url=canonical,
         og_image=og_image_url(base_url), lang=lang, twitter=True,
         ld=[article_ld, breadcrumb_ld, *extra_ld])
+    if guide_id in _SLIDE_GUIDES:
+        head += "\n" + _slides_head()
     body_html = (f'<article>\n<h1>{meta["h1"]}</h1>\n{article_dates_html}\n{body}\n'
                  f'<a class="cta" href="{app_home}">{cta_label} &rarr;</a>\n</article>')
     ui = _i18n_pick(content_json("guides", "ui.json"), lang)

@@ -350,5 +350,49 @@
    "kw": "audiobook maker वाउचर, audiobook maker कूपन, वाउचर कोड, वाउचर का उपयोग, दान कूपन, रिफंड वाउचर, प्रीमियम वाउचर, वाउचर शेष राशि",
    "h1": "वाउचर और कूपन: किन सेवाओं का भुगतान करते हैं और कैसे इस्तेमाल करें"
   }
+ },
+ "how-text-to-speech-works": {
+  "en": {
+   "title": "How Text to Speech Works: From Written Text to Voice",
+   "desc": "How text to speech works, step by step: normalization, phonemes, prosody, spectrograms, vocoders and voice cloning, with audio samples to compare.",
+   "kw": "how text to speech works, text to speech, speech synthesis, tts explained, ai voice generator, neural tts, voice cloning, mel spectrogram",
+   "h1": "How Text to Speech Works"
+  },
+  "it": {
+   "title": "Come Funziona il Text to Speech: dal Testo alla Voce AI",
+   "desc": "Come una voce sintetica legge un testo: normalizzazione, fonemi, prosodia, modelli neurali e vocoder. Con esempi audio e i limiti sui libri lunghi.",
+   "kw": "come funziona il text to speech, sintesi vocale come funziona, tts neurale, come funziona la voce ai, sintesi vocale spiegata, vocoder, clonazione vocale",
+   "h1": "Come funziona la sintesi vocale (text to speech)"
+  },
+  "zh": {
+   "title": "文字转语音原理：TTS 语音合成是如何工作的",
+   "desc": "图解文字转语音（TTS）的工作原理：文本规范化、多音字与拼音、韵律、声学模型、声码器和声音克隆。附音频示例，并解释整本有声书为何更难。",
+   "kw": "文字转语音,语音合成,TTS原理,文本转语音,语音合成原理,AI配音,声音克隆,多音字",
+   "h1": "文字转语音是如何工作的（语音合成原理）"
+  },
+  "de": {
+   "title": "Wie funktioniert Text to Speech? Sprachsynthese erklärt",
+   "desc": "Wie aus Text Sprache wird: Normalisierung, Phoneme, Prosodie, Spektrogramm und Vocoder einfach erklärt, mit Hörbeispielen und Stimmklonen.",
+   "kw": "Sprachsynthese, Text to Speech, wie funktioniert Text to Speech, Vorlesestimme, KI-Stimme, Sprachausgabe, Stimmklonen, TTS erklärt",
+   "h1": "Wie funktioniert Text to Speech? Sprachsynthese einfach erklärt"
+  },
+  "es": {
+   "title": "Cómo funciona la síntesis de voz (texto a voz)",
+   "desc": "Del texto al sonido: normalización, fonemas, prosodia, espectrograma y vocoder, con muestras de audio. Y qué cambia cuando la voz lee un libro entero.",
+   "kw": "síntesis de voz, texto a voz, cómo funciona el texto a voz, voz sintética, voz artificial, conversor de texto a voz, clonación de voz, audiolibro con voz sintética",
+   "h1": "Cómo funciona la síntesis de voz"
+  },
+  "fr": {
+   "title": "Comment fonctionne la synthèse vocale (text to speech)",
+   "desc": "Comment une voix de synthèse lit un texte : normalisation, phonèmes, prosodie, modèles neuronaux et vocodeur. Avec échantillons audio et limites sur les livres.",
+   "kw": "comment fonctionne la synthèse vocale, synthèse vocale, text to speech, tts neuronal, voix ia, vocodeur, clonage vocal, lecture de texte à voix haute",
+   "h1": "Comment fonctionne la synthèse vocale (text to speech)"
+  },
+  "hi": {
+   "title": "टेक्स्ट टू स्पीच कैसे काम करता है: आसान गाइड",
+   "desc": "टेक्स्ट टू स्पीच कैसे काम करता है: नॉर्मलाइज़ेशन, उच्चारण, सुर, न्यूरल वोकोडर और वॉइस क्लोनिंग, ऑडियो सैंपल के साथ। फिर अपनी किताब पर आज़माएँ।",
+   "kw": "text to speech kaise kaam karta hai, टेक्स्ट टू स्पीच कैसे काम करता है, आवाज़ संश्लेषण, वाक् संश्लेषण, AI आवाज़, हिंदी TTS, वॉइस क्लोनिंग, टेक्स्ट को आवाज़ में बदलें",
+   "h1": "टेक्स्ट टू स्पीच (आवाज़ संश्लेषण) कैसे काम करता है"
+  }
  }
 }
