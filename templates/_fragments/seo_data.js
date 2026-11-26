@@ -9,7 +9,7 @@ features:["Conversione EPUB in audiolibro MP3/M4B (con capitoli)","Conversione P
 },
 en:{
 title:"Free EPUB/PDF to MP3 & M4B Audiobook | Audiobook Maker",
-desc:"Convert your EPUB and PDF ebooks to MP3 or M4B audiobooks (with embedded chapters) for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your professional audiobook. No installation needed, works in your browser.",
+desc:"Free EPUB and PDF to audio converter: turn ebooks into MP3 or M4B audiobooks with chapters, read by natural AI voices. Works in your browser, no sign-up.",
 kw:"epub to audiobook converter, pdf to audiobook, m4b with chapters, free audiobook maker, text to speech audiobook, ai audiobook generator, ebook to mp3, audiobook for dyslexia, accessible audiobook, listen to PDF, elevenlabs alternative free, podcast rss generator",
 ld:"Audiobook Maker",
 features:["EPUB to MP3/M4B audiobook conversion (with chapters)","PDF to MP3/M4B audiobook conversion (with chapters)","400+ neural AI voices","50+ languages supported","Chapter selection and preview","Podcast RSS feed generation","Email notification for long conversions","No registration required","Generous free monthly quota","Browser-based processing"]

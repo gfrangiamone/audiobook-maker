@@ -708,14 +708,21 @@ def test_senza_r2_il_bucket_non_accende_il_catalogo(monkeypatch):
 def test_home_ha_la_faq_del_catalogo_con_il_link(client):
     # FAQ della home (i18n_data.js, pre-riempita lato server), la prima della
     # card, e pagina /faq/ con il link cliccabile.
+    # Il link porta all'indice della lingua della pagina, se il catalogo la ha;
+    # l'elenco delle lingue comprende il francese (26/11/2026).
+    french = {"it": "francese", "en": "French", "fr": "le français", "es": "francés",
+              "de": "Französisch", "zh": "法语", "hi": "फ़्रेंच"}
     for lang in ("it", "en", "fr", "es", "de", "zh", "hi"):
+        href = page_brand.catalog_href(lang)
         page = client.get(f"/{lang}/", follow_redirects=True).get_data(as_text=True)
         m = re.search(r'data-t="faq_catalog_a">(.*?)</div>', page, flags=re.S)
-        assert m and "href='/free-audiobooks/'" in m.group(1), lang
+        assert m and f"href='{href}'" in m.group(1), lang
+        assert french[lang] in m.group(1), lang
         card = page[page.index('class="resources-card faq-card"'):]
         assert re.search(r'<summary data-t="(\w+)"', card).group(1) == "faq_catalog_q", lang
         faq = client.get(f"/faq/{lang}/").get_data(as_text=True)
-        assert '<a href="https://audiobook-maker.com/free-audiobooks/">' in faq, lang
+        assert f'<a href="https://audiobook-maker.com{href}">' in faq, lang
+        assert french[lang] in faq, lang
         assert '<a href="https://play.google.com/store/apps/details?id=it.abm.audiobook_maker_mobile"' \
                ' target="_blank" rel="noopener">' in faq, lang
 

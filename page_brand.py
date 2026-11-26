@@ -259,6 +259,17 @@ def seo_head(*, desc="", keywords="", canonical="", hreflang="", og_type="", og_
 
 
 CATALOG_PATH = "/free-audiobooks/"
+# Lingue del catalogo (spec §2): non coincidono con quelle del sito. Fonte
+# unica, `free_catalog.LANGS` la riprende.
+CATALOG_LANGS = ("it", "en", "de", "pt", "nl", "es", "fr")
+
+
+def catalog_href(lang):
+    """Indirizzo del catalogo per una pagina in `lang`: l'indice di quella
+    lingua se il catalogo la ha, altrimenti l'indice di tutte. Il link
+    interno nella lingua giusta spinge l'indice che risponde a ricerche come
+    «audiolibri gratis» (Search Console, 26/11/2026)."""
+    return f"{CATALOG_PATH}{lang}/" if lang in CATALOG_LANGS else CATALOG_PATH
 
 
 def catalog_label(lang):
@@ -273,7 +284,7 @@ def catalog_link(lang):
     breadcrumb nella lingua della pagina (i18n/free_catalog.json). Sta nei
     footer delle pagine pubbliche: il catalogo cresce di libri nuovi e i link
     interni sono quello che ne fa scansionare le pagine (06/11/2026)."""
-    return f'<a href="{CATALOG_PATH}">{catalog_label(lang)}</a>'
+    return f'<a href="{catalog_href(lang)}">{catalog_label(lang)}</a>'
 
 
 def public_page(*, lang, title, crumb, body, footer, home="/", head="", css="", tools="",

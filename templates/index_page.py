@@ -155,6 +155,7 @@ def build_html_template(
 
     # Link al catalogo gratuito nel footer (il JS lo traduce al cambio lingua).
     html = html.replace("__NAV_CATALOG__", _brand.catalog_label(lang))
+    html = html.replace("__CATALOG_HREF__", _brand.catalog_href(lang))
 
     # ── 3. Inject FAQPage + HowTo + SoftwareApplication JSON-LD into <head> placeholders ──
     from seo_content import get_schema_ld

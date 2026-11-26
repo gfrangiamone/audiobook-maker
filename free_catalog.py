@@ -44,7 +44,7 @@ from og_image_data import og_image_url
 
 SCHEMA_VERSION = 1
 # Lingue del catalogo (spec §2): non coincidono con quelle del sito.
-LANGS = ("it", "en", "de", "pt", "nl", "es", "fr")
+LANGS = page_brand.CATALOG_LANGS
 # Nome di ogni lingua nella lingua stessa: il filtro dell'indice le elenca
 # cosi', qualunque sia la lingua dell'interfaccia.
 LANG_NAMES = {"it": "Italiano", "en": "English", "de": "Deutsch", "pt": "Português",

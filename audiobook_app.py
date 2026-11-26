@@ -8713,7 +8713,7 @@ _SEO_DATA = {
         "title":   "Free EPUB/PDF to MP3 & M4B Audiobook | Audiobook Maker",
         "tagline": "Free EPUB & PDF to Audiobook Converter",
         "subtitle":"Convert your EPUBs and PDFs into audiobooks with high-quality neural voices",
-        "desc":    "Convert your EPUB and PDF ebooks to MP3 or M4B audiobooks (with embedded chapters) for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your professional audiobook. No installation needed, works in your browser.",
+        "desc":    "Free EPUB and PDF to audio converter: turn ebooks into MP3 or M4B audiobooks with chapters, read by natural AI voices. Works in your browser, no sign-up.",
         "kw":      "epub to audiobook converter, pdf to audiobook, m4b with chapters, free audiobook maker, text to speech audiobook, ai audiobook generator, ebook to mp3, audiobook for dyslexia, accessible audiobook, listen to PDF, elevenlabs alternative free, podcast rss generator",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Free online tool to convert EPUB and PDF ebooks into MP3 and M4B audiobooks (with chapters) using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
